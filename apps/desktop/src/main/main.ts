@@ -220,33 +220,31 @@ export function normalizeRendererCrashReport(
   if (payload === null || typeof payload !== "object") return null;
   try {
     const record = payload as Record<string, unknown>;
-    if (
-      Object.getPrototypeOf(record) !== Object.prototype ||
-      Object.keys(record).length !== 2 ||
-      typeof record.errorName !== "string" ||
-      typeof record.componentStack !== "string"
-    ) {
-      return null;
-    }
-    if (
-      record.componentStack.length > RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH
-    ) {
-      return null;
-    }
-    if (record.componentStack.length > RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH) {
-      return null;
-    }
-    const normalizedStack = normalizeRendererComponentStack(record.componentStack);
-    if (!normalizedStack) return null;
-    return {
-      errorName: RENDERER_CRASH_ERROR_NAMES.has(record.errorName)
-        ? record.errorName
-        : "Error",
-      ...normalizedStack,
-    };
+    if (!isRendererCrashRecord(record)) return null;
+    return createRendererCrashReport(record);
   } catch {
     return null;
   }
+}
+
+function isRendererCrashRecord(
+  record: Record<string, unknown>,
+): record is Record<"errorName" | "componentStack", string> {
+  if (Object.getPrototypeOf(record) !== Object.prototype) return false;
+  if (Object.keys(record).length !== 2) return false;
+  if (typeof record.errorName !== "string" || typeof record.componentStack !== "string") return false;
+  return record.componentStack.length <= RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH;
+}
+
+function createRendererCrashReport(
+  record: Record<"errorName" | "componentStack", string>,
+): RendererCrashReportPayload | null {
+  const normalizedStack = normalizeRendererComponentStack(record.componentStack);
+  if (!normalizedStack) return null;
+  return {
+    errorName: RENDERER_CRASH_ERROR_NAMES.has(record.errorName) ? record.errorName : "Error",
+    ...normalizedStack,
+  };
 }
 
 /** Accept an authorized, rate-limited renderer crash report and write safe fields. */

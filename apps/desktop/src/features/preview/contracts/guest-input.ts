@@ -44,20 +44,11 @@ export class PreviewGuestInputSuppressor {
 
   /** Accepts one bounded allowance from the trusted host process. */
   allow(input: unknown, now = Date.now()): boolean {
-    if (!input || typeof input !== "object" || Array.isArray(input)) return false;
-    const candidate = input as Partial<PreviewGuestAgentInputAllowance>;
-    if (candidate.action !== "allow") return false;
-    if (typeof candidate.token !== "string" || candidate.token.length < 1 || candidate.token.length > 128) return false;
-    if (!Number.isSafeInteger(candidate.generation) || candidate.generation! < 1) return false;
-    if (!PREVIEW_GUEST_HUMAN_INPUT_KINDS.includes(candidate.kind as PreviewGuestHumanInputMessage["kind"])) return false;
-    if (!Number.isInteger(candidate.count) || candidate.count! < 1 || candidate.count! > 16) return false;
-    if (!Number.isFinite(candidate.expiresAt) || candidate.expiresAt! < now || candidate.expiresAt! > now + 5_000) return false;
+    const candidate = parseAgentInputAllowance(input, now);
+    if (!candidate) return false;
     this.removeExpired(now);
-    if (!this.allowances.has(candidate.token) && this.allowances.size >= MAX_AGENT_INPUT_ALLOWANCES) {
-      const oldestToken = this.allowances.keys().next().value;
-      if (typeof oldestToken === "string") this.allowances.delete(oldestToken);
-    }
-    this.allowances.set(candidate.token, candidate as PreviewGuestAgentInputAllowance);
+    this.evictOldestAllowance(candidate.token);
+    this.allowances.set(candidate.token, candidate);
     return true;
   }
 
@@ -100,6 +91,49 @@ export class PreviewGuestInputSuppressor {
     }
     return removed;
   }
+
+  private evictOldestAllowance(token: string): void {
+    if (this.allowances.has(token)) return;
+    if (this.allowances.size < MAX_AGENT_INPUT_ALLOWANCES) return;
+    const oldestToken = this.allowances.keys().next().value;
+    if (typeof oldestToken === "string") this.allowances.delete(oldestToken);
+  }
+}
+
+function parseAgentInputAllowance(
+  input: unknown,
+  now: number,
+): PreviewGuestAgentInputAllowance | null {
+  if (!isAgentInputAllowanceRecord(input)) return null;
+  if (!hasValidAgentInputIdentity(input)) return null;
+  if (!hasValidAgentInputCount(input.count)) return null;
+  if (!hasValidAgentInputExpiry(input.expiresAt, now)) return null;
+  return input;
+}
+
+function isAgentInputAllowanceRecord(
+  input: unknown,
+): input is PreviewGuestAgentInputAllowance {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  return (input as { action?: unknown }).action === "allow";
+}
+
+function hasValidAgentInputIdentity(input: PreviewGuestAgentInputAllowance): boolean {
+  return (
+    input.token.length >= 1 &&
+    input.token.length <= 128 &&
+    Number.isSafeInteger(input.generation) &&
+    input.generation >= 1 &&
+    PREVIEW_GUEST_HUMAN_INPUT_KINDS.includes(input.kind)
+  );
+}
+
+function hasValidAgentInputCount(count: number): boolean {
+  return Number.isInteger(count) && count >= 1 && count <= 16;
+}
+
+function hasValidAgentInputExpiry(expiresAt: number, now: number): boolean {
+  return Number.isFinite(expiresAt) && expiresAt >= now && expiresAt <= now + 5_000;
 }
 
 /** Maps a trusted DOM input event to the narrow webview-host takeover message. */

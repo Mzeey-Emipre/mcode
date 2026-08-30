@@ -41,6 +41,25 @@ export async function runPackagedReliabilityScenario() {
     throw new Error("Packaged Desktop executable not found. Run the target package task first.");
   }
 
+  const run = createReliabilityRun(found.desktop);
+  const desktop = startReliabilityDesktop(run);
+  let ownedServerAuthToken = null;
+  try {
+    const { initialLock, rendezvous } = await startReliabilityRun(run, desktop.child);
+    ownedServerAuthToken = initialLock.authToken;
+    const thread = await createReliabilityThread(initialLock, run.runRoot);
+    const assistant = await publishReliabilityAssistant(initialLock, rendezvous, run.token, thread.id);
+    const recovered = await recoverReliabilityRun(run, rendezvous, initialLock, thread, assistant.stream);
+    return reliabilityEvidence(initialLock, recovered.lock, recovered.persisted, thread, assistant, recovered.assistant, recovered.mutationCount);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${detail}\nPackaged Desktop output:\n${desktop.output().slice(-4_000)}`);
+  } finally {
+    await cleanupOwnedRun(desktop.child, run.dataDir, run.runRoot, { expectedServerAuthToken: ownedServerAuthToken });
+  }
+}
+
+function createReliabilityRun(desktop) {
   const runRoot = resolve(tmpdir(), `mcode-reliability-${randomUUID()}`);
   const dataDir = join(runRoot, "data");
   const userDataDir = join(runRoot, "user-data");
@@ -49,104 +68,126 @@ export async function runPackagedReliabilityScenario() {
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(userDataDir, { recursive: true });
   writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: randomUUID() }), { mode: 0o600 });
+  return { desktop, runRoot, dataDir, userDataDir, capabilityPath, token };
+}
 
-  const child = spawn(found.desktop, process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : [], {
-    cwd: dirname(found.desktop),
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      MCODE_DATA_DIR: dataDir,
-      MCODE_ELECTRON_USER_DATA_DIR: userDataDir,
-      MCODE_RELIABILITY_CAPABILITY_PATH: capabilityPath,
-      MCODE_AGENT_RUNTIME: "1",
-      MCODE_SINGLE_INSTANCE: "false",
-      MCODE_MODE: "desktop",
-      ELECTRON_ENABLE_LOGGING: "1",
-    },
+function startReliabilityDesktop(run) {
+  const child = spawn(run.desktop, reliabilityDesktopArguments(), {
+    cwd: dirname(run.desktop),
+    env: reliabilityDesktopEnvironment(run),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     ...resolveOwnedDesktopSpawnOptions(),
   });
-  let output = "";
+  let capturedOutput = "";
   const capture = (chunk) => {
-    output = `${output}${chunk.toString()}`.slice(-12_000);
+    capturedOutput = `${capturedOutput}${chunk.toString()}`.slice(-12_000);
   };
   child.stdout?.on("data", capture);
   child.stderr?.on("data", capture);
+  return { child, output: () => capturedOutput };
+}
 
+function reliabilityDesktopArguments() {
+  return process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : [];
+}
+
+function reliabilityDesktopEnvironment(run) {
+  return {
+    ...process.env,
+    NODE_ENV: "production",
+    MCODE_DATA_DIR: run.dataDir,
+    MCODE_ELECTRON_USER_DATA_DIR: run.userDataDir,
+    MCODE_RELIABILITY_CAPABILITY_PATH: run.capabilityPath,
+    MCODE_AGENT_RUNTIME: "1",
+    MCODE_SINGLE_INSTANCE: "false",
+    MCODE_MODE: "desktop",
+    ELECTRON_ENABLE_LOGGING: "1",
+  };
+}
+
+async function startReliabilityRun(run, child) {
+  const initialLock = await waitForServerLock(run.dataDir, STARTUP_TIMEOUT_MS);
+  await waitForHealth(initialLock.port, STARTUP_TIMEOUT_MS);
+  const rendezvous = await waitForDesktopRendezvous(run.runRoot, child.pid, run.token, STARTUP_TIMEOUT_MS);
+  return { initialLock, rendezvous };
+}
+
+async function createReliabilityThread(lock, runRoot) {
   let mutationCount = 0;
-  let ownedServerAuthToken = null;
-  let observer = null;
+  await rpc(lock, "settings.update", { appearance: { theme: "dark" } }, () => { mutationCount += 1; });
+  const workspace = (await rpc(lock, "workspace.create", { name: "Reliability harness", path: runRoot })).result;
+  const thread = (await rpc(lock, "thread.create", {
+    workspaceId: workspace.id,
+    title: "Restart recovery",
+    mode: "direct",
+    branch: "main",
+  })).result;
+  return { thread, mutationCount };
+}
+
+async function publishReliabilityAssistant(lock, rendezvous, token, threadId) {
+  const observer = await observeAgentText(lock, threadId);
   try {
-    const initialLock = await waitForServerLock(dataDir, STARTUP_TIMEOUT_MS);
-    ownedServerAuthToken = initialLock.authToken;
-    await waitForHealth(initialLock.port, STARTUP_TIMEOUT_MS);
-    const rendezvous = await waitForDesktopRendezvous(runRoot, child.pid, token, STARTUP_TIMEOUT_MS);
-    await rpc(initialLock, "settings.update", { appearance: { theme: "dark" } }, () => { mutationCount += 1; });
-    const workspace = (await rpc(initialLock, "workspace.create", {
-      name: "Reliability harness",
-      path: runRoot,
-    })).result;
-    const thread = (await rpc(initialLock, "thread.create", {
-      workspaceId: workspace.id,
-      title: "Restart recovery",
-      mode: "direct",
-      branch: "main",
-    })).result;
-    observer = await observeAgentText(initialLock, thread.id);
-    const streamed = await postDesktopFault(rendezvous.port, token, {
-      control: "assistant-stream",
-      threadId: thread.id,
-    });
-    const stream = streamed?.stream;
-    if (!stream || stream.threadId !== thread.id || typeof stream.executionId !== "string" || typeof stream.text !== "string") {
-      throw new Error("Reliability assistant stream did not return its durable identity");
-    }
+    const streamed = await postDesktopFault(rendezvous.port, token, { control: "assistant-stream", threadId });
+    const stream = reliableAssistantStream(streamed, threadId);
     const published = await observer.published;
-    if (published.delta !== stream.text) {
-      throw new Error("Published assistant prefix differed from the durable stream");
-    }
-    observer.close();
-    observer = null;
-
-    await postDesktopFault(rendezvous.port, token, { control: "server-exit" });
-    const recoveredLock = await waitForChangedServerLock(dataDir, initialLock, RECOVERY_TIMEOUT_MS);
-    await waitForHealth(recoveredLock.port, RECOVERY_TIMEOUT_MS);
-    const persisted = await rpc(recoveredLock, "settings.get", {});
-
-    if (mutationCount !== 1) throw new Error(`Expected one settings mutation, observed ${mutationCount}`);
-    if (persisted?.result?.appearance?.theme !== "dark") {
-      throw new Error("Persisted settings sentinel was not retained after server recovery");
-    }
-    const conversation = await rpc(recoveredLock, "message.list", { threadId: thread.id, limit: 10 });
-    const assistants = conversation?.result?.messages?.filter((message) => message.role === "assistant") ?? [];
-    if (assistants.length !== 1
-      || assistants[0].content !== stream.text
-      || assistants[0].outcome !== "interrupted"
-      || assistants[0].outcomeExecutionId !== stream.executionId) {
-      throw new Error("Recovered assistant prefix was not restored exactly once as Interrupted");
-    }
-
-    return {
-      initialServer: { pid: initialLock.pid, startedAt: initialLock.startedAt },
-      recoveredServer: { pid: recoveredLock.pid, startedAt: recoveredLock.startedAt },
-      persistedTheme: persisted.result.appearance.theme,
-      mutationCount,
-      assistant: {
-        threadId: thread.id,
-        executionId: stream.executionId,
-        publishedPrefix: published.delta,
-        restoredPrefix: assistants[0].content,
-        outcome: assistants[0].outcome,
-      },
-    };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`${detail}\nPackaged Desktop output:\n${output.slice(-4_000)}`);
+    if (published.delta !== stream.text) throw new Error("Published assistant prefix differed from the durable stream");
+    return { stream, published };
   } finally {
-    observer?.close();
-    await cleanupOwnedRun(child, dataDir, runRoot, { expectedServerAuthToken: ownedServerAuthToken });
+    observer.close();
   }
+}
+
+function reliableAssistantStream(streamed, threadId) {
+  const stream = streamed?.stream;
+  if (!stream || stream.threadId !== threadId || typeof stream.executionId !== "string" || typeof stream.text !== "string") {
+    throw new Error("Reliability assistant stream did not return its durable identity");
+  }
+  return stream;
+}
+
+async function recoverReliabilityRun(run, rendezvous, initialLock, thread, stream) {
+  await postDesktopFault(rendezvous.port, run.token, { control: "server-exit" });
+  const lock = await waitForChangedServerLock(run.dataDir, initialLock, RECOVERY_TIMEOUT_MS);
+  await waitForHealth(lock.port, RECOVERY_TIMEOUT_MS);
+  const persisted = await rpc(lock, "settings.get", {});
+  assertPersistedTheme(persisted);
+  const conversation = await rpc(lock, "message.list", { threadId: thread.thread.id, limit: 10 });
+  const assistant = restoredReliabilityAssistant(conversation, stream);
+  return { lock, persisted, assistant, mutationCount: thread.mutationCount };
+}
+
+function assertPersistedTheme(persisted) {
+  if (persisted?.result?.appearance?.theme !== "dark") {
+    throw new Error("Persisted settings sentinel was not retained after server recovery");
+  }
+}
+
+function restoredReliabilityAssistant(conversation, stream) {
+  const assistants = conversation?.result?.messages?.filter((message) => message.role === "assistant") ?? [];
+  const assistant = assistants[0];
+  if (assistants.length !== 1 || assistant.content !== stream.text || assistant.outcome !== "interrupted" || assistant.outcomeExecutionId !== stream.executionId) {
+    throw new Error("Recovered assistant prefix was not restored exactly once as Interrupted");
+  }
+  return assistant;
+}
+
+function reliabilityEvidence(initialLock, recoveredLock, persisted, thread, stream, restoredAssistant, mutationCount) {
+  if (mutationCount !== 1) throw new Error(`Expected one settings mutation, observed ${mutationCount}`);
+  return {
+    initialServer: { pid: initialLock.pid, startedAt: initialLock.startedAt },
+    recoveredServer: { pid: recoveredLock.pid, startedAt: recoveredLock.startedAt },
+    persistedTheme: persisted.result.appearance.theme,
+    mutationCount,
+    assistant: {
+      threadId: thread.thread.id,
+      executionId: stream.stream.executionId,
+      publishedPrefix: stream.published.delta,
+      restoredPrefix: restoredAssistant.content,
+      outcome: restoredAssistant.outcome,
+    },
+  };
 }
 
 async function waitForServerLock(dataDir, timeoutMs) {
@@ -346,47 +387,57 @@ async function cleanupOwnedServer(dataDir, operations) {
   let lock = operations.readLock(lockPath);
   if (!isServerLock(lock)) return;
   const expectedAuthToken = operations.expectedServerAuthToken ?? operations.readAuthSecret(join(dataDir, "auth-secret"));
+  assertOwnedServerLock(lock, expectedAuthToken);
+
+  for (let attempt = 0; attempt < 4 && lock; attempt += 1) {
+    const outcome = await stopOwnedServer(lockPath, lock, expectedAuthToken, operations);
+    if (outcome === "removed") return;
+    lock = outcome;
+  }
+  throw new Error("Server lock kept changing during cleanup");
+}
+
+function assertOwnedServerLock(lock, expectedAuthToken) {
   if (!expectedAuthToken || !isOwnedServerLock(lock, expectedAuthToken)) {
     throw new Error("Refusing to terminate a server without an isolated-run identity");
   }
+}
 
-  for (let attempt = 0; attempt < 4 && lock; attempt += 1) {
-    try {
-      await operations.fetch(`http://127.0.0.1:${lock.port}/shutdown`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${lock.authToken}` },
-        signal: AbortSignal.timeout(2_000),
-      });
-    } catch {
-      // The server may already have exited or be intentionally hung.
-    }
+async function stopOwnedServer(lockPath, lock, expectedAuthToken, operations) {
+  await requestOwnedServerShutdown(lock, operations);
+  const beforeTerminate = nextOwnedServerLock(lockPath, expectedAuthToken, operations);
+  if (!beforeTerminate || !sameServerIdentity(lock, beforeTerminate)) return beforeTerminate ?? "removed";
+  await terminateOwnedServer(lock, operations);
+  const afterTerminate = nextOwnedServerLock(lockPath, expectedAuthToken, operations);
+  if (!afterTerminate || sameServerIdentity(lock, afterTerminate)) return "removed";
+  return afterTerminate;
+}
 
-    const beforeTerminate = operations.readLock(lockPath);
-    if (!beforeTerminate) return;
-    if (!isOwnedServerLock(beforeTerminate, expectedAuthToken)) {
-      throw new Error("Server lock identity changed outside the isolated run");
-    }
-    if (!sameServerIdentity(lock, beforeTerminate)) {
-      lock = beforeTerminate;
-      continue;
-    }
-
-    const useProcessGroup = operations.platform !== "win32";
-    await operations.killPidTree(lock.pid, "SIGTERM", { graceMs: 500, useProcessGroup });
-    await operations.waitForProcessExit(lock.pid, 5_000, { useProcessGroup });
-
-    const afterTerminate = operations.readLock(lockPath);
-    if (!afterTerminate) return;
-    if (!isOwnedServerLock(afterTerminate, expectedAuthToken)) {
-      throw new Error("Server lock identity changed outside the isolated run");
-    }
-    if (!sameServerIdentity(lock, afterTerminate)) {
-      lock = afterTerminate;
-      continue;
-    }
-    return;
+async function requestOwnedServerShutdown(lock, operations) {
+  try {
+    await operations.fetch(`http://127.0.0.1:${lock.port}/shutdown`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${lock.authToken}` },
+      signal: AbortSignal.timeout(2_000),
+    });
+  } catch {
+    // The server may already have exited or be intentionally hung.
   }
-  throw new Error("Server lock kept changing during cleanup");
+}
+
+function nextOwnedServerLock(lockPath, expectedAuthToken, operations) {
+  const lock = operations.readLock(lockPath);
+  if (!lock) return null;
+  if (!isOwnedServerLock(lock, expectedAuthToken)) {
+    throw new Error("Server lock identity changed outside the isolated run");
+  }
+  return lock;
+}
+
+async function terminateOwnedServer(lock, operations) {
+  const useProcessGroup = operations.platform !== "win32";
+  await operations.killPidTree(lock.pid, "SIGTERM", { graceMs: 500, useProcessGroup });
+  await operations.waitForProcessExit(lock.pid, 5_000, { useProcessGroup });
 }
 
 async function cleanupOwnedDesktop(child, operations) {
@@ -418,19 +469,32 @@ export async function waitForProcessExit(pid, timeoutMs, options = {}) {
     processKill = process.kill,
     sleep = delay,
   } = options;
-  const target = useProcessGroup && platform !== "win32" ? -pid : pid;
+  const target = processExitTarget(pid, useProcessGroup, platform);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try {
-      processKill(target, 0);
-    } catch (error) {
-      const code = error?.code;
-      const message = error instanceof Error ? error.message : String(error ?? "");
-      if (code === "ESRCH" || message.includes("ESRCH")) return;
-    }
+    if (processExited(target, processKill)) return;
     await sleep(POLL_INTERVAL_MS);
   }
   throw new Error(`Owned process tree ${pid} survived cleanup`);
+}
+
+function processExitTarget(pid, useProcessGroup, platform) {
+  return useProcessGroup && platform !== "win32" ? -pid : pid;
+}
+
+function processExited(target, processKill) {
+  try {
+    processKill(target, 0);
+    return false;
+  } catch (error) {
+    return processExitError(error);
+  }
+}
+
+function processExitError(error) {
+  const code = error?.code;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return code === "ESRCH" || message.includes("ESRCH");
 }
 
 function readJson(filePath) {

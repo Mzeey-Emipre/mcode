@@ -23,44 +23,56 @@ export function applyChannelConfig(
 
 /** Compare two three-part semantic versions, including prerelease identifiers. */
 function semverGt(a: string, b: string): boolean {
-  const parse = (version: string) => {
-    const [main, pre] = version.split("-", 2);
-    const nums = main.split(".").map((part) => Number(part));
-    return { nums, pre: pre ?? null };
-  };
-  const left = parse(a);
-  const right = parse(b);
-  for (let index = 0; index < 3; index++) {
-    const leftPart = left.nums[index] ?? 0;
-    const rightPart = right.nums[index] ?? 0;
-    if (leftPart !== rightPart) return leftPart > rightPart;
-  }
-  if (left.pre === null && right.pre !== null) return true;
-  if (left.pre !== null && right.pre === null) return false;
-  if (left.pre === null && right.pre === null) return false;
+  return compareSemanticVersions(parseSemanticVersion(a), parseSemanticVersion(b)) > 0;
+}
 
-  const leftPrerelease = (left.pre as string).split(".");
-  const rightPrerelease = (right.pre as string).split(".");
-  for (let index = 0; index < Math.max(leftPrerelease.length, rightPrerelease.length); index++) {
-    const leftPart = leftPrerelease[index];
-    const rightPart = rightPrerelease[index];
-    if (leftPart === undefined) return false;
-    if (rightPart === undefined) return true;
-    const leftNumber = Number(leftPart);
-    const rightNumber = Number(rightPart);
-    const leftIsNumber = !Number.isNaN(leftNumber);
-    const rightIsNumber = !Number.isNaN(rightNumber);
-    if (leftIsNumber && rightIsNumber) {
-      if (leftNumber !== rightNumber) return leftNumber > rightNumber;
-    } else if (leftIsNumber) {
-      return false;
-    } else if (rightIsNumber) {
-      return true;
-    } else if (leftPart !== rightPart) {
-      return leftPart > rightPart;
-    }
+function parseSemanticVersion(version: string): { nums: number[]; pre: string | null } {
+  const [main, pre] = version.split("-", 2);
+  return { nums: main.split(".").map((part) => Number(part)), pre: pre ?? null };
+}
+
+function compareSemanticVersions(
+  left: { nums: number[]; pre: string | null },
+  right: { nums: number[]; pre: string | null },
+): number {
+  const mainComparison = compareMainVersion(left.nums, right.nums);
+  if (mainComparison !== 0) return mainComparison;
+  return comparePrerelease(left.pre, right.pre);
+}
+
+function compareMainVersion(left: number[], right: number[]): number {
+  for (let index = 0; index < 3; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
   }
-  return false;
+  return 0;
+}
+
+function comparePrerelease(left: string | null, right: string | null): number {
+  if (left === null) return right === null ? 0 : 1;
+  if (right === null) return -1;
+  return comparePrereleaseParts(left.split("."), right.split("."));
+}
+
+function comparePrereleaseParts(leftPrerelease: string[], rightPrerelease: string[]): number {
+  for (let index = 0; index < Math.max(leftPrerelease.length, rightPrerelease.length); index++) {
+    const comparison = comparePrereleasePart(leftPrerelease[index], rightPrerelease[index]);
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+}
+
+function comparePrereleasePart(left: string | undefined, right: string | undefined): number {
+  if (left === undefined) return right === undefined ? 0 : -1;
+  if (right === undefined) return 1;
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  const leftIsNumber = !Number.isNaN(leftNumber);
+  const rightIsNumber = !Number.isNaN(rightNumber);
+  if (leftIsNumber && rightIsNumber) return leftNumber - rightNumber;
+  if (leftIsNumber) return -1;
+  if (rightIsNumber) return 1;
+  return left === right ? 0 : left > right ? 1 : -1;
 }
 
 /** Return whether a release-line switch would install an older stable build. */

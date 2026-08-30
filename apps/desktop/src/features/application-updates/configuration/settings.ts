@@ -40,46 +40,54 @@ function isNightlyBuild(applicationVersion: string): boolean {
 export function loadUpdaterSettings(
   applicationVersion = app.getVersion(),
 ): UpdaterSettings {
-  const defaults: UpdaterSettings = {
+  const defaults = updaterSettingsDefaults(applicationVersion);
+  return readPersistedUpdaterSettings(defaults) ?? defaults;
+}
+
+/** Return the packaged defaults for the current release line. */
+function updaterSettingsDefaults(applicationVersion: string): UpdaterSettings {
+  return {
     releaseLine: isNightlyBuild(applicationVersion) ? "nightly" : "stable",
     autoDownload: true,
     autoInstallOnQuit: true,
     checkInterval: "4hours",
   };
+}
+
+/** Read valid persisted settings, or return null after the existing diagnostic. */
+function readPersistedUpdaterSettings(defaults: UpdaterSettings): UpdaterSettings | null {
   try {
     const raw = readFileSync(join(getMcodeDir(), "settings.json"), "utf-8");
     const parsed = JSON.parse(raw);
     const result = SettingsSchema().safeParse(parsed);
-    if (result.success) {
-      // The schema defaults an absent channel to stable. Preserve nightly
-      // builds' implicit nightly selection when the user has not set it.
-      const explicitChannel = parsed?.updates?.channel as string | undefined;
-      const releaseLine = explicitChannel
-        ? (result.data.updates.channel as ReleaseLine)
-        : defaults.releaseLine;
-
-      return {
-        releaseLine,
-        autoDownload:
-          result.data.updates?.autoDownload ?? defaults.autoDownload,
-        autoInstallOnQuit:
-          result.data.updates?.autoInstallOnQuit ?? defaults.autoInstallOnQuit,
-        checkInterval:
-          result.data.updates?.checkInterval ?? defaults.checkInterval,
-      };
-    }
-    console.warn(
-      "[auto-updater] settings.json failed validation, using defaults",
-    );
+    if (result.success) return mergeUpdaterSettings(parsed, result.data.updates, defaults);
+    console.warn("[auto-updater] settings.json failed validation, using defaults");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[auto-updater] settings.json could not be loaded, using defaults: ${message}`,
-      );
-    }
+    logUpdaterSettingsReadFailure(err);
   }
-  return defaults;
+  return null;
+}
+
+/** Merge schema defaults with packaged defaults that depend on the application version. */
+function mergeUpdaterSettings(
+  parsed: unknown,
+  updates: NonNullable<ReturnType<typeof SettingsSchema>["_output"]>["updates"],
+  defaults: UpdaterSettings,
+): UpdaterSettings {
+  const explicitChannel = (parsed as { updates?: { channel?: string } }).updates?.channel;
+  return {
+    releaseLine: explicitChannel ? (updates.channel as ReleaseLine) : defaults.releaseLine,
+    autoDownload: updates?.autoDownload ?? defaults.autoDownload,
+    autoInstallOnQuit: updates?.autoInstallOnQuit ?? defaults.autoInstallOnQuit,
+    checkInterval: updates?.checkInterval ?? defaults.checkInterval,
+  };
+}
+
+/** Report settings load failures other than a missing optional settings file. */
+function logUpdaterSettingsReadFailure(error: unknown): void {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[auto-updater] settings.json could not be loaded, using defaults: ${message}`);
 }
 
 /** Convert a persisted check interval to milliseconds. */

@@ -414,47 +414,9 @@ export function createReleaseEvidenceManifest({
     ),
   }));
   const first = parsed[0].manifest;
-  for (const { manifestPath, manifest } of parsed) {
-    if (
-      manifest.channel !== channel ||
-      manifest.commit !== first.commit ||
-      manifest.version !== first.version ||
-      manifest.expectedLegacy !== first.expectedLegacy ||
-      manifest.signingRequired !== first.signingRequired
-    ) {
-      throw new Error(
-        `Target manifest does not match the aggregate release: ${manifestPath}`,
-      );
-    }
-    for (const artifact of manifest.artifacts) {
-      const artifactPath = path.join(path.dirname(manifestPath), artifact.name);
-      if (
-        !existsSync(artifactPath) ||
-        sha256File(artifactPath) !== artifact.sha256
-      ) {
-        throw new Error(`Staged artifact hash mismatch: ${artifactPath}`);
-      }
-    }
-    if (
-      manifest.terminal.dependencies["node-pty"] !==
-        first.terminal.dependencies["node-pty"] ||
-      manifest.terminal.dependencies.koffi !== first.terminal.dependencies.koffi
-    ) {
-      throw new Error(
-        "Native dependency versions differ across release targets",
-      );
-    }
-  }
+  validateTargetReleaseManifests(parsed, first, channel);
   const ids = parsed.map(({ manifest }) => targetId(manifest));
-  const duplicateId = ids.find((id, index) => ids.indexOf(id) !== index);
-  if (duplicateId) {
-    throw new Error(`Duplicate release target: ${duplicateId}`);
-  }
-  const required = COMPLETE_TARGETS;
-  for (const expected of required) {
-    if (!ids.includes(expected))
-      throw new Error(`Release target is missing: ${expected}`);
-  }
+  assertReleaseTargetCoverage(ids);
   const aggregate = TerminalReleaseEvidenceManifestSchema().parse({
     contractVersion: 1,
     kind: "terminal-release-evidence",
@@ -492,6 +454,47 @@ export function createReleaseEvidenceManifest({
   });
   writeJsonAtomic(resolvedOutputPath, aggregate);
   return aggregate;
+}
+
+function validateTargetReleaseManifests(parsed, first, channel) {
+  for (const { manifestPath, manifest } of parsed) {
+    assertMatchingTargetManifest(manifestPath, manifest, first, channel);
+    assertTargetArtifactHashes(manifestPath, manifest.artifacts);
+    assertMatchingNativeDependencies(manifest, first);
+  }
+}
+
+function assertMatchingTargetManifest(manifestPath, manifest, first, channel) {
+  const matches = manifest.channel === channel
+    && manifest.commit === first.commit
+    && manifest.version === first.version
+    && manifest.expectedLegacy === first.expectedLegacy
+    && manifest.signingRequired === first.signingRequired;
+  if (!matches) throw new Error(`Target manifest does not match the aggregate release: ${manifestPath}`);
+}
+
+function assertTargetArtifactHashes(manifestPath, artifacts) {
+  for (const artifact of artifacts) {
+    const artifactPath = path.join(path.dirname(manifestPath), artifact.name);
+    if (!existsSync(artifactPath) || sha256File(artifactPath) !== artifact.sha256) {
+      throw new Error(`Staged artifact hash mismatch: ${artifactPath}`);
+    }
+  }
+}
+
+function assertMatchingNativeDependencies(manifest, first) {
+  if (manifest.terminal.dependencies["node-pty"] !== first.terminal.dependencies["node-pty"]
+    || manifest.terminal.dependencies.koffi !== first.terminal.dependencies.koffi) {
+    throw new Error("Native dependency versions differ across release targets");
+  }
+}
+
+function assertReleaseTargetCoverage(ids) {
+  const duplicateId = ids.find((id, index) => ids.indexOf(id) !== index);
+  if (duplicateId) throw new Error(`Duplicate release target: ${duplicateId}`);
+  for (const expected of COMPLETE_TARGETS) {
+    if (!ids.includes(expected)) throw new Error(`Release target is missing: ${expected}`);
+  }
 }
 
 function parseCli(argv) {

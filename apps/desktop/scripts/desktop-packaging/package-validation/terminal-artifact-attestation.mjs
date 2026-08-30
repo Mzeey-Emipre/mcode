@@ -516,40 +516,44 @@ function defaultLoadProbe({
 }
 
 function validateLoadProbe(probe, targetPlatform, targetArch, packageRoots) {
+  validateLoadProbeRuntime(probe, targetPlatform, targetArch);
+  const nativeByPackage = validateLoadProbeNativeModules(probe.nativeModules, packageRoots);
+  validateExpectedNativeModules(nativeByPackage);
+  return {
+    modulesAbi: probe.modulesAbi,
+    nodeVersion: probe.nodeVersion,
+    electronVersion: probe.electronVersion,
+    nativeByPackage,
+  };
+}
+
+function validateLoadProbeRuntime(probe, targetPlatform, targetArch) {
+  validateLoadProbeTarget(probe, targetPlatform, targetArch);
+  validateLoadProbeVersion(probe.modulesAbi, /^\d+$/, "a valid Node modules ABI");
+  validateLoadProbeVersion(probe.nodeVersion, /^\d+\.\d+\.\d+/, "its Node version");
+  validateLoadProbeVersion(probe.electronVersion, /^\d+\.\d+\.\d+/, "its Electron version");
+  if (probe.hostReady !== true) throw new Error("Packaged runtime did not start the PTY host bundle");
+  if (!Array.isArray(probe.nativeModules)) throw new Error("Packaged runtime did not report loaded native modules");
+}
+
+function validateLoadProbeTarget(probe, targetPlatform, targetArch) {
   if (probe?.platform !== targetPlatform || probe?.arch !== targetArch) {
     throw new Error(
       `Packaged runtime target mismatch: expected ${targetPlatform}-${targetArch}, found ${probe?.platform}-${probe?.arch}`,
     );
   }
-  if (typeof probe.modulesAbi !== "string" || !/^\d+$/.test(probe.modulesAbi)) {
-    throw new Error("Packaged runtime did not report a valid Node modules ABI");
+}
+
+function validateLoadProbeVersion(value, pattern, label) {
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw new Error(`Packaged runtime did not report ${label}`);
   }
-  if (
-    typeof probe.nodeVersion !== "string" ||
-    !/^\d+\.\d+\.\d+/.test(probe.nodeVersion)
-  ) {
-    throw new Error("Packaged runtime did not report its Node version");
-  }
-  if (
-    typeof probe.electronVersion !== "string" ||
-    !/^\d+\.\d+\.\d+/.test(probe.electronVersion)
-  ) {
-    throw new Error("Packaged runtime did not report its Electron version");
-  }
-  if (probe.hostReady !== true) {
-    throw new Error("Packaged runtime did not start the PTY host bundle");
-  }
-  if (!Array.isArray(probe.nativeModules)) {
-    throw new Error("Packaged runtime did not report loaded native modules");
-  }
+}
+
+function validateLoadProbeNativeModules(nativeModules, packageRoots) {
   const nativeByPackage = new Map();
-  for (const entry of probe.nativeModules) {
-    if (
-      !EXPECTED_NATIVE_PACKAGES.includes(entry?.packageName) ||
-      typeof entry.path !== "string"
-    ) {
-      throw new Error("Packaged runtime reported an unexpected native module");
-    }
+  for (const entry of nativeModules) {
+    assertNativeModuleEntry(entry);
     if (nativeByPackage.has(entry.packageName)) {
       throw new Error(
         `Packaged runtime loaded duplicate ${entry.packageName} native modules`,
@@ -559,21 +563,26 @@ function validateLoadProbe(probe, targetPlatform, targetArch, packageRoots) {
       entry.path,
       `${entry.packageName} loaded native module`,
     );
-    const relative = path.relative(
-      realpathSync(packageRoots[entry.packageName]),
-      resolvedPath,
-    );
-    if (
-      relative === "" ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    ) {
-      throw new Error(
-        `Loaded ${entry.packageName} native module is outside its packaged directory`,
-      );
-    }
+    assertNativeModuleInPackageRoot(entry.packageName, resolvedPath, packageRoots);
     nativeByPackage.set(entry.packageName, resolvedPath);
   }
+  return nativeByPackage;
+}
+
+function assertNativeModuleEntry(entry) {
+  if (!EXPECTED_NATIVE_PACKAGES.includes(entry?.packageName) || typeof entry.path !== "string") {
+    throw new Error("Packaged runtime reported an unexpected native module");
+  }
+}
+
+function assertNativeModuleInPackageRoot(packageName, resolvedPath, packageRoots) {
+  const relative = path.relative(realpathSync(packageRoots[packageName]), resolvedPath);
+  if (relative === "" || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Loaded ${packageName} native module is outside its packaged directory`);
+  }
+}
+
+function validateExpectedNativeModules(nativeByPackage) {
   for (const packageName of EXPECTED_NATIVE_PACKAGES) {
     if (!nativeByPackage.has(packageName)) {
       throw new Error(
@@ -581,12 +590,6 @@ function validateLoadProbe(probe, targetPlatform, targetArch, packageRoots) {
       );
     }
   }
-  return {
-    modulesAbi: probe.modulesAbi,
-    nodeVersion: probe.nodeVersion,
-    electronVersion: probe.electronVersion,
-    nativeByPackage,
-  };
 }
 
 /**
@@ -603,6 +606,44 @@ export function attestPackagedTerminalArtifacts({
   maxCompressedBytes = TERMINAL_ARTIFACT_MAX_COMPRESSED_BYTES,
   runLoadProbe = defaultLoadProbe,
 }) {
+  const prepared = preparePackagedTerminalArtifactPaths(resourcesRoot, runtimePath, targetPlatform, targetArch);
+  const inspection = inspectPackagedTerminalRuntime({
+    ...prepared,
+    hostPlatform,
+    hostArch,
+    targetPlatform,
+    targetArch,
+    runLoadProbe,
+  });
+  const { resolvedResourcesRoot, hostBundlePath, packageRoots, dependencies } = prepared;
+  const { modulesAbi, nodeVersion, electronVersion, nativeByPackage } = inspection;
+  const nodePtyRuntime = nodePtyRuntimePaths(nativeByPackage.get("node-pty"), targetPlatform);
+  assertNativeInventory(packageRoots, [nativeByPackage.get("node-pty"), nativeByPackage.get("koffi"), ...nodePtyRuntime]);
+  const artifacts = createTerminalArtifacts({
+    resolvedResourcesRoot,
+    hostBundlePath,
+    nativeByPackage,
+    nodePtyRuntime,
+    targetPlatform,
+    targetArch,
+    modulesAbi,
+    dependencies,
+  });
+  const packageMeasurement = measureTerminalPackage(packageRoots, hostBundlePath);
+  assertCompressedArtifactSize(packageMeasurement.compressedBytes, maxCompressedBytes);
+  return {
+    contractVersion: 1,
+    target: { platform: targetPlatform, arch: targetArch, modulesAbi },
+    runtime: { node: nodeVersion, electron: electronVersion },
+    dependencies,
+    compressedBytes: packageMeasurement.compressedBytes,
+    compressedLimitBytes: maxCompressedBytes,
+    packageFileCount: packageMeasurement.packageFileCount,
+    artifacts,
+  };
+}
+
+function preparePackagedTerminalArtifactPaths(resourcesRoot, runtimePath, targetPlatform, targetArch) {
   if (!TARGET_PLATFORMS.has(targetPlatform) || !TARGET_ARCHES.has(targetArch)) {
     throw new Error(
       `Unsupported Terminal package target: ${targetPlatform}-${targetArch}`,
@@ -635,6 +676,19 @@ export function attestPackagedTerminalArtifacts({
     "node-pty": readPackageVersion(packageRoots["node-pty"], "node-pty"),
     koffi: readPackageVersion(packageRoots.koffi, "koffi"),
   };
+  return { resolvedResourcesRoot, resolvedRuntimePath, hostBundlePath, packageRoots, dependencies };
+}
+
+function inspectPackagedTerminalRuntime({
+  resolvedRuntimePath,
+  hostBundlePath,
+  packageRoots,
+  hostPlatform,
+  hostArch,
+  targetPlatform,
+  targetArch,
+  runLoadProbe,
+}) {
   const probe = runLoadProbe({
     runtimePath: resolvedRuntimePath,
     hostBundlePath,
@@ -647,22 +701,19 @@ export function attestPackagedTerminalArtifacts({
       targetArch,
     }),
   });
-  const { modulesAbi, nodeVersion, electronVersion, nativeByPackage } = validateLoadProbe(
-    probe,
-    targetPlatform,
-    targetArch,
-    packageRoots,
-  );
-  const nodePtyRuntime = nodePtyRuntimePaths(
-    nativeByPackage.get("node-pty"),
-    targetPlatform,
-  );
-  const expectedNativePaths = [
-    nativeByPackage.get("node-pty"),
-    nativeByPackage.get("koffi"),
-    ...nodePtyRuntime,
-  ];
-  assertNativeInventory(packageRoots, expectedNativePaths);
+  return validateLoadProbe(probe, targetPlatform, targetArch, packageRoots);
+}
+
+function createTerminalArtifacts({
+  resolvedResourcesRoot,
+  hostBundlePath,
+  nativeByPackage,
+  nodePtyRuntime,
+  targetPlatform,
+  targetArch,
+  modulesAbi,
+  dependencies,
+}) {
   const nodePtyOrigin = nativeOrigin(
     "node-pty",
     dependencies["node-pty"],
@@ -711,6 +762,10 @@ export function attestPackagedTerminalArtifacts({
       ),
     ),
   );
+  return artifacts;
+}
+
+function measureTerminalPackage(packageRoots, hostBundlePath) {
   const hostSourceMap = `${hostBundlePath}.map`;
   const packageBudget = { files: 0, bytes: 0, directories: 0 };
   addFileToBudget(hostBundlePath, packageBudget);
@@ -723,6 +778,13 @@ export function attestPackagedTerminalArtifacts({
     ...(existsSync(hostSourceMap) ? [hostSourceMap] : []),
     ...packageFiles,
   ]);
+  return {
+    compressedBytes,
+    packageFileCount: packageFiles.length + 1 + (existsSync(hostSourceMap) ? 1 : 0),
+  };
+}
+
+function assertCompressedArtifactSize(compressedBytes, maxCompressedBytes) {
   if (!Number.isSafeInteger(maxCompressedBytes) || maxCompressedBytes < 1) {
     throw new Error("Terminal artifact compressed size limit is invalid");
   }
@@ -731,15 +793,4 @@ export function attestPackagedTerminalArtifacts({
       `Terminal artifact compressed size ${compressedBytes} exceeds ${maxCompressedBytes} bytes`,
     );
   }
-  return {
-    contractVersion: 1,
-    target: { platform: targetPlatform, arch: targetArch, modulesAbi },
-    runtime: { node: nodeVersion, electron: electronVersion },
-    dependencies,
-    compressedBytes,
-    compressedLimitBytes: maxCompressedBytes,
-    packageFileCount:
-      packageFiles.length + 1 + (existsSync(hostSourceMap) ? 1 : 0),
-    artifacts,
-  };
 }

@@ -73,96 +73,90 @@ export async function downloadAndExtractPackage({
     installRoot ?? resolveInstallRoot(destination),
   );
   assertContained(resolvedInstallRoot, destination);
+  const tarballBytes = await downloadPackageTarball(registry, packageName, version);
+  verifyPackageIntegrity(tarballBytes, integrity ?? plan?.integrity);
+  const { tempDir, tarballPath } = createPackageTempDirectory(destination, resolvedInstallRoot);
+  try {
+    extractAndValidatePackage(tempDir, tarballPath, tarballBytes, packageName, plan, executable, chmodExecutable);
+    replacePackageDestination(tempDir, destination, resolvedInstallRoot);
+  } finally {
+    removePackagePath(tarballPath);
+    removePackageDirectory(tempDir);
+  }
+}
+
+async function downloadPackageTarball(registry, packageName, version) {
   const metadataUrl = buildRegistryMetadataUrl(registry, packageName, version);
   const metadataResponse = await fetch(metadataUrl);
   if (!metadataResponse.ok) {
-    throw new Error(
-      `[ensure-sdk] Registry lookup failed for ${packageName}@${version}: HTTP ${metadataResponse.status}`,
-    );
+    throw new Error(`[ensure-sdk] Registry lookup failed for ${packageName}@${version}: HTTP ${metadataResponse.status}`);
   }
   const tarballUrl = (await metadataResponse.json()).dist?.tarball;
-  if (!tarballUrl) {
-    throw new Error(
-      `[ensure-sdk] Registry metadata for ${packageName}@${version} has no dist.tarball`,
-    );
-  }
-
+  if (!tarballUrl) throw new Error(`[ensure-sdk] Registry metadata for ${packageName}@${version} has no dist.tarball`);
   const tarballResponse = await fetch(tarballUrl);
   if (!tarballResponse.ok) {
-    throw new Error(
-      `[ensure-sdk] Tarball download failed (${tarballUrl}): HTTP ${tarballResponse.status}`,
-    );
+    throw new Error(`[ensure-sdk] Tarball download failed (${tarballUrl}): HTTP ${tarballResponse.status}`);
   }
+  return Buffer.from(await tarballResponse.arrayBuffer());
+}
 
-  const tarballBytes = Buffer.from(await tarballResponse.arrayBuffer());
-  verifyPackageIntegrity(tarballBytes, integrity ?? plan?.integrity);
-
+function createPackageTempDirectory(destination, installRoot) {
   const destinationParent = dirname(destination);
-  assertContained(resolvedInstallRoot, destinationParent);
+  assertContained(installRoot, destinationParent);
   mkdirSync(destinationParent, { recursive: true });
-  const tempDir = mkdtempSync(
-    join(destinationParent, `.${basename(destination)}-tmp-`),
-  );
-  assertContained(resolvedInstallRoot, tempDir);
-  const tarballPath = join(tempDir, "package.tgz");
-  try {
-    writeFileSync(tarballPath, tarballBytes);
-    execFileSync("tar", ["-xzf", "package.tgz", "--strip-components=1"], {
-      cwd: tempDir,
-      stdio: "inherit",
-    });
-    if (plan) {
-      const metadata = JSON.parse(
-        readFileSync(resolve(tempDir, "package.json"), "utf8"),
-      );
-      if (!packageMetadataUsable(metadata, plan)) {
-        throw new Error(
-          `[ensure-sdk] Downloaded package metadata mismatch for ${packageName}`,
-        );
-      }
-    }
-    const executablePath = executable
-      ? resolve(tempDir, executable)
-      : undefined;
-    if (
-      executablePath &&
-      (!existsSync(executablePath) || !statSync(executablePath).isFile())
-    ) {
-      throw new Error(
-        `[ensure-sdk] Downloaded package executable missing for ${packageName}`,
-      );
-    }
-    if (executable && chmodExecutable) {
-      chmodSync(join(tempDir, executable), 0o755);
-    }
+  const tempDir = mkdtempSync(join(destinationParent, `.${basename(destination)}-tmp-`));
+  assertContained(installRoot, tempDir);
+  return { tempDir, tarballPath: join(tempDir, "package.tgz") };
+}
 
-    const backupPath = join(
-      destinationParent,
-      `.${basename(destination)}-backup-${randomUUID()}`,
-    );
-    assertContained(resolvedInstallRoot, backupPath);
-    let movedExisting = false;
-    try {
-      if (pathExists(destination)) {
-        renameSync(destination, backupPath);
-        movedExisting = true;
-      }
-      renameSync(tempDir, destination);
-      if (movedExisting) rmSync(backupPath, { recursive: true, force: true });
-    } catch (error) {
-      if (pathExists(destination))
-        rmSync(destination, { recursive: true, force: true });
-      if (movedExisting && pathExists(backupPath))
-        renameSync(backupPath, destination);
-      throw error;
-    } finally {
-      if (pathExists(backupPath))
-        rmSync(backupPath, { recursive: true, force: true });
-    }
-  } finally {
-    if (pathExists(tarballPath)) rmSync(tarballPath, { force: true });
-    if (pathExists(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+function extractAndValidatePackage(tempDir, tarballPath, tarballBytes, packageName, plan, executable, chmodExecutable) {
+  writeFileSync(tarballPath, tarballBytes);
+  execFileSync("tar", ["-xzf", "package.tgz", "--strip-components=1"], { cwd: tempDir, stdio: "inherit" });
+  validateExtractedPackage(tempDir, packageName, plan, executable);
+  if (executable && chmodExecutable) chmodSync(join(tempDir, executable), 0o755);
+}
+
+function validateExtractedPackage(tempDir, packageName, plan, executable) {
+  if (plan && !packageMetadataUsable(JSON.parse(readFileSync(resolve(tempDir, "package.json"), "utf8")), plan)) {
+    throw new Error(`[ensure-sdk] Downloaded package metadata mismatch for ${packageName}`);
   }
+  if (!executable) return;
+  const executablePath = resolve(tempDir, executable);
+  if (!existsSync(executablePath) || !statSync(executablePath).isFile()) {
+    throw new Error(`[ensure-sdk] Downloaded package executable missing for ${packageName}`);
+  }
+}
+
+function replacePackageDestination(tempDir, destination, installRoot) {
+  const backupPath = join(dirname(destination), `.${basename(destination)}-backup-${randomUUID()}`);
+  assertContained(installRoot, backupPath);
+  let movedExisting = false;
+  try {
+    if (pathExists(destination)) {
+      renameSync(destination, backupPath);
+      movedExisting = true;
+    }
+    renameSync(tempDir, destination);
+    if (movedExisting) removePackageDirectory(backupPath);
+  } catch (error) {
+    restorePackageDestination(destination, backupPath, movedExisting);
+    throw error;
+  } finally {
+    removePackageDirectory(backupPath);
+  }
+}
+
+function restorePackageDestination(destination, backupPath, movedExisting) {
+  removePackageDirectory(destination);
+  if (movedExisting && pathExists(backupPath)) renameSync(backupPath, destination);
+}
+
+function removePackagePath(filePath) {
+  if (pathExists(filePath)) rmSync(filePath, { force: true });
+}
+
+function removePackageDirectory(directoryPath) {
+  if (pathExists(directoryPath)) rmSync(directoryPath, { recursive: true, force: true });
 }
 
 /** Forward a resolved package plan through shared download mechanics. */
@@ -190,48 +184,27 @@ export async function prepareSdkPlatformPackages({
     targetPlatform,
     target.arch,
   );
-  if (readPlanTargetMetadata(claudePlan, serverPackageRoot)) {
-    console.log(
-      `[ensure-sdk] Claude target package already installed (${target.id})`,
-    );
-  } else {
-    console.log(
-      `[ensure-sdk] Downloading ${claudePlan.packageName}@${claudePlan.version} for ${target.id}...`,
-    );
-    await downloadTargetPackage(claudePlan);
-    if (!readPlanTargetMetadata(claudePlan, serverPackageRoot)) {
-      throw new Error(
-        `[ensure-sdk] Installed Claude package failed validation: ${claudePlan.packageName}`,
-      );
-    }
-    console.log(
-      `[ensure-sdk] Installed ${claudePlan.packageName} at ${claudePlan.destination}`,
-    );
-  }
+  await ensureTargetPackage("Claude", claudePlan, target.id, serverPackageRoot);
 
   const copilotPlan = resolveCopilotTargetPackagePlan(
     serverPackageRoot,
     targetPlatform,
     target.arch,
   );
-  if (readPlanTargetMetadata(copilotPlan, serverPackageRoot)) {
-    console.log(
-      `[ensure-sdk] Copilot target package already installed (${target.id})`,
-    );
-  } else {
-    console.log(
-      `[ensure-sdk] Downloading ${copilotPlan.packageName}@${copilotPlan.version} for ${target.id}...`,
-    );
-    await downloadTargetPackage(copilotPlan);
-    if (!readPlanTargetMetadata(copilotPlan, serverPackageRoot)) {
-      throw new Error(
-        `[ensure-sdk] Installed Copilot package failed validation: ${copilotPlan.packageName}`,
-      );
-    }
-    console.log(
-      `[ensure-sdk] Installed ${copilotPlan.packageName} at ${copilotPlan.destination}`,
-    );
+  await ensureTargetPackage("Copilot", copilotPlan, target.id, serverPackageRoot);
+}
+
+async function ensureTargetPackage(label, plan, targetId, serverPackageRoot) {
+  if (readPlanTargetMetadata(plan, serverPackageRoot)) {
+    console.log(`[ensure-sdk] ${label} target package already installed (${targetId})`);
+    return;
   }
+  console.log(`[ensure-sdk] Downloading ${plan.packageName}@${plan.version} for ${targetId}...`);
+  await downloadTargetPackage(plan);
+  if (!readPlanTargetMetadata(plan, serverPackageRoot)) {
+    throw new Error(`[ensure-sdk] Installed ${label} package failed validation: ${plan.packageName}`);
+  }
+  console.log(`[ensure-sdk] Installed ${plan.packageName} at ${plan.destination}`);
 }
 
 if (

@@ -249,4 +249,26 @@ describe("preview tab handlers", () => {
       faviconUrl: null,
     })).toEqual({ ok: false, error: "invalid-tab-chrome" });
   });
+
+  it("does not change workspace context when open or chrome validation fails", () => {
+    const session = getSession(window as never);
+    session.workspaceId = "workspace-existing";
+
+    expect(invoke("preview:tabs.open", {
+      workspaceId: "workspace-untrusted",
+      threadId: "thread-A",
+      initialAddress: "file:///sensitive.html",
+    })).toEqual({ ok: false, error: "invalid-initial-address" });
+    expect(session.workspaceId).toBe("workspace-existing");
+
+    expect(invoke("preview:tabs.updateChrome", {
+      workspaceId: "workspace-untrusted",
+      threadId: "thread-A",
+      tabId: "tab-A",
+      title: {},
+      url: null,
+      faviconUrl: null,
+    })).toEqual({ ok: false, error: "invalid-tab-chrome" });
+    expect(session.workspaceId).toBe("workspace-existing");
+  });
 });

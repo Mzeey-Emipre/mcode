@@ -1,13 +1,8 @@
-/**
- * Tab IPC handlers for BrowserSurfaceHost-owned Preview pages.
- */
+/** Tab IPC handlers for BrowserSurfaceHost-owned Preview pages. */
 
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { randomUUID } from "node:crypto";
-import {
-  BROWSER_TAB_INFO_STRING_MAX,
-  type BrowserTabSet,
-} from "@mcode/contracts";
+import { BROWSER_TAB_INFO_STRING_MAX, type BrowserTabSet } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import {
   ensureThreadTabSet,
@@ -15,33 +10,50 @@ import {
   previewTabScopeKey,
   toBrowserTabSet,
   type PreviewSession,
+  type TabState,
 } from "../state/window-session.js";
 import { bumpPerf } from "../observability/perf-counters.js";
-import { type TabState } from "../state/window-session.js";
 
 type TabIpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
+
+interface TabContext {
+  readonly win: BrowserWindow;
+  readonly session: PreviewSession;
+  readonly threadId: string;
+  readonly workspaceId: string;
+}
+
+interface TabIdContext extends TabContext {
+  readonly tabId: string;
+}
+
+interface OpenTabInput {
+  readonly requestedTabId: string | null;
+  readonly initialAddress: string | null | undefined;
+  readonly activate: boolean;
+}
+
+interface ChromeUpdateInput {
+  readonly title: string | null | undefined;
+  readonly url: string | null | undefined;
+  readonly faviconUrl: string | null | undefined;
+  readonly updates: { title: boolean; url: boolean; faviconUrl: boolean };
+}
+
 const MAX_PREVIEW_ID_LENGTH = 256;
+
+function error<T>(message: string): TabIpcResult<T> {
+  return { ok: false, error: message };
+}
+
+function isTabError<T>(value: unknown): value is TabIpcResult<T> {
+  return typeof value === "object" && value !== null && "ok" in value;
+}
 
 function normalisePreviewId(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 && trimmed.length <= MAX_PREVIEW_ID_LENGTH ? trimmed : null;
-}
-
-function normaliseThreadId(value: unknown): string | null {
-  return normalisePreviewId(value);
-}
-
-function normaliseTabId(value: unknown): string | null {
-  return normalisePreviewId(value);
-}
-
-function normaliseWorkspaceId(value: unknown): string | null {
-  return normalisePreviewId(value);
-}
-
-function hasOwnField(value: unknown, field: string): boolean {
-  return typeof value === "object" && value !== null && Object.prototype.hasOwnProperty.call(value, field);
 }
 
 function normaliseChromeField(value: unknown, maxLength: number): string | null | undefined {
@@ -50,17 +62,32 @@ function normaliseChromeField(value: unknown, maxLength: number): string | null 
   return value;
 }
 
-function normaliseChromeUrl(value: unknown): string | null | undefined {
-  if (value === null) return null;
-  if (typeof value !== "string" || value.length > BROWSER_TAB_INFO_STRING_MAX.url) {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  const lower = trimmed.toLowerCase();
-  if (trimmed.length === 0 || lower.startsWith("about:") || lower.startsWith("chrome-error:")) {
+function normaliseInitialAddress(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length === 0 || value.length > BROWSER_TAB_INFO_STRING_MAX.url) {
     return null;
   }
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (parsed.username.length > 0 || parsed.password.length > 0) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function normaliseChromeUrl(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string" || value.length > BROWSER_TAB_INFO_STRING_MAX.url) return undefined;
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  if (trimmed.length === 0 || lower.startsWith("about:") || lower.startsWith("chrome-error:")) return null;
   return normaliseInitialAddress(trimmed) ?? undefined;
+}
+
+function hasOwnField(value: unknown, field: string): boolean {
+  return typeof value === "object" && value !== null && Object.prototype.hasOwnProperty.call(value, field);
 }
 
 function sendTabsUpdated(win: BrowserWindow, set: BrowserTabSet): void {
@@ -73,309 +100,232 @@ function sendTabsUpdated(win: BrowserWindow, set: BrowserTabSet): void {
   }
 }
 
-function normaliseInitialAddress(value: unknown): string | null | undefined {
-  if (value === undefined) return undefined;
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > BROWSER_TAB_INFO_STRING_MAX.url
-  ) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return null;
-  }
-  if (
-    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
-    parsed.username.length > 0 ||
-    parsed.password.length > 0
-  ) return null;
-  return value;
-}
-
-function activateTab(
-  s: PreviewSession,
-  tab: TabState,
-): void {
+function activateTab(session: PreviewSession, tab: TabState): void {
   tab.lastActiveAt = Date.now();
-  s.resumePreviewUrl = tab.resumeUrl;
-  s.lastFavicons = tab.faviconUrl ? [tab.faviconUrl] : [];
+  session.resumePreviewUrl = tab.resumeUrl;
+  session.lastFavicons = tab.faviconUrl ? [tab.faviconUrl] : [];
 }
 
-/**
- * Phase A: returns the active thread's tab set, but only meaningfully when
- * `threadId` matches the session's current thread. For inactive threads we
- * still materialise their saved tab set so the renderer can preview the list
- * before switching.
- */
-function buildTabSet(s: PreviewSession, threadId: string): BrowserTabSet {
-  return toBrowserTabSet(s, threadId);
+function buildTabSet(session: PreviewSession, threadId: string): BrowserTabSet {
+  return toBrowserTabSet(session, threadId);
 }
 
+function resolveTabContext(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown }): TabContext | TabIpcResult<never> {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return error("no-window");
+  const threadId = normalisePreviewId(payload?.threadId);
+  if (!threadId) return error("invalid-thread-id");
+  const workspaceId = normalisePreviewId(payload?.workspaceId);
+  if (!workspaceId) return error("invalid-workspace-id");
+  const session = getSession(win);
+  return { win, session, threadId, workspaceId };
+}
+
+function updateWorkspaceContext(context: TabContext): void {
+  context.session.workspaceId = context.workspaceId;
+}
+
+function resolveTabIdContext(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown }): TabIdContext | TabIpcResult<never> {
+  const context = resolveTabContext(event, payload);
+  if ("ok" in context) return context;
+  const tabId = normalisePreviewId(payload?.tabId);
+  if (!tabId) return error("invalid-tab-id");
+  return { ...context, tabId };
+}
+
+function parseRequestedTabId(value: unknown, supplied: boolean): string | null | TabIpcResult<never> {
+  if (!supplied) return null;
+  const tabId = normalisePreviewId(value);
+  return tabId ?? error("invalid-tab-id");
+}
+
+function parseInitialAddress(value: unknown, supplied: boolean): string | null | undefined | TabIpcResult<never> {
+  const address = normaliseInitialAddress(value);
+  if (supplied && address === null) return error("invalid-initial-address");
+  return address;
+}
+
+function parseOpenTabInput(payload: { activate?: unknown; tabId?: unknown; initialAddress?: unknown }): OpenTabInput | TabIpcResult<never> {
+  const requestedTabId = parseRequestedTabId(payload?.tabId, payload?.tabId !== undefined);
+  if (isTabError(requestedTabId)) return requestedTabId;
+  const initialAddress = parseInitialAddress(payload?.initialAddress, payload?.initialAddress !== undefined);
+  if (isTabError(initialAddress)) return initialAddress;
+  return { requestedTabId, initialAddress, activate: payload?.activate !== false };
+}
+
+function createBlankTab(threadId: string, tabId: string): TabState {
+  return {
+    id: tabId,
+    threadId,
+    resumeUrl: null,
+    title: null,
+    faviconUrl: null,
+    lastActiveAt: Date.now(),
+    userCreatedBlank: true,
+  };
+}
+
+function applyInitialAddress(tab: TabState, initialAddress: string | null | undefined): void {
+  if (initialAddress === undefined) return;
+  tab.resumeUrl = initialAddress;
+  tab.userCreatedBlank = false;
+}
+
+function selectOpenedTab(context: TabContext, tab: TabState, activate: boolean): void {
+  if (!activate) return;
+  const set = ensureThreadTabSet(context.session, context.threadId);
+  set.activeTabId = tab.id;
+  if (context.threadId === context.session.lastPreviewThreadId) activateTab(context.session, tab);
+}
+
+function openTab(context: TabContext, input: OpenTabInput): TabIpcResult<{ tabId: string; tabs: BrowserTabSet }> {
+  const set = ensureThreadTabSet(context.session, context.threadId);
+  const existingTab = input.requestedTabId ? set.tabs.find((tab) => tab.id === input.requestedTabId) : undefined;
+  if (input.requestedTabId && !existingTab) return error("tab-not-found");
+  if (existingTab?.backgroundOpenReserved) return error("tab-reserved");
+  const tab = existingTab ?? createBlankTab(context.threadId, randomUUID());
+  applyInitialAddress(tab, input.initialAddress);
+  if (!existingTab) set.tabs.push(tab);
+  if (existingTab && !input.activate) tab.backgroundOpenReserved = true;
+  selectOpenedTab(context, tab, input.activate);
+  const tabs = buildTabSet(context.session, context.threadId);
+  sendTabsUpdated(context.win, tabs);
+  logger.info("Preview: tab opened", { threadId: context.threadId, tabId: tab.id, activate: input.activate, reused: existingTab !== undefined });
+  return { ok: true, data: { tabId: tab.id, tabs } };
+}
+
+function parseChromeField(value: unknown, supplied: boolean, maxLength: number): string | null | undefined | TabIpcResult<never> {
+  if (!supplied) return undefined;
+  const normalised = normaliseChromeField(value, maxLength);
+  return normalised === undefined ? error("invalid-tab-chrome") : normalised;
+}
+
+function parseChromeUrl(value: unknown, supplied: boolean): string | null | undefined | TabIpcResult<never> {
+  if (!supplied) return undefined;
+  const normalised = normaliseChromeUrl(value);
+  return normalised === undefined ? error("invalid-tab-chrome") : normalised;
+}
+
+function parseChromeUpdate(payload: { title?: unknown; url?: unknown; faviconUrl?: unknown }): ChromeUpdateInput | TabIpcResult<never> {
+  const updates = { title: hasOwnField(payload, "title"), url: hasOwnField(payload, "url"), faviconUrl: hasOwnField(payload, "faviconUrl") };
+  const title = parseChromeField(payload?.title, updates.title, BROWSER_TAB_INFO_STRING_MAX.title);
+  if (isTabError(title)) return title;
+  const url = parseChromeUrl(payload?.url, updates.url);
+  if (isTabError(url)) return url;
+  const faviconUrl = parseChromeField(payload?.faviconUrl, updates.faviconUrl, BROWSER_TAB_INFO_STRING_MAX.faviconUrl);
+  if (isTabError(faviconUrl)) return faviconUrl;
+  return { title, url, faviconUrl, updates };
+}
+
+function applyChromeUpdate(tab: TabState, input: ChromeUpdateInput): void {
+  if (input.updates.title) tab.title = input.title ?? null;
+  if (input.updates.url) tab.resumeUrl = input.url ?? null;
+  if (input.updates.faviconUrl) tab.faviconUrl = input.faviconUrl ?? null;
+}
+
+function handleList(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown }): TabIpcResult<BrowserTabSet> {
+  const context = resolveTabContext(event, payload);
+  if ("ok" in context) return context;
+  updateWorkspaceContext(context);
+  return { ok: true, data: buildTabSet(context.session, context.threadId) };
+}
+
+function handleOpen(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; activate?: unknown; tabId?: unknown; initialAddress?: unknown }): TabIpcResult<{ tabId: string; tabs: BrowserTabSet }> {
+  const context = resolveTabContext(event, payload);
+  if ("ok" in context) return context;
+  const input = parseOpenTabInput(payload);
+  if ("ok" in input) return input;
+  updateWorkspaceContext(context);
+  return openTab(context, input);
+}
+
+function handleActivate(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown }): TabIpcResult<BrowserTabSet> {
+  const context = resolveTabIdContext(event, payload);
+  if ("ok" in context) return context;
+  updateWorkspaceContext(context);
+  const set = ensureThreadTabSet(context.session, context.threadId);
+  const tab = set.tabs.find((candidate) => candidate.id === context.tabId);
+  if (!tab) return error("tab-not-found");
+  if (set.activeTabId !== context.tabId) {
+    set.activeTabId = context.tabId;
+    if (context.threadId === context.session.lastPreviewThreadId) activateTab(context.session, tab);
+  }
+  const tabs = buildTabSet(context.session, context.threadId);
+  sendTabsUpdated(context.win, tabs);
+  logger.info("Preview: tab activated", { threadId: context.threadId, tabId: context.tabId });
+  return { ok: true, data: tabs };
+}
+
+function handleChromeUpdate(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown; title?: unknown; url?: unknown; faviconUrl?: unknown }): TabIpcResult<BrowserTabSet> {
+  const context = resolveTabIdContext(event, payload);
+  if ("ok" in context) return context;
+  const input = parseChromeUpdate(payload);
+  if ("ok" in input) return input;
+  updateWorkspaceContext(context);
+  const tab = ensureThreadTabSet(context.session, context.threadId).tabs.find((candidate) => candidate.id === context.tabId);
+  if (!tab) return error("tab-not-found");
+  applyChromeUpdate(tab, input);
+  return { ok: true, data: buildTabSet(context.session, context.threadId) };
+}
+
+function activateFallback(context: TabContext, tab: TabState): void {
+  const set = ensureThreadTabSet(context.session, context.threadId);
+  set.activeTabId = tab.id;
+  if (context.threadId === context.session.lastPreviewThreadId) activateTab(context.session, tab);
+}
+
+function chooseRemainingActiveTab(context: TabContext, index: number, wasActive: boolean): void {
+  const set = ensureThreadTabSet(context.session, context.threadId);
+  if (!wasActive) return;
+  const nextTab = set.tabs[Math.min(index, set.tabs.length - 1)]!;
+  activateFallback(context, nextTab);
+}
+
+function createFallbackTab(context: TabContext): void {
+  const set = ensureThreadTabSet(context.session, context.threadId);
+  const fallback = createBlankTab(context.threadId, randomUUID());
+  set.tabs.push(fallback);
+  activateFallback(context, fallback);
+}
+
+function handleClose(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown }): TabIpcResult<BrowserTabSet> {
+  const context = resolveTabIdContext(event, payload);
+  if ("ok" in context) return context;
+  updateWorkspaceContext(context);
+  const set = ensureThreadTabSet(context.session, context.threadId);
+  const index = set.tabs.findIndex((tab) => tab.id === context.tabId);
+  if (index === -1) return error("tab-not-found");
+  const wasActive = set.activeTabId === context.tabId;
+  set.tabs.splice(index, 1);
+  if (set.tabs.length === 0) createFallbackTab(context);
+  else chooseRemainingActiveTab(context, index, wasActive);
+  const tabs = buildTabSet(context.session, context.threadId);
+  sendTabsUpdated(context.win, tabs);
+  logger.info("Preview: tab closed", { threadId: context.threadId, tabId: context.tabId, wasActive });
+  return { ok: true, data: tabs };
+}
+
+function handleCloseScope(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown }): TabIpcResult<BrowserTabSet> {
+  const context = resolveTabContext(event, payload);
+  if ("ok" in context) return context;
+  updateWorkspaceContext(context);
+  context.session.tabsByThread.delete(previewTabScopeKey(context.workspaceId, context.threadId));
+  if (context.session.lastPreviewThreadId === context.threadId) {
+    context.session.lastPreviewThreadId = null;
+    context.session.resumePreviewUrl = null;
+  }
+  const empty: BrowserTabSet = { threadId: context.threadId, activeTabId: null, tabs: [] };
+  sendTabsUpdated(context.win, empty);
+  logger.info("Preview: tab scope closed", { threadId: context.threadId });
+  return { ok: true, data: empty };
+}
+
+/** Registers the Preview tab IPC handlers. */
 export function registerTabHandlers(): void {
-  ipcMain.handle(
-    "preview:tabs.list",
-    (_event, payload: { threadId?: unknown; workspaceId?: unknown }): TabIpcResult<BrowserTabSet> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const tid = normaliseThreadId(payload?.threadId);
-      if (!tid) return { ok: false, error: "invalid-thread-id" };
-      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
-      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
-      const s = getSession(win);
-      s.workspaceId = workspaceId;
-      return { ok: true, data: buildTabSet(s, tid) };
-    },
-  );
-
-  ipcMain.handle(
-    "preview:tabs.open",
-    (
-      _event,
-      payload: {
-        threadId?: unknown;
-        workspaceId?: unknown;
-        activate?: unknown;
-        tabId?: unknown;
-        initialAddress?: unknown;
-      },
-    ): TabIpcResult<{ tabId: string; tabs: BrowserTabSet }> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const tid = normaliseThreadId(payload?.threadId);
-      if (!tid) return { ok: false, error: "invalid-thread-id" };
-      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
-      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
-      const requestedTabId = payload?.tabId === undefined ? null : normaliseTabId(payload.tabId);
-      if (payload?.tabId !== undefined && !requestedTabId) {
-        return { ok: false, error: "invalid-tab-id" };
-      }
-      const initialAddress = normaliseInitialAddress(payload?.initialAddress);
-      if (payload?.initialAddress !== undefined && initialAddress === null) {
-        return { ok: false, error: "invalid-initial-address" };
-      }
-      const activate = payload?.activate !== false; // default: true
-
-      const s = getSession(win);
-      s.workspaceId = workspaceId;
-      const set = ensureThreadTabSet(s, tid);
-      const existingTab = requestedTabId
-        ? set.tabs.find((candidate) => candidate.id === requestedTabId)
-        : undefined;
-      if (requestedTabId && !existingTab) return { ok: false, error: "tab-not-found" };
-      if (existingTab?.backgroundOpenReserved) return { ok: false, error: "tab-reserved" };
-
-      const tabId = existingTab?.id ?? randomUUID();
-      const tab = existingTab ?? {
-        id: tabId,
-        threadId: tid,
-        resumeUrl: null,
-        title: null,
-        faviconUrl: null,
-        lastActiveAt: Date.now(),
-        // A newly-created page starts blank and must not inherit the thread's
-        // last URL via the per-thread resume hint on the next sync.
-        userCreatedBlank: true,
-      } satisfies TabState;
-      if (initialAddress !== undefined) {
-        tab.resumeUrl = initialAddress;
-        tab.userCreatedBlank = false;
-      }
-      if (!existingTab) set.tabs.push(tab);
-      if (existingTab && !activate) tab.backgroundOpenReserved = true;
-
-      if (activate && tid === s.lastPreviewThreadId) {
-        // Opening on the active thread builds or reuses its exact view before
-        // swapping it in, without disturbing sibling webContents.
-        set.activeTabId = tabId;
-        activateTab(s, tab);
-      } else if (activate) {
-        set.activeTabId = tabId;
-      }
-
-      const tabs = buildTabSet(s, tid);
-      sendTabsUpdated(win, tabs);
-      logger.info("Preview: tab opened", {
-        threadId: tid,
-        tabId,
-        activate,
-        reused: existingTab !== undefined,
-      });
-      return { ok: true, data: { tabId, tabs } };
-    },
-  );
-
-  ipcMain.handle(
-    "preview:tabs.activate",
-    (
-      _event,
-      payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown },
-    ): TabIpcResult<BrowserTabSet> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const tid = normaliseThreadId(payload?.threadId);
-      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
-      const tabId = normaliseTabId(payload?.tabId);
-      if (!tid) return { ok: false, error: "invalid-thread-id" };
-      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
-      if (!tabId) return { ok: false, error: "invalid-tab-id" };
-
-      const s = getSession(win);
-      s.workspaceId = workspaceId;
-      const set = ensureThreadTabSet(s, tid);
-      const tab = set.tabs.find((t) => t.id === tabId);
-      if (!tab) return { ok: false, error: "tab-not-found" };
-
-      if (set.activeTabId !== tabId) {
-        set.activeTabId = tabId;
-        if (tid === s.lastPreviewThreadId) {
-          activateTab(s, tab);
-        }
-      }
-
-      const tabs = buildTabSet(s, tid);
-      sendTabsUpdated(win, tabs);
-      logger.info("Preview: tab activated", { threadId: tid, tabId });
-      return { ok: true, data: tabs };
-    },
-  );
-
-  ipcMain.handle(
-    "preview:tabs.updateChrome",
-    (
-      _event,
-      payload: {
-        threadId?: unknown;
-        workspaceId?: unknown;
-        tabId?: unknown;
-        title?: unknown;
-        url?: unknown;
-        faviconUrl?: unknown;
-      },
-    ): TabIpcResult<BrowserTabSet> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const tid = normaliseThreadId(payload?.threadId);
-      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
-      const tabId = normaliseTabId(payload?.tabId);
-      const hasTitle = hasOwnField(payload, "title");
-      const hasUrl = hasOwnField(payload, "url");
-      const hasFaviconUrl = hasOwnField(payload, "faviconUrl");
-      const title = hasTitle
-        ? normaliseChromeField(payload?.title, BROWSER_TAB_INFO_STRING_MAX.title)
-        : undefined;
-      const url = hasUrl ? normaliseChromeUrl(payload?.url) : undefined;
-      const faviconUrl = hasFaviconUrl
-        ? normaliseChromeField(payload?.faviconUrl, BROWSER_TAB_INFO_STRING_MAX.faviconUrl)
-        : undefined;
-      if (!tid) return { ok: false, error: "invalid-thread-id" };
-      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
-      if (!tabId) return { ok: false, error: "invalid-tab-id" };
-      if (
-        (hasTitle && title === undefined) ||
-        (hasUrl && url === undefined) ||
-        (hasFaviconUrl && faviconUrl === undefined)
-      ) {
-        return { ok: false, error: "invalid-tab-chrome" };
-      }
-
-      const s = getSession(win);
-      s.workspaceId = workspaceId;
-      const set = ensureThreadTabSet(s, tid);
-      const tab = set.tabs.find((candidate) => candidate.id === tabId);
-      if (!tab) return { ok: false, error: "tab-not-found" };
-      if (hasTitle) tab.title = title ?? null;
-      if (hasUrl) tab.resumeUrl = url ?? null;
-      if (hasFaviconUrl) tab.faviconUrl = faviconUrl ?? null;
-      return { ok: true, data: buildTabSet(s, tid) };
-    },
-  );
-
-  ipcMain.handle(
-    "preview:tabs.close",
-    (
-      _event,
-      payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown },
-    ): TabIpcResult<BrowserTabSet> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const tid = normaliseThreadId(payload?.threadId);
-      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
-      const tabId = normaliseTabId(payload?.tabId);
-      if (!tid) return { ok: false, error: "invalid-thread-id" };
-      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
-      if (!tabId) return { ok: false, error: "invalid-tab-id" };
-
-      const s = getSession(win);
-      s.workspaceId = workspaceId;
-      const set = ensureThreadTabSet(s, tid);
-      const idx = set.tabs.findIndex((t) => t.id === tabId);
-      if (idx === -1) return { ok: false, error: "tab-not-found" };
-
-      const wasActive = set.activeTabId === tabId;
-      set.tabs.splice(idx, 1);
-
-      if (set.tabs.length === 0) {
-        // Always keep at least one tab so the renderer never sees an empty bar.
-        const fallbackId = randomUUID();
-        const fallback: TabState = {
-          id: fallbackId,
-          threadId: tid,
-          resumeUrl: null,
-          title: null,
-          faviconUrl: null,
-          lastActiveAt: Date.now(),
-          // The user just closed the last page; the replacement stays blank
-          // rather than resurrecting the closed page's URL via the hint.
-          userCreatedBlank: true,
-        };
-        set.tabs.push(fallback);
-        set.activeTabId = fallbackId;
-        if (tid === s.lastPreviewThreadId) {
-          activateTab(s, fallback);
-        }
-      } else if (wasActive) {
-        const nextActive = set.tabs[Math.min(idx, set.tabs.length - 1)]!;
-        set.activeTabId = nextActive.id;
-        if (tid === s.lastPreviewThreadId) {
-          activateTab(s, nextActive);
-        }
-      }
-
-      const tabs = buildTabSet(s, tid);
-      sendTabsUpdated(win, tabs);
-      logger.info("Preview: tab closed", { threadId: tid, tabId, wasActive });
-      return { ok: true, data: tabs };
-    },
-  );
-
-  ipcMain.handle(
-    "preview:tabs.closeScope",
-    (_event, payload: { threadId?: unknown; workspaceId?: unknown }): TabIpcResult<BrowserTabSet> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const tid = normaliseThreadId(payload?.threadId);
-      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
-      if (!tid) return { ok: false, error: "invalid-thread-id" };
-      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
-
-      const s = getSession(win);
-      s.workspaceId = workspaceId;
-      const scopeKey = previewTabScopeKey(workspaceId, tid);
-      const set = s.tabsByThread.get(scopeKey);
-      if (set) {
-        s.tabsByThread.delete(scopeKey);
-      }
-      if (s.lastPreviewThreadId === tid) {
-        s.lastPreviewThreadId = null;
-        s.resumePreviewUrl = null;
-      }
-
-      const empty: BrowserTabSet = { threadId: tid, activeTabId: null, tabs: [] };
-      sendTabsUpdated(win, empty);
-      logger.info("Preview: tab scope closed", { threadId: tid });
-      return { ok: true, data: empty };
-    },
-  );
+  ipcMain.handle("preview:tabs.list", handleList);
+  ipcMain.handle("preview:tabs.open", handleOpen);
+  ipcMain.handle("preview:tabs.activate", handleActivate);
+  ipcMain.handle("preview:tabs.updateChrome", handleChromeUpdate);
+  ipcMain.handle("preview:tabs.close", handleClose);
+  ipcMain.handle("preview:tabs.closeScope", handleCloseScope);
 }

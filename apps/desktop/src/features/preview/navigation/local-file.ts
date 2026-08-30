@@ -76,44 +76,47 @@ export async function resolveMcodeWorkspacePreviewUrl(
   if (!isMcodeWorkspacePreviewUrl(trimmed)) {
     return { ok: false, error: "invalid-url" };
   }
-  let pathname: string;
-  try {
-    pathname = new URL(trimmed).pathname;
-  } catch {
-    return { ok: false, error: "invalid-url" };
-  }
+  const pathname = workspacePreviewPathname(trimmed);
+  if (pathname === null) return { ok: false, error: "invalid-url" };
   const raw = pathname.replace(/^\/+/, "");
   if (!raw) return { ok: false, error: "empty-url" };
-  const decodedSegments: string[] = [];
-  for (const urlSeg of raw.split("/")) {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(urlSeg);
-    } catch {
-      return { ok: false, error: "invalid-url" };
-    }
-    if (decoded.includes("\0")) {
-      return { ok: false, error: "invalid-url" };
-    }
-    for (const piece of decoded.split(/[/\\]/)) {
-      if (piece === "..") {
-        return { ok: false, error: "invalid-url" };
-      }
-    }
-    decodedSegments.push(decoded.replace(/\\/g, "/"));
-  }
-  const rel = decodedSegments.join("/");
-  const normalizedRel = normalize(rel);
-  if (
-    isAbsolute(normalizedRel) ||
-    normalizedRel === ".." ||
-    normalizedRel.startsWith(`..${sep}`) ||
-    normalizedRel.startsWith("../") ||
-    normalizedRel.startsWith("..\\")
-  ) {
-    return { ok: false, error: "invalid-url" };
-  }
+  const rel = decodeWorkspacePreviewPath(raw);
+  if (rel === null || !isSafeWorkspaceRelativePath(rel)) return { ok: false, error: "invalid-url" };
   return resolveLocalFileUrl(rel, workspacePath);
+}
+
+function workspacePreviewPathname(input: string): string | null {
+  try {
+    return new URL(input).pathname;
+  } catch {
+    return null;
+  }
+}
+
+function decodeWorkspacePreviewPath(raw: string): string | null {
+  const decodedSegments: string[] = [];
+  for (const segment of raw.split("/")) {
+    const decoded = decodeWorkspacePreviewSegment(segment);
+    if (decoded === null) return null;
+    decodedSegments.push(decoded);
+  }
+  return decodedSegments.join("/");
+}
+
+function decodeWorkspacePreviewSegment(segment: string): string | null {
+  try {
+    const decoded = decodeURIComponent(segment);
+    if (decoded.includes("\0") || decoded.split(/[/\\]/).includes("..")) return null;
+    return decoded.replace(/\\/g, "/");
+  } catch {
+    return null;
+  }
+}
+
+function isSafeWorkspaceRelativePath(relativePath: string): boolean {
+  const normalized = normalize(relativePath);
+  if (isAbsolute(normalized) || normalized === "..") return false;
+  return !normalized.startsWith(`..${sep}`) && !normalized.startsWith("../") && !normalized.startsWith("..\\");
 }
 
 /**
@@ -128,75 +131,81 @@ export async function resolveLocalFileUrl(
   workspacePath: string | null,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const trimmed = input.trim();
-
-  if (trimmed.startsWith("\\\\")) {
+  const resolved = resolvePreviewFilePath(trimmed, workspacePath);
+  if (!resolved.ok) return resolved;
+  if (isUncPath(resolved.path) || isSensitivePath(resolved.path)) {
     return { ok: false, error: "sensitive-file" };
   }
+  return verifyPreviewFilePath(resolved.path);
+}
 
-  let resolved: string;
+function resolvePreviewFilePath(
+  input: string,
+  workspacePath: string | null,
+): { ok: true; path: string } | { ok: false; error: string } {
+  if (input.startsWith("\\\\")) return { ok: false, error: "sensitive-file" };
+  if (/^file:\/\//i.test(input)) return resolveFileUrlPath(input);
+  if (input.startsWith("~")) return { ok: true, path: resolveHomePath(input) };
+  if (isAbsolute(input)) return { ok: true, path: normalize(resolve(input)) };
+  if (!workspacePath) return { ok: false, error: "no-workspace" };
+  return { ok: true, path: normalize(resolve(workspacePath, input)) };
+}
 
-  if (/^file:\/\//i.test(trimmed)) {
-    try {
-      const u = new URL(trimmed);
-      if (u.protocol !== "file:") {
-        return { ok: false, error: "invalid-url" };
-      }
-      const host = u.hostname.toLowerCase();
-      if (host !== "" && host !== "localhost") {
-        return { ok: false, error: "sensitive-file" };
-      }
-      resolved = normalize(fileURLToPath(trimmed));
-    } catch {
-      return { ok: false, error: "invalid-url" };
-    }
-  } else if (trimmed.startsWith("~")) {
-    resolved = resolve(homedir(), trimmed.slice(trimmed.startsWith("~/") || trimmed.startsWith("~\\") ? 2 : 1));
-    resolved = normalize(resolved);
-  } else if (isAbsolute(trimmed)) {
-    resolved = normalize(resolve(trimmed));
-  } else if (workspacePath) {
-    resolved = normalize(resolve(workspacePath, trimmed));
-  } else {
-    return { ok: false, error: "no-workspace" };
-  }
-
-  if (isUncPath(resolved)) {
-    return { ok: false, error: "sensitive-file" };
-  }
-
-  if (isSensitivePath(resolved)) {
-    return { ok: false, error: "sensitive-file" };
-  }
-
+function resolveFileUrlPath(input: string): { ok: true; path: string } | { ok: false; error: string } {
   try {
-    let info = await lstat(resolved);
-    if (info.isSymbolicLink()) {
-      const real = await realpath(resolved);
-      if (isSensitivePath(real)) {
-        return { ok: false, error: "sensitive-file" };
-      }
-      resolved = real;
-      info = await lstat(real);
-    }
-    if (info.isDirectory()) {
-      const indexPath = join(resolved, "index.html");
-      try {
-        const indexInfo = await stat(indexPath);
-        if (indexInfo.isFile()) {
-          return { ok: true, url: pathToFileURL(indexPath).href };
-        }
-      } catch {
-        return { ok: false, error: "is-directory" };
-      }
-    }
-    if (!info.isFile()) {
-      return { ok: false, error: "not-a-file" };
-    }
+    const url = new URL(input);
+    if (url.protocol !== "file:") return { ok: false, error: "invalid-url" };
+    if (!isLocalFileHost(url.hostname)) return { ok: false, error: "sensitive-file" };
+    return { ok: true, path: normalize(fileURLToPath(input)) };
+  } catch {
+    return { ok: false, error: "invalid-url" };
+  }
+}
+
+function isLocalFileHost(hostname: string): boolean {
+  return hostname === "" || hostname.toLowerCase() === "localhost";
+}
+
+function resolveHomePath(input: string): string {
+  const offset = input.startsWith("~/") || input.startsWith("~\\") ? 2 : 1;
+  return normalize(resolve(homedir(), input.slice(offset)));
+}
+
+async function verifyPreviewFilePath(
+  unresolvedPath: string,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  try {
+    const resolved = await resolveSymbolicPreviewFilePath(unresolvedPath);
+    if (!resolved.ok) return resolved;
+    if (resolved.info.isDirectory()) return resolveDirectoryPreviewUrl(resolved.path);
+    if (!resolved.info.isFile()) return { ok: false, error: "not-a-file" };
+    return { ok: true, url: pathToFileURL(resolved.path).href };
   } catch {
     return { ok: false, error: "file-not-found" };
   }
+}
 
-  return { ok: true, url: pathToFileURL(resolved).href };
+async function resolveSymbolicPreviewFilePath(unresolvedPath: string): Promise<
+  | { ok: true; path: string; info: Awaited<ReturnType<typeof lstat>> }
+  | { ok: false; error: "sensitive-file" }
+> {
+  const info = await lstat(unresolvedPath);
+  if (!info.isSymbolicLink()) return { ok: true, path: unresolvedPath, info };
+  const path = await realpath(unresolvedPath);
+  if (isSensitivePath(path)) return { ok: false, error: "sensitive-file" };
+  return { ok: true, path, info: await lstat(path) };
+}
+
+async function resolveDirectoryPreviewUrl(
+  directoryPath: string,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  try {
+    const indexPath = join(directoryPath, "index.html");
+    if (!(await stat(indexPath)).isFile()) return { ok: false, error: "is-directory" };
+    return { ok: true, url: pathToFileURL(indexPath).href };
+  } catch {
+    return { ok: false, error: "is-directory" };
+  }
 }
 
 /**
@@ -205,18 +214,17 @@ export async function resolveLocalFileUrl(
  * slashes (./, ../, /), and common file extensions (.html, .pdf, etc.).
  */
 export function looksLikeFilePath(input: string): boolean {
-  if (input.startsWith("~")) return true;
-  if (input.startsWith("/") || input.startsWith("./") || input.startsWith("../")) return true;
-  if (input.startsWith(".\\") || input.startsWith("..\\")) return true;
+  if (hasFilePathPrefix(input)) return true;
   if (/^[A-Za-z]:[/\\]/.test(input)) return true;
   const firstSlash = input.indexOf("/");
   const firstSegment = firstSlash >= 0 ? input.slice(0, firstSlash) : input;
-  if (firstSegment.includes(".") && !firstSegment.includes("\\")) {
-    return false;
-  }
+  if (firstSegment.includes(".") && !firstSegment.includes("\\")) return false;
   const hasPathSep = input.includes("/") || input.includes("\\");
-  if (hasPathSep && BROWSER_VIEWABLE_EXT_RE.test(input)) return true;
-  return false;
+  return hasPathSep && BROWSER_VIEWABLE_EXT_RE.test(input);
+}
+
+function hasFilePathPrefix(input: string): boolean {
+  return input.startsWith("~") || input.startsWith("/") || input.startsWith("./") || input.startsWith("../") || input.startsWith(".\\") || input.startsWith("..\\");
 }
 
 /**

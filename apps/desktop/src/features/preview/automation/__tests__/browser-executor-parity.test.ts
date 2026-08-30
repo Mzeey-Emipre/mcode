@@ -60,21 +60,27 @@ class FakeDebugger extends EventEmitter {
   async sendCommand(method: string, params?: unknown): Promise<unknown> {
     this.commands.push({ method, params });
     if (method.startsWith("Input.")) this.owner.emit("before-input-event", {});
+    return this.commandResult(method, params) ?? {};
+  }
+
+  private commandResult(method: string, params: unknown): unknown | undefined {
     if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main-frame" } } };
     if (method === "Page.createIsolatedWorld") return { executionContextId: 42 };
-    if (method === "Runtime.callFunctionOn") {
-      const source = String((params as { functionDeclaration?: string } | undefined)?.functionDeclaration ?? "");
-      if (source.includes("snapshotPage")) return { result: { value: this.owner.snapshotValue } };
-      if (source.includes("locatePageTarget")) return { result: { value: { x: 10, y: 20 } } };
-      if (source.includes("inspectPageTarget")) return { result: { value: { attached: true, visible: true, x: 10, y: 20 } } };
-      return { result: { value: { ok: true, valueJson: "null" } } };
-    }
+    if (method === "Runtime.callFunctionOn") return this.callFunctionResult(params);
     if (method === "Page.captureScreenshot") return { data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" };
     if (method === "DOM.getDocument") return { root: { backendNodeId: 1 } };
     if (method === "DOM.describeNode") return { node: { backendNodeId: 2 } };
     if (method === "Accessibility.getPartialAXTree") return { nodes: [] };
     if (method === "Performance.getMetrics") return { metrics: [] };
-    return {};
+    return undefined;
+  }
+
+  private callFunctionResult(params: unknown): unknown {
+    const source = String((params as { functionDeclaration?: string } | undefined)?.functionDeclaration ?? "");
+    if (source.includes("snapshotPage")) return { result: { value: this.owner.snapshotValue } };
+    if (source.includes("locatePageTarget")) return { result: { value: { x: 10, y: 20 } } };
+    if (source.includes("inspectPageTarget")) return { result: { value: { attached: true, visible: true, x: 10, y: 20 } } };
+    return { result: { value: { ok: true, valueJson: "null" } } };
   }
 }
 
@@ -151,6 +157,109 @@ function replaceObservationRefs(value: unknown, observationRef: string | undefin
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, replaceObservationRefs(entry, observationRef)]));
 }
 
+type ParityState = { url: string; owner: "none" | "agent"; observationRef: string | undefined };
+
+function createParityDispatch(
+  command: BrowserConformanceCommand,
+  args: Record<string, unknown>,
+  desktopInstanceId: "electron" | "web",
+  targetValue: ReturnType<typeof target> | ReturnType<typeof webTarget>,
+  requestId: string,
+  sequence: number,
+): BrowserAutomationHostDispatch {
+  return {
+    scope: { workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance" },
+    connection: { desktopInstanceId, windowId: desktopInstanceId === "electron" ? 7 : 1, connectionGeneration: 1, targetGeneration: targetValue.targetGeneration, capabilityRevision: 1 },
+    target: targetValue,
+    request: { contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance", requestId, sequence, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: command.operation, args },
+  } as unknown as BrowserAutomationHostDispatch;
+}
+
+function applyParityResult(
+  state: ParityState,
+  command: BrowserConformanceCommand,
+  args: Record<string, unknown>,
+  result: BrowserAutomationResponse,
+): void {
+  if (!result.ok) return;
+  const candidate = result.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
+  state.observationRef = candidate.nextObservationRef ?? candidate.finalObservation?.observationRef ?? candidate.observationRef ?? state.observationRef;
+  updateParityUrl(state, command, args);
+  if (["open", "navigate", "click", "type", "act", "tabs"].includes(command.operation)) state.owner = "agent";
+}
+
+function updateParityUrl(state: ParityState, command: BrowserConformanceCommand, args: Record<string, unknown>): void {
+  if (["open", "navigate"].includes(command.operation)) state.url = String(args.url ?? state.url);
+  if (command.operation !== "act" || !Array.isArray(args.steps)) return;
+  const navigation = args.steps.find((step) => typeof step === "object" && step !== null && (step as { operation?: unknown }).operation === "navigate");
+  if (navigation && typeof (navigation as { url?: unknown }).url === "string") state.url = navigation.url;
+}
+
+function parityRawRun(
+  state: ParityState,
+  command: BrowserConformanceCommand,
+  result: BrowserAutomationResponse,
+  tick: number,
+  ordinal: number,
+  resources: BrowserConformanceResourceSnapshot,
+) {
+  const effect = parityEffect(command.operation, result);
+  const recovery = parityRecovery(result);
+  const error = parityError(result, command.operation);
+  const observation = parityObservation(command.operation, state);
+  return {
+    receipts: [{ order: { tick, ordinal }, commandId: command.id, operation: command.operation, status: result.ok ? "applied" : "failed", effect, recovery, truncated: false, revisions: { host: 0, document: 0, control: 0, capability: 1, observation: ordinal }, errorCode: error.code, errorStage: error.stage, ownership: state.owner }],
+    outcome: result.ok ? { status: "completed", effect: "complete", recovery: "none", revisions: { capability: 1, observation: ordinal }, ownership: state.owner } : { status: "failed", effect, recovery, errorCode: error.code, errorStage: error.stage, ownership: state.owner },
+    finalState: { readiness: "ready", controlOwner: state.owner, tabCount: 1, currentUrl: state.url, revisions: { capability: 1, observation: ordinal }, resources },
+    visibleObservations: [observation],
+  };
+}
+
+function parityEffect(operation: string, result: BrowserAutomationResponse): string {
+  if (!result.ok) return result.error.effect ?? "none";
+  const explicit = (result.result as { effect?: string }).effect;
+  if (explicit) return explicit;
+  if (["inspect", "snapshot", "screenshot"].includes(operation)) return "none";
+  return operation === "open" ? "created" : "complete";
+}
+
+function parityRecovery(result: BrowserAutomationResponse): string {
+  return result.ok ? ((result.result as { recovery?: string }).recovery ?? "none") : (result.error.recovery ?? "inspect");
+}
+
+function parityError(result: BrowserAutomationResponse, operation: string): { code: string | null; stage: string } {
+  if (!result.ok) return { code: result.error.code, stage: result.error.stage ?? "effect" };
+  return { code: null, stage: ["inspect", "snapshot", "screenshot"].includes(operation) ? "observation" : "effect" };
+}
+
+function parityObservation(operation: string | null, state: ParityState) {
+  return { surface: "browser", readiness: "ready", controlOwner: state.owner, tabCount: 1, currentUrl: state.url, title: "Executor fixture", action: operation, truncated: false };
+}
+
+function paritySnapshotOutcome(
+  receipts: BrowserConformanceReceipt[],
+  state: ParityState,
+  resources: BrowserConformanceResourceSnapshot,
+): BrowserConformanceNormalizedRun {
+  const last = receipts.at(-1);
+  return normalizeBrowserConformanceRun({
+    receipts,
+    outcome: parityFinalOutcome(last),
+    finalState: { readiness: "ready", controlOwner: state.owner, tabCount: 1, currentUrl: state.url, revisions: last?.revisions, resources },
+    visibleObservations: [parityObservation(last?.operation ?? null, state)],
+  });
+}
+
+function parityFinalOutcome(last: BrowserConformanceReceipt | undefined) {
+  return {
+    status: last?.status === "failed" ? "failed" : "completed",
+    effect: last?.effect ?? "none",
+    recovery: last?.recovery ?? "none",
+    revisions: last?.revisions,
+    ownership: last?.ownership,
+  };
+}
+
 class ElectronExecutorSubject implements BrowserConformanceSubject {
   private readonly receipts: BrowserConformanceReceipt[] = [];
   private readonly state = { url: "http://localhost:3000/", owner: "none" as "none" | "agent", observationRef: undefined as string | undefined };
@@ -158,34 +267,19 @@ class ElectronExecutorSubject implements BrowserConformanceSubject {
   constructor(private readonly driver: BrowserSessionDriver, private readonly kernel: BrowserAutomationKernel) {}
   async dispatch(command: BrowserConformanceCommand): Promise<BrowserConformanceReceipt> {
     const args = replaceObservationRefs(command.args ?? {}, this.state.observationRef) as Record<string, unknown>;
-    const dispatch = {
-      scope: { workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance" },
-      connection: { desktopInstanceId: "electron", windowId: 7, connectionGeneration: 1, targetGeneration: 0, capabilityRevision: 1 },
-      target: target(),
-      request: { contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance", requestId: `parity-${command.id}-${this.receipts.length}`, sequence: this.receipts.length, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: command.operation, args },
-    } as unknown as BrowserAutomationHostDispatch;
+    const dispatch = createParityDispatch(command, args, "electron", target(), `parity-${command.id}-${this.receipts.length}`, this.receipts.length);
     const result = BrowserAutomationResponseSchema().parse(
       await this.driver.execute(dispatch, new AbortController().signal),
     );
-    if (result.ok) {
-      const candidate = result.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
-      this.state.observationRef = candidate.nextObservationRef ?? candidate.finalObservation?.observationRef ?? candidate.observationRef ?? this.state.observationRef;
-      if (["open", "navigate"].includes(command.operation)) this.state.url = String(args.url ?? this.state.url);
-      if (command.operation === "act" && Array.isArray(args.steps)) {
-        const navigation = args.steps.find((step) => typeof step === "object" && step !== null && (step as { operation?: unknown }).operation === "navigate");
-        if (navigation && typeof (navigation as { url?: unknown }).url === "string") this.state.url = navigation.url;
-      }
-      if (["open", "navigate", "click", "type", "act", "tabs"].includes(command.operation)) this.state.owner = "agent";
-    }
-    const raw = { receipts: [{ order: { tick: this.tick, ordinal: this.receipts.length }, commandId: command.id, operation: command.operation, status: result.ok ? "applied" : "failed", effect: result.ok ? ((result.result as { effect?: string }).effect ?? (["inspect", "snapshot", "screenshot"].includes(command.operation) ? "none" : command.operation === "open" ? "created" : "complete")) : (result.error.effect ?? "none"), recovery: result.ok ? ((result.result as { recovery?: string }).recovery ?? "none") : (result.error.recovery ?? "inspect"), truncated: false, revisions: { host: 0, document: 0, control: 0, capability: 1, observation: this.receipts.length }, errorCode: result.ok ? null : result.error.code, errorStage: result.ok ? (["inspect", "snapshot", "screenshot"].includes(command.operation) ? "observation" : "effect") : (result.error.stage ?? "effect"), ownership: this.state.owner }], outcome: result.ok ? { status: "completed", effect: "complete", recovery: "none", revisions: { capability: 1, observation: this.receipts.length }, ownership: this.state.owner } : { status: "failed", effect: result.error.effect ?? "none", recovery: result.error.recovery ?? "inspect", errorCode: result.error.code, errorStage: result.error.stage ?? "effect", ownership: this.state.owner }, finalState: { readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, revisions: { capability: 1, observation: this.receipts.length }, resources: this.snapshotResources() }, visibleObservations: [{ surface: "browser", readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, title: "Executor fixture", action: command.operation, truncated: false }] };
-    const receipt = normalizeBrowserConformanceRun(raw).receipts[0]!;
+    applyParityResult(this.state, command, args, result);
+    const receipt = normalizeBrowserConformanceRun(parityRawRun(this.state, command, result, this.tick, this.receipts.length, this.snapshotResources())).receipts[0]!;
     this.receipts.push(receipt);
     return receipt;
   }
   schedule(_event: BrowserConformanceScheduledEvent): void {}
   async advanceClock(tick: number): Promise<void> { this.tick = tick; }
   async injectExternalEvent(_event: BrowserConformanceScheduledEvent): Promise<void> {}
-  snapshotOutcome(): BrowserConformanceNormalizedRun { const last = this.receipts.at(-1); return normalizeBrowserConformanceRun({ receipts: this.receipts, outcome: { status: last?.status === "failed" ? "failed" : "completed", effect: last?.effect ?? "none", recovery: last?.recovery ?? "none", revisions: last?.revisions, ownership: last?.ownership }, finalState: { readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, revisions: last?.revisions, resources: this.snapshotResources() }, visibleObservations: [{ surface: "browser", readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, title: "Executor fixture", action: last?.operation ?? null, truncated: false }] }); }
+  snapshotOutcome(): BrowserConformanceNormalizedRun { return paritySnapshotOutcome(this.receipts, this.state, this.snapshotResources()); }
   snapshotResources(): BrowserConformanceResourceSnapshot { const counters = this.kernel.getCounters(); const targets = counters.targets > 0 ? [{ id: "browser-target", generation: 1 }] : []; return createBrowserConformanceResourceSnapshot({ counts: { targets: counters.targets, queues: counters.queued, requests: counters.active + counters.cancellations }, identities: { targets } }); }
   async drainToQuiescence(): Promise<void> {}
   async dispose(): Promise<void> { await this.driver.releaseProviderSession("session"); this.kernel.disposeWindow(fakeWindow.id); }
@@ -200,32 +294,17 @@ class WebDirectExecutorSubject implements BrowserConformanceSubject {
 
   async dispatch(command: BrowserConformanceCommand): Promise<BrowserConformanceReceipt> {
     const args = replaceObservationRefs(command.args ?? {}, this.state.observationRef) as Record<string, unknown>;
-    const dispatch = {
-      scope: { workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance" },
-      connection: { desktopInstanceId: "web", windowId: 1, connectionGeneration: 1, targetGeneration: 1, capabilityRevision: 1 },
-      target: webTarget(),
-      request: { contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance", requestId: `web-direct-${command.id}-${this.receipts.length}`, sequence: this.receipts.length, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: command.operation, args },
-    } as unknown as BrowserAutomationHostDispatch;
+    const dispatch = createParityDispatch(command, args, "web", webTarget(), `web-direct-${command.id}-${this.receipts.length}`, this.receipts.length);
     const result = BrowserAutomationResponseSchema().parse(await this.driver.execute(dispatch, new AbortController().signal));
-    if (result.ok) {
-      const candidate = result.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
-      this.state.observationRef = candidate.nextObservationRef ?? candidate.finalObservation?.observationRef ?? candidate.observationRef ?? this.state.observationRef;
-      if (["open", "navigate"].includes(command.operation)) this.state.url = String(args.url ?? this.state.url);
-      if (command.operation === "act" && Array.isArray(args.steps)) {
-        const navigation = args.steps.find((step) => typeof step === "object" && step !== null && (step as { operation?: unknown }).operation === "navigate");
-        if (navigation && typeof (navigation as { url?: unknown }).url === "string") this.state.url = navigation.url;
-      }
-      if (["open", "navigate", "click", "type", "act", "tabs"].includes(command.operation)) this.state.owner = "agent";
-    }
-    const raw = { receipts: [{ order: { tick: this.tick, ordinal: this.receipts.length }, commandId: command.id, operation: command.operation, status: result.ok ? "applied" : "failed", effect: result.ok ? ((result.result as { effect?: string }).effect ?? (["inspect", "snapshot", "screenshot"].includes(command.operation) ? "none" : command.operation === "open" ? "created" : "complete")) : (result.error.effect ?? "none"), recovery: result.ok ? ((result.result as { recovery?: string }).recovery ?? "none") : (result.error.recovery ?? "inspect"), truncated: false, revisions: { host: 0, document: 0, control: 0, capability: 1, observation: this.receipts.length }, errorCode: result.ok ? null : result.error.code, errorStage: result.ok ? (["inspect", "snapshot", "screenshot"].includes(command.operation) ? "observation" : "effect") : (result.error.stage ?? "effect"), ownership: this.state.owner }], outcome: result.ok ? { status: "completed", effect: "complete", recovery: "none", revisions: { capability: 1, observation: this.receipts.length }, ownership: this.state.owner } : { status: "failed", effect: result.error.effect ?? "none", recovery: result.error.recovery ?? "inspect", errorCode: result.error.code, errorStage: result.error.stage ?? "effect", ownership: this.state.owner }, finalState: { readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, revisions: { capability: 1, observation: this.receipts.length }, resources: this.snapshotResources() }, visibleObservations: [{ surface: "browser", readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, title: "Executor fixture", action: command.operation, truncated: false }] };
-    const receipt = normalizeBrowserConformanceRun(raw).receipts[0]!;
+    applyParityResult(this.state, command, args, result);
+    const receipt = normalizeBrowserConformanceRun(parityRawRun(this.state, command, result, this.tick, this.receipts.length, this.snapshotResources())).receipts[0]!;
     this.receipts.push(receipt);
     return receipt;
   }
   schedule(_event: BrowserConformanceScheduledEvent): void {}
   async advanceClock(tick: number): Promise<void> { this.tick = tick; }
   async injectExternalEvent(_event: BrowserConformanceScheduledEvent): Promise<void> {}
-  snapshotOutcome(): BrowserConformanceNormalizedRun { const last = this.receipts.at(-1); return normalizeBrowserConformanceRun({ receipts: this.receipts, outcome: { status: last?.status === "failed" ? "failed" : "completed", effect: last?.effect ?? "none", recovery: last?.recovery ?? "none", revisions: last?.revisions, ownership: last?.ownership }, finalState: { readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, revisions: last?.revisions, resources: this.snapshotResources() }, visibleObservations: [{ surface: "browser", readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, title: "Executor fixture", action: last?.operation ?? null, truncated: false }] }); }
+  snapshotOutcome(): BrowserConformanceNormalizedRun { return paritySnapshotOutcome(this.receipts, this.state, this.snapshotResources()); }
   snapshotResources(): BrowserConformanceResourceSnapshot { return createBrowserConformanceResourceSnapshot({ identities: { targets: this.liveTargets.size > 0 ? [{ id: "browser-target", generation: 1 }] : [] } }); }
   async drainToQuiescence(): Promise<void> {}
   async dispose(): Promise<void> { await this.driver.releaseProviderSession("session"); }
@@ -247,7 +326,7 @@ describe("Electron Browser executor parity at BrowserSessionDriver", () => {
   afterEach(() => { kernel.disposeWindow(fakeWindow.id); });
 
   it("executes the shared scenario through the real Electron kernel and matches canonical outcomes", async () => {
-    const execute = (dispatch: BrowserAutomationHostDispatch, signal: AbortSignal): Promise<BrowserAutomationResponse> => kernel.execute({ sender: rendererSender } as never, dispatch);
+    const execute = (dispatch: BrowserAutomationHostDispatch, _signal: AbortSignal): Promise<BrowserAutomationResponse> => kernel.execute({ sender: rendererSender } as never, dispatch);
     const electronAdapter = new ElectronBrowserSessionAdapter(execute);
     const liveTargets = new Map([["tab", target()]]);
     const driver = new BrowserSessionDriver({ web: electronAdapter, electron: electronAdapter, isElectron: () => true, supportedActOperations: ["click", "type", "navigate"], electronTabs: { list: async () => [...liveTargets.values()], close: async (closedTarget) => { liveTargets.delete(closedTarget.tabId); } } });

@@ -14,6 +14,8 @@ const refs = vi.hoisted(() => {
     }),
     unref: vi.fn(),
     pid: 12345,
+    exitCode: null,
+    signalCode: null,
   };
 
   // Shared existsSync spy used by "fs"/"node:fs" mocks.
@@ -90,6 +92,10 @@ vi.mock("node:fs", () => ({
     throw err;
   }),
   renameSync: vi.fn(),
+  linkSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  readdirSync: vi.fn(),
+  rmdirSync: vi.fn(),
   unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
   // createWriteStream is used in non-dev mode to route stderr to a log file.
@@ -125,6 +131,11 @@ const LOCK_FILE_JSON = JSON.stringify({
   ipcPath: "",
 });
 
+/** Create lock data for a specific spawned child process. */
+function lockFileJsonForPid(pid: number): string {
+  return JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid });
+}
+
 /**
  * Build the standard readFileSync mock sequence for a normal start():
  *  1. tryExistingServer: lock file -> ENOENT
@@ -153,8 +164,8 @@ import { execFileSync, spawn } from "child_process";
 import {
   existsSync,
   readFileSync,
-  writeFileSync,
   createWriteStream,
+  rmdirSync,
   renameSync,
   unlinkSync,
 } from "fs";
@@ -326,6 +337,16 @@ describe("ServerManager", () => {
     expect(() => manager.shutdown()).not.toThrow();
   });
 
+  it("ends the packaged stderr stream after a normal server exit", async () => {
+    const stderrStream = { write: vi.fn(), end: vi.fn(), destroy: vi.fn() };
+    vi.mocked(createWriteStream).mockReturnValueOnce(stderrStream as never);
+
+    await manager.start();
+    refs.getExitCallback()!(0);
+
+    expect(stderrStream.end).toHaveBeenCalledOnce();
+  });
+
   it("calls onUnexpectedExit when the process exits without shutdown", async () => {
     const onCrash = vi.fn();
     manager.onUnexpectedExit = onCrash;
@@ -350,6 +371,110 @@ describe("ServerManager", () => {
     expect(onCrash).not.toHaveBeenCalled();
   });
 
+  it("suppresses the expected exit when forceReplace stops the current child", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.spyOn(manager, "stopServerHeldByLock").mockImplementation(async () => {
+      exitCallback?.(0);
+    });
+
+    await manager.forceReplace();
+
+    expect(onCrash).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the expected exit when an ordinary restart replaces the child", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.spyOn(manager, "stopServerHeldByLock").mockImplementation(async () => {
+      exitCallback?.(0);
+    });
+    vi.spyOn(manager, "start").mockResolvedValue({
+      port: 19600,
+      authToken: "replacement-token",
+    });
+    vi.useFakeTimers();
+
+    try {
+      const restart = manager.restart();
+      await vi.advanceTimersByTimeAsync(500);
+      await restart;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(onCrash).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the expected exit when a version mismatch replaces the child", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValue(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), version: "0.0.0" }),
+      );
+    vi.mocked(readFile)
+      .mockReset()
+      .mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    vi.spyOn(manager, "stopServerHeldByLock").mockImplementation(async () => {
+      exitCallback?.(0);
+    });
+
+    await manager.start();
+
+    expect(onCrash).not.toHaveBeenCalled();
+  });
+
+  it("clears a version-replacement marker when the replacement fails to spawn", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValue(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), version: "0.0.0" }),
+      );
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      throw new Error("replacement spawn failed");
+    });
+    vi.spyOn(manager, "stopServerHeldByLock").mockResolvedValue();
+
+    await expect(manager.start()).rejects.toThrow("replacement spawn failed");
+
+    exitCallback?.(1);
+    expect(onCrash).toHaveBeenCalledWith(1);
+  });
+
+  it("clears an ordinary restart marker when replacement startup fails", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.spyOn(manager, "stopServerHeldByLock").mockResolvedValue();
+    vi.spyOn(manager, "start").mockRejectedValue(new Error("start failed"));
+    vi.useFakeTimers();
+
+    try {
+      const restart = manager.restart();
+      const rejectedRestart = expect(restart).rejects.toThrow("start failed");
+      await vi.advanceTimersByTimeAsync(500);
+      await rejectedRestart;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    exitCallback?.(1);
+    expect(onCrash).toHaveBeenCalledWith(1);
+  });
+
   it("suppresses only the planned old child during a planned restart", async () => {
     const onCrash = vi.fn();
     manager.onUnexpectedExit = onCrash;
@@ -359,6 +484,8 @@ describe("ServerManager", () => {
       }),
       unref: vi.fn(),
       pid: 54321,
+      exitCode: null,
+      signalCode: null,
       exit: undefined as ((code: number | null) => void) | undefined,
     };
     const newChild = {
@@ -367,19 +494,28 @@ describe("ServerManager", () => {
       }),
       unref: vi.fn(),
       pid: 54322,
+      exitCode: null,
+      signalCode: null,
       exit: undefined as ((code: number | null) => void) | undefined,
     };
     vi.mocked(spawn)
       .mockImplementationOnce(() => oldChild as never)
       .mockImplementationOnce(() => newChild as never);
+    vi.mocked(readFile)
+      .mockReset()
+      .mockResolvedValueOnce(lockFileJsonForPid(54321) as never);
     await manager.start();
 
-    const restart = vi.spyOn(manager, "restart").mockImplementation(async () => {
-      oldChild.exit?.(0);
-      vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
-      await manager.start();
-      newChild.exit?.(1);
-    });
+    const restart = vi
+      .spyOn(manager, "restart")
+      .mockImplementation(async () => {
+        oldChild.exit?.(0);
+        vi.mocked(readFile)
+          .mockReset()
+          .mockResolvedValueOnce(lockFileJsonForPid(54322) as never);
+        await manager.start();
+        newChild.exit?.(1);
+      });
 
     await manager.restartPlanned();
 
@@ -389,15 +525,20 @@ describe("ServerManager", () => {
   });
 
   it("coalesces concurrent planned restart requests", async () => {
-    const restart = vi.spyOn(manager, "restart").mockImplementation(
-      () => new Promise<void>((resolve) => setImmediate(resolve)),
-    );
+    const restart = vi
+      .spyOn(manager, "restart")
+      .mockImplementation(
+        () => new Promise<void>((resolve) => setImmediate(resolve)),
+      );
 
     const first = manager.restartPlanned();
     const second = manager.restartPlanned();
 
     expect(restart).toHaveBeenCalledOnce();
-    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 
   it("rejects a planned restart when the server is unowned", async () => {
@@ -417,13 +558,22 @@ describe("ServerManager", () => {
       }),
       unref: vi.fn(),
       pid: 54323,
+      exitCode: null,
+      signalCode: null,
       exit: undefined as ((code: number | null) => void) | undefined,
     };
     vi.mocked(spawn).mockImplementationOnce(() => oldChild as never);
+    vi.mocked(readFile)
+      .mockReset()
+      .mockResolvedValueOnce(lockFileJsonForPid(54323) as never);
     await manager.start();
-    vi.spyOn(manager, "restart").mockRejectedValue(new Error("planned restart failed"));
+    vi.spyOn(manager, "restart").mockRejectedValue(
+      new Error("planned restart failed"),
+    );
 
-    await expect(manager.restartPlanned()).rejects.toThrow("planned restart failed");
+    await expect(manager.restartPlanned()).rejects.toThrow(
+      "planned restart failed",
+    );
     oldChild.exit?.(9);
 
     expect(onCrash).toHaveBeenCalledWith(9);
@@ -438,19 +588,30 @@ describe("ServerManager", () => {
       }),
       unref: vi.fn(),
       pid: 54324,
+      exitCode: null,
+      signalCode: null,
       exit: undefined as ((code: number | null) => void) | undefined,
     };
     const replacement = {
       on: vi.fn(),
       unref: vi.fn(),
       pid: 54325,
+      exitCode: null,
+      signalCode: null,
     };
     vi.mocked(spawn)
       .mockImplementationOnce(() => oldChild as never)
       .mockImplementationOnce(() => replacement as never);
+    vi.mocked(readFile)
+      .mockReset()
+      .mockResolvedValueOnce(lockFileJsonForPid(54324) as never);
     await manager.start();
-    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
-    vi.spyOn(manager, "restart").mockImplementation(() => manager.start().then(() => undefined));
+    vi.mocked(readFile)
+      .mockReset()
+      .mockResolvedValueOnce(lockFileJsonForPid(54325) as never);
+    vi.spyOn(manager, "restart").mockImplementation(() =>
+      manager.start().then(() => undefined),
+    );
 
     await manager.restartPlanned();
     oldChild.exit?.(4);
@@ -477,7 +638,6 @@ describe("ServerManager", () => {
         JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
       ); // settings.json
     vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
-
     await manager.start();
 
     const spawnCall = vi.mocked(spawn).mock.calls[0];
@@ -500,7 +660,6 @@ describe("ServerManager", () => {
         }),
       );
     vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
-
     await manager.start();
 
     const spawnCall = vi.mocked(spawn).mock.calls[0];
@@ -814,9 +973,11 @@ describe("ServerManager", () => {
   it("rejects an unreadable lock and preserves the lock file", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     const denied = Object.assign(new Error("EACCES"), { code: "EACCES" });
-    vi.mocked(readFileSync).mockReset().mockImplementation(() => {
-      throw denied;
-    });
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockImplementation(() => {
+        throw denied;
+      });
 
     await expect(manager.stopServerHeldByLock()).rejects.toThrow(
       "Unable to read server lock file",
@@ -875,8 +1036,12 @@ describe("ServerManager", () => {
     });
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
-    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
-      JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerIdentity: unknown }
+    ).ownedServerIdentity = JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerProcess: unknown }
+    ).ownedServerProcess = refs.mockChildProcess;
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", {
@@ -909,8 +1074,12 @@ describe("ServerManager", () => {
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
-    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
-      JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerIdentity: unknown }
+    ).ownedServerIdentity = JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerProcess: unknown }
+    ).ownedServerProcess = refs.mockChildProcess;
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", {
       value: "linux",
@@ -944,7 +1113,7 @@ describe("ServerManager", () => {
     }
   });
 
-  it("kills an owned POSIX process group after its leader exits", async () => {
+  it("refuses a PID-reused POSIX process group after the owned leader exits", async () => {
     await manager.start();
     refs.getExitCallback()!(1);
 
@@ -956,22 +1125,18 @@ describe("ServerManager", () => {
       value: "linux",
       configurable: true,
     });
-    let groupAlive = true;
-    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
-      if (pid > 0) {
-        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
-        throw error;
-      }
-      if (signal === 0) {
-        if (!groupAlive) {
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation((pid, signal) => {
+        if (pid > 0) {
           const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
           throw error;
         }
+        if (signal === 0) {
+          return true as never;
+        }
         return true as never;
-      }
-      groupAlive = false;
-      return true as never;
-    });
+      });
     let now = 1000;
     const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
       now += 5000;
@@ -979,10 +1144,47 @@ describe("ServerManager", () => {
     });
 
     try {
-      await manager.stopServerHeldByLock();
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "refusing to terminate unrelated process",
+      );
 
-      expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
-      expect(unlinkSync).toHaveBeenCalledOnce();
+      expect(killSpy).not.toHaveBeenCalledWith(-12345, "SIGKILL");
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("refuses a PID-reused Windows process after the owned child exits", async () => {
+    await manager.start();
+    refs.getExitCallback()!(1);
+
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(execFileSync).mockReset();
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "win32",
+      configurable: true,
+    });
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "refusing to terminate unrelated process",
+      );
+
+      expect(execFileSync).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(process, "platform", {
         value: originalPlatform,
@@ -1051,7 +1253,9 @@ describe("ServerManager", () => {
     try {
       await manager.stopServerHeldByLock();
 
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(unlinkSync).not.toHaveBeenCalledWith(
+        join("/tmp/mcode", "server.lock"),
+      );
     } finally {
       killSpy.mockRestore();
     }
@@ -1125,8 +1329,12 @@ describe("ServerManager", () => {
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
-    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
-      JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerIdentity: unknown }
+    ).ownedServerIdentity = JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerProcess: unknown }
+    ).ownedServerProcess = refs.mockChildProcess;
 
     // Always report alive so we hit the SIGKILL fallback.
     // Mock Date.now to fast-forward past the 10s deadline.
@@ -1186,6 +1394,27 @@ describe("ServerManager", () => {
     expect(mockStream.destroy).toHaveBeenCalledOnce();
   });
 
+  it("ends stderr and clears the child reference when readiness times out", async () => {
+    const stderrStream = { write: vi.fn(), end: vi.fn(), destroy: vi.fn() };
+    vi.mocked(createWriteStream).mockReturnValueOnce(stderrStream as never);
+    vi.spyOn(
+      manager as unknown as {
+        waitForReady: (timeoutMs: number) => Promise<void>;
+      },
+      "waitForReady",
+    ).mockRejectedValue(new Error("Server did not become ready"));
+
+    await expect(manager.start()).rejects.toThrow("did not become ready");
+
+    expect(stderrStream.end).toHaveBeenCalledOnce();
+    expect(
+      (manager as unknown as { serverProcess: unknown }).serverProcess,
+    ).toBeNull();
+    expect(rmdirSync).toHaveBeenCalledWith(
+      join("/tmp/mcode", "server.starting"),
+    );
+  });
+
   it("rotates the previous stderr log before opening a new one", async () => {
     vi.mocked(existsSync).mockImplementation(
       (path) =>
@@ -1208,6 +1437,125 @@ describe("ServerManager", () => {
   // -----------------------------------------------------------------------
   // Reuse existing server from lock file
   // -----------------------------------------------------------------------
+
+  it("bounds a never-resolving existing-server health probe before spawning", async () => {
+    vi.mocked(readFileSync).mockReset().mockReturnValueOnce(LOCK_FILE_JSON);
+    vi.mocked(readFile)
+      .mockReset()
+      .mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+    vi.useFakeTimers();
+
+    try {
+      const start = manager.start();
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(start).resolves.toEqual({
+        port: 19600,
+        authToken: "test-auth-token",
+      });
+      expect(spawn).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      killSpy.mockRestore();
+    }
+  });
+
+  it("rejects a readiness lock that belongs to a different spawned child", async () => {
+    vi.mocked(readFile)
+      .mockReset()
+      .mockResolvedValueOnce(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 99999 }) as never,
+      );
+
+    await expect(manager.start()).rejects.toThrow(
+      "Server lock does not match the spawned server process",
+    );
+    expect(
+      (manager as unknown as { serverProcess: unknown }).serverProcess,
+    ).toBeNull();
+  });
+
+  it("rejects readiness when the spawned child exits before lock application", async () => {
+    vi.mocked(readFile)
+      .mockReset()
+      .mockImplementationOnce(async () => {
+        refs.getExitCallback()!(1);
+        return LOCK_FILE_JSON as never;
+      });
+
+    await expect(manager.start()).rejects.toThrow(
+      "Server process exited before lock application",
+    );
+    expect(
+      (manager as unknown as { serverProcess: unknown }).serverProcess,
+    ).toBeNull();
+  });
+
+  it("detaches a prior child before it adopts an external lock holder", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const delayedExit = refs.getExitCallback();
+    const externalLock = JSON.stringify({
+      ...JSON.parse(LOCK_FILE_JSON),
+      pid: 54326,
+      authToken: "external-token",
+      startedAt: "2026-01-02T00:00:00.000Z",
+    });
+    vi.mocked(readFileSync).mockReset().mockReturnValue(externalLock);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+
+    try {
+      await expect(manager.start()).resolves.toEqual({
+        port: 19600,
+        authToken: "external-token",
+      });
+      delayedExit?.(1);
+
+      expect(onCrash).not.toHaveBeenCalled();
+      expect(manager.reusedExisting).toBe(true);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it("preserves a replacement lock when stale-lock cleanup reaches the deletion race", async () => {
+    const replacement = JSON.stringify({
+      ...JSON.parse(LOCK_FILE_JSON),
+      authToken: "replacement-token",
+    });
+    const enoent = () => {
+      const error = new Error("ENOENT") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValueOnce(LOCK_FILE_JSON)
+      .mockReturnValueOnce(replacement)
+      .mockImplementation(enoent);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      const error = new Error("ESRCH") as NodeJS.ErrnoException;
+      error.code = "ESRCH";
+      throw error;
+    });
+
+    try {
+      await manager.start();
+
+      expect(unlinkSync).not.toHaveBeenCalledWith(
+        join("/tmp/mcode", "server.lock"),
+      );
+      expect(renameSync).toHaveBeenCalledTimes(1);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
 
   it("reuses existing server when lock file is present and health check passes", async () => {
     // tryExistingServer: lock file returns valid JSON and health check passes

@@ -279,6 +279,27 @@ describe("Preview capture bounds and outbound data", () => {
     expect(spilled.htmlExcerpt).not.toContain("<script>");
   });
 
+  it("includes console lines received while guest context capture is pending", async () => {
+    let resolveContext!: (value: string) => void;
+    captureTest.webContents.executeJavaScript.mockImplementationOnce(() => new Promise<string>((resolve) => {
+      resolveContext = resolve;
+    }));
+    const consoleBuffer = ["log: before context"];
+    const capture = buildBrowserCapturePayload(
+      captureTest.webContents as never,
+      { x: 0, y: 0, width: 800, height: 600 },
+      consoleBuffer,
+      [],
+      "workspace-A",
+    );
+    consoleBuffer.push("warning: during context");
+    resolveContext(contextResult());
+
+    await expect(capture).resolves.toMatchObject({
+      consoleTail: "log: before context\nwarning: during context",
+    });
+  });
+
   it("uses a bounded hostname or the page fallback in capture filenames", () => {
     expect(previewCaptureFileStem("https://docs.example.test/path")).toBe("docs.example.test");
     expect(previewCaptureFileStem("file:///C:/secret.txt")).toBe("page");

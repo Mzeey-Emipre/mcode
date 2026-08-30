@@ -100,31 +100,40 @@ class FakeDebugger extends EventEmitter {
   async sendCommand(method: string, params?: unknown): Promise<unknown> {
     const command = { method, params };
     this.commands.push(command);
-    const gate = this.gate;
-    if (gate?.matches(command)) {
-      this.gate = null;
-      gate.reached.resolve(undefined);
-      await gate.release.promise;
-    }
+    await this.releaseCommandGate(command);
     if (method === "Input.dispatchKeyEvent") this.owner.emit("before-input-event", {});
+    return this.commandResult(method, params);
+  }
+
+  private async releaseCommandGate(command: Command): Promise<void> {
+    const gate = this.gate;
+    if (!gate?.matches(command)) return;
+    this.gate = null;
+    gate.reached.resolve(undefined);
+    await gate.release.promise;
+  }
+
+  private commandResult(method: string, params: unknown): unknown {
     if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main-frame" } } };
     if (method === "Page.createIsolatedWorld") return { executionContextId: 7 };
-    if (method === "Runtime.callFunctionOn") {
-      const input = params as { functionDeclaration?: string; arguments?: Array<{ value?: unknown }> } | undefined;
-      const source = input?.functionDeclaration ?? "";
-      if (source.includes("inspectPageTarget")) {
-        return { result: { value: { attached: true, visible: true, x: 10, y: 20 } } };
-      }
-      if (source.includes("evaluateIsolatedExpression")) {
-        const argument = input?.arguments?.[0]?.value as { expression?: unknown } | undefined;
-        const expression = String(argument?.expression ?? "null");
-        if (expression === "never") return new Promise(() => undefined);
-        if (expression === "huge") return { result: { value: { ok: false, tooLarge: true } } };
-        return { result: { value: { ok: true, valueJson: "null" } } };
-      }
-      return { result: { value: false } };
-    }
+    if (method === "Runtime.callFunctionOn") return this.callFunctionResult(params);
     return {};
+  }
+
+  private callFunctionResult(params: unknown): unknown {
+    const input = params as { functionDeclaration?: string; arguments?: Array<{ value?: unknown }> } | undefined;
+    const source = input?.functionDeclaration ?? "";
+    if (source.includes("inspectPageTarget")) return { result: { value: { attached: true, visible: true, x: 10, y: 20 } } };
+    if (source.includes("evaluateIsolatedExpression")) return this.evaluateIsolatedExpression(input);
+    return { result: { value: false } };
+  }
+
+  private evaluateIsolatedExpression(input: { arguments?: Array<{ value?: unknown }> } | undefined): unknown {
+    const argument = input?.arguments?.[0]?.value as { expression?: unknown } | undefined;
+    const expression = String(argument?.expression ?? "null");
+    if (expression === "never") return new Promise(() => undefined);
+    if (expression === "huge") return { result: { value: { ok: false, tooLarge: true } } };
+    return { result: { value: { ok: true, valueJson: "null" } } };
   }
 }
 
@@ -295,44 +304,90 @@ class KernelConformanceSubject implements BrowserConformanceSubject {
   }
 
   async dispatch(command: BrowserConformanceCommand): Promise<BrowserConformanceReceipt> {
+    const requestKey = this.startDispatch(command);
+    const response = await this.executeDispatch(command);
+    this.recordObservation(response, requestKey);
+    const receipt = normalizeBrowserConformanceRun(this.rawDispatch(command, response)).receipts[0]!;
+    this.receipts.push(receipt);
+    return receipt;
+  }
+
+  private startDispatch(command: BrowserConformanceCommand): string {
     if (command.operation === "act" && this.mutationCounters) this.preActMutationCounters = this.mutationCounters();
     const requestKey = `${command.id}:${this.receipts.length}`;
     this.requestLeases.add(requestKey);
     this.bufferEntries.add(requestKey);
     this.registryEntries.set("provider-session", "active");
-    if (command.operation === "act") {
-      this.heldInputLeases.add(requestKey);
-      this.controllerLeases.add(requestKey);
-    }
-    const args = { ...(command.args ?? (command.operation === "inspect" ? { includeScreenshot: false, includeDiagnostics: false } : {})) } as Record<string, unknown>;
-    if (command.operation === "act") args.observationRef = this.observationRef ?? "missing-observation";
-    const request = requestForConformance({ ...command, args }, this.receipts.length);
+    if (command.operation === "act") this.addActLeases(requestKey);
+    return requestKey;
+  }
+
+  private addActLeases(requestKey: string): void {
+    this.heldInputLeases.add(requestKey);
+    this.controllerLeases.add(requestKey);
+  }
+
+  private async executeDispatch(command: BrowserConformanceCommand): Promise<BrowserAutomationResponse> {
+    const request = requestForConformance({ ...command, args: this.dispatchArgs(command) }, this.receipts.length);
     const envelope = dispatch(request) as unknown as BrowserAutomationHostDispatch;
     envelope.connection = { ...envelope.connection, capabilityRevision: 1 };
-    const response = parseResponse(await this.driver.execute(envelope, new AbortController().signal));
-    if (response.ok) {
-      const result = response.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
-      this.observationRef = result.nextObservationRef ?? result.finalObservation?.observationRef ?? result.observationRef ?? this.observationRef;
-      if (this.observationRef) this.replayEntries.set(this.observationRef, requestKey);
-    }
-    const raw = {
+    return parseResponse(await this.driver.execute(envelope, new AbortController().signal));
+  }
+
+  private dispatchArgs(command: BrowserConformanceCommand): Record<string, unknown> {
+    const fallback = command.operation === "inspect" ? { includeScreenshot: false, includeDiagnostics: false } : {};
+    const args = { ...(command.args ?? fallback) } as Record<string, unknown>;
+    if (command.operation === "act") args.observationRef = this.observationRef ?? "missing-observation";
+    return args;
+  }
+
+  private recordObservation(response: BrowserAutomationResponse, requestKey: string): void {
+    if (!response.ok) return;
+    const result = response.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
+    this.observationRef = result.nextObservationRef ?? result.finalObservation?.observationRef ?? result.observationRef ?? this.observationRef;
+    if (this.observationRef) this.replayEntries.set(this.observationRef, requestKey);
+  }
+
+  private rawDispatch(command: BrowserConformanceCommand, response: BrowserAutomationResponse) {
+    return response.ok ? this.successfulRawDispatch(command) : this.failedRawDispatch(command, response);
+  }
+
+  private successfulRawDispatch(command: BrowserConformanceCommand) {
+    return this.rawDispatchResult(command, "applied", "none", "none", null, "observation", {
+      status: "completed", effect: "none", recovery: "none", revisions: this.revisions,
+    });
+  }
+
+  private failedRawDispatch(command: BrowserConformanceCommand, response: Extract<BrowserAutomationResponse, { ok: false }>) {
+    return this.rawDispatchResult(command, "failed", response.error.effect, response.error.recovery, response.error.code, response.error.stage, {
+      status: "failed", effect: response.error.effect, recovery: response.error.recovery, errorCode: response.error.code, errorStage: response.error.stage, revisions: this.revisions,
+    });
+  }
+
+  private rawDispatchResult(
+    command: BrowserConformanceCommand,
+    status: BrowserConformanceReceipt["status"],
+    effect: BrowserConformanceReceipt["effect"],
+    recovery: BrowserConformanceReceipt["recovery"],
+    errorCode: BrowserConformanceReceipt["errorCode"],
+    errorStage: BrowserConformanceReceipt["errorStage"],
+    outcome: BrowserConformanceNormalizedRun["outcome"],
+  ) {
+    return {
       receipts: [{
         order: { tick: this.tick, ordinal: this.receipts.length },
         commandId: command.id,
         operation: command.operation,
-        status: response.ok ? "applied" : "failed",
-        effect: response.ok ? "none" : response.error.effect,
-        recovery: response.ok ? "none" : response.error.recovery,
-        errorCode: response.ok ? null : response.error.code,
-        errorStage: response.ok ? "observation" : response.error.stage,
+        status,
+        effect,
+        recovery,
+        errorCode,
+        errorStage,
         revisions: this.revisions,
       }],
-      outcome: response.ok ? { status: "completed", effect: "none", recovery: "none", revisions: this.revisions } : { status: "failed", effect: response.error.effect, recovery: response.error.recovery, errorCode: response.error.code, errorStage: response.error.stage, revisions: this.revisions },
+      outcome,
       finalState: { readiness: "ready", controlOwner: "none", tabCount: 1, currentUrl: null, revisions: this.revisions, resources: this.snapshotResources() },
     };
-    const receipt = normalizeBrowserConformanceRun(raw).receipts[0]!;
-    this.receipts.push(receipt);
-    return receipt;
   }
 
   schedule(eventValue: BrowserConformanceScheduledEvent): void {
@@ -408,23 +463,24 @@ function requestForConformance(command: BrowserConformanceCommand, sequence: num
   return request(command.operation as BrowserAutomationRequest["operation"], args as never, { requestId: `conformance-${command.id}-${sequence}`, expectedControlEpoch: 0 });
 }
 
+const revisionByEvent: Partial<Record<BrowserConformanceScheduledEvent["kind"], keyof ConformanceRevisions>> = {
+  "host-disconnect": "host",
+  "host-reconnect": "host",
+  navigation: "document",
+  reload: "document",
+  "document-revision": "document",
+  "user-takeover": "control",
+  "competing-mutation": "control",
+  cancel: "control",
+  timeout: "control",
+  resize: "control",
+  "control-revision": "control",
+  "capability-revision": "capability",
+  "observation-revision": "observation",
+};
+
 function revisionForEvent(kind: BrowserConformanceScheduledEvent["kind"]): keyof ConformanceRevisions | undefined {
-  switch (kind) {
-    case "host-disconnect":
-    case "host-reconnect": return "host";
-    case "navigation":
-    case "reload":
-    case "document-revision": return "document";
-    case "user-takeover":
-    case "competing-mutation":
-    case "cancel":
-    case "timeout":
-    case "resize":
-    case "control-revision": return "control";
-    case "capability-revision": return "capability";
-    case "observation-revision": return "observation";
-    default: return undefined;
-  }
+  return revisionByEvent[kind];
 }
 
 function kernelTarget() {

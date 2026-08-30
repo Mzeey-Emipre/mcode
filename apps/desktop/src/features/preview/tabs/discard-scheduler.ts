@@ -19,7 +19,6 @@ import {
   type DiscardConfig,
 } from "./discard-policy.js";
 import {
-  emitTabsUpdated,
   getThreadTabSet,
   type PreviewSession,
   type TabState,
@@ -119,52 +118,63 @@ export async function runDiscardSweep(
     const warm = collectWarmTabs(s);
     setPerf("warmInactiveRuntimeCount", warm.length);
     if (warm.length === 0) return;
-
-    const ids = selectTabsToDiscard(
-      warm,
-      s.lastPreviewThreadId,
-      activeTabIdOf(s),
-      visible,
-      Date.now(),
-      config,
-    );
+    const ids = tabsToDiscard(warm, s, visible, config);
     if (ids.length === 0) return;
-
-    let activeThreadTouched = false;
-    for (const id of ids) {
-      const located = locateTab(s, id);
-      if (!located) continue;
-      const { tab } = located;
-
-      // Persist the validated current URL before disposing (ADR 0002).
-      const rendererGuest = tab.rendererSurfaceGeneration == null
-        ? null
-        : findAdoptedWebContentsForWindow(
-            win.id,
-            tab.threadId,
-            tab.id,
-            tab.rendererSurfaceGeneration,
-          );
-      if (rendererGuest) {
-        try {
-          const live = rendererGuest.getURL();
-          const safe = await validateResumeUrl(isAllowedPreviewUrl(live) ? live : null);
-          if (safe) tab.resumeUrl = safe;
-        } catch {
-          /* guest may be tearing down; keep the last known resumeUrl */
-        }
-      }
-      if (win.isDestroyed()) return;
-
-      requestRendererSurfaceDiscard(win, s.workspaceId ?? tab.threadId, tab.threadId, tab.id);
-    }
+    if (!(await discardTabs(win, s, ids))) return;
 
     setPerf("warmInactiveRuntimeCount", collectWarmTabs(s).length);
-    if (activeThreadTouched && s.lastPreviewThreadId) {
-      emitTabsUpdated(win, s, s.lastPreviewThreadId);
-    }
   } finally {
     s.discardSweepInProgress = false;
+  }
+}
+
+function tabsToDiscard(
+  warm: WarmTabRef[],
+  session: PreviewSession,
+  visible: boolean,
+  config: DiscardConfig,
+): string[] {
+  return selectTabsToDiscard(
+    warm,
+    session.lastPreviewThreadId,
+    activeTabIdOf(session),
+    visible,
+    Date.now(),
+    config,
+  );
+}
+
+async function discardTabs(win: BrowserWindow, session: PreviewSession, ids: string[]): Promise<boolean> {
+  for (const id of ids) {
+    const located = locateTab(session, id);
+    if (!located) continue;
+    await persistLiveResumeUrl(win, located.tab);
+    if (win.isDestroyed()) return false;
+    requestRendererSurfaceDiscard(
+      win,
+      session.workspaceId ?? located.tab.threadId,
+      located.tab.threadId,
+      located.tab.id,
+    );
+  }
+  return true;
+}
+
+async function persistLiveResumeUrl(win: BrowserWindow, tab: TabState): Promise<void> {
+  if (tab.rendererSurfaceGeneration == null) return;
+  const guest = findAdoptedWebContentsForWindow(
+    win.id,
+    tab.threadId,
+    tab.id,
+    tab.rendererSurfaceGeneration,
+  );
+  if (!guest) return;
+  try {
+    const live = guest.getURL();
+    const safe = await validateResumeUrl(isAllowedPreviewUrl(live) ? live : null);
+    if (safe) tab.resumeUrl = safe;
+  } catch {
+    /* guest may be tearing down; keep the last known resumeUrl */
   }
 }
 

@@ -51,65 +51,65 @@ export function createInstallationLifecycle(
     beforeInstallHook = hook;
   };
 
+  const operationIsCurrent = (operationGeneration: number): boolean =>
+    active && operationGeneration === generation;
+
+  const publishBlockedInstall = (logMessage: string, statusMessage = logMessage): void => {
+    console.error(`[auto-updater] ${logMessage}`);
+    status.publish({ state: "error", message: `Update installation blocked: ${statusMessage}` });
+  };
+
+  const runBeforeInstallHook = async (
+    operationGeneration: number,
+    failureContext: string,
+  ): Promise<boolean> => {
+    if (!beforeInstallHook) return true;
+    try {
+      await beforeInstallHook();
+      return true;
+    } catch (error) {
+      if (!operationIsCurrent(operationGeneration)) return false;
+      const message = error instanceof Error ? error.message : String(error);
+      publishBlockedInstall(`${failureContext}: ${message}`, message);
+      return false;
+    }
+  };
+
+  const awaitQuitAndInstall = async (): Promise<void> => {
+    const initiation = updater.quitAndInstall();
+    if (initiation === false) throw new Error("Update installer did not begin application shutdown");
+    if (isPromiseLike(initiation)) await initiation;
+  };
+
+  const finishInstallerQuit = (operationGeneration: number): boolean => {
+    if (!operationIsCurrent(operationGeneration)) return false;
+    if (installerQuitObserved) {
+      isCompletingStoppedServerQuit = false;
+      return true;
+    }
+    isCompletingStoppedServerQuit = false;
+    publishBlockedInstall("Update installer did not begin application shutdown");
+    return false;
+  };
+
   /** Stop the server and start the installer after Electron observes the quit. */
   const quitAndInstallSafely = async (): Promise<boolean> => {
     const operationGeneration = generation;
-    if (beforeInstallHook) {
-      try {
-        await beforeInstallHook();
-      } catch (err) {
-        if (!active || operationGeneration !== generation) return false;
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(
-          "[auto-updater] beforeInstallHook failed, cancelling install:",
-          message,
-        );
-        status.publish({
-          state: "error",
-          message: `Update installation blocked: ${message}`,
-        });
-        return false;
-      }
-    }
-    if (!active || operationGeneration !== generation) return false;
+    if (!(await runBeforeInstallHook(operationGeneration, "beforeInstallHook failed, cancelling install"))) return false;
+    if (!operationIsCurrent(operationGeneration)) return false;
     installerQuitObserved = false;
     isCompletingStoppedServerQuit = true;
     try {
-      const initiation = updater.quitAndInstall();
-      if (initiation === false) {
-        throw new Error("Update installer did not begin application shutdown");
-      }
-      if (
-        initiation &&
-        typeof (initiation as PromiseLike<unknown>).then === "function"
-      ) {
-        await initiation;
-      }
-    } catch (err) {
+      await awaitQuitAndInstall();
+    } catch (error) {
       if (operationGeneration !== generation) return false;
       isCompletingStoppedServerQuit = false;
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[auto-updater] quitAndInstall failed:", message);
-      status.publish({
-        state: "error",
-        message: `Update installation blocked: ${message}`,
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      publishBlockedInstall(`quitAndInstall failed: ${message}`, message);
       return false;
     }
     await new Promise<void>((resolve) => timer.setImmediate(resolve));
-    if (!active || operationGeneration !== generation) return false;
-    if (!installerQuitObserved) {
-      isCompletingStoppedServerQuit = false;
-      const message = "Update installer did not begin application shutdown";
-      console.error(`[auto-updater] ${message}`);
-      status.publish({
-        state: "error",
-        message: `Update installation blocked: ${message}`,
-      });
-      return false;
-    }
-    isCompletingStoppedServerQuit = false;
-    return true;
+    return finishInstallerQuit(operationGeneration);
   };
 
   /** Handle Electron's pending-install quit path with deferred server teardown. */
@@ -119,58 +119,30 @@ export function createInstallationLifecycle(
       installerQuitObserved = true;
       return;
     }
-    if (!active || !application.isPackaged) return;
-    const { autoInstallOnQuit } = settings();
-    if (!autoInstallOnQuit || status.get().state !== "downloaded") return;
+    if (!shouldDeferInstallOnQuit()) return;
 
     event.preventDefault();
     installerQuitObserved = false;
     isCompletingStoppedServerQuit = true;
-    const operationGeneration = generation;
-    void (async () => {
-      try {
-        if (beforeInstallHook) await beforeInstallHook();
-      } catch (err) {
-        if (!active || operationGeneration !== generation) return;
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(
-          "[auto-updater] server stop failed before silent install on quit:",
-          message,
-        );
-        isCompletingStoppedServerQuit = false;
-        status.publish({
-          state: "error",
-          message: `Update installation blocked: ${message}`,
-        });
-        return;
-      }
-      if (!active || operationGeneration !== generation) return;
-      try {
-        application.quit();
-      } catch (err) {
-        if (operationGeneration !== generation) return;
-        isCompletingStoppedServerQuit = false;
-        const message = err instanceof Error ? err.message : String(err);
-        console.error("[auto-updater] deferred app quit failed:", message);
-        status.publish({
-          state: "error",
-          message: `Update installation blocked: ${message}`,
-        });
-        return;
-      }
-      if (!active || operationGeneration !== generation) return;
-      if (!installerQuitObserved) {
-        isCompletingStoppedServerQuit = false;
-        const message = "Update installer did not begin application shutdown";
-        console.error(`[auto-updater] ${message}`);
-        status.publish({
-          state: "error",
-          message: `Update installation blocked: ${message}`,
-        });
-        return;
-      }
+    void completePendingInstall(generation);
+  };
+
+  const shouldDeferInstallOnQuit = (): boolean =>
+    active && application.isPackaged && settings().autoInstallOnQuit && status.get().state === "downloaded";
+
+  const completePendingInstall = async (operationGeneration: number): Promise<void> => {
+    if (!(await runBeforeInstallHook(operationGeneration, "server stop failed before silent install on quit"))) return;
+    if (!operationIsCurrent(operationGeneration)) return;
+    try {
+      application.quit();
+    } catch (error) {
+      if (operationGeneration !== generation) return;
       isCompletingStoppedServerQuit = false;
-    })();
+      const message = error instanceof Error ? error.message : String(error);
+      publishBlockedInstall(`deferred app quit failed: ${message}`, message);
+      return;
+    }
+    finishInstallerQuit(operationGeneration);
   };
 
   return {
@@ -199,4 +171,8 @@ export function createInstallationLifecycle(
       installerQuitObserved = false;
     },
   };
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return Boolean(value) && typeof (value as { then?: unknown }).then === "function";
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, writeFile, readFile, mkdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { buildServerBinary, resolveBinaryPaths } from "../desktop-packaging/target-package/build-server-binary.mjs";

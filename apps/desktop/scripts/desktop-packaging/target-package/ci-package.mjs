@@ -51,25 +51,26 @@ export async function runElectronBuilderWithRetry({
   maxAttempts = MAX_ATTEMPTS,
   diagnosticLimitBytes = DEFAULT_DIAGNOSTIC_LIMIT_BYTES,
 }) {
-  if (typeof runAttempt !== "function") {
-    throw new TypeError("runAttempt must be a function");
-  }
-  const attemptLimit = Math.min(Math.max(Number(maxAttempts) || MAX_ATTEMPTS, 1), MAX_ATTEMPTS);
+  assertRunAttempt(runAttempt);
+  const attemptLimit = boundedAttemptLimit(maxAttempts);
+  return runElectronBuilderAttempts(runAttempt, attemptLimit, diagnosticLimitBytes);
+}
+
+function assertRunAttempt(runAttempt) {
+  if (typeof runAttempt !== "function") throw new TypeError("runAttempt must be a function");
+}
+
+function boundedAttemptLimit(maxAttempts) {
+  return Math.min(Math.max(Number(maxAttempts) || MAX_ATTEMPTS, 1), MAX_ATTEMPTS);
+}
+
+async function runElectronBuilderAttempts(runAttempt, attemptLimit, diagnosticLimitBytes) {
   let lastResult;
   for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
     lastResult = await runAttempt(attempt);
     if (lastResult?.status === 0) return lastResult;
-    const output = String(lastResult?.output ?? "");
-    const diagnostics = boundedTail(output, diagnosticLimitBytes);
-    const classification =
-      lastResult?.classification ?? classifyElectronBuilderFailure(output);
-    if (!classification.retryable || attempt === attemptLimit) {
-      throw packageFailure({
-        status: lastResult?.status ?? 1,
-        diagnostics,
-        attempts: attempt,
-        attemptLimit,
-      });
+    if (shouldStopElectronBuilderRetries(lastResult, attempt, attemptLimit)) {
+      throw electronBuilderAttemptFailure(lastResult, attempt, attemptLimit, diagnosticLimitBytes);
     }
     console.warn(
       `[ci-package] Retrying transient Electron download failure (${attempt + 1}/${attemptLimit})`,
@@ -79,6 +80,21 @@ export async function runElectronBuilderWithRetry({
     status: lastResult?.status ?? 1,
     diagnostics: boundedTail(lastResult?.output, diagnosticLimitBytes),
     attempts: attemptLimit,
+    attemptLimit,
+  });
+}
+
+function shouldStopElectronBuilderRetries(result, attempt, attemptLimit) {
+  const output = String(result?.output ?? "");
+  const classification = result?.classification ?? classifyElectronBuilderFailure(output);
+  return !classification.retryable || attempt === attemptLimit;
+}
+
+function electronBuilderAttemptFailure(result, attempts, attemptLimit, diagnosticLimitBytes) {
+  return packageFailure({
+    status: result?.status ?? 1,
+    diagnostics: boundedTail(result?.output, diagnosticLimitBytes),
+    attempts,
     attemptLimit,
   });
 }

@@ -258,23 +258,9 @@ export function viewportBoundsFallback(viewWidth: number, viewHeight: number): B
 export function parseBoundsRecord(b: unknown): Bounds | null {
   if (!b || typeof b !== "object") return null;
   const bb = b as Record<string, unknown>;
-  const x = bb.x;
-  const y = bb.y;
-  const width = bb.width;
-  const height = bb.height;
-  if (
-    typeof x !== "number" ||
-    typeof y !== "number" ||
-    typeof width !== "number" ||
-    typeof height !== "number" ||
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
-    !Number.isFinite(width) ||
-    !Number.isFinite(height)
-  ) {
-    return null;
-  }
-  return { x, y, width, height };
+  const values = [bb.x, bb.y, bb.width, bb.height];
+  if (!values.every((value) => typeof value === "number" && Number.isFinite(value))) return null;
+  return { x: values[0] as number, y: values[1] as number, width: values[2] as number, height: values[3] as number };
 }
 
 /**
@@ -430,23 +416,15 @@ export function previewCaptureFileStem(pageUrl: string): string {
 }
 
 /** Typed capture envelope aligned with PNG bytes for outbound prompt augmentation (v2 adds text outline and console tail). */
-export async function buildBrowserCapturePayload(
-  webContents: WebContents,
-  boundsCss: Bounds,
-  consoleBuffer: readonly string[],
-  failedRequests: McodeBrowserCaptureV2["failedRequests"],
-  workspaceId: string | null,
-  extras?: {
-    captureKind?: "viewport" | "region" | "element";
-    selectorHint?: string | null;
-    htmlExcerpt?: string | null;
-    elementStyle?: McodeBrowserCaptureV2["elementStyle"] | null;
-  },
-): Promise<McodeBrowserCaptureV2> {
-  const ctx = await captureGuestPageContextForCapture(webContents);
-  const tail = formatConsoleTail(consoleBuffer);
+type CaptureExtras = {
+  captureKind?: "viewport" | "region" | "element";
+  selectorHint?: string | null;
+  htmlExcerpt?: string | null;
+  elementStyle?: McodeBrowserCaptureV2["elementStyle"] | null;
+};
 
-  const out: McodeBrowserCaptureV2 = {
+function createCapturePayload(webContents: WebContents, boundsCss: Bounds, extras: CaptureExtras | undefined): McodeBrowserCaptureV2 {
+  return {
     schemaVersion: 2,
     pageUrl: webContents.getURL(),
     pageTitle: webContents.getTitle() ?? "",
@@ -455,67 +433,93 @@ export async function buildBrowserCapturePayload(
     selectorHint:
       extras?.selectorHint != null ? sanitizeSelectorHintFromGuest(String(extras.selectorHint)) : null,
   };
-  if (extras?.captureKind !== undefined) {
-    out.captureKind = extras.captureKind;
-  }
-  if (extras?.htmlExcerpt != null && extras.htmlExcerpt.length > 0) {
-    const scrubbed = scrubHtmlExcerptForOutbound(extras.htmlExcerpt);
-    if (scrubbed.length > 0) {
-      out.htmlExcerpt = safetyCapGuestText(scrubbed);
-    }
-  }
-  if (tail) {
-    out.consoleTail = tail;
-  }
-  if (extras?.elementStyle && Object.keys(extras.elementStyle).length > 0) {
-    out.elementStyle = extras.elementStyle;
-  }
-  if (ctx && !ctx.error) {
-    if (ctx.visibleText != null && ctx.visibleText.length > 0) {
-      const scrubbed = scrubVisibleTextForOutbound(ctx.visibleText);
-      if (scrubbed.length > 0) {
-        out.visibleTextExcerpt = safetyCapGuestText(scrubbed);
-      }
-    }
-    if (ctx.headingOutline != null && ctx.headingOutline.length > 0) {
-      const ho = scrubVisibleTextForOutbound(ctx.headingOutline);
-      if (ho.length > 0) {
-        out.headingOutline = safetyCapGuestText(ho);
-      }
-    }
-    if (ctx.interactiveOutline != null && ctx.interactiveOutline.length > 0) {
-      const io = scrubVisibleTextForOutbound(ctx.interactiveOutline);
-      if (io.length > 0) {
-        out.interactiveOutlineExcerpt = safetyCapGuestText(io);
-      }
-    }
-    if (typeof ctx.scrollX === "number" && Number.isFinite(ctx.scrollX)) {
-      const sy = typeof ctx.scrollY === "number" && Number.isFinite(ctx.scrollY) ? ctx.scrollY : 0;
-      out.viewportScroll = { scrollX: ctx.scrollX, scrollY: sy };
-    }
-    if (
-      typeof ctx.layoutWidth === "number" &&
-      Number.isFinite(ctx.layoutWidth) &&
-      typeof ctx.layoutHeight === "number" &&
-      Number.isFinite(ctx.layoutHeight)
-    ) {
-      out.layoutViewport = { width: Math.max(0, ctx.layoutWidth), height: Math.max(0, ctx.layoutHeight) };
-    }
-  }
+}
+
+function applyCaptureExtras(out: McodeBrowserCaptureV2, extras: CaptureExtras | undefined, tail: string | undefined): void {
+  applyCaptureKind(out, extras);
+  applyHtmlExcerpt(out, extras?.htmlExcerpt);
+  applyConsoleTail(out, tail);
+  applyElementStyle(out, extras?.elementStyle);
+}
+
+function applyCaptureKind(out: McodeBrowserCaptureV2, extras: CaptureExtras | undefined): void {
+  if (extras?.captureKind !== undefined) out.captureKind = extras.captureKind;
+}
+
+function applyHtmlExcerpt(out: McodeBrowserCaptureV2, excerpt: string | null | undefined): void {
+  if (!excerpt) return;
+  const scrubbed = scrubHtmlExcerptForOutbound(excerpt);
+  if (scrubbed.length > 0) out.htmlExcerpt = safetyCapGuestText(scrubbed);
+}
+
+function applyConsoleTail(out: McodeBrowserCaptureV2, tail: string | undefined): void {
+  if (tail) out.consoleTail = tail;
+}
+
+function applyElementStyle(out: McodeBrowserCaptureV2, style: McodeBrowserCaptureV2["elementStyle"] | null | undefined): void {
+  if (style && Object.keys(style).length > 0) out.elementStyle = style;
+}
+
+function appendCaptureText(out: McodeBrowserCaptureV2, field: "visibleTextExcerpt" | "headingOutline" | "interactiveOutlineExcerpt", value: string | undefined): void {
+  if (!value) return;
+  const scrubbed = scrubVisibleTextForOutbound(value);
+  if (scrubbed.length > 0) out[field] = safetyCapGuestText(scrubbed);
+}
+
+function appendGuestContext(out: McodeBrowserCaptureV2, context: GuestPageContextPayload | null): void {
+  if (!context || context.error) return;
+  appendCaptureText(out, "visibleTextExcerpt", context.visibleText);
+  appendCaptureText(out, "headingOutline", context.headingOutline);
+  appendCaptureText(out, "interactiveOutlineExcerpt", context.interactiveOutline);
+  appendViewportScroll(out, context);
+  appendLayoutViewport(out, context);
+}
+
+function appendViewportScroll(out: McodeBrowserCaptureV2, context: GuestPageContextPayload): void {
+  if (typeof context.scrollX !== "number" || !Number.isFinite(context.scrollX)) return;
+  const scrollY = typeof context.scrollY === "number" && Number.isFinite(context.scrollY) ? context.scrollY : 0;
+  out.viewportScroll = { scrollX: context.scrollX, scrollY };
+}
+
+function appendLayoutViewport(out: McodeBrowserCaptureV2, context: GuestPageContextPayload): void {
+  if (typeof context.layoutWidth !== "number" || !Number.isFinite(context.layoutWidth)) return;
+  if (typeof context.layoutHeight !== "number" || !Number.isFinite(context.layoutHeight)) return;
+  out.layoutViewport = { width: Math.max(0, context.layoutWidth), height: Math.max(0, context.layoutHeight) };
+}
+
+async function persistCaptureSpillIfNeeded(
+  capture: McodeBrowserCaptureV2,
+  workspaceId: string | null,
+): Promise<McodeBrowserCaptureV2> {
+  const clamped = clampMcodeBrowserCaptureV2(capture);
+  const id = workspaceId?.trim() ?? "";
+  if (!id || !captureNeedsSpillPostRedact(capture)) return clamped;
+  const spill = await persistBrowserCaptureSpill(id, capture);
+  if (!spill) return clamped;
+  clamped.spillAppDataPath = spill.appDataPath;
+  clamped.spillAbsolutePath = spill.absolutePath;
+  return clamped;
+}
+
+/** Builds a bounded, redacted Browser Capture v2 payload from an adopted guest. */
+export async function buildBrowserCapturePayload(
+  webContents: WebContents,
+  boundsCss: Bounds,
+  consoleBuffer: readonly string[],
+  failedRequests: McodeBrowserCaptureV2["failedRequests"],
+  workspaceId: string | null,
+  extras?: CaptureExtras,
+): Promise<McodeBrowserCaptureV2> {
+  const context = await captureGuestPageContextForCapture(webContents);
+  const tail = formatConsoleTail(consoleBuffer);
+  const out = createCapturePayload(webContents, boundsCss, extras);
+  applyCaptureExtras(out, extras, tail);
+  appendGuestContext(out, context);
   if (failedRequests && failedRequests.length > 0) {
     out.failedRequests = failedRequests;
   }
   const redacted = redactMcodeBrowserCaptureV2(out);
-  const clamped = clampMcodeBrowserCaptureV2(redacted);
-  const wid = workspaceId?.trim() ?? "";
-  if (wid && captureNeedsSpillPostRedact(redacted)) {
-    const sp = await persistBrowserCaptureSpill(wid, redacted);
-    if (sp) {
-      clamped.spillAppDataPath = sp.appDataPath;
-      clamped.spillAbsolutePath = sp.absolutePath;
-    }
-  }
-  return clamped;
+  return persistCaptureSpillIfNeeded(redacted, workspaceId);
 }
 
 /**
@@ -523,189 +527,142 @@ export async function buildBrowserCapturePayload(
  * to track failed HTTP/HTTPS responses per-session.
  */
 export function registerWebRequestInterceptor(partition: Electron.Session): void {
-  partition.webRequest.onCompleted({ urls: ["http://*/*", "https://*/*"] }, (details) => {
-    const code = details.statusCode ?? 0;
-    if (code > 0 && code < 400) return;
-    const wcId = details.webContentsId;
-    if (wcId == null) return;
-    const url = details.url;
-    if (!url.startsWith("http://") && !url.startsWith("https://")) return;
-    const rt = String(details.resourceType ?? "other").slice(0, 32);
-    const safeUrl = url.length > 2048 ? url.slice(0, 2048) : url;
-    for (const s of sessions.values()) {
-      const activeWebContents = resolveActivePreviewWebContents(s);
-      if (!activeWebContents || activeWebContents.id !== wcId) continue;
-      pushFailedRequest(s, { url: safeUrl, statusCode: code, resourceType: rt });
-      return;
-    }
-  });
+  partition.webRequest.onCompleted({ urls: ["http://*/*", "https://*/*"] }, recordFailedPreviewRequest);
+}
+
+function failedPreviewRequest(details: Electron.OnCompletedListenerDetails): { webContentsId: number; url: string; statusCode: number; resourceType: string } | null {
+  const statusCode = details.statusCode ?? 0;
+  if (statusCode > 0 && statusCode < 400) return null;
+  if (details.webContentsId == null) return null;
+  if (!details.url.startsWith("http://") && !details.url.startsWith("https://")) return null;
+  return {
+    webContentsId: details.webContentsId,
+    url: details.url.length > 2048 ? details.url.slice(0, 2048) : details.url,
+    statusCode,
+    resourceType: String(details.resourceType ?? "other").slice(0, 32),
+  };
+}
+
+function recordFailedPreviewRequest(details: Electron.OnCompletedListenerDetails): void {
+  const request = failedPreviewRequest(details);
+  if (!request) return;
+  for (const session of sessions.values()) {
+    const activeWebContents = resolveActivePreviewWebContents(session);
+    if (!activeWebContents || activeWebContents.id !== request.webContentsId) continue;
+    pushFailedRequest(session, request);
+    return;
+  }
 }
 
 /**
  * Registers the `preview:capture-picture-reference` and `preview:capture-context-reference`
  * IPC handlers. Call once at app startup.
  */
+interface ActiveCapture {
+  readonly session: PreviewSession;
+  readonly webContents: WebContents;
+}
+
+function activeCapture(event: Electron.IpcMainInvokeEvent): ActiveCapture | PreviewPictureReferenceResult {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+  const session = getSession(win);
+  const webContents = resolveActivePreviewWebContents(session);
+  return webContents ? { session, webContents } : { ok: false, error: "no-preview" };
+}
+
+function isCaptureError(value: ActiveCapture | PreviewPictureReferenceResult): value is PreviewPictureReferenceResult {
+  return "ok" in value;
+}
+
+async function persistCapturedPng(webContents: WebContents, prefix: string): Promise<{ meta: AttachmentMeta; bytes: Uint8Array; bounds: Bounds } | PreviewPictureReferenceResult> {
+  const image = await webContents.capturePage();
+  const buffer = image.toPNG();
+  if (buffer.length === 0) return { ok: false, error: "empty-capture" };
+  const id = randomUUID();
+  const stem = previewCaptureFileStem(webContents.getURL());
+  const tempDir = join(app.getPath("temp"), "mcode-attachments");
+  const tempPath = join(tempDir, `${id}.png`);
+  await mkdir(tempDir, { recursive: true });
+  await writeFile(tempPath, buffer);
+  const size = image.getSize();
+  return {
+    meta: { id, name: `${prefix}-${stem}-${Date.now()}.png`, mimeType: "image/png", sizeBytes: buffer.length, sourcePath: tempPath },
+    bytes: Uint8Array.from(buffer),
+    bounds: viewportBoundsFallback(size.width, size.height),
+  };
+}
+
+function captureBounds(session: PreviewSession, fallback: Bounds): Bounds {
+  return session.lastBounds ? viewportBoundsFallback(session.lastBounds.width, session.lastBounds.height) : fallback;
+}
+
+async function buildPictureResult(capture: ActiveCapture, prefix: string, bounds: Bounds | null): Promise<PreviewPictureReferenceResult> {
+  const persisted = await persistCapturedPng(capture.webContents, prefix);
+  if ("ok" in persisted) return persisted;
+  const capturePayload = await buildBrowserCapturePayload(capture.webContents, bounds ?? captureBounds(capture.session, persisted.bounds), capture.session.consoleBuffer, snapshotFailedRequestsForCapture(capture.session), capture.session.workspaceId, { captureKind: "viewport" });
+  return { ok: true, meta: persisted.meta, previewBytes: persisted.bytes, capture: capturePayload };
+}
+
+async function handlePictureCapture(event: Electron.IpcMainInvokeEvent): Promise<PreviewPictureReferenceResult> {
+  const capture = activeCapture(event);
+  if (isCaptureError(capture)) return capture;
+  try {
+    return await buildPictureResult(capture, "preview", null);
+  } catch {
+    return { ok: false, error: "capture-failed" };
+  }
+}
+
+async function removeAnnotationOverlay(webContents: WebContents): Promise<void> {
+  if (webContents.isDestroyed()) return;
+  try {
+    await webContents.executeJavaScript(REMOVE_ANNOTATION_SNAPSHOT_OVERLAY_JS, true);
+  } catch {
+    // Navigation can destroy the isolated page between capture and cleanup.
+  }
+}
+
+async function paintAnnotationOverlay(webContents: WebContents, overlay: AnnotationSnapshotRequest): Promise<boolean> {
+  await webContents.executeJavaScript(buildAnnotationSnapshotOverlayJs(overlay), true);
+  return await webContents.executeJavaScript(WAIT_FOR_ANNOTATION_SNAPSHOT_OVERLAY_PAINT_JS, true) === true;
+}
+
+async function handleAnnotationCapture(event: Electron.IpcMainInvokeEvent, payload: unknown): Promise<PreviewPictureReferenceResult> {
+  const capture = activeCapture(event);
+  if (isCaptureError(capture)) return capture;
+  const lastBounds = capture.session.lastBounds;
+  if (!lastBounds) return { ok: false, error: "no-bounds" };
+  const bounds = viewportBoundsFallback(lastBounds.width, lastBounds.height);
+  const overlay = parseAnnotationSnapshotRequest(payload, bounds);
+  if (!overlay) return { ok: false, error: "capture-failed" };
+  try {
+    if (!await paintAnnotationOverlay(capture.webContents, overlay)) return { ok: false, error: "capture-failed" };
+    return await buildPictureResult(capture, "preview-annotation", bounds);
+  } catch {
+    return { ok: false, error: "capture-failed" };
+  } finally {
+    await removeAnnotationOverlay(capture.webContents);
+  }
+}
+
+async function handleContextCapture(event: Electron.IpcMainInvokeEvent): Promise<PreviewContextReferenceResult> {
+  const capture = activeCapture(event);
+  if (isCaptureError(capture)) return capture;
+  const lastBounds = capture.session.lastBounds;
+  if (!lastBounds) return { ok: false, error: "no-bounds" };
+  try {
+    const bounds = viewportBoundsFallback(lastBounds.width, lastBounds.height);
+    const payload = await buildBrowserCapturePayload(capture.webContents, bounds, capture.session.consoleBuffer, snapshotFailedRequestsForCapture(capture.session), capture.session.workspaceId, { captureKind: "viewport" });
+    return { ok: true, capture: payload };
+  } catch {
+    return { ok: false, error: "capture-failed" };
+  }
+}
+
+/** Registers the Preview capture IPC handlers. */
 export function registerCaptureHandlers(): void {
-  ipcMain.handle("preview:capture-picture-reference", async (_event): Promise<PreviewPictureReferenceResult> => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-
-    const s = getSession(win);
-    const activeWebContents = resolveActivePreviewWebContents(s);
-    if (!activeWebContents) {
-      return { ok: false, error: "no-preview" };
-    }
-
-    try {
-      const image = await activeWebContents.capturePage();
-      const buffer = image.toPNG();
-      if (buffer.length === 0) {
-        return { ok: false, error: "empty-capture" };
-      }
-
-      const id = randomUUID();
-      const stem = previewCaptureFileStem(activeWebContents.getURL());
-      const name = `preview-${stem}-${Date.now()}.png`;
-      const tempDir = join(app.getPath("temp"), "mcode-attachments");
-      await mkdir(tempDir, { recursive: true });
-      const tempPath = join(tempDir, `${id}.png`);
-      await writeFile(tempPath, buffer);
-
-      const meta: AttachmentMeta = {
-        id,
-        name,
-        mimeType: "image/png",
-        sizeBytes: buffer.length,
-        sourcePath: tempPath,
-      };
-
-      const lb = s.lastBounds;
-      const pngSize = image.getSize();
-      const boundsCss =
-        lb !== null ? viewportBoundsFallback(lb.width, lb.height) : viewportBoundsFallback(pngSize.width, pngSize.height);
-      const capture = await buildBrowserCapturePayload(
-        activeWebContents,
-        boundsCss,
-        s.consoleBuffer,
-        snapshotFailedRequestsForCapture(s),
-        s.workspaceId,
-        {
-          captureKind: "viewport",
-        },
-      );
-      return { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture };
-    } catch {
-      return { ok: false, error: "capture-failed" };
-    }
-  });
-
-  ipcMain.handle(
-    "preview:capture-annotation-snapshot",
-    async (_event, payload: unknown): Promise<PreviewPictureReferenceResult> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-
-      const s = getSession(win);
-      const activeWebContents = resolveActivePreviewWebContents(s);
-      if (!activeWebContents) {
-        return { ok: false, error: "no-preview" };
-      }
-
-      const lb = s.lastBounds;
-      if (!lb) {
-        return { ok: false, error: "no-bounds" };
-      }
-
-      const viewportBounds = viewportBoundsFallback(lb.width, lb.height);
-      const overlay = parseAnnotationSnapshotRequest(payload, viewportBounds);
-      if (!overlay) {
-        return { ok: false, error: "capture-failed" };
-      }
-
-      try {
-        await activeWebContents.executeJavaScript(buildAnnotationSnapshotOverlayJs(overlay), true);
-        const overlayPainted = await activeWebContents.executeJavaScript(
-          WAIT_FOR_ANNOTATION_SNAPSHOT_OVERLAY_PAINT_JS,
-          true,
-        );
-        if (overlayPainted !== true) {
-          return { ok: false, error: "capture-failed" };
-        }
-        const image = await activeWebContents.capturePage();
-        const buffer = image.toPNG();
-        if (buffer.length === 0) {
-          return { ok: false, error: "empty-capture" };
-        }
-
-        const id = randomUUID();
-        const stem = previewCaptureFileStem(activeWebContents.getURL());
-        const name = `preview-annotation-${stem}-${Date.now()}.png`;
-        const tempDir = join(app.getPath("temp"), "mcode-attachments");
-        await mkdir(tempDir, { recursive: true });
-        const tempPath = join(tempDir, `${id}.png`);
-        await writeFile(tempPath, buffer);
-
-        const meta: AttachmentMeta = {
-          id,
-          name,
-          mimeType: "image/png",
-          sizeBytes: buffer.length,
-          sourcePath: tempPath,
-        };
-
-        const capture = await buildBrowserCapturePayload(
-          activeWebContents,
-          viewportBounds,
-          s.consoleBuffer,
-          snapshotFailedRequestsForCapture(s),
-          s.workspaceId,
-          {
-            captureKind: "viewport",
-          },
-        );
-        return { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture };
-      } catch {
-        return { ok: false, error: "capture-failed" };
-      } finally {
-        if (!activeWebContents.isDestroyed()) {
-          try {
-            await activeWebContents.executeJavaScript(REMOVE_ANNOTATION_SNAPSHOT_OVERLAY_JS, true);
-          } catch {
-            /* page may be navigating */
-          }
-        }
-      }
-    },
-  );
-
-  ipcMain.handle("preview:capture-context-reference", async (_event): Promise<PreviewContextReferenceResult> => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-
-    const s = getSession(win);
-    const activeWebContents = resolveActivePreviewWebContents(s);
-    if (!activeWebContents) {
-      return { ok: false, error: "no-preview" };
-    }
-
-    const lb = s.lastBounds;
-    if (!lb) {
-      return { ok: false, error: "no-bounds" };
-    }
-
-    try {
-      const boundsCss = viewportBoundsFallback(lb.width, lb.height);
-      const capture = await buildBrowserCapturePayload(
-        activeWebContents,
-        boundsCss,
-        s.consoleBuffer,
-        snapshotFailedRequestsForCapture(s),
-        s.workspaceId,
-        { captureKind: "viewport" },
-      );
-      return { ok: true, capture };
-    } catch {
-      return { ok: false, error: "capture-failed" };
-    }
-  });
+  ipcMain.handle("preview:capture-picture-reference", handlePictureCapture);
+  ipcMain.handle("preview:capture-annotation-snapshot", handleAnnotationCapture);
+  ipcMain.handle("preview:capture-context-reference", handleContextCapture);
 }

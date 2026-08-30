@@ -9,7 +9,6 @@ import {
 import {
   CLIPBOARD_FILE_NAME_MAX_LENGTH,
   CLIPBOARD_MIME_TYPE_MAX_LENGTH,
-  createClipboardHandlers,
   registerClipboardHandlers,
   type ClipboardImage,
 } from "../handlers.js";

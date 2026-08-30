@@ -306,9 +306,27 @@ function pageStatusEqual(a: PreviewPageStatus, b: PreviewPageStatus): boolean {
     a.title === b.title &&
     a.favicon === b.favicon &&
     a.phase === b.phase &&
-    a.error?.kind === b.error?.kind &&
-    a.error?.status === b.error?.status &&
-    a.error?.code === b.error?.code &&
-    a.error?.message === b.error?.message
+    pageStatusErrorEqual(a.error, b.error)
   );
+}
+
+function pageStatusErrorEqual(
+  left: PreviewPageStatus["error"],
+  right: PreviewPageStatus["error"],
+): boolean {
+  return pageStatusErrorKindEqual(left, right) && pageStatusErrorDetailsEqual(left, right);
+}
+
+function pageStatusErrorKindEqual(
+  left: PreviewPageStatus["error"],
+  right: PreviewPageStatus["error"],
+): boolean {
+  return left?.kind === right?.kind;
+}
+
+function pageStatusErrorDetailsEqual(
+  left: PreviewPageStatus["error"],
+  right: PreviewPageStatus["error"],
+): boolean {
+  return left?.status === right?.status && left?.code === right?.code && left?.message === right?.message;
 }

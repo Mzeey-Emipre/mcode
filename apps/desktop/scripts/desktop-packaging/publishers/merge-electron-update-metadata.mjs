@@ -16,30 +16,51 @@ function readBounded(filePath) {
 }
 
 function parseFileEntries(source) {
-  const lines = source.split(/\r?\n/);
+  if (typeof source !== "string") {
+    throw new TypeError("Electron update metadata must be text");
+  }
+  return collectFileEntries(source.split(/\r?\n/));
+}
+
+function collectFileEntries(lines) {
   const entries = [];
-  let inFiles = false;
+  const fileLines = lines.slice(findFilesSectionStart(lines) + 1);
+  let current = collectCurrentFileEntry(fileLines, entries);
+  if (current.length > 0) entries.push(current.join("\n").replace(/\n+$/, ""));
+  return assertFileEntries(entries);
+}
+
+function findFilesSectionStart(lines) {
+  const filesStart = lines.findIndex((line) => line === "files:");
+  if (filesStart < 0) throw new Error("Electron update metadata has no files section");
+  return filesStart;
+}
+
+function collectCurrentFileEntry(lines, entries) {
   let current = [];
   for (const line of lines) {
-    if (line === "files:") {
-      inFiles = true;
-      continue;
-    }
-    if (!inFiles) continue;
-    if (/^  - url:/.test(line)) {
+    const operation = fileEntryLineOperation(line, current.length > 0);
+    if (operation.kind === "stop") return current;
+    if (operation.kind === "new") {
       if (current.length > 0) entries.push(current.join("\n"));
       current = [line];
-    } else if (/^    \S/.test(line) && current.length > 0) {
-      current.push(line);
-    } else if (/^\S/.test(line) && line.trim()) {
-      break;
-    } else if (current.length > 0) {
-      current.push(line);
     }
-    if (entries.length > MAX_FILE_ENTRIES)
+    if (operation.kind === "append") current.push(line);
+    if (entries.length > MAX_FILE_ENTRIES) {
       throw new Error("Electron update metadata has too many file entries");
+    }
   }
-  if (current.length > 0) entries.push(current.join("\n").replace(/\n+$/, ""));
+  return current;
+}
+
+function fileEntryLineOperation(line, hasCurrentEntry) {
+  if (line.startsWith("  - url:")) return { kind: "new" };
+  if (/^    \S/.test(line) && hasCurrentEntry) return { kind: "append" };
+  if (/^\S/.test(line) && line.trim()) return { kind: "stop" };
+  return hasCurrentEntry ? { kind: "append" } : { kind: "ignore" };
+}
+
+function assertFileEntries(entries) {
   if (entries.length === 0 || entries.length > MAX_FILE_ENTRIES) {
     throw new Error(
       "Electron update metadata must contain bounded file entries",

@@ -1,274 +1,190 @@
-/**
- * Navigation IPC handlers for BrowserSurfaceHost-owned Preview surfaces:
- * sync, navigate, go-back, go-forward, reload, force-reload, open-external,
- * get-navigation-state, plus the secondary browser tools surfaced in the header
- * overflow kebab (clear-cookies, clear-cache, get-zoom, set-zoom).
- */
+/** Navigation IPC handlers for BrowserSurfaceHost-owned Preview surfaces. */
 
-import { BrowserWindow, ipcMain, shell, type WebContents } from "electron";
+import { BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { logger } from "@mcode/shared";
-import {
-  ensureThreadTabSet,
-  getActiveTab,
-  getSession,
-  getThreadTabSet,
-  setPreviewLoading,
-} from "../state/window-session.js";
-import { type Bounds, type PreviewSession } from "../state/window-session.js";
+import { ensureThreadTabSet, getActiveTab, getSession, getThreadTabSet, setPreviewLoading, type Bounds, type PreviewSession } from "../state/window-session.js";
 import { bumpPerf } from "../observability/perf-counters.js";
-import {
-  validateResumeUrl,
-  trustMainProcessFileNavigation,
-} from "./local-file.js";
+import { validateResumeUrl, trustMainProcessFileNavigation } from "./local-file.js";
 import { isAllowedHttpUrl, isAllowedPreviewUrl } from "./policy.js";
-import {
-  resolvePreviewNavigationTarget,
-  type PreviewResolveNavigationResult,
-} from "./resolve-target.js";
+import { resolvePreviewNavigationTarget, type PreviewResolveNavigationResult } from "./resolve-target.js";
 import { loadPreviewGuestUrl } from "./guest-navigation.js";
 import { onPreviewHidden, onPreviewVisible } from "../tabs/discard-scheduler.js";
 import { previewSessionAdapter } from "../security/electron-session-policy.js";
 import { findAdoptedWebContentsForWindow } from "../surfaces/registry.js";
 
-/** Lower bound on the preview zoom factor (25%), matching Chromium's floor. */
 const MIN_ZOOM_FACTOR = 0.25;
-/** Upper bound on the preview zoom factor (500%), matching Chromium's ceiling. */
 const MAX_ZOOM_FACTOR = 5;
 
-/** Clamp a requested zoom factor to the supported range and snap to whole percent. */
+interface SyncPayload {
+  readonly visible: boolean;
+  readonly bounds: Bounds | null;
+  readonly threadId?: string | null;
+  readonly resumeUrlHint?: string | null;
+  readonly workspaceId?: string | null;
+}
+
 function clampZoomFactor(factor: number): number {
   const safe = Number.isFinite(factor) ? factor : 1;
   const bounded = Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, safe));
   return Math.round(bounded * 100) / 100;
 }
 
-/** Return the exact active adopted guest without creating or selecting another surface. */
+function getWindow(event: IpcMainInvokeEvent): BrowserWindow | null {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  return !win || win.isDestroyed() ? null : win;
+}
+
 function getActiveGuest(win: BrowserWindow, session: PreviewSession): WebContents | null {
   const threadId = session.lastPreviewThreadId;
   if (!threadId) return null;
   const tabSet = getThreadTabSet(session, threadId);
   const tab = tabSet?.tabs.find((candidate) => candidate.id === tabSet.activeTabId);
   if (!tab || tab.rendererSurfaceGeneration == null) return null;
-  return findAdoptedWebContentsForWindow(
-    win.id,
-    threadId,
-    tab.id,
-    tab.rendererSurfaceGeneration,
-  );
+  return findAdoptedWebContentsForWindow(win.id, threadId, tab.id, tab.rendererSurfaceGeneration);
 }
 
-/**
- * Registers all navigation-related IPC handlers:
- * preview:sync, preview:navigate, preview:go-back, preview:go-forward,
- * preview:reload, preview:open-external, preview:get-navigation-state.
- * Call once at app startup.
- */
+function roundedBounds(bounds: Bounds | null): Bounds | null {
+  if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) return null;
+  if (bounds.width < 4 || bounds.height < 4) return null;
+  return { x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height) };
+}
+
+function updateSyncScope(session: PreviewSession, payload: SyncPayload, bounds: Bounds | null): void {
+  const workspaceId = payload.workspaceId;
+  session.workspaceId = typeof workspaceId === "string" && workspaceId.trim().length > 0 ? workspaceId.trim() : null;
+  if (!bounds) return;
+  session.lastBounds = bounds;
+  if (payload.threadId !== null && payload.threadId !== undefined) ensureThreadTabSet(session, payload.threadId);
+  session.lastPreviewThreadId = payload.threadId ?? null;
+}
+
+function permittedResumeHint(value: string | null | undefined): string | null {
+  const hint = value?.trim() ?? "";
+  return hint.length > 0 && isAllowedPreviewUrl(hint) ? hint : null;
+}
+
+async function updateVisiblePreview(win: BrowserWindow, session: PreviewSession, payload: SyncPayload): Promise<void> {
+  const threadId = payload.threadId;
+  if (!threadId) return;
+  const safeHint = await validateResumeUrl(permittedResumeHint(payload.resumeUrlHint));
+  const activeTab = getActiveTab(session, threadId);
+  if (!activeTab.resumeUrl && !activeTab.userCreatedBlank && safeHint) activeTab.resumeUrl = safeHint;
+  session.resumePreviewUrl = activeTab.resumeUrl;
+  session.lastFavicons = activeTab.faviconUrl ? [activeTab.faviconUrl] : [];
+  onPreviewVisible(win, session);
+}
+
+async function handleSync(event: IpcMainInvokeEvent, payload: SyncPayload): Promise<void> {
+  const win = getWindow(event);
+  if (!win) return;
+  const session = getSession(win);
+  const bounds = roundedBounds(payload.bounds);
+  bumpPerf("setPanelBoundsCalls");
+  updateSyncScope(session, payload, bounds);
+  if (!payload.visible || !bounds) {
+    onPreviewHidden(win, session);
+    return;
+  }
+  await updateVisiblePreview(win, session, payload);
+}
+
+async function handleResolveNavigation(event: IpcMainInvokeEvent, url: string, workspacePath?: string | null): Promise<PreviewResolveNavigationResult> {
+  return getWindow(event) ? resolvePreviewNavigationTarget(url, workspacePath) : { ok: false, error: "no-window" };
+}
+
+function getNavigableGuest(event: IpcMainInvokeEvent): { win: BrowserWindow; session: PreviewSession; guest: WebContents } | null {
+  const win = getWindow(event);
+  if (!win) return null;
+  return getNavigableGuestForWindow(win);
+}
+
+function getNavigableGuestForWindow(win: BrowserWindow): { win: BrowserWindow; session: PreviewSession; guest: WebContents } | null {
+  const session = getSession(win);
+  const guest = getActiveGuest(win, session);
+  return guest ? { win, session, guest } : null;
+}
+
+async function handleNavigate(event: IpcMainInvokeEvent, url: string, workspacePath?: string | null): Promise<{ ok: true } | { ok: false; error: string }> {
+  const win = getWindow(event);
+  if (!win) return { ok: false, error: "no-window" };
+  const resolved = await resolvePreviewNavigationTarget(url, workspacePath);
+  if (!resolved.ok) return resolved;
+  const context = getNavigableGuestForWindow(win);
+  if (!context) return { ok: false, error: "preview-unavailable" };
+  const activeTab = context.session.lastPreviewThreadId ? getActiveTab(context.session, context.session.lastPreviewThreadId) : null;
+  logger.info("Preview: user navigated", { url: resolved.url });
+  setPreviewLoading(context.win, context.session, true);
+  trustMainProcessFileNavigation(context.session, resolved.url);
+  const result = await loadPreviewGuestUrl(context.guest, resolved.url);
+  if (result.status === "failed") return { ok: false, error: "navigation-failed" };
+  context.session.resumePreviewUrl = resolved.url;
+  if (activeTab) activeTab.resumeUrl = resolved.url;
+  return { ok: true };
+}
+
+function handleHistory(event: IpcMainInvokeEvent, direction: "back" | "forward"): boolean {
+  const context = getNavigableGuest(event);
+  if (!context) return false;
+  const canNavigate = direction === "back" ? context.guest.canGoBack() : context.guest.canGoForward();
+  if (!canNavigate) return false;
+  setPreviewLoading(context.win, context.session, true);
+  if (direction === "back") context.guest.goBack();
+  else context.guest.goForward();
+  return true;
+}
+
+function reloadActiveGuest(event: IpcMainInvokeEvent, ignoreCache: boolean): void {
+  const context = getNavigableGuest(event);
+  if (!context) return;
+  setPreviewLoading(context.win, context.session, true);
+  if (ignoreCache) context.guest.reloadIgnoringCache();
+  else context.guest.reload();
+}
+
+async function clearPreviewStorage(event: IpcMainInvokeEvent, operation: "cookies" | "cache"): Promise<void> {
+  if (!getWindow(event)) return;
+  if (operation === "cookies") await previewSessionAdapter.clearCookies();
+  else await previewSessionAdapter.clearCache();
+}
+
+function getZoom(event: IpcMainInvokeEvent): number {
+  const context = getNavigableGuest(event);
+  return context ? clampZoomFactor(context.guest.getZoomFactor()) : 1;
+}
+
+function setZoom(event: IpcMainInvokeEvent, factor: number): number {
+  const context = getNavigableGuest(event);
+  if (!context) return 1;
+  const clamped = clampZoomFactor(factor);
+  context.guest.setZoomFactor(clamped);
+  return clamped;
+}
+
+function openActiveUrlExternally(event: IpcMainInvokeEvent): void {
+  const context = getNavigableGuest(event);
+  const url = context?.guest.getURL();
+  if (!url || !isAllowedHttpUrl(url)) return;
+  void shell.openExternal(url).catch(() => undefined);
+}
+
+function getNavigationState(event: IpcMainInvokeEvent): { canGoBack: boolean; canGoForward: boolean } {
+  const context = getNavigableGuest(event);
+  return context ? { canGoBack: context.guest.canGoBack(), canGoForward: context.guest.canGoForward() } : { canGoBack: false, canGoForward: false };
+}
+
+/** Registers the Preview navigation IPC handlers. */
 export function registerNavigationHandlers(): void {
-  ipcMain.handle(
-    "preview:sync",
-    async (
-      _event,
-      payload: {
-        visible: boolean;
-        bounds: Bounds | null;
-        threadId?: string | null;
-        resumeUrlHint?: string | null;
-        workspaceId?: string | null;
-      },
-    ) => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return;
-
-      const s = getSession(win);
-      const ws = payload.workspaceId;
-      s.workspaceId = typeof ws === "string" && ws.trim().length > 0 ? ws.trim() : null;
-      const b = payload.bounds;
-      bumpPerf("setPanelBoundsCalls");
-      const hasValidBounds = b && b.width >= 4 && b.height >= 4;
-      const tid = payload.threadId ?? null;
-      const incomingBounds = hasValidBounds
-        ? {
-            x: Math.round(b.x),
-            y: Math.round(b.y),
-            width: Math.round(b.width),
-            height: Math.round(b.height),
-          }
-        : null;
-      if (hasValidBounds) {
-        s.lastBounds = incomingBounds;
-        if (tid != null) {
-          ensureThreadTabSet(s, tid);
-        }
-        s.lastPreviewThreadId = tid;
-      }
-      if (!payload.visible || !incomingBounds) {
-        onPreviewHidden(win, s);
-        return;
-      }
-
-      const hintRaw = payload.resumeUrlHint?.trim() ?? "";
-      const hint = hintRaw.length > 0 && isAllowedPreviewUrl(hintRaw) ? hintRaw : null;
-      const safeHint = await validateResumeUrl(hint);
-      if (tid == null) return;
-      const activeTab = getActiveTab(s, tid);
-      if (!activeTab.resumeUrl && !activeTab.userCreatedBlank && safeHint) {
-        activeTab.resumeUrl = safeHint;
-      }
-      s.resumePreviewUrl = activeTab.resumeUrl;
-      s.lastFavicons = activeTab.faviconUrl ? [activeTab.faviconUrl] : [];
-      onPreviewVisible(win, s);
-    },
-  );
-
-  ipcMain.handle(
-    "preview:resolve-navigation",
-    async (
-      _event,
-      url: string,
-      workspacePath?: string | null,
-    ): Promise<PreviewResolveNavigationResult> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      return resolvePreviewNavigationTarget(url, workspacePath);
-    },
-  );
-
-  ipcMain.handle(
-    "preview:navigate",
-    async (
-      _event,
-      url: string,
-      workspacePath?: string | null,
-    ): Promise<{ ok: true } | { ok: false; error: string }> => {
-      const win = BrowserWindow.fromWebContents(_event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-
-      const resolved = await resolvePreviewNavigationTarget(url, workspacePath);
-      if (!resolved.ok) return resolved;
-      const target = resolved.url;
-
-      const s = getSession(win);
-      const guest = getActiveGuest(win, s);
-      if (!guest) return { ok: false, error: "preview-unavailable" };
-      const activeTab = s.lastPreviewThreadId ? getActiveTab(s, s.lastPreviewThreadId) : null;
-      logger.info("Preview: user navigated", { url: target });
-      setPreviewLoading(win, s, true);
-      trustMainProcessFileNavigation(s, target);
-      const loadResult = await loadPreviewGuestUrl(guest, target);
-      if (loadResult.status === "failed") {
-        return { ok: false, error: "navigation-failed" };
-      }
-      s.resumePreviewUrl = target;
-      if (activeTab) activeTab.resumeUrl = target;
-      return { ok: true };
-    },
-  );
-
-  ipcMain.handle("preview:go-back", (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return false;
-    const s = getSession(win);
-    const guest = getActiveGuest(win, s);
-    if (!guest) return false;
-    if (guest.canGoBack()) {
-      setPreviewLoading(win, s, true);
-      guest.goBack();
-      return true;
-    }
-    return false;
-  });
-
-  ipcMain.handle("preview:go-forward", (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return false;
-    const s = getSession(win);
-    const guest = getActiveGuest(win, s);
-    if (!guest) return false;
-    if (guest.canGoForward()) {
-      setPreviewLoading(win, s, true);
-      guest.goForward();
-      return true;
-    }
-    return false;
-  });
-
-  ipcMain.handle("preview:reload", (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return;
-    const s = getSession(win);
-    const guest = getActiveGuest(win, s);
-    if (!guest) return;
-    setPreviewLoading(win, s, true);
-    guest.reload();
-  });
-
-  ipcMain.handle("preview:force-reload", (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return;
-    const s = getSession(win);
-    const guest = getActiveGuest(win, s);
-    if (!guest) return;
-    setPreviewLoading(win, s, true);
-    guest.reloadIgnoringCache();
-  });
-
-  ipcMain.handle("preview:clear-cookies", async (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return;
-    await previewSessionAdapter.clearCookies();
-  });
-
-  ipcMain.handle("preview:clear-cache", async (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return;
-    await previewSessionAdapter.clearCache();
-  });
-
-  ipcMain.handle("preview:get-zoom", (_event): number => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return 1;
-    const s = getSession(win);
-    const guest = getActiveGuest(win, s);
-    if (!guest) return 1;
-    return clampZoomFactor(guest.getZoomFactor());
-  });
-
-  ipcMain.handle("preview:set-zoom", (_event, factor: number): number => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return 1;
-    const s = getSession(win);
-    const guest = getActiveGuest(win, s);
-    if (!guest) return 1;
-    const clamped = clampZoomFactor(factor);
-    guest.setZoomFactor(clamped);
-    return clamped;
-  });
-
-  ipcMain.handle("preview:open-external", (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return;
-    const s = getSession(win);
-    const guest = getActiveGuest(win, s);
-    if (!guest) return;
-    const current = guest.getURL();
-    if (isAllowedHttpUrl(current)) {
-      void shell.openExternal(current).catch(() => {
-        /* shell may reject the URL */
-      });
-    }
-  });
-
-  ipcMain.handle("preview:get-navigation-state", (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return { canGoBack: false, canGoForward: false };
-    const s = getSession(win);
-    const guest = getActiveGuest(win, s);
-    if (!guest) {
-      return { canGoBack: false, canGoForward: false };
-    }
-    return {
-      canGoBack: guest.canGoBack(),
-      canGoForward: guest.canGoForward(),
-    };
-  });
+  ipcMain.handle("preview:sync", handleSync);
+  ipcMain.handle("preview:resolve-navigation", handleResolveNavigation);
+  ipcMain.handle("preview:navigate", handleNavigate);
+  ipcMain.handle("preview:go-back", (event) => handleHistory(event, "back"));
+  ipcMain.handle("preview:go-forward", (event) => handleHistory(event, "forward"));
+  ipcMain.handle("preview:reload", (event) => reloadActiveGuest(event, false));
+  ipcMain.handle("preview:force-reload", (event) => reloadActiveGuest(event, true));
+  ipcMain.handle("preview:clear-cookies", (event) => clearPreviewStorage(event, "cookies"));
+  ipcMain.handle("preview:clear-cache", (event) => clearPreviewStorage(event, "cache"));
+  ipcMain.handle("preview:get-zoom", getZoom);
+  ipcMain.handle("preview:set-zoom", setZoom);
+  ipcMain.handle("preview:open-external", openActiveUrlExternally);
+  ipcMain.handle("preview:get-navigation-state", getNavigationState);
 }

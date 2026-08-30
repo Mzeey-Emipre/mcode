@@ -46,35 +46,35 @@ function isContainedPath(parent: string, candidate: string): boolean {
 
 function parseAttachmentUrl(requestUrl: unknown): ParsedAttachmentUrl | null {
   if (typeof requestUrl !== "string") return null;
-
   try {
-    const url = new URL(requestUrl);
-    if (
-      url.protocol !== `${ATTACHMENT_PROTOCOL_SCHEME}:` ||
-      url.username ||
-      url.password ||
-      url.port
-    ) {
-      return null;
-    }
-
-    const threadId = decodeURIComponent(url.hostname);
-    const pathName = decodeURIComponent(url.pathname);
-    if (!pathName.startsWith("/") || pathName.length < 2) return null;
-
-    const fileName = pathName.slice(1);
-    const match = VALID_ATTACHMENT_FILE.exec(fileName);
-    if (!match || fileName.includes("/") || fileName.includes("\\")) return null;
-    if (!VALID_THREAD_ID.test(threadId)) return null;
-
-    return {
-      threadId,
-      fileName,
-      extension: match[2],
-    };
+    return parseAttachmentUrlParts(new URL(requestUrl));
   } catch {
     return null;
   }
+}
+
+function parseAttachmentUrlParts(url: URL): ParsedAttachmentUrl | null {
+  if (!isAttachmentProtocolUrl(url)) return null;
+  const threadId = decodeURIComponent(url.hostname);
+  const pathName = decodeURIComponent(url.pathname);
+  if (!pathName.startsWith("/") || pathName.length < 2) return null;
+  return parseAttachmentFileName(threadId, pathName.slice(1));
+}
+
+function isAttachmentProtocolUrl(url: URL): boolean {
+  return (
+    url.protocol === `${ATTACHMENT_PROTOCOL_SCHEME}:` &&
+    !url.username &&
+    !url.password &&
+    !url.port
+  );
+}
+
+function parseAttachmentFileName(threadId: string, fileName: string): ParsedAttachmentUrl | null {
+  const match = VALID_ATTACHMENT_FILE.exec(fileName);
+  if (!match || fileName.includes("/") || fileName.includes("\\")) return null;
+  if (!VALID_THREAD_ID.test(threadId)) return null;
+  return { threadId, fileName, extension: match[2] };
 }
 
 async function resolveAttachmentFile(

@@ -54,19 +54,7 @@ export default async function afterPack(context) {
   // and derive a bounded fourth segment from the prerelease metadata. Nightly
   // versions like "0.11.1-nightly.20260518.42" contain a date segment that
   // exceeds 65535, so we use the run number (last prerelease segment) instead.
-  const rawVersion = context.packager.appInfo.version;
-  const semverCore = rawVersion.match(/^(\d+)\.(\d+)\.(\d+)/);
-  const [major, minor, patch] = semverCore
-    ? [semverCore[1], semverCore[2], semverCore[3]]
-    : ["0", "0", "0"];
-  // Extract the last numeric segment from the prerelease suffix (typically the
-  // CI run number), clamped to 65535 so it always fits VERSIONINFO.
-  const prerelease = rawVersion.replace(/^\d+\.\d+\.\d+[-.]?/, "");
-  const preNums = prerelease.match(/\d+/g);
-  const fourth = preNums
-    ? String(Math.min(Number(preNums[preNums.length - 1]), 65535))
-    : "0";
-  const appVersion = `${major}.${minor}.${patch}.${fourth}`;
+  const appVersion = toWindowsVersion(context.packager.appInfo.version);
   const companyName = context.packager.appInfo.companyName ?? "Mcode";
   // Stamp the app favicon onto the win32 server binary so Task Manager shows it
   // instead of a generic icon. resedit ignores this on non-win32 platforms.
@@ -153,61 +141,53 @@ export default async function afterPack(context) {
   // disabled on every packaged build regardless of snapshot presence.
   // -------------------------------------------------------------------------
 
+  await configureBrowserSnapshotAndFuses(context, snapshotFile);
+}
+
+function toWindowsVersion(rawVersion) {
+  const semverCore = rawVersion.match(/^(\d+)\.(\d+)\.(\d+)/);
+  const [major, minor, patch] = semverCore ? [semverCore[1], semverCore[2], semverCore[3]] : ["0", "0", "0"];
+  const prerelease = rawVersion.replace(/^\d+\.\d+\.\d+[-.]?/, "");
+  const preNums = prerelease.match(/\d+/g);
+  const fourth = preNums ? String(Math.min(Number(preNums[preNums.length - 1]), 65535)) : "0";
+  return `${major}.${minor}.${patch}.${fourth}`;
+}
+
+async function configureBrowserSnapshotAndFuses(context, snapshotFile) {
   const hasSnapshot = existsSync(snapshotFile);
-
-  // Resolve the main Electron binary path — needed for the fuse flip whether
-  // or not a snapshot was generated.
-  let electronBinary;
-  if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
-    // @electron/fuses expects the main executable, not the framework binary.
-    // It resolves to the framework internally; passing the framework path
-    // causes double Frameworks/ resolution (ENOENT).
-    electronBinary = join(
-      appOutDir,
-      `${context.packager.appInfo.productFilename}.app`,
-      "Contents", "MacOS", context.packager.appInfo.productFilename,
-    );
-  } else if (electronPlatformName === "win32") {
-    electronBinary = join(
-      appOutDir,
-      `${context.packager.appInfo.productFilename}.exe`,
-    );
-  } else {
-    electronBinary = join(appOutDir, context.packager.executableName);
-  }
-
+  const electronBinary = packagedElectronBinary(context);
   if (hasSnapshot) {
-    let snapshotDest;
-    if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
-      const frameworkDir = join(
-        appOutDir,
-        `${context.packager.appInfo.productFilename}.app`,
-        "Contents/Frameworks/Electron Framework.framework/Resources",
-      );
-      snapshotDest = join(frameworkDir, "browser_v8_context_snapshot.bin");
-    } else {
-      snapshotDest = join(appOutDir, "browser_v8_context_snapshot.bin");
-    }
+    const snapshotDest = packagedSnapshotPath(context);
     console.log(`[after-pack] Copying snapshot to ${snapshotDest}`);
     copyFileSync(snapshotFile, snapshotDest);
   } else {
     console.log("[after-pack] No snapshot found, skipping snapshot copy");
   }
-
   console.log(`[after-pack] Flipping security fuses on ${electronBinary}`);
   await flipFuses(electronBinary, {
     version: FuseVersion.V1,
-    // On ARM64 macOS, flipping fuses invalidates the ad-hoc code signature.
-    // Reset it so the binary can launch before electron-builder codesigns.
-    resetAdHocDarwinSignature: electronPlatformName === "darwin" || electronPlatformName === "mas",
-    // Only enable the browser-process V8 snapshot fuse when the snapshot was
-    // actually copied into the app bundle; otherwise Electron crashes trying
-    // to load a missing file.
+    resetAdHocDarwinSignature: isMacPlatform(context.electronPlatformName),
     [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: hasSnapshot,
-    // Packaged apps must not expose Node/V8 inspector on the main binary.
-    // This runs unconditionally — independent of snapshot presence.
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
   });
-
   console.log("[after-pack] Security fuses applied");
+}
+
+function isMacPlatform(platform) {
+  return platform === "darwin" || platform === "mas";
+}
+
+function packagedElectronBinary(context) {
+  const { electronPlatformName, appOutDir, packager } = context;
+  const productFilename = packager.appInfo.productFilename;
+  if (isMacPlatform(electronPlatformName)) return join(appOutDir, `${productFilename}.app`, "Contents", "MacOS", productFilename);
+  if (electronPlatformName === "win32") return join(appOutDir, `${productFilename}.exe`);
+  return join(appOutDir, packager.executableName);
+}
+
+function packagedSnapshotPath(context) {
+  const { electronPlatformName, appOutDir, packager } = context;
+  if (!isMacPlatform(electronPlatformName)) return join(appOutDir, "browser_v8_context_snapshot.bin");
+  const frameworkDir = join(appOutDir, `${packager.appInfo.productFilename}.app`, "Contents/Frameworks/Electron Framework.framework/Resources");
+  return join(frameworkDir, "browser_v8_context_snapshot.bin");
 }
