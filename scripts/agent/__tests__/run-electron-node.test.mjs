@@ -36,6 +36,53 @@ function runElectronNode(...args) {
   return spawnSync(process.execPath, [wrapper, ...args], options);
 }
 
+function descendantChildCode() {
+  return [
+    "const { spawn } = require('node:child_process');",
+    "const { writeFileSync } = require('node:fs');",
+    "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+    "writeFileSync(process.env.MCODE_TEST_DESCENDANT_FILE, String(descendant.pid));",
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+}
+
+async function waitForDescendantFile(descendantFile) {
+  const deadline = Date.now() + 5_000;
+  while (!existsSync(descendantFile) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(existsSync(descendantFile), true, "descendant PID file was never written");
+}
+
+async function waitForProcessToStop(pid) {
+  const deadline = Date.now() + 5_000;
+  let alive = true;
+  while (alive && Date.now() < deadline) {
+    alive = await processIsAlive(pid);
+  }
+  assert.equal(alive, false, `descendant ${pid} survived cleanup`);
+}
+
+async function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function assertDescendantStopped(descendantPid) {
+  if (process.platform === "win32") {
+    const alive = spawnSync("tasklist", ["/FI", `PID eq ${descendantPid}`], { encoding: "utf8" });
+    assert.doesNotMatch(alive.stdout, new RegExp(`\\b${descendantPid}\\b`));
+    return;
+  }
+  await waitForProcessToStop(descendantPid);
+}
+
 test("Electron Node forwards output and preserves exit status", testOptions, () => {
   const result = runElectronNode(
     "-e",
@@ -74,13 +121,7 @@ test("workspace CLI rejects entries outside the package directory", testOptions,
 test("Electron timeout terminates a detached descendant group", { timeout: 10_000 }, async () => {
   const tempDirectory = mkdtempSync(join(tmpdir(), "mcode-electron-process-"));
   const descendantFile = join(tempDirectory, "descendant.pid");
-  const childCode = [
-    "const { spawn } = require('node:child_process');",
-    "const { writeFileSync } = require('node:fs');",
-    "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
-    "writeFileSync(process.env.MCODE_TEST_DESCENDANT_FILE, String(descendant.pid));",
-    "setInterval(() => {}, 1000);",
-  ].join("\n");
+  const childCode = descendantChildCode();
 
   try {
     const started = runElectronProcess(process.execPath, ["-e", childCode], {
@@ -92,11 +133,7 @@ test("Electron timeout terminates a detached descendant group", { timeout: 10_00
       timeoutMs: 2_000,
     });
 
-    const readyDeadline = Date.now() + 5_000;
-    while (!existsSync(descendantFile) && Date.now() < readyDeadline) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    assert.equal(existsSync(descendantFile), true, "descendant PID file was never written");
+    await waitForDescendantFile(descendantFile);
     const result = await started;
 
     assert.equal(result.timedOut, true);
@@ -104,39 +141,22 @@ test("Electron timeout terminates a detached descendant group", { timeout: 10_00
 
     const descendantPid = Number.parseInt(readFileSync(descendantFile, "utf8"), 10);
     assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
-    if (process.platform === "win32") {
-      const alive = spawnSync("tasklist", ["/FI", `PID eq ${descendantPid}`], { encoding: "utf8" });
-      assert.doesNotMatch(alive.stdout, new RegExp(`\\b${descendantPid}\\b`));
-    } else {
-      const deadline = Date.now() + 5_000;
-      let alive = true;
-      while (alive && Date.now() < deadline) {
-        try {
-          process.kill(descendantPid, 0);
-          await new Promise((resolve) => setTimeout(resolve, 25));
-        } catch (error) {
-          if (error?.code !== "ESRCH") throw error;
-          alive = false;
-        }
-      }
-      assert.equal(alive, false, `descendant ${descendantPid} survived timeout cleanup`);
-    }
+    await assertDescendantStopped(descendantPid);
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
 
 if (process.platform !== "win32") {
-test("Electron adapter forwards parent signals to its owned detached tree", { timeout: 15_000 }, async () => {
-  const tempDirectory = mkdtempSync(join(tmpdir(), "mcode-electron-signal-"));
-  const descendantFile = join(tempDirectory, "descendant.pid");
-  const childCode = [
-    "const { spawn } = require('node:child_process');",
-    "const { writeFileSync } = require('node:fs');",
-    "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
-    "writeFileSync(process.env.MCODE_TEST_DESCENDANT_FILE, String(descendant.pid));",
-    "setInterval(() => {}, 1000);",
-  ].join("\n");
+  test("Electron adapter forwards parent signals to its owned detached tree", { timeout: 15_000 }, async () => {
+    await verifyForwardedSignal();
+  });
+}
+
+async function verifyForwardedSignal() {
+    const tempDirectory = mkdtempSync(join(tmpdir(), "mcode-electron-signal-"));
+    const descendantFile = join(tempDirectory, "descendant.pid");
+  const childCode = descendantChildCode();
   const wrapperChild = spawn(
     process.execPath,
     [wrapper, "-e", childCode],
@@ -148,11 +168,7 @@ test("Electron adapter forwards parent signals to its owned detached tree", { ti
   );
 
   try {
-    const readyDeadline = Date.now() + 5_000;
-    while (!existsSync(descendantFile) && Date.now() < readyDeadline) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    assert.equal(existsSync(descendantFile), true, "descendant PID file was never written");
+    await waitForDescendantFile(descendantFile);
     const descendantPid = Number.parseInt(readFileSync(descendantFile, "utf8"), 10);
     assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
 
@@ -162,21 +178,9 @@ test("Electron adapter forwards parent signals to its owned detached tree", { ti
     assert.equal(status, 1);
     assert.equal(signal, null);
 
-    const deadline = Date.now() + 5_000;
-    let alive = true;
-    while (alive && Date.now() < deadline) {
-      try {
-        process.kill(descendantPid, 0);
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      } catch (error) {
-        if (error?.code !== "ESRCH") throw error;
-        alive = false;
-      }
-    }
-    assert.equal(alive, false, `descendant ${descendantPid} survived signal cleanup`);
+    await waitForProcessToStop(descendantPid);
   } finally {
     if (wrapperChild.exitCode === null && wrapperChild.signalCode === null) wrapperChild.kill("SIGKILL");
     rmSync(tempDirectory, { recursive: true, force: true });
   }
-});
 }

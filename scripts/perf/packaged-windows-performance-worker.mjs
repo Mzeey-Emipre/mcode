@@ -84,133 +84,126 @@ function summarizeFrameResults(metrics) {
 }
 
 async function run() {
-  const repoRoot = process.cwd();
-  const sampleCount = parseCount("--sample-count", 3, 20);
-  const gpuSampleCount = parseCount("--gpu-sample-count", 5, 300);
-  const accelerationMode = parseChoice("--acceleration-mode", ["disabled", "default"]);
-  const gpuType = parseChoice("--gpu-type", ["integrated", "discrete"]);
-  const adapterName = readRequiredArgument("--adapter-name").trim();
-  if (adapterName.length === 0 || adapterName.length > 256) {
-    throw new Error("--adapter-name must identify one Windows video adapter");
-  }
-  const electronVersion = readRequiredArgument("--electron-version");
-  const sessionFileName = readRequiredArgument("--electron-session-file");
-  if (!/^electron-[a-z0-9-]+\.json$/.test(sessionFileName)) {
-    throw new Error("--electron-session-file must be a safe session file name");
-  }
-  const outputFile = resolveOutputFile(repoRoot);
-  await mkdir(dirname(outputFile), { recursive: true });
-
-  const scratchRequire = createRequire(
-    join(repoRoot, ".dev", "playwright-scratch", "package.json"),
-  );
-  const playwright = scratchRequire("playwright");
-  const playwrightVersion = scratchRequire("playwright/package.json").version;
-  const electronHelper = await import(
-    pathToFileURL(
-      join(
-        repoRoot,
-        ".codex",
-        "skills",
-        "electorn-live-testing",
-        "scripts",
-        "electron-session.mjs",
-      ),
-    ).href,
-  );
-  const runEnvironment = collectRunEnvironment(repoRoot, {
-    electron: electronVersion,
-    playwright: playwrightVersion,
-  });
+  const context = await prepareWorkerContext();
 
   let electronSession;
   try {
-    electronSession = await electronHelper.connectElectronSession({
-      playwright,
-      repoRoot,
-      sessionFileName,
+    electronSession = await context.electronHelper.connectElectronSession({
+      playwright: context.playwright,
+      repoRoot: context.repoRoot,
+      sessionFileName: context.sessionFileName,
     });
-    await electronSession.page.setViewportSize(VIEWPORT);
-    const startupMetrics = await electronSession.page.evaluate(async () =>
-      window.desktopBridge?.performance?.getMetrics?.() ?? null,
-    );
-    if (!startupMetrics) {
-      throw new Error("Electron performance metrics are unavailable");
-    }
-    if (!startupMetrics.packaged) {
-      throw new Error("The packaged Windows runner connected to an unpackaged app");
-    }
-    if (startupMetrics.devToolsOpen) {
-      throw new Error("The packaged Windows runner requires closed DevTools");
-    }
-    if (startupMetrics.accelerationMode !== accelerationMode) {
-      throw new Error(
-        `${accelerationMode} packaged run reported accelerationMode=${startupMetrics.accelerationMode}`,
-      );
-    }
-
-    const [matrix, gpu] = await Promise.all([
-      runRendererMatrix(
-        electronSession.page,
-        "packaged-windows-electron",
-        sampleCount,
-        "production",
-      ),
-      collectWindowsGpuEngineEvidence(
-        repoRoot,
-        startupMetrics.processes,
-        gpuSampleCount,
-      ),
-    ]);
-    const gpuClassification = resolveWindowsGpuClassification(
-      gpu.devices,
-      adapterName,
-      gpuType,
-    );
-    const result = {
-      schemaVersion: 3,
-      recordedAt: new Date().toISOString(),
-      packaged: true,
-      buildMode: "production",
-      devToolsOpen: startupMetrics.devToolsOpen,
-      accelerationMode,
-      gpuFeatureStatus: startupMetrics.gpuFeatureStatus,
-      gpuType,
-      gpuClassification,
-      sourceRevision: runEnvironment.sourceRevision,
-      sourceDirty: runEnvironment.sourceDirty,
-      deviceIdentity: {
-        hostname: hostname(),
-        adapters: gpu.devices,
-      },
-      comparisonContract: {
-        viewport: VIEWPORT,
-        workloadOrder: FRONTEND_RENDERER_WORKLOADS,
-        warmupCount: WARMUP_COUNT,
-        sampleCount,
-        gpuSampleCount,
-      },
-      correctness: matrix.correctness,
-      frameResults: summarizeFrameResults(matrix.metrics),
-      electronProcesses: startupMetrics.processes,
-      gpu,
-      metrics: matrix.metrics,
-      observations: matrix.observations,
-      environment: {
-        ...runEnvironment.host,
-        versions: runEnvironment.versions,
-      },
-    };
-    await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+    const result = await measurePackagedSession(electronSession, context);
+    await writeFile(context.outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     if (!result.correctness.passed) process.exitCode = 1;
   } finally {
-    if (electronSession) {
-      try {
-        await electronHelper.disconnectElectronSession(electronSession);
-      } catch {
-        // The parent runner still owns and stops the packaged process tree.
-      }
-    }
+    await disconnectElectronSession(electronSession, context.electronHelper);
+  }
+}
+
+async function prepareWorkerContext() {
+  const repoRoot = process.cwd();
+  const adapterName = readRequiredArgument("--adapter-name").trim();
+  validateAdapterName(adapterName);
+  const sessionFileName = readRequiredArgument("--electron-session-file");
+  validateSessionFileName(sessionFileName);
+  const electronVersion = readRequiredArgument("--electron-version");
+  const outputFile = resolveOutputFile(repoRoot);
+  await mkdir(dirname(outputFile), { recursive: true });
+  const scratchRequire = createRequire(join(repoRoot, ".dev", "playwright-scratch", "package.json"));
+  const playwrightVersion = scratchRequire("playwright/package.json").version;
+  return {
+    repoRoot,
+    adapterName,
+    sessionFileName,
+    outputFile,
+    electronVersion,
+    sampleCount: parseCount("--sample-count", 3, 20),
+    gpuSampleCount: parseCount("--gpu-sample-count", 5, 300),
+    accelerationMode: parseChoice("--acceleration-mode", ["disabled", "default"]),
+    gpuType: parseChoice("--gpu-type", ["integrated", "discrete"]),
+    playwright: scratchRequire("playwright"),
+    electronHelper: await loadElectronHelper(repoRoot),
+    runEnvironment: collectRunEnvironment(repoRoot, { electron: electronVersion, playwright: playwrightVersion }),
+  };
+}
+
+function validateAdapterName(adapterName) {
+  if (adapterName.length === 0 || adapterName.length > 256) {
+    throw new Error("--adapter-name must identify one Windows video adapter");
+  }
+}
+
+function validateSessionFileName(sessionFileName) {
+  if (!/^electron-[a-z0-9-]+\.json$/.test(sessionFileName)) {
+    throw new Error("--electron-session-file must be a safe session file name");
+  }
+}
+
+function loadElectronHelper(repoRoot) {
+  return import(pathToFileURL(join(
+    repoRoot, ".codex", "skills", "electorn-live-testing", "scripts", "electron-session.mjs",
+  )).href);
+}
+
+async function measurePackagedSession(electronSession, context) {
+  await electronSession.page.setViewportSize(VIEWPORT);
+  const startupMetrics = await readPackagedStartupMetrics(electronSession.page, context.accelerationMode);
+  const [matrix, gpu] = await Promise.all([
+    runRendererMatrix(electronSession.page, "packaged-windows-electron", context.sampleCount, "production"),
+    collectWindowsGpuEngineEvidence(context.repoRoot, startupMetrics.processes, context.gpuSampleCount),
+  ]);
+  return buildPackagedResult(context, startupMetrics, matrix, gpu);
+}
+
+async function readPackagedStartupMetrics(page, accelerationMode) {
+  const metrics = await page.evaluate(async () => window.desktopBridge?.performance?.getMetrics?.() ?? null);
+  if (!metrics) throw new Error("Electron performance metrics are unavailable");
+  if (!metrics.packaged) throw new Error("The packaged Windows runner connected to an unpackaged app");
+  if (metrics.devToolsOpen) throw new Error("The packaged Windows runner requires closed DevTools");
+  if (metrics.accelerationMode !== accelerationMode) {
+    throw new Error(`${accelerationMode} packaged run reported accelerationMode=${metrics.accelerationMode}`);
+  }
+  return metrics;
+}
+
+function buildPackagedResult(context, startupMetrics, matrix, gpu) {
+  return {
+    schemaVersion: 3,
+    recordedAt: new Date().toISOString(),
+    packaged: true,
+    buildMode: "production",
+    devToolsOpen: startupMetrics.devToolsOpen,
+    accelerationMode: context.accelerationMode,
+    gpuFeatureStatus: startupMetrics.gpuFeatureStatus,
+    gpuType: context.gpuType,
+    gpuClassification: resolveWindowsGpuClassification(gpu.devices, context.adapterName, context.gpuType),
+    sourceRevision: context.runEnvironment.sourceRevision,
+    sourceDirty: context.runEnvironment.sourceDirty,
+    deviceIdentity: { hostname: hostname(), adapters: gpu.devices },
+    comparisonContract: {
+      viewport: VIEWPORT,
+      workloadOrder: FRONTEND_RENDERER_WORKLOADS,
+      warmupCount: WARMUP_COUNT,
+      sampleCount: context.sampleCount,
+      gpuSampleCount: context.gpuSampleCount,
+    },
+    correctness: matrix.correctness,
+    frameResults: summarizeFrameResults(matrix.metrics),
+    electronProcesses: startupMetrics.processes,
+    gpu,
+    metrics: matrix.metrics,
+    observations: matrix.observations,
+    environment: { ...context.runEnvironment.host, versions: context.runEnvironment.versions },
+  };
+}
+
+async function disconnectElectronSession(electronSession, electronHelper) {
+  if (!electronSession) return;
+  try {
+    await electronHelper.disconnectElectronSession(electronSession);
+  } catch {
+    // The parent runner still owns and stops the packaged process tree.
   }
 }
 

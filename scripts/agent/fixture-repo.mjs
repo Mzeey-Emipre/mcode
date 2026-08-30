@@ -3,14 +3,13 @@
  * Seeds the deterministic agent runtime fixture git repository.
  */
 import { spawnSync } from "node:child_process";
-import { rmSync, mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { rmSync, mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
   assertInsideDevDir,
   ensureRuntimeRoot,
-  getRuntimePaths,
   resolveRepoRoot,
 } from "./runtime-contract.mjs";
 
@@ -32,33 +31,74 @@ export function seedFixtureRepo(repoRoot = resolveRepoRoot()) {
   git(fixtureDir, ["config", "user.email", "agent-runtime@example.invalid"]);
   git(fixtureDir, ["config", "user.name", "Agent Runtime Fixture"]);
   git(fixtureDir, ["config", "commit.gpgsign", "false"]);
-
-  writeFileSync(join(fixtureDir, "README.md"), "# Fixture repo\n");
-  writeFileSync(join(fixtureDir, "agent.txt"), "base\n");
-  git(fixtureDir, ["add", "."]);
-  git(fixtureDir, ["commit", "-q", "-m", "chore: seed fixture repo"]);
-
-  writeFileSync(join(fixtureDir, "agent.txt"), "runtime base\n");
-  git(fixtureDir, ["add", "agent.txt"]);
-  git(fixtureDir, ["commit", "-q", "-m", "feat: add runtime baseline"]);
-
-  git(fixtureDir, ["checkout", "-q", "-b", "conflict/agent-runtime"]);
-  writeFileSync(join(fixtureDir, "agent.txt"), "conflict branch value\n");
-  git(fixtureDir, ["add", "agent.txt"]);
-  git(fixtureDir, ["commit", "-q", "-m", "test: add conflict branch edit"]);
-
-  git(fixtureDir, ["checkout", "-q", "main"]);
-  writeFileSync(join(fixtureDir, "agent.txt"), "main branch value\n");
-  git(fixtureDir, ["add", "agent.txt"]);
-  git(fixtureDir, ["commit", "-q", "-m", "feat: update main runtime value"]);
-
-  git(fixtureDir, ["checkout", "-q", "-b", "feature/agent-runtime"]);
-  writeFileSync(join(fixtureDir, "feature.txt"), "feature branch fixture\n");
-  git(fixtureDir, ["add", "feature.txt"]);
-  git(fixtureDir, ["commit", "-q", "-m", "feat: add agent runtime fixture"]);
-
+  git(fixtureDir, ["fast-import", "--quiet"], fixtureHistory());
   git(fixtureDir, ["checkout", "-q", "main"]);
   return fixtureDir;
+}
+
+function fixtureHistory() {
+  const identity = `Agent Runtime Fixture <agent-runtime@example.invalid> ${Math.floor(Date.now() / 1_000)} +0000`;
+  return [
+    fastImportCommit({
+      branch: "main",
+      mark: 1,
+      message: "chore: seed fixture repo",
+      files: [
+        ["README.md", "# Fixture repo\n"],
+        ["agent.txt", "base\n"],
+      ],
+      identity,
+    }),
+    fastImportCommit({
+      branch: "main",
+      mark: 2,
+      parent: 1,
+      message: "feat: add runtime baseline",
+      files: [["agent.txt", "runtime base\n"]],
+      identity,
+    }),
+    fastImportCommit({
+      branch: "conflict/agent-runtime",
+      mark: 3,
+      parent: 2,
+      message: "test: add conflict branch edit",
+      files: [["agent.txt", "conflict branch value\n"]],
+      identity,
+    }),
+    fastImportCommit({
+      branch: "main",
+      mark: 4,
+      parent: 2,
+      message: "feat: update main runtime value",
+      files: [["agent.txt", "main branch value\n"]],
+      identity,
+    }),
+    fastImportCommit({
+      branch: "feature/agent-runtime",
+      mark: 5,
+      parent: 4,
+      message: "feat: add agent runtime fixture",
+      files: [["feature.txt", "feature branch fixture\n"]],
+      identity,
+    }),
+    "done\n",
+  ].join("");
+}
+
+function fastImportCommit({ branch, mark, parent, message, files, identity }) {
+  return [
+    `commit refs/heads/${branch}\n`,
+    `mark :${mark}\n`,
+    `author ${identity}\n`,
+    `committer ${identity}\n`,
+    fastImportData(`${message}\n`),
+    parent ? `from :${parent}\n` : "",
+    ...files.map(([path, contents]) => `M 100644 inline ${path}\n${fastImportData(contents)}`),
+  ].join("");
+}
+
+function fastImportData(value) {
+  return `data ${Buffer.byteLength(value)}\n${value}`;
 }
 
 /**
@@ -66,18 +106,22 @@ export function seedFixtureRepo(repoRoot = resolveRepoRoot()) {
  *
  * @param {string} cwd
  * @param {string[]} args
+ * @param {string} [input]
  * @returns {string}
  */
-function git(cwd, args) {
+function git(cwd, args, input) {
   const result = spawnSync("git", [
     "-c",
     "core.fsmonitor=false",
     "-c",
     "core.hooksPath=NUL",
+    "-c",
+    "commit.gpgsign=false",
     ...args,
   ], {
     cwd,
     encoding: "utf8",
+    input,
     timeout: 60_000,
     env: {
       ...process.env,

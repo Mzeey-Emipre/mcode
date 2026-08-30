@@ -15,36 +15,38 @@ function extractJsonObject(text) {
     throw new Error("bun audit did not print JSON");
   }
 
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
+  const state = { depth: 0, inString: false, escaped: false };
 
   for (let i = start; i < text.length; i += 1) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (ch === "\"") {
-      inString = true;
-    } else if (ch === "{") {
-      depth += 1;
-    } else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return JSON.parse(text.slice(start, i + 1));
-      }
+    if (scanJsonCharacter(state, text[i])) {
+      return JSON.parse(text.slice(start, i + 1));
     }
   }
 
   throw new Error("bun audit JSON was incomplete");
+}
+
+function scanJsonCharacter(state, character) {
+  if (state.inString) return scanStringCharacter(state, character);
+  if (character === "\"") {
+    state.inString = true;
+  } else if (character === "{") {
+    state.depth += 1;
+  } else if (character === "}") {
+    state.depth -= 1;
+  }
+  return state.depth === 0;
+}
+
+function scanStringCharacter(state, character) {
+  if (state.escaped) {
+    state.escaped = false;
+  } else if (character === "\\") {
+    state.escaped = true;
+  } else if (character === "\"") {
+    state.inString = false;
+  }
+  return false;
 }
 
 function runAudit() {

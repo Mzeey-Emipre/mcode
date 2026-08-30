@@ -5,11 +5,11 @@
  * Exits 1 if any check fails.
  */
 import { existsSync, accessSync, constants, readFileSync } from 'node:fs';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
-import { resolveMainRoot, scriptRoot as root } from './utils.mjs';
+import { resolveMainRoot } from './utils.mjs';
 import {
   isElectronBinaryInstalled,
   resolveElectronPackageDir,

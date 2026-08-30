@@ -337,59 +337,80 @@ export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
 
 /** Compare two complete package trees without mutating either destination. */
 function copilotTreesMatch(sourceDir, destinationDir, skipDanglingOptional = true) {
-  try {
-    if (!statSync(destinationDir).isDirectory()) return false;
-  } catch (error) {
-    if (error?.code === "EACCES" || error?.code === "EPERM") return true;
-    return false;
-  }
-
+  const destinationDirectory = inspectDestinationDirectory(destinationDir);
+  if (destinationDirectory === "unreadable") return true;
+  if (destinationDirectory === "missing") return false;
   const sourceEntries = copilotSourceEntries(sourceDir, skipDanglingOptional);
-  let destinationEntries;
-  try {
-    destinationEntries = readdirSync(destinationDir, { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === "EACCES" || error?.code === "EPERM") return true;
-    throw error;
-  }
+  const destinationEntries = readDestinationEntries(destinationDir);
+  if (destinationEntries === "unreadable") return true;
   if (sourceEntries.length !== destinationEntries.length) return false;
 
   const destinationByName = new Map(destinationEntries.map((entry) => [entry.name, entry]));
   for (const sourceEntry of sourceEntries) {
-    const destinationEntry = destinationByName.get(sourceEntry.name);
-    if (!destinationEntry) {
-      return false;
-    }
-
-    const sourcePath = resolve(sourceDir, sourceEntry.name);
-    const destinationPath = resolve(destinationDir, sourceEntry.name);
-    let destinationStat;
-    try {
-      destinationStat = lstatSync(destinationPath);
-    } catch (error) {
-      if (error?.code === "EACCES" || error?.code === "EPERM") return true;
-      throw error;
-    }
-    const destinationKind = destinationStat.isDirectory()
-      ? "directory"
-      : destinationStat.isFile()
-      ? "file"
-      : null;
-    if (sourceEntry.kind !== destinationKind) {
-      return false;
-    }
-    if (sourceEntry.kind === "directory") {
-      if (!copilotTreesMatch(sourcePath, destinationPath, skipDanglingOptional)) return false;
-      continue;
-    }
-    try {
-      if (!copilotFilesMatch(sourcePath, destinationPath)) return false;
-    } catch (error) {
-      if (error?.destinationAccess === true) return true;
-      throw error;
-    }
+    const entryMatches = copilotEntryMatches(
+      sourceDir,
+      destinationDir,
+      sourceEntry,
+      destinationByName,
+      skipDanglingOptional,
+    );
+    if (entryMatches !== true) return entryMatches === "unreadable";
   }
   return true;
+}
+
+function inspectDestinationDirectory(destinationDir) {
+  try {
+    return statSync(destinationDir).isDirectory() ? "readable" : "missing";
+  } catch (error) {
+    return isDestinationAccessError(error) ? "unreadable" : "missing";
+  }
+}
+
+function readDestinationEntries(destinationDir) {
+  try {
+    return readdirSync(destinationDir, { withFileTypes: true });
+  } catch (error) {
+    if (isDestinationAccessError(error)) return "unreadable";
+    throw error;
+  }
+}
+
+function copilotEntryMatches(sourceDir, destinationDir, sourceEntry, destinationByName, skipDanglingOptional) {
+  if (!destinationByName.has(sourceEntry.name)) return false;
+  const sourcePath = resolve(sourceDir, sourceEntry.name);
+  const destinationPath = resolve(destinationDir, sourceEntry.name);
+  const destinationKind = readDestinationKind(destinationPath);
+  if (destinationKind === "unreadable") return destinationKind;
+  if (sourceEntry.kind !== destinationKind) return false;
+  if (sourceEntry.kind === "directory") {
+    return copilotTreesMatch(sourcePath, destinationPath, skipDanglingOptional);
+  }
+  return copilotFilesMatchOrAccessState(sourcePath, destinationPath);
+}
+
+function readDestinationKind(destinationPath) {
+  try {
+    const stat = lstatSync(destinationPath);
+    if (stat.isDirectory()) return "directory";
+    return stat.isFile() ? "file" : null;
+  } catch (error) {
+    if (isDestinationAccessError(error)) return "unreadable";
+    throw error;
+  }
+}
+
+function copilotFilesMatchOrAccessState(sourcePath, destinationPath) {
+  try {
+    return copilotFilesMatch(sourcePath, destinationPath);
+  } catch (error) {
+    if (error?.destinationAccess === true) return "unreadable";
+    throw error;
+  }
+}
+
+function isDestinationAccessError(error) {
+  return error?.code === "EACCES" || error?.code === "EPERM";
 }
 
 /**

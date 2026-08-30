@@ -207,140 +207,147 @@ function printResult(result, outputFile) {
   for (const [runtimeName, runtime] of Object.entries(result.runtimes)) {
     process.stdout.write(`${runtimeName}: correctness=${runtime.correctness.passed}\n`);
     for (const workload of result.comparisonContract.workloadOrder) {
-      const metric = runtime.metrics[workload];
-      if (workload === "vlistLifecycle") {
-        const decision = metric.gateDecision;
-        process.stdout.write(
-          `  vlistLifecycle: harness=${metric.correctness.passed}, candidate=${decision?.status ?? "invalid"}, ` +
-          `eligible=${decision?.candidateEligible ?? false}, timing ignored\n`,
-        );
-        continue;
-      }
-      const median = metric.summary ? `${metric.summary.medianMs.toFixed(1)} ms` : "rejected";
-      process.stdout.write(
-        `  ${workload}: median=${median}, rejected=${metric.correctness.rejectedSamples}\n`,
-      );
-      if (metric.shikiAttribution) {
-        process.stdout.write(
-          `    Shiki largest=${metric.shikiAttribution.largestStage ?? "none"}; ` +
-          `stageOver50=${JSON.stringify(metric.shikiAttribution.stageObservationsOver50Ms)}; ` +
-          `longTasksOver50=${JSON.stringify(metric.shikiAttribution.longTasksOver50Ms)}\n`,
-        );
-      }
+      printWorkloadResult(workload, runtime.metrics[workload]);
     }
   }
+}
+
+function printWorkloadResult(workload, metric) {
+  if (workload === "vlistLifecycle") {
+    printVListLifecycleResult(metric);
+    return;
+  }
+  const median = metric.summary ? `${metric.summary.medianMs.toFixed(1)} ms` : "rejected";
+  process.stdout.write(`  ${workload}: median=${median}, rejected=${metric.correctness.rejectedSamples}\n`);
+  printShikiAttribution(metric.shikiAttribution);
+}
+
+function printVListLifecycleResult(metric) {
+  const decision = metric.gateDecision;
+  process.stdout.write(
+    `  vlistLifecycle: harness=${metric.correctness.passed}, candidate=${decision?.status ?? "invalid"}, ` +
+    `eligible=${decision?.candidateEligible ?? false}, timing ignored\n`,
+  );
+}
+
+function printShikiAttribution(attribution) {
+  if (!attribution) return;
+  process.stdout.write(
+    `    Shiki largest=${attribution.largestStage ?? "none"}; ` +
+    `stageOver50=${JSON.stringify(attribution.stageObservationsOver50Ms)}; ` +
+    `longTasksOver50=${JSON.stringify(attribution.longTasksOver50Ms)}\n`,
+  );
 }
 
 /** Runs the paired standalone-web and Electron renderer matrix. */
 export async function runFrontendPerformance(repoRoot = process.cwd()) {
   const root = resolve(repoRoot);
-  const sampleCount = parseSampleCount();
-  const mode = parsePerformanceMode();
-  const workloads = parseFrontendPerformanceWorkloads();
-  const runtimes = parseFrontendPerformanceRuntimes();
-  const outputFile = resolveOutputFile(root);
-  const completionFile = `${outputFile}.complete`;
-  const failureFile = resolve(
-    root,
-    ".dev",
-    "verification",
-    "performance",
-    "frontend-worker-error.json",
-  );
-  for (const artifact of [outputFile, completionFile, failureFile]) {
-    rmSync(artifact, { force: true });
-  }
-
-  let startedRuntime = false;
-  let startedElectron = false;
-  let rendererServer = null;
-  const sessionFileName = `electron-performance-${mode}.json`;
+  const options = readFrontendPerformanceOptions(root);
+  const state = { startedRuntime: false, startedElectron: false, rendererServer: null };
   try {
-    startedRuntime = await ensureRuntime(root);
-    ensurePlaywright(root);
-    await runCommand(
-      process.execPath,
-      ["run", "--cwd", "apps/desktop", "build"],
-      {
-        cwd: root,
-        env: {
-          ...process.env,
-          MCODE_FRONTEND_PERFORMANCE_MODE: mode,
-          VITE_MCODE_PERFORMANCE_MODE: mode,
-          VITE_MCODE_SINGLE_INSTANCE: "1",
-        },
-      },
-    );
-    const runtimeContract = await import("../agent/runtime-contract.mjs");
-    const webPort = await runtimeContract.findAvailablePort(
-      runtimeContract.computeDeterministicPort(root, 44_000),
-    );
-    rendererServer = await startBuiltRendererServer(root, webPort);
-    let electronRecord;
-    if (runtimes.includes("electron")) {
-      const performanceSessionFile = join(root, ".dev", sessionFileName);
-      if (existsSync(performanceSessionFile)) {
-        stopElectron(root, { sessionFileName });
-      }
-      electronRecord = await startElectron(root, {
-        performanceMode: mode,
-        rendererUrl: null,
-        sessionFileName,
-      });
-      startedElectron = true;
-    }
-
-    const workerArguments = [
-      join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
-      "--sample-count",
-      String(sampleCount),
-      "--mode",
-      mode,
-      "--workload",
-      workloads.join(","),
-      "--runtime",
-      runtimes.join(","),
-      "--web-url",
-      rendererServer.url,
-      "--output",
-      outputFile,
-    ];
-    if (runtimes.includes("electron")) {
-      workerArguments.push("--electron-session-file", sessionFileName);
-    }
-    const worker = spawn(
-      electronRecord?.executablePath ?? process.execPath,
-      workerArguments,
-      {
-        cwd: root,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-        shell: false,
-        stdio: "inherit",
-        windowsHide: true,
-      },
-    );
-    const workerLaunchFailure = new Promise((_, rejectWorker) => {
-      worker.once("error", (error) => {
-        rejectWorker(new Error(`Frontend performance worker launch failed: ${error.message}`));
-      });
-    });
-
-    const result = await Promise.race([
-      waitForWorker(outputFile, failureFile, sampleCount),
-      workerLaunchFailure,
-    ]);
+    const electronRecord = await startFrontendPerformanceResources(root, options, state);
+    const result = await runFrontendPerformanceWorker(root, options, state.rendererServer, electronRecord);
     const exitCode = getFrontendPerformanceExitCode(result);
-    await waitForExpectedExit(worker, "Frontend performance worker", exitCode);
-    printResult(result, outputFile);
+    printResult(result, options.outputFile);
     if (exitCode !== 0) process.exitCode = exitCode;
     return result;
   } finally {
-    if (startedElectron) stopElectron(root, { sessionFileName });
-    if (rendererServer?.child && rendererServer.child.exitCode === null) {
-      rendererServer.child.kill();
-    }
-    if (startedRuntime) await agentDown(root);
+    await stopFrontendPerformanceResources(root, options, state);
   }
+}
+
+function readFrontendPerformanceOptions(root) {
+  const mode = parsePerformanceMode();
+  const outputFile = resolveOutputFile(root);
+  const failureFile = resolve(root, ".dev", "verification", "performance", "frontend-worker-error.json");
+  const options = {
+    sampleCount: parseSampleCount(),
+    mode,
+    workloads: parseFrontendPerformanceWorkloads(),
+    runtimes: parseFrontendPerformanceRuntimes(),
+    outputFile,
+    failureFile,
+    sessionFileName: `electron-performance-${mode}.json`,
+  };
+  for (const artifact of [outputFile, `${outputFile}.complete`, failureFile]) rmSync(artifact, { force: true });
+  return options;
+}
+
+async function startFrontendPerformanceResources(root, options, state) {
+  state.startedRuntime = await ensureRuntime(root);
+  ensurePlaywright(root);
+  await buildFrontendPerformanceApp(root, options.mode);
+  state.rendererServer = await startRendererPerformanceServer(root);
+  if (!options.runtimes.includes("electron")) return undefined;
+  const sessionPath = join(root, ".dev", options.sessionFileName);
+  if (existsSync(sessionPath)) stopElectron(root, { sessionFileName: options.sessionFileName });
+  const record = await startElectron(root, {
+    performanceMode: options.mode,
+    rendererUrl: null,
+    sessionFileName: options.sessionFileName,
+  });
+  state.startedElectron = true;
+  return record;
+}
+
+async function buildFrontendPerformanceApp(root, mode) {
+  await runCommand(process.execPath, ["run", "--cwd", "apps/desktop", "build"], {
+    cwd: root,
+    env: {
+      ...process.env,
+      MCODE_FRONTEND_PERFORMANCE_MODE: mode,
+      VITE_MCODE_PERFORMANCE_MODE: mode,
+      VITE_MCODE_SINGLE_INSTANCE: "1",
+    },
+  });
+}
+
+async function startRendererPerformanceServer(root) {
+  const runtimeContract = await import("../agent/runtime-contract.mjs");
+  const webPort = await runtimeContract.findAvailablePort(
+    runtimeContract.computeDeterministicPort(root, 44_000),
+  );
+  return startBuiltRendererServer(root, webPort);
+}
+
+async function runFrontendPerformanceWorker(root, options, rendererServer, electronRecord) {
+  const worker = spawn(
+    electronRecord?.executablePath ?? process.execPath,
+    frontendPerformanceWorkerArguments(root, options, rendererServer.url),
+    {
+      cwd: root,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      shell: false,
+      stdio: "inherit",
+      windowsHide: true,
+    },
+  );
+  const launchFailure = new Promise((_, rejectWorker) => {
+    worker.once("error", (error) => rejectWorker(new Error(`Frontend performance worker launch failed: ${error.message}`)));
+  });
+  const result = await Promise.race([
+    waitForWorker(options.outputFile, options.failureFile, options.sampleCount),
+    launchFailure,
+  ]);
+  await waitForExpectedExit(worker, "Frontend performance worker", getFrontendPerformanceExitCode(result));
+  return result;
+}
+
+function frontendPerformanceWorkerArguments(root, options, webUrl) {
+  const args = [
+    join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
+    "--sample-count", String(options.sampleCount), "--mode", options.mode,
+    "--workload", options.workloads.join(","), "--runtime", options.runtimes.join(","),
+    "--web-url", webUrl, "--output", options.outputFile,
+  ];
+  if (options.runtimes.includes("electron")) args.push("--electron-session-file", options.sessionFileName);
+  return args;
+}
+
+async function stopFrontendPerformanceResources(root, options, state) {
+  if (state.startedElectron) stopElectron(root, { sessionFileName: options.sessionFileName });
+  if (state.rendererServer?.child && state.rendererServer.child.exitCode === null) state.rendererServer.child.kill();
+  if (state.startedRuntime) await agentDown(root);
 }
 
 if (import.meta.main) {

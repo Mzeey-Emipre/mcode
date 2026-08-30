@@ -69,48 +69,70 @@ let pendingToolUses = 0;
 let hasFiredToolThisTurn = false;
 let toolStartedAt = null;
 let toolEndedAt = null;
-let turnCompleted = false;
 let resolveTurn;
 const turnDone = new Promise((r) => (resolveTurn = r));
 
-ws.on("message", (raw) => {
+function parseMessage(raw) {
   let msg;
-  try { msg = JSON.parse(raw.toString()); } catch { return; }
+  try { msg = JSON.parse(raw.toString()); } catch { return null; }
+  return msg;
+}
 
-  if (typeof msg.id === "string" && pending.has(msg.id)) {
-    const { resolve, reject, method } = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.error) reject(new Error(`${method} failed: ${msg.error.message}`));
-    else resolve(msg.result);
-    return;
+function settlePendingRpc(msg) {
+  if (typeof msg.id !== "string" || !pending.has(msg.id)) return false;
+  const { resolve, reject, method } = pending.get(msg.id);
+  pending.delete(msg.id);
+  if (msg.error) {
+    reject(new Error(`${method} failed: ${msg.error.message}`));
+  } else {
+    resolve(msg.result);
   }
-  if (msg.type === "push" && msg.channel === "agent.event") {
-    const e = msg.data;
-    if (e.type === "toolUse") {
-      pendingToolUses++;
-      hasFiredToolThisTurn = true;
-      if (toolStartedAt == null) toolStartedAt = events.length;
-      events.push({ kind: "toolUse", toolName: e.toolName, idx: events.length });
-    } else if (e.type === "toolResult") {
-      pendingToolUses = Math.max(0, pendingToolUses - 1);
-      if (pendingToolUses === 0 && toolEndedAt == null) toolEndedAt = events.length;
-      events.push({ kind: "toolResult", idx: events.length });
-    } else if (e.type === "textDelta") {
-      events.push({
-        kind: "textDelta",
-        delta: (e.delta ?? "").slice(0, 50),
-        isFinalResponse: e.isFinalResponse === true,
-        pendingTools: pendingToolUses,
-        hasFiredTool: hasFiredToolThisTurn,
-        idx: events.length,
-      });
-    } else if (e.type === "turnComplete") {
+  return true;
+}
+
+function recordToolUse(event) {
+  pendingToolUses++;
+  hasFiredToolThisTurn = true;
+  if (toolStartedAt == null) toolStartedAt = events.length;
+  events.push({ kind: "toolUse", toolName: event.toolName, idx: events.length });
+}
+
+function recordToolResult() {
+  pendingToolUses = Math.max(0, pendingToolUses - 1);
+  if (pendingToolUses === 0 && toolEndedAt == null) toolEndedAt = events.length;
+  events.push({ kind: "toolResult", idx: events.length });
+}
+
+function recordTextDelta(event) {
+  events.push({
+    kind: "textDelta",
+    delta: (event.delta ?? "").slice(0, 50),
+    isFinalResponse: event.isFinalResponse === true,
+    pendingTools: pendingToolUses,
+    hasFiredTool: hasFiredToolThisTurn,
+    idx: events.length,
+  });
+}
+
+function recordAgentEvent(event) {
+  const recorders = {
+    toolUse: () => recordToolUse(event),
+    toolResult: recordToolResult,
+    textDelta: () => recordTextDelta(event),
+    turnComplete: () => {
       events.push({ kind: "turnComplete", idx: events.length });
-      turnCompleted = true;
       resolveTurn();
-    } else if (e.type === "error") {
-      w(`[event:error] ${JSON.stringify(e).slice(0, 200)}`);
-    }
+    },
+    error: () => w(`[event:error] ${JSON.stringify(event).slice(0, 200)}`),
+  };
+  recorders[event.type]?.();
+}
+
+ws.on("message", (raw) => {
+  const msg = parseMessage(raw);
+  if (!msg || settlePendingRpc(msg)) return;
+  if (msg.type === "push" && msg.channel === "agent.event") {
+    recordAgentEvent(msg.data);
   }
 });
 

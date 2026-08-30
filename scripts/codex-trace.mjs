@@ -2,7 +2,7 @@
 // Minimal NDJSON JSON-RPC 2.0 client for `codex app-server`.
 // Usage: bun scripts/codex-trace.mjs <cwd> <traceOut> [prompt]
 import { spawn } from "node:child_process";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import readline from "node:readline";
 
 const [, , cwd, traceFile, scenarioLabel, prompt] = process.argv;
@@ -42,54 +42,83 @@ const done = new Promise((r) => { resolveDone = r; });
 let activeTurnId = null;
 let turnCompleted = false;
 
-rl.on("line", (line) => {
-  if (!line.trim()) return;
+function parseLine(line) {
+  if (!line.trim()) return null;
   let msg;
-  try { msg = JSON.parse(line); } catch { return; }
-  if (msg.id != null && pending.has(msg.id)) {
-    const { resolve, reject, method } = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.error) reject(new Error(`${method} failed: ${msg.error.message}`));
-    else resolve(msg.result);
-    return;
+  try { msg = JSON.parse(line); } catch { return null; }
+  return msg;
+}
+
+function settlePendingResponse(msg) {
+  if (msg.id == null || !pending.has(msg.id)) return false;
+  const { resolve, reject, method } = pending.get(msg.id);
+  pending.delete(msg.id);
+  if (msg.error) {
+    reject(new Error(`${method} failed: ${msg.error.message}`));
+  } else {
+    resolve(msg.result);
   }
-  if (msg.method) {
-    seq++;
-    const p = msg.params ?? {};
-    const item = p.item ?? {};
-    const summary = {
-      seq,
-      t: new Date().toISOString(),
-      method: msg.method,
-      threadId: p.threadId,
-      turnId: p.turnId,
-      itemId: p.itemId ?? item.id,
-      itemType: item.type,
-    };
-    // include small fields when present
-    if (typeof p.delta === "string") summary.deltaLen = p.delta.length;
-    if (msg.method === "turn/completed") {
-      summary.status = p.turn?.status;
-      summary.itemsLen = Array.isArray(p.turn?.items) ? p.turn.items.length : null;
-    }
-    if (msg.method === "item/completed") {
-      const it = p.item ?? {};
-      if (typeof it.command === "string") summary.command = it.command.slice(0, 80);
-      if (it.role) summary.role = it.role;
-      if (typeof it.tool === "string") summary.tool = it.tool;
-      if (Array.isArray(it.summary)) summary.summaryLen = it.summary.length;
-      if (Array.isArray(it.reasoningContent)) summary.reasoningLen = it.reasoningContent.length;
-    }
-    if (msg.method === "error") {
-      summary.errorMsg = p.error?.message;
-      summary.willRetry = p.willRetry;
-    }
-    logLine(summary);
-    if (msg.method === "turn/completed" && p.turnId === activeTurnId) {
-      turnCompleted = true;
-      resolveDone();
-    }
+  return true;
+}
+
+function addDeltaSummary(summary, params) {
+  if (typeof params.delta === "string") summary.deltaLen = params.delta.length;
+}
+
+function addTurnCompletionSummary(summary, params) {
+  summary.status = params.turn?.status;
+  summary.itemsLen = Array.isArray(params.turn?.items) ? params.turn.items.length : null;
+}
+
+function addItemCompletionSummary(summary, params) {
+  const item = params.item ?? {};
+  if (typeof item.command === "string") summary.command = item.command.slice(0, 80);
+  if (item.role) summary.role = item.role;
+  if (typeof item.tool === "string") summary.tool = item.tool;
+  if (Array.isArray(item.summary)) summary.summaryLen = item.summary.length;
+  if (Array.isArray(item.reasoningContent)) summary.reasoningLen = item.reasoningContent.length;
+}
+
+function addErrorSummary(summary, params) {
+  summary.errorMsg = params.error?.message;
+  summary.willRetry = params.willRetry;
+}
+
+function addMethodSummary(summary, msg, params) {
+  const methodSummaries = {
+    "turn/completed": addTurnCompletionSummary,
+    "item/completed": addItemCompletionSummary,
+    error: addErrorSummary,
+  };
+  addDeltaSummary(summary, params);
+  methodSummaries[msg.method]?.(summary, params);
+}
+
+function logNotification(msg) {
+  seq++;
+  const params = msg.params ?? {};
+  const item = params.item ?? {};
+  const summary = {
+    seq,
+    t: new Date().toISOString(),
+    method: msg.method,
+    threadId: params.threadId,
+    turnId: params.turnId,
+    itemId: params.itemId ?? item.id,
+    itemType: item.type,
+  };
+  addMethodSummary(summary, msg, params);
+  logLine(summary);
+  if (msg.method === "turn/completed" && params.turnId === activeTurnId) {
+    turnCompleted = true;
+    resolveDone();
   }
+}
+
+rl.on("line", (line) => {
+  const msg = parseLine(line);
+  if (!msg || settlePendingResponse(msg) || !msg.method) return;
+  logNotification(msg);
 });
 
 proc.stderr.on("data", (d) => {

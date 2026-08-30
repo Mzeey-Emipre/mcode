@@ -34,12 +34,8 @@ function parseArguments(argv) {
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (!["--repo", "--stable-tag", "--apply"].includes(argument)) {
-      throw new Error(`Unknown argument: ${argument}`);
-    }
-    if (seen.has(argument)) {
-      throw new Error(`Duplicate argument: ${argument}`);
-    }
+    assertSupportedArgument(argument);
+    assertUniqueArgument(seen, argument);
     seen.add(argument);
 
     if (argument === "--apply") {
@@ -47,22 +43,38 @@ function parseArguments(argv) {
       continue;
     }
 
-    const value = argv[index + 1];
-    if (!value || value.startsWith("--")) {
-      throw new Error(`Missing value for ${argument}`);
-    }
+    const value = readArgumentValue(argv, index, argument);
     parsed[argument === "--repo" ? "repo" : "stableTag"] = value;
     index += 1;
   }
 
+  validateRequiredArguments(parsed);
+  return parsed;
+}
+
+function assertSupportedArgument(argument) {
+  if (!["--repo", "--stable-tag", "--apply"].includes(argument)) {
+    throw new Error(`Unknown argument: ${argument}`);
+  }
+}
+
+function assertUniqueArgument(seen, argument) {
+  if (seen.has(argument)) throw new Error(`Duplicate argument: ${argument}`);
+}
+
+function readArgumentValue(argv, index, argument) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`Missing value for ${argument}`);
+  return value;
+}
+
+function validateRequiredArguments(parsed) {
   if (!parsed.repo || !parsed.stableTag) {
     throw new Error("Both --repo and --stable-tag are required.");
   }
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(parsed.repo)) {
     throw new Error("--repo must be an owner/name pair.");
   }
-
-  return parsed;
 }
 
 function callApi(gh, method, endpoint) {
@@ -146,38 +158,39 @@ function validateStableRelease(release, expectedTag) {
 }
 
 function isCandidate(release, stableVersion, cutoff) {
-  if (
-    !release ||
-    typeof release !== "object" ||
-    !Number.isSafeInteger(release.id) ||
-    release.id <= 0 ||
-    release.prerelease !== true ||
-    release.immutable !== false
-  ) {
-    return false;
-  }
+  if (!hasCandidateShape(release)) return false;
+  const tagMatch = parseNightlyTag(release.tag_name);
+  if (!tagMatch || !hasEligibleVersion(tagMatch, stableVersion)) return false;
+  return readCandidateCreationTime(release) < cutoff;
+}
 
-  const tagMatch =
-    typeof release.tag_name === "string"
-      ? NIGHTLY_TAG_PATTERN.exec(release.tag_name)
-      : null;
-  if (!tagMatch) {
-    return false;
-  }
-  if (!isCalendarDate(tagMatch[4])) {
-    return false;
-  }
-  if (compareVersions(parseVersion(tagMatch), stableVersion) > 0) {
-    return false;
-  }
+function hasCandidateShape(release) {
+  return Boolean(
+    release &&
+    typeof release === "object" &&
+    Number.isSafeInteger(release.id) &&
+    release.id > 0 &&
+    release.prerelease === true &&
+    release.immutable === false,
+  );
+}
 
-  let createdAt;
+function parseNightlyTag(tag) {
+  if (typeof tag !== "string") return null;
+  const match = NIGHTLY_TAG_PATTERN.exec(tag);
+  return match && isCalendarDate(match[4]) ? match : null;
+}
+
+function hasEligibleVersion(tagMatch, stableVersion) {
+  return compareVersions(parseVersion(tagMatch), stableVersion) <= 0;
+}
+
+function readCandidateCreationTime(release) {
   try {
-    createdAt = parseTimestamp(release.created_at, "Nightly created_at");
+    return parseTimestamp(release.created_at, "Nightly created_at");
   } catch {
-    return false;
+    return Number.POSITIVE_INFINITY;
   }
-  return createdAt < cutoff;
 }
 
 function listReleases(gh, repo) {

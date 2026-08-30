@@ -38,46 +38,72 @@ function rpc(method, params) {
 
 // Simulated client store: { id -> {isComplete, isError, output, toolName} }
 const toolCalls = new Map();
-let threadStatus = "active";
 let statusEvents = [];
 
+function parseMessage(raw) {
+  try { return JSON.parse(raw.toString()); } catch { return null; }
+}
+
+function settlePendingRpc(msg) {
+  if (typeof msg.id !== "string" || !pending.has(msg.id)) return false;
+  const { resolve, reject, method } = pending.get(msg.id);
+  pending.delete(msg.id);
+  if (msg.error) {
+    reject(new Error(`${method}: ${msg.error.message}`));
+  } else {
+    resolve(msg.result);
+  }
+  return true;
+}
+
+function recordToolUse(event) {
+  toolCalls.set(event.toolCallId, {
+    id: event.toolCallId, toolName: event.toolName, isComplete: false, isError: false,
+    parentToolCallId: event.parentToolCallId ?? null, output: null,
+  });
+}
+
+function recordToolResult(event) {
+  const toolCall = toolCalls.get(event.toolCallId);
+  if (!toolCall) return;
+  toolCall.isComplete = true;
+  toolCall.isError = Boolean(event.isError);
+  toolCall.output = event.output ?? null;
+}
+
+function recordAgentEvent(event) {
+  const recorders = { toolUse: recordToolUse, toolResult: recordToolResult };
+  recorders[event.type]?.(event);
+}
+
+function cancelIncompleteToolCalls() {
+  for (const toolCall of toolCalls.values()) {
+    if (toolCall.isComplete) continue;
+    toolCall.isComplete = true;
+    toolCall.isError = true;
+    toolCall.output = toolCall.output ?? "Cancelled";
+  }
+}
+
+function recordThreadStatus(status) {
+  statusEvents.push(status);
+  if (["paused", "interrupted", "errored"].includes(status)) {
+    cancelIncompleteToolCalls();
+  }
+}
+
+function recordPushMessage(msg) {
+  if (msg.channel === "agent.event") {
+    recordAgentEvent(msg.data);
+  } else if (msg.channel === "thread.status") {
+    recordThreadStatus(msg.data.status);
+  }
+}
+
 ws.on("message", (raw) => {
-  let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
-  if (typeof msg.id === "string" && pending.has(msg.id)) {
-    const { resolve, reject, method } = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.error) reject(new Error(`${method}: ${msg.error.message}`));
-    else resolve(msg.result);
-    return;
-  }
-  if (msg.type === "push") {
-    if (msg.channel === "agent.event") {
-      const e = msg.data;
-      if (e.type === "toolUse") {
-        toolCalls.set(e.toolCallId, {
-          id: e.toolCallId, toolName: e.toolName, isComplete: false, isError: false,
-          parentToolCallId: e.parentToolCallId ?? null, output: null,
-        });
-      } else if (e.type === "toolResult") {
-        const tc = toolCalls.get(e.toolCallId);
-        if (tc) { tc.isComplete = true; tc.isError = !!e.isError; tc.output = e.output ?? null; }
-      }
-    } else if (msg.channel === "thread.status") {
-      threadStatus = msg.data.status;
-      statusEvents.push(threadStatus);
-      // Replicate the ws-events.ts fix: mark in-flight tools cancelled on terminal status.
-      const isTerminal = ["paused", "interrupted", "errored"].includes(threadStatus);
-      if (isTerminal) {
-        for (const tc of toolCalls.values()) {
-          if (!tc.isComplete) {
-            tc.isComplete = true;
-            tc.isError = true;
-            tc.output = tc.output ?? "Cancelled";
-          }
-        }
-      }
-    }
-  }
+  const msg = parseMessage(raw);
+  if (!msg || settlePendingRpc(msg) || msg.type !== "push") return;
+  recordPushMessage(msg);
 });
 
 await new Promise((r) => ws.on("open", r));

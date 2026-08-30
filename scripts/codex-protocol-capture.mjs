@@ -84,47 +84,92 @@ function send(method, params) {
 
 const rl = readline.createInterface({ input: proc.stdout });
 
-rl.on("line", (line) => {
-  if (!line.trim()) return;
-  let msg;
-  try {
-    msg = JSON.parse(line);
-  } catch {
-    return;
+function parseLine(line) {
+  if (!line.trim()) return null;
+  try { return JSON.parse(line); } catch { return null; }
+}
+
+function settlePendingResponse(msg) {
+  if (msg.id == null || !pending.has(msg.id)) return false;
+  const { resolve, reject, method } = pending.get(msg.id);
+  pending.delete(msg.id);
+  if (msg.error) {
+    reject(new Error(`${method}: ${msg.error.message}`));
+  } else {
+    resolve(msg.result);
   }
-  if (msg.id != null && pending.has(msg.id)) {
-    const { resolve, reject, method } = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.error) reject(new Error(`${method}: ${msg.error.message}`));
-    else resolve(msg.result);
-    return;
-  }
-  if (!msg.method) return;
-  seq++;
-  const p = msg.params ?? {};
-  const item = p.item ?? {};
-  log({
+  return true;
+}
+
+function buildNotification(msg) {
+  const params = msg.params ?? {};
+  const item = params.item ?? {};
+  return addRawNotification({
     type: "notification",
     scenario: activeScenario,
-    seq,
+    seq: ++seq,
     method: msg.method,
-    threadId: p.threadId,
-    turnId: p.turnId,
-    itemId: p.itemId ?? item.id,
+    threadId: params.threadId,
+    turnId: params.turnId,
+    itemId: params.itemId ?? item.id,
     itemType: item.type,
-    deltaLen: typeof p.delta === "string" ? p.delta.length : undefined,
-    turnStatus: p.turn?.status,
-    turnItemsLen: Array.isArray(p.turn?.items) ? p.turn.items.length : undefined,
-    command: typeof item.command === "string" ? item.command.slice(0, 120) : undefined,
-    tool: typeof item.tool === "string" ? item.tool : undefined,
-    summaryLen: Array.isArray(item.summary) ? item.summary.length : undefined,
-    ...(INCLUDE_RAW ? { raw: msg } : {}),
-  });
-  if (msg.method === "turn/completed" && p.turnId === activeTurnId && resolveTurnDone) {
-    const done = resolveTurnDone;
-    resolveTurnDone = null;
-    done(p.turn?.status ?? "completed");
+    ...buildNotificationDetails(params, item),
+  }, msg);
+}
+
+function buildNotificationDetails(params, item) {
+  return {
+    deltaLen: readStringLength(params.delta),
+    turnStatus: params.turn?.status,
+    turnItemsLen: readArrayLength(params.turn?.items),
+    command: readCommand(item.command),
+    tool: readString(item.tool),
+    summaryLen: readArrayLength(item.summary),
+  };
+}
+
+function readStringLength(value) {
+  return typeof value === "string" ? value.length : undefined;
+}
+
+function readArrayLength(value) {
+  return Array.isArray(value) ? value.length : undefined;
+}
+
+function readCommand(value) {
+  return typeof value === "string" ? value.slice(0, 120) : undefined;
+}
+
+function readString(value) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function addRawNotification(notification, msg) {
+  return INCLUDE_RAW ? { ...notification, raw: msg } : notification;
+}
+
+function resolveCompletedTurn(msg) {
+  const params = msg.params ?? {};
+  if (msg.method !== "turn/completed" || params.turnId !== activeTurnId || !resolveTurnDone) {
+    return;
   }
+  const done = resolveTurnDone;
+  resolveTurnDone = null;
+  done(params.turn?.status ?? "completed");
+}
+
+function handleMessage(msg) {
+  if (!msg.method) return;
+  log(buildNotification(msg));
+  resolveCompletedTurn(msg);
+}
+
+rl.on("line", (line) => {
+  const msg = parseLine(line);
+  if (!msg || settlePendingResponse(msg)) {
+    return;
+  }
+  handleMessage(msg);
 });
 
 proc.stderr.on("data", (d) => {

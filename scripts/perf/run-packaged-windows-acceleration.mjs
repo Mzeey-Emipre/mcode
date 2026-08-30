@@ -44,47 +44,63 @@ export function parsePackagedWindowsArguments(args = process.argv.slice(2)) {
 export function validateAccelerationPair(results) {
   const failures = [];
   for (const mode of ["disabled", "default"]) {
-    const result = results[mode];
-    if (!result) {
-      failures.push(`${mode} packaged result is missing`);
-      continue;
-    }
-    if (result.accelerationMode !== mode) {
-      failures.push(`${mode} packaged result has the wrong acceleration mode`);
-    }
-    if (result.packaged !== true || result.buildMode !== "production") {
-      failures.push(`${mode} result is not a packaged production run`);
-    }
-    if (result.devToolsOpen !== false) {
-      failures.push(`${mode} packaged run did not confirm closed DevTools`);
-    }
-    const expectedGpuCompositing = mode === "default" ? "enabled" : "disabled_software";
-    if (result.gpuFeatureStatus?.gpu_compositing !== expectedGpuCompositing) {
-      failures.push(`${mode} packaged run reported unexpected GPU compositing status`);
-    }
-    if (!result.correctness?.passed) {
-      failures.push(`${mode} packaged correctness checks failed`);
-    }
+    validatePackagedMode(results[mode], mode, failures);
   }
-  if (results.disabled && results.default) {
-    if (results.disabled.sourceRevision !== results.default.sourceRevision) {
-      failures.push("packaged results use different source revisions");
-    }
-    if (
-      JSON.stringify(results.disabled.comparisonContract) !==
-      JSON.stringify(results.default.comparisonContract)
-    ) {
-      failures.push("packaged results use different workload contracts");
-    }
-    if (
-      results.disabled.gpuType !== results.default.gpuType ||
-      JSON.stringify(results.disabled.deviceIdentity) !==
-        JSON.stringify(results.default.deviceIdentity)
-    ) {
-      failures.push("packaged results use different device identities");
-    }
-  }
+  validatePackagedPairConsistency(results, failures);
   return { passed: failures.length === 0, failures };
+}
+
+function validatePackagedMode(result, mode, failures) {
+  if (!result) {
+    failures.push(`${mode} packaged result is missing`);
+    return;
+  }
+  validatePackagedModeContract(result, mode, failures);
+  validatePackagedModeGpuState(result, mode, failures);
+  if (!result.correctness?.passed) failures.push(`${mode} packaged correctness checks failed`);
+}
+
+function validatePackagedModeContract(result, mode, failures) {
+  if (result.accelerationMode !== mode) failures.push(`${mode} packaged result has the wrong acceleration mode`);
+  if (result.packaged !== true || result.buildMode !== "production") {
+    failures.push(`${mode} result is not a packaged production run`);
+  }
+  if (result.devToolsOpen !== false) failures.push(`${mode} packaged run did not confirm closed DevTools`);
+}
+
+function validatePackagedModeGpuState(result, mode, failures) {
+  const expected = mode === "default" ? "enabled" : "disabled_software";
+  if (result.gpuFeatureStatus?.gpu_compositing !== expected) {
+    failures.push(`${mode} packaged run reported unexpected GPU compositing status`);
+  }
+}
+
+function validatePackagedPairConsistency(results, failures) {
+  if (!results.disabled || !results.default) return;
+  validateMatchingSourceRevision(results, failures);
+  validateMatchingWorkloadContract(results, failures);
+  validateMatchingDeviceIdentity(results, failures);
+}
+
+function validateMatchingSourceRevision(results, failures) {
+  if (results.disabled.sourceRevision !== results.default.sourceRevision) {
+    failures.push("packaged results use different source revisions");
+  }
+}
+
+function validateMatchingWorkloadContract(results, failures) {
+  if (JSON.stringify(results.disabled.comparisonContract) !== JSON.stringify(results.default.comparisonContract)) {
+    failures.push("packaged results use different workload contracts");
+  }
+}
+
+function validateMatchingDeviceIdentity(results, failures) {
+  if (
+    results.disabled.gpuType !== results.default.gpuType
+    || JSON.stringify(results.disabled.deviceIdentity) !== JSON.stringify(results.default.deviceIdentity)
+  ) {
+    failures.push("packaged results use different device identities");
+  }
 }
 
 /** Builds the primary frame-cadence comparison for each locked workload. */
@@ -378,16 +394,16 @@ async function runPackagedMode(
     );
     return JSON.parse(await readFile(modeOutputFile, "utf8"));
   } finally {
-    if (started) {
-      try {
-        stopElectron(repoRoot, { sessionFileName });
-      } catch (error) {
-        const retry = stopElectron(repoRoot, { sessionFileName });
-        if (retry.status !== "already-stopped" && retry.status !== "not-running") {
-          throw error;
-        }
-      }
-    }
+    if (started) stopPackagedElectron(repoRoot, sessionFileName);
+  }
+}
+
+function stopPackagedElectron(repoRoot, sessionFileName) {
+  try {
+    stopElectron(repoRoot, { sessionFileName });
+  } catch (error) {
+    const retry = stopElectron(repoRoot, { sessionFileName });
+    if (retry.status !== "already-stopped" && retry.status !== "not-running") throw error;
   }
 }
 

@@ -33,7 +33,6 @@ import {
   formatSafeReproduction,
   getChangedFiles,
   inspectVerificationReceipt,
-  isVerificationRelevant,
   pathEntriesMatch,
   runPhase,
   runPhasesInParallel,

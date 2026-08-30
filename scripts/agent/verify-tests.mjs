@@ -155,17 +155,24 @@ export function isVerificationRelevant(file) {
 
 function isVerificationConfig(file) {
   const name = basename(file).toLowerCase();
-  return ROOT_VERIFICATION_FILES.has(file)
-    || name === "package.json"
-    || name === "turbo.json"
-    || name === "bun.lock"
-    || name === "bun.lockb"
-    || /^tsconfig(?:\.[^/]+)?\.json$/.test(name)
-    || /^eslint\.config\./.test(name)
-    || /^\.eslintrc(?:\.|$)/.test(name)
-    || /^vitest\.(?:config|workspace|setup)\./.test(name)
-    || /^vite\.config\./.test(name)
-    || /^(?:test-setup|setuptests)\./.test(name);
+  return ROOT_VERIFICATION_FILES.has(file) || isVerificationConfigName(name);
+}
+
+function isVerificationConfigName(name) {
+  return ["package.json", "turbo.json", "bun.lock", "bun.lockb"].includes(name)
+    || hasVerificationConfigPattern(name);
+}
+
+function hasVerificationConfigPattern(name) {
+  return isTypeScriptConfig(name)
+    || name.startsWith("eslint.config.")
+    || name === ".eslintrc"
+    || name.startsWith(".eslintrc.")
+    || /^(?:vitest\.(?:config|workspace|setup)|vite\.config|(?:test-setup|setuptests))\./.test(name);
+}
+
+function isTypeScriptConfig(name) {
+  return /^tsconfig(?:\.[^/]+)?\.json$/.test(name);
 }
 
 function parseNulPaths(raw) {
@@ -212,15 +219,31 @@ export function hasCodeChanges(options) {
 /** Plans the smallest safe maintained test scope for the changed files. */
 export function selectTestPhases(changedFiles, { forceFull = false, cwd = process.cwd() } = {}) {
   if (changedFiles === null) return [];
-  if (forceFull) {
-    return changedFiles.some((file) => file.startsWith("scripts/agent/"))
-      ? [FULL_TEST_PHASE, { ...SCRIPT_TEST_PHASE, cwd }]
-      : [FULL_TEST_PHASE];
-  }
+  if (forceFull) return selectFullTestPhases(changedFiles, cwd);
   if (changedFiles.length === 0) return [];
 
   const needsScriptTests = changedFiles.some((file) => file.startsWith("scripts/agent/"));
-  const phases = [];
+  const phases = selectWorkspaceTestPhases(changedFiles, cwd);
+  if (needsScriptTests) phases.push(...selectAgentScriptTestPhases(changedFiles, cwd));
+  return phases;
+}
+
+function selectFullTestPhases(changedFiles, cwd) {
+  const phases = [FULL_TEST_PHASE];
+  if (changedFiles.some((file) => file.startsWith("scripts/agent/"))) {
+    phases.push({ ...SCRIPT_TEST_PHASE, cwd });
+  }
+  return phases;
+}
+
+function selectWorkspaceTestPhases(changedFiles, cwd) {
+  const buckets = collectWorkspaceFiles(changedFiles);
+  return [...buckets].flatMap(([workspace, files]) =>
+    createRelatedTestPhases(workspace, files, cwd),
+  );
+}
+
+function collectWorkspaceFiles(changedFiles) {
   const buckets = new Map();
   for (const file of changedFiles) {
     if (isVerificationConfig(file)) continue;
@@ -232,49 +255,54 @@ export function selectTestPhases(changedFiles, { forceFull = false, cwd = proces
     files.push(file.slice(workspace.length + 1));
     buckets.set(workspace, files);
   }
-  for (const [workspace, files] of buckets) {
-    const isServer = workspace === "apps/server";
-    const relatedArgsPrefix = isServer
-      ? [
-        "../../scripts/run-electron-node.mjs",
-        "--workspace-cli",
-        "vitest",
-        "vitest.mjs",
-        "related",
-      ]
-      : ["vitest", "related"];
-    const buildRelatedArgs = (filesChunk) => [
-      ...relatedArgsPrefix,
-      ...filesChunk,
-      "--run",
-    ];
-    const chunks = [];
-    let chunk = [];
-    for (const file of files) {
-      const candidate = [...chunk, file];
-      const argvBytes = Buffer.byteLength(JSON.stringify(buildRelatedArgs(candidate)));
-      if (chunk.length > 0
-        && (candidate.length > MAX_RELATED_FILES || argvBytes > MAX_RELATED_ARG_BYTES)) {
-        chunks.push(chunk);
-        chunk = [file];
-      } else {
-        chunk = candidate;
-      }
-    }
-    if (chunk.length > 0) chunks.push(chunk);
-    for (const [index, filesChunk] of chunks.entries()) {
-      const suffix = chunks.length > 1 ? ` ${index + 1}/${chunks.length}` : "";
-      phases.push({
-        name: `Unit Tests (${workspace}${suffix})`,
-        command: isServer ? "bun" : "bunx",
-        args: buildRelatedArgs(filesChunk),
-        cwd: resolvePath(cwd, workspace),
-      });
+  return buckets;
+}
+
+function createRelatedTestPhases(workspace, files, cwd) {
+  const isServer = workspace === "apps/server";
+  const buildArgs = (fileChunk) => [
+    ...relatedTestArgumentsPrefix(workspace),
+    ...fileChunk,
+    "--run",
+  ];
+  const chunks = splitRelatedFiles(files, buildArgs);
+  return chunks.map((fileChunk, index) => ({
+    name: `Unit Tests (${workspace}${relatedTestPhaseSuffix(chunks, index)})`,
+    command: isServer ? "bun" : "bunx",
+    args: buildArgs(fileChunk),
+    cwd: resolvePath(cwd, workspace),
+  }));
+}
+
+function relatedTestArgumentsPrefix(workspace) {
+  return workspace === "apps/server"
+    ? ["../../scripts/run-electron-node.mjs", "--workspace-cli", "vitest", "vitest.mjs", "related"]
+    : ["vitest", "related"];
+}
+
+function splitRelatedFiles(files, buildArgs) {
+  const chunks = [];
+  let chunk = [];
+  for (const file of files) {
+    const candidate = [...chunk, file];
+    if (chunk.length > 0 && exceedsRelatedTestBounds(candidate, buildArgs)) {
+      chunks.push(chunk);
+      chunk = [file];
+    } else {
+      chunk = candidate;
     }
   }
+  if (chunk.length > 0) chunks.push(chunk);
+  return chunks;
+}
 
-  if (needsScriptTests) phases.push(...selectAgentScriptTestPhases(changedFiles, cwd));
-  return phases;
+function exceedsRelatedTestBounds(files, buildArgs) {
+  return files.length > MAX_RELATED_FILES
+    || Buffer.byteLength(JSON.stringify(buildArgs(files))) > MAX_RELATED_ARG_BYTES;
+}
+
+function relatedTestPhaseSuffix(chunks, index) {
+  return chunks.length > 1 ? ` ${index + 1}/${chunks.length}` : "";
 }
 
 /** Builds typecheck, lint, and the selected maintained test phases. */
@@ -293,26 +321,84 @@ function appendBounded(buffer, chunk, maxBytes = MAX_RETAINED_OUTPUT_BYTES) {
 
 function terminateProcessTree(child, force = false) {
   if (!child.pid) return null;
-  if (isWindows) {
-    const result = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-      encoding: "utf8",
-      windowsHide: true,
-    });
-    if (!result.error && result.status === 0) return null;
-    try { child.kill("SIGKILL"); } catch { /* Process already exited. */ }
-    const error = result.error?.message ?? (
-      String(result.stderr ?? "").trim()
-      || String(result.stdout ?? "").trim()
-      || `taskkill exited with ${result.status ?? "an unknown status"}`
-    );
-    return error.slice(0, MAX_FAILURE_EXCERPT_CHARS);
-  }
+  return isWindows ? terminateWindowsProcessTree(child) : terminatePosixProcessTree(child, force);
+}
+
+function terminateWindowsProcessTree(child) {
+  const result = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (!result.error && result.status === 0) return null;
+  try { child.kill("SIGKILL"); } catch { /* Process already exited. */ }
+  return taskkillFailureExcerpt(result);
+}
+
+function taskkillFailureExcerpt(result) {
+  const error = (result.error?.message
+    ?? String(result.stderr ?? "").trim())
+    || String(result.stdout ?? "").trim()
+    || `taskkill exited with ${result.status ?? "an unknown status"}`;
+  return error.slice(0, MAX_FAILURE_EXCERPT_CHARS);
+}
+
+function terminatePosixProcessTree(child, force) {
   try {
     process.kill(-child.pid, force ? "SIGKILL" : "SIGTERM");
   } catch {
     try { child.kill(force ? "SIGKILL" : "SIGTERM"); } catch { /* Process already exited. */ }
   }
   return null;
+}
+
+function releaseDetachedChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.unref();
+}
+
+function resolvePhaseExitCondition({ exitCondition, logError, spawnError, childSignal, code }) {
+  if (logError) return "log-error";
+  if (spawnError) return "spawn-error";
+  if (exitCondition === "timeout" || exitCondition === "cancelled") return exitCondition;
+  if (childSignal) return "signal";
+  return code === 0 ? "success" : "nonzero";
+}
+
+function createPhaseResult({
+  name,
+  code,
+  signal,
+  exitCondition,
+  spawnError,
+  logError,
+  terminationError,
+  tail,
+  startedAt,
+  command,
+  args,
+  cwd,
+  logPath,
+}) {
+  return {
+    name,
+    code,
+    signal: signal ?? null,
+    exitCondition,
+    spawnError,
+    logError,
+    terminationError,
+    output: tail.toString("utf8"),
+    outputTruncated: tail.length >= MAX_RETAINED_OUTPUT_BYTES,
+    durationMs: Date.now() - startedAt,
+    command,
+    args,
+    cwd,
+    argvDisplay: formatArgvDisplay(command, args),
+    reproduction: formatSafeReproduction(command, args),
+    logPath: logPath ?? null,
+  };
 }
 
 /** Formats a bounded argv display without interpreting shell metacharacters. */
@@ -427,36 +513,30 @@ export function runPhase({
       clearTimeout(forceKillTimer);
       clearTimeout(settlementTimer);
       signal?.removeEventListener("abort", cancel);
-      if (child.exitCode === null && child.signalCode === null) {
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        child.unref();
-      }
+      releaseDetachedChild(child);
       const normalizedCode = code ?? 1;
-      if (logError) exitCondition = "log-error";
-      else if (spawnError) exitCondition = "spawn-error";
-      else if (exitCondition === "timeout" || exitCondition === "cancelled") { /* Keep cause. */ }
-      else if (childSignal) exitCondition = "signal";
-      else exitCondition = normalizedCode === 0 ? "success" : "nonzero";
-      const result = {
+      exitCondition = resolvePhaseExitCondition({
+        exitCondition,
+        logError,
+        spawnError,
+        childSignal,
+        code: normalizedCode,
+      });
+      resolve(createPhaseResult({
         name,
         code: normalizedCode,
-        signal: childSignal ?? null,
+        signal: childSignal,
         exitCondition,
         spawnError,
         logError,
         terminationError,
-        output: tail.toString("utf8"),
-        outputTruncated: tail.length >= MAX_RETAINED_OUTPUT_BYTES,
-        durationMs: Date.now() - startedAt,
+        tail,
+        startedAt,
         command,
         args,
         cwd,
-        argvDisplay: formatArgvDisplay(command, args),
-        reproduction: formatSafeReproduction(command, args),
-        logPath: logPath ?? null,
-      };
-      resolve(result);
+        logPath,
+      }));
     };
     const finish = (code, childSignal) => {
       if (settled || finishing) return;
@@ -513,39 +593,57 @@ export async function runPhasesInParallel(
   phases,
   { printer = console.log, runDirectory, timeoutMs, signal, logIndexOffset = 0 } = {},
 ) {
-  const results = await Promise.all(phases.map((phase, index) => runPhase({
+  const results = await Promise.all(phases.map((phase, index) => runPhase(
+    preparePhaseRun(phase, index, { runDirectory, timeoutMs, signal, logIndexOffset }),
+  )));
+  let code = 0;
+  for (const result of results) {
+    code ||= reportPhaseResult(result, printer);
+  }
+  return { code, results };
+}
+
+function preparePhaseRun(phase, index, { runDirectory, timeoutMs, signal, logIndexOffset }) {
+  return {
     ...phase,
     timeoutMs: phase.timeoutMs ?? timeoutMs,
     signal,
-    logPath: runDirectory
-      ? resolvePath(runDirectory, `${String(logIndexOffset + index + 1).padStart(2, "0")}-${phase.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.log`)
-      : undefined,
-  })));
-  let code = 0;
-  for (const result of results) {
-    const seconds = (result.durationMs / 1_000).toFixed(1);
-    if (result.exitCondition === "success") {
-      printer(`${result.name}: PASS (${seconds}s)`);
-      continue;
-    }
-    if (code === 0) code = result.code || 1;
-    printer(`${result.name}: FAIL (${seconds}s)`);
-    printer(`Argv: ${result.argvDisplay}`);
-    if (result.reproduction) printer(`Reproduce: ${result.reproduction}`);
-    printer(`Working directory: ${result.cwd}`);
-    const detail = result.exitCondition === "nonzero"
-      ? `nonzero exit ${result.code}`
-      : result.exitCondition === "signal"
-        ? `signal ${result.signal}`
-        : result.exitCondition === "spawn-error"
-          ? `spawn error: ${result.spawnError}`
-          : result.exitCondition;
-    printer(`Exit condition: ${detail}`);
-    const excerpt = failureExcerpt(result.output);
-    if (excerpt) printer(`Diagnostic excerpt:\n${excerpt}`);
-    if (result.logPath) printer(`Full log: ${result.logPath}`);
+    logPath: runDirectory ? phaseLogPath(runDirectory, phase, index, logIndexOffset) : undefined,
+  };
+}
+
+function phaseLogPath(runDirectory, phase, index, logIndexOffset) {
+  const position = String(logIndexOffset + index + 1).padStart(2, "0");
+  const name = phase.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return resolvePath(runDirectory, `${position}-${name}.log`);
+}
+
+function reportPhaseResult(result, printer) {
+  const seconds = (result.durationMs / 1_000).toFixed(1);
+  if (result.exitCondition === "success") {
+    printer(`${result.name}: PASS (${seconds}s)`);
+    return 0;
   }
-  return { code, results };
+  printer(`${result.name}: FAIL (${seconds}s)`);
+  printPhaseFailure(result, printer);
+  return result.code || 1;
+}
+
+function printPhaseFailure(result, printer) {
+  printer(`Argv: ${result.argvDisplay}`);
+  if (result.reproduction) printer(`Reproduce: ${result.reproduction}`);
+  printer(`Working directory: ${result.cwd}`);
+  printer(`Exit condition: ${phaseFailureDetail(result)}`);
+  const excerpt = failureExcerpt(result.output);
+  if (excerpt) printer(`Diagnostic excerpt:\n${excerpt}`);
+  if (result.logPath) printer(`Full log: ${result.logPath}`);
+}
+
+function phaseFailureDetail(result) {
+  if (result.exitCondition === "nonzero") return `nonzero exit ${result.code}`;
+  if (result.exitCondition === "signal") return `signal ${result.signal}`;
+  if (result.exitCondition === "spawn-error") return `spawn error: ${result.spawnError}`;
+  return result.exitCondition;
 }
 
 /** Runs core phases in parallel, then agent script tests without resource contention. */
@@ -587,31 +685,51 @@ function hashEffectivePath(hash, cwd, file) {
   const path = safeRepositoryPath(cwd, file);
   if (!path) throw new Error(`Unsafe repository path: ${file}`);
   const normalized = file.replaceAll("\\", "/");
+  assertNoSymbolicLinkAncestors(cwd, normalized, file);
+  hashPathContent(hash, path, file);
+}
+
+function assertNoSymbolicLinkAncestors(cwd, normalized, file) {
   let ancestor = cwd;
   for (const part of normalized.split("/").slice(0, -1)) {
     if (!part || part === ".") continue;
     ancestor = resolvePath(ancestor, part);
-    try {
-      if (lstatSync(ancestor).isSymbolicLink()) {
-        throw new Error(`Repository path crosses a link: ${file}`);
-      }
-    } catch (error) {
-      if (error?.code === "ENOENT") break;
-      throw error;
+    if (isMissingPath(ancestor)) break;
+    if (lstatSync(ancestor).isSymbolicLink()) {
+      throw new Error(`Repository path crosses a link: ${file}`);
     }
   }
+}
+
+function isMissingPath(path) {
   try {
-    const stats = lstatSync(path);
-    if (stats.isSymbolicLink()) {
-      hashPart(hash, `symlink:${file}`, readlinkSync(path));
-    } else if (stats.isFile()) {
-      hashPart(hash, `file:${file}`, readFileSync(path));
-    } else {
-      hashPart(hash, `unsupported:${file}`, stats.mode);
-    }
+    lstatSync(path);
+    return false;
   } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-    hashPart(hash, `missing:${file}`, "");
+    if (error?.code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+function hashPathContent(hash, path, file) {
+  try {
+    hashExistingPathContent(hash, path, file, lstatSync(path));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      hashPart(hash, `missing:${file}`, "");
+      return;
+    }
+    throw error;
+  }
+}
+
+function hashExistingPathContent(hash, path, file, stats) {
+  if (stats.isSymbolicLink()) {
+    hashPart(hash, `symlink:${file}`, readlinkSync(path));
+  } else if (stats.isFile()) {
+    hashPart(hash, `file:${file}`, readFileSync(path));
+  } else {
+    hashPart(hash, `unsupported:${file}`, stats.mode);
   }
 }
 
@@ -712,44 +830,70 @@ function validateCachedManifest(record, root) {
   }
   try {
     const manifest = JSON.parse(readFileSync(record.manifestPath, "utf8"));
-    if (
-      manifest.schemaVersion !== VERIFICATION_SCHEMA_VERSION
-      || manifest.complete !== true
-      || manifest.contentIdentity !== record.contentIdentity
-      || manifest.planningIdentity !== record.planningIdentity
-      || manifest.gate !== record.gate
-      || manifest.code !== record.code
-      || typeof manifest.skipped !== "boolean"
-      || !Array.isArray(manifest.changedFiles)
-      || !Array.isArray(manifest.phases)
-    ) return false;
-    return manifest.phases.every((phase) =>
-      typeof phase === "object"
-      && phase !== null
-      && typeof phase.name === "string"
-      && Number.isInteger(phase.code)
-      && typeof phase.exitCondition === "string"
-      && typeof phase.logPath === "string"
-      && existingPathWithin(dirname(record.manifestPath), phase.logPath),
-    );
+    return hasValidManifestHeader(manifest, record)
+      && manifest.phases.every((phase) => isValidManifestPhase(phase, record.manifestPath));
   } catch {
     return false;
   }
 }
 
+function hasValidManifestHeader(manifest, record) {
+  return hasExpectedManifestIdentity(manifest, record)
+    && typeof manifest.skipped === "boolean"
+    && Array.isArray(manifest.changedFiles)
+    && Array.isArray(manifest.phases);
+}
+
+function hasExpectedManifestIdentity(manifest, record) {
+  return manifest.schemaVersion === VERIFICATION_SCHEMA_VERSION
+    && manifest.complete === true
+    && manifest.contentIdentity === record.contentIdentity
+    && manifest.planningIdentity === record.planningIdentity
+    && manifest.gate === record.gate
+    && manifest.code === record.code;
+}
+
+function isValidManifestPhase(phase, manifestPath) {
+  return isManifestPhaseShape(phase)
+    && existingPathWithin(dirname(manifestPath), phase.logPath);
+}
+
+function isManifestPhaseShape(phase) {
+  return typeof phase === "object"
+    && phase !== null
+    && typeof phase.name === "string"
+    && Number.isInteger(phase.code)
+    && typeof phase.exitCondition === "string"
+    && typeof phase.logPath === "string";
+}
+
 function isCacheRecordShape(record) {
-  return typeof record === "object"
-    && record !== null
-    && record.schemaVersion === VERIFICATION_SCHEMA_VERSION
+  return isRecordObject(record)
+    && hasCacheRecordIdentity(record)
+    && hasCacheRecordResult(record)
+    && hasCacheRecordTimestamps(record);
+}
+
+function isRecordObject(record) {
+  return typeof record === "object" && record !== null;
+}
+
+function hasCacheRecordIdentity(record) {
+  return record.schemaVersion === VERIFICATION_SCHEMA_VERSION
     && record.complete === true
     && /^[a-f0-9]{64}$/.test(record.contentIdentity)
-    && /^[a-f0-9]{64}$/.test(record.planningIdentity)
-    && (record.gate === "changed" || record.gate === "full")
+    && /^[a-f0-9]{64}$/.test(record.planningIdentity);
+}
+
+function hasCacheRecordResult(record) {
+  return (record.gate === "changed" || record.gate === "full")
     && Number.isInteger(record.code)
     && record.code >= 0
-    && typeof record.manifestPath === "string"
-    && typeof record.startedAt === "string"
-    && typeof record.completedAt === "string";
+    && typeof record.manifestPath === "string";
+}
+
+function hasCacheRecordTimestamps(record) {
+  return typeof record.startedAt === "string" && typeof record.completedAt === "string";
 }
 
 /** Finds a validated receipt whose gate covers the requested gate. */
@@ -841,62 +985,64 @@ export async function runVerification({
 } = {}) {
   const changedFiles = getChangedFiles({ cwd });
   const identities = calculateVerificationIdentities({ cwd, env, changedFiles });
-  if (!identities) {
-    printer("Verification failed: could not calculate receipt identities.");
-    return { code: 1, identityFailure: true };
+  if (!identities) return reportIdentityFailure(printer);
+  const run = createVerificationRun(cwd);
+  if (changedFiles !== null && changedFiles.length === 0) {
+    return writeSkippedVerification(run, { gate, identities, changedFiles, printer });
   }
+  return runVerificationGate(run, { cwd, gate, identities, changedFiles, printer, timeoutMs });
+}
+
+function reportIdentityFailure(printer) {
+  printer("Verification failed: could not calculate receipt identities.");
+  return { code: 1, identityFailure: true };
+}
+
+function createVerificationRun(cwd) {
   const root = artifactRoot(cwd);
   mkdirSync(resolvePath(root, "runs"), { recursive: true });
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}-${randomUUID().slice(0, 8)}`;
   const runDirectory = resolvePath(root, "runs", runId);
   mkdirSync(runDirectory, { recursive: true });
-  const manifestPath = resolvePath(runDirectory, "manifest.json");
-  const startedAt = new Date().toISOString();
+  return { root, runDirectory, manifestPath: resolvePath(runDirectory, "manifest.json"), startedAt: new Date().toISOString() };
+}
 
-  if (changedFiles !== null && changedFiles.length === 0) {
-    const manifest = {
-      schemaVersion: VERIFICATION_SCHEMA_VERSION,
-      complete: true,
-      gate,
-      ...identities,
-      code: 0,
-      skipped: true,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      changedFiles,
-      phases: [],
-    };
-    atomicWriteJson(manifestPath, manifest);
-    recordResult(root, { ...manifest, manifestPath });
-    printer("Verification skipped: no relevant changes.");
-    pruneRuns(root);
-    return { code: 0, manifestPath };
-  }
+function writeSkippedVerification(run, { gate, identities, changedFiles, printer }) {
+  const manifest = buildVerificationManifest({ gate, identities, changedFiles, startedAt: run.startedAt, code: 0, skipped: true, results: [] });
+  writeVerificationReceipt(run, manifest);
+  printer("Verification skipped: no relevant changes.");
+  return { code: 0, manifestPath: run.manifestPath };
+}
 
+async function runVerificationGate(run, { cwd, gate, identities, changedFiles, printer, timeoutMs }) {
   const phases = buildPhases(changedFiles, { forceFull: gate === "full", cwd });
   printer(`Verification started: ${gate} gate, ${phases.length} phase(s).`);
-  const { code, results } = await runVerificationPhases(phases, {
-    printer,
-    runDirectory,
-    timeoutMs,
-  });
-  const manifest = {
+  const { code, results } = await runVerificationPhases(phases, { printer, runDirectory: run.runDirectory, timeoutMs });
+  const manifest = buildVerificationManifest({ gate, identities, changedFiles, startedAt: run.startedAt, code, skipped: false, results });
+  writeVerificationReceipt(run, manifest);
+  printer(`Verification ${code === 0 ? "passed" : "failed"}. Manifest: ${run.manifestPath}`);
+  return { code, manifestPath: run.manifestPath, results };
+}
+
+function buildVerificationManifest({ gate, identities, changedFiles, startedAt, code, skipped, results }) {
+  return {
     schemaVersion: VERIFICATION_SCHEMA_VERSION,
     complete: true,
     gate,
     ...identities,
     code,
-    skipped: false,
+    skipped,
     startedAt,
     completedAt: new Date().toISOString(),
     changedFiles,
     phases: results.map((result) => ({ ...result, output: undefined })),
   };
-  atomicWriteJson(manifestPath, manifest);
-  recordResult(root, { ...manifest, phases: undefined, manifestPath });
-  printer(`Verification ${code === 0 ? "passed" : "failed"}. Manifest: ${manifestPath}`);
-  pruneRuns(root);
-  return { code, manifestPath, results };
+}
+
+function writeVerificationReceipt(run, manifest) {
+  atomicWriteJson(run.manifestPath, manifest);
+  recordResult(run.root, { ...manifest, phases: undefined, manifestPath: run.manifestPath });
+  pruneRuns(run.root);
 }
 
 async function main() {

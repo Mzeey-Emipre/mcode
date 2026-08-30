@@ -73,108 +73,140 @@ export function setAgentUpTestHooks(hooks) {
  */
 export async function agentUp(repoRoot = resolveRepoRoot()) {
   const paths = ensureRuntimeRoot(repoRoot);
-  mkdirSync(paths.dbDir, { recursive: true });
-  mkdirSync(paths.logsDir, { recursive: true });
-  mkdirSync(paths.pidsDir, { recursive: true });
-  mkdirSync(paths.playwrightScratchDir, { recursive: true });
-  mkdirSync(paths.electronDir, { recursive: true });
+  prepareRuntimeDirectories(paths);
   const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
   await stopRuntimePids(repoRoot);
 
+  const runtime = await prepareRuntime(repoRoot);
+  const electronBin = resolveElectronBinary();
+  if (!electronBin) throw new Error("Electron binary not found. Run 'bun install' in the project root.");
+  runtime.electronBinding = getElectronBinding();
+  await rebuildRuntimeServerBundle();
+
+  const startedPidFiles = [];
+  try {
+    const server = startRuntimeServer({ electronBin, paths, repoRoot, runtime });
+    startedPidFiles.push(writePid(paths, "server", server.pid));
+
+    await waitForHealth(runtime.contract.healthUrl);
+    writePortsFile(runtime.contract, repoRoot);
+
+    const web = startRuntimeWeb({ paths, repoRoot, runtime });
+    startedPidFiles.push(writePid(paths, "web", web.pid));
+    await waitForHttpOk(runtime.contract.appUrl, "web app");
+
+    await writeRuntimeContract(runtime.contract);
+    return runtime.contract;
+  } catch (error) {
+    await cleanupStartedProcesses(startedPidFiles, repoRoot);
+    throw error;
+  }
+}
+
+function prepareRuntimeDirectories(paths) {
+  for (const directory of [
+    paths.dbDir,
+    paths.logsDir,
+    paths.pidsDir,
+    paths.playwrightScratchDir,
+    paths.electronDir,
+  ]) {
+    mkdirSync(directory, { recursive: true });
+  }
+}
+
+async function prepareRuntime(repoRoot) {
   const seedRuntimeFixtureRepo = agentUpTestHooks.seedFixtureRepo ?? seedFixtureRepo;
   const computeRuntimePorts = agentUpTestHooks.computeAvailablePorts ?? computeAvailablePorts;
   const fixtureRepo = seedRuntimeFixtureRepo(repoRoot);
   const { serverPort, webPort } = await computeRuntimePorts(repoRoot);
   const token = randomUUID();
   const instanceToken = generateInstanceToken();
-  const contract = buildPortsContract({
-    repoRoot,
+  return {
+    fixtureRepo,
+    token,
+    instanceToken,
     serverPort,
     webPort,
-    instanceToken,
-    worktreeIdentity: repoRoot,
-    seedLogin: {
-      email: "agent@seed.local",
-      token,
-      authHeader: `Bearer ${token}`,
-      cookieName: "mcode-auth",
+    contract: buildPortsContract({
+      repoRoot,
+      serverPort,
+      webPort,
+      instanceToken,
+      worktreeIdentity: repoRoot,
+      seedLogin: {
+        email: "agent@seed.local",
+        token,
+        authHeader: `Bearer ${token}`,
+        cookieName: "mcode-auth",
+      },
+    }),
+  };
+}
+
+function resolveElectronBinary() {
+  const getElectron = agentUpTestHooks.getElectronBinary ?? getElectronBinary;
+  return getElectron();
+}
+
+async function rebuildRuntimeServerBundle() {
+  const rebuild = agentUpTestHooks.rebuildServerDevBundle
+    ?? (await import("../build-server-dev-bundle.mjs")).rebuildServerDevBundle;
+  await rebuild();
+}
+
+function startRuntimeServer({ electronBin, paths, repoRoot, runtime }) {
+  const spawnRuntimeProcess = agentUpTestHooks.spawnLogged ?? spawnLogged;
+  return spawnRuntimeProcess(
+    electronBin,
+    [serverCjs],
+    {
+      cwd: dirname(serverCjs),
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        BETTER_SQLITE3_BINDING: runtime.electronBinding,
+        NODE_ENV: "development",
+        ...buildRuntimeStateEnv(repoRoot, { MCODE_AGENT_FIXTURE_REPO: runtime.fixtureRepo }),
+        MCODE_PORT: String(runtime.serverPort),
+        MCODE_HOST: "127.0.0.1",
+        MCODE_AUTH_TOKEN: runtime.token,
+        MCODE_SINGLE_INSTANCE: "true",
+        MCODE_INSTANCE_TOKEN: runtime.instanceToken,
+        MCODE_WORKTREE_IDENTITY: repoRoot,
+        MCODE_WEB_AUTOMATION: buildWebAutomationEnv().MCODE_WEB_AUTOMATION,
+      },
+      windowsHide: true,
     },
-  });
+    resolve(paths.logsDir, "server.log"),
+  );
+}
 
-  const resolveElectronBinary = agentUpTestHooks.getElectronBinary ?? getElectronBinary;
-  const electronBin = resolveElectronBinary();
-  if (!electronBin) {
-    throw new Error("Electron binary not found. Run 'bun install' in the project root.");
-  }
-  const electronBinding = getElectronBinding();
-
-  const rebuildRuntimeServerBundle = agentUpTestHooks.rebuildServerDevBundle ??
-    (await import("../build-server-dev-bundle.mjs")).rebuildServerDevBundle;
-  await rebuildRuntimeServerBundle();
-
-  const startedPidFiles = [];
-  try {
-    const spawnRuntimeProcess = agentUpTestHooks.spawnLogged ?? spawnLogged;
-    const server = spawnRuntimeProcess(
-      electronBin,
-      [serverCjs],
-      {
-        cwd: dirname(serverCjs),
-        env: {
-          ...process.env,
-          ELECTRON_RUN_AS_NODE: "1",
-          BETTER_SQLITE3_BINDING: electronBinding,
-          NODE_ENV: "development",
-          ...buildRuntimeStateEnv(repoRoot, {
-            MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
-          }),
-          MCODE_PORT: String(serverPort),
-          MCODE_HOST: "127.0.0.1",
-          MCODE_AUTH_TOKEN: token,
-          MCODE_SINGLE_INSTANCE: "true",
-          MCODE_INSTANCE_TOKEN: instanceToken,
-          MCODE_WORKTREE_IDENTITY: repoRoot,
-          MCODE_WEB_AUTOMATION: buildWebAutomationEnv().MCODE_WEB_AUTOMATION,
-        },
-        windowsHide: true,
+function startRuntimeWeb({ paths, repoRoot, runtime }) {
+  const spawnRuntimeProcess = agentUpTestHooks.spawnLogged ?? spawnLogged;
+  return spawnRuntimeProcess(
+    getBunBinary(),
+    ["run", "dev", "--host", "127.0.0.1", "--port", String(runtime.webPort), "--strictPort"],
+    {
+      cwd: resolve(rootDir, "apps", "web"),
+      env: {
+        ...process.env,
+        NODE_ENV: "development",
+        MCODE_AGENT_RUNTIME: "1",
+        MCODE_WEB_PORT: String(runtime.webPort),
+        VITE_MCODE_SINGLE_INSTANCE: "true",
+        VITE_MCODE_WORKTREE_IDENTITY: repoRoot,
+        VITE_MCODE_RUNTIME_CONTRACT: paths.portsFile,
+        VITE_MCODE_WEB_AUTOMATION: buildWebAutomationEnv().VITE_MCODE_WEB_AUTOMATION,
       },
-      resolve(paths.logsDir, "server.log"),
-    );
-    startedPidFiles.push(writePid(paths, "server", server.pid));
+      windowsHide: true,
+    },
+    resolve(paths.logsDir, "web.log"),
+  );
+}
 
-    await waitForHealth(contract.healthUrl);
-    writePortsFile(contract, repoRoot);
-
-    const web = spawnRuntimeProcess(
-      getBunBinary(),
-      ["run", "dev", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"],
-      {
-        cwd: resolve(rootDir, "apps", "web"),
-        env: {
-          ...process.env,
-          NODE_ENV: "development",
-          MCODE_AGENT_RUNTIME: "1",
-          MCODE_WEB_PORT: String(webPort),
-          VITE_MCODE_SINGLE_INSTANCE: "true",
-          VITE_MCODE_WORKTREE_IDENTITY: repoRoot,
-          VITE_MCODE_RUNTIME_CONTRACT: paths.portsFile,
-          VITE_MCODE_WEB_AUTOMATION: buildWebAutomationEnv().VITE_MCODE_WEB_AUTOMATION,
-        },
-        windowsHide: true,
-      },
-      resolve(paths.logsDir, "web.log"),
-    );
-    startedPidFiles.push(writePid(paths, "web", web.pid));
-    await waitForHttpOk(contract.appUrl, "web app");
-
-    if (!process.argv.includes("--quiet")) {
-      await writeStdout(`${JSON.stringify(contract)}\n`);
-    }
-    return contract;
-  } catch (error) {
-    await cleanupStartedProcesses(startedPidFiles, repoRoot);
-    throw error;
-  }
+async function writeRuntimeContract(contract) {
+  if (!process.argv.includes("--quiet")) await writeStdout(`${JSON.stringify(contract)}\n`);
 }
 
 /**

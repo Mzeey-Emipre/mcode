@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
-import { dirname, join, resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 
 export const DEV_DIR_NAME = ".dev";
@@ -246,34 +246,49 @@ export function assertInsideDevDir(candidate, devDir) {
  * @param {unknown} ports
  */
 function validatePortsContract(ports) {
-  if (!ports || typeof ports !== "object" || Array.isArray(ports)) {
-    throw new Error("ports.json must contain an object");
-  }
+  assertContractObject(ports, "ports.json must contain an object");
+  validateRuntimePorts(ports);
+  validateInstanceContract(ports);
+  validateRuntimeUrls(ports);
+  validateSeedLogin(ports.seedLogin);
+}
+
+function assertContractObject(value, message) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(message);
+}
+
+function validateRuntimePorts(ports) {
   for (const name of ["serverPort", "webPort"]) {
     const port = ports[name];
     if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
       throw new Error(`Invalid ${name}: ${port}`);
     }
   }
+}
+
+function validateInstanceContract(ports) {
   if (typeof ports.instanceToken !== "string" || ports.instanceToken.length < 32) {
     throw new Error("ports.json instanceToken must be a non-empty random token");
   }
-  if (typeof ports.worktreeIdentity !== "string" || ports.worktreeIdentity.trim().length === 0) {
-    throw new Error("ports.json worktreeIdentity must be a non-empty string");
-  }
+  assertNonBlankString(ports.worktreeIdentity, "ports.json worktreeIdentity must be a non-empty string");
+  assertNonBlankString(ports.logsDir, "ports.json logsDir must be a non-empty string");
+}
+
+function assertNonBlankString(value, message) {
+  if (typeof value !== "string" || value.trim().length === 0) throw new Error(message);
+}
+
+function validateRuntimeUrls(ports) {
   if (ports.healthUrl !== `http://127.0.0.1:${ports.serverPort}/health`) {
     throw new Error("ports.json healthUrl must match serverPort");
   }
   if (ports.appUrl !== `http://127.0.0.1:${ports.webPort}`) {
     throw new Error("ports.json appUrl must match webPort");
   }
-  if (typeof ports.logsDir !== "string" || ports.logsDir.trim().length === 0) {
-    throw new Error("ports.json logsDir must be a non-empty string");
-  }
-  const seedLogin = ports.seedLogin;
-  if (!seedLogin || typeof seedLogin !== "object" || Array.isArray(seedLogin)) {
-    throw new Error("ports.json seedLogin must be an object");
-  }
+}
+
+function validateSeedLogin(seedLogin) {
+  assertContractObject(seedLogin, "ports.json seedLogin must be an object");
   if (seedLogin.email !== "agent@seed.local") {
     throw new Error("ports.json seedLogin.email must be agent@seed.local");
   }
