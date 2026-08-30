@@ -207,19 +207,21 @@ logger.info("Single-instance dev mode resolved", {
   worktreeIdentityPresent: WORKTREE_IDENTITY !== null,
 });
 
-// Clean-shutdown breadcrumb check. If the marker is missing AND a prior lock
-// file exists, the previous server process did not run shutdown() to completion.
-// Log it so operators have a diagnostic trail for issue #290-class unclean
-// exits. The lock-file gate prevents false positives on fresh installs and on
-// test runs that import this module without ever starting a server.
-if (existsSync(SHUTDOWN_MARKER_PATH)) {
-  unlinkSync(SHUTDOWN_MARKER_PATH);
-} else if (existsSync(LOCK_FILE_PATH)) {
-  logger.warn(
-    "Previous server process did not shut down gracefully: no clean-shutdown marker found",
-    { markerPath: SHUTDOWN_MARKER_PATH },
-  );
+/** Records an unclean previous exit, then clears a clean-shutdown marker. */
+function inspectCleanShutdownMarker(): void {
+  if (existsSync(SHUTDOWN_MARKER_PATH)) {
+    unlinkSync(SHUTDOWN_MARKER_PATH);
+    return;
+  }
+  if (existsSync(LOCK_FILE_PATH)) {
+    logger.warn(
+      "Previous server process did not shut down gracefully: no clean-shutdown marker found",
+      { markerPath: SHUTDOWN_MARKER_PATH },
+    );
+  }
 }
+
+inspectCleanShutdownMarker();
 
 /** Standalone dev: populate MCODE_GIT_BRANCH / MCODE_GIT_TOPLEVEL before DB path selection. */
 function applyDevGitCheckoutEnv(): void {
@@ -544,12 +546,17 @@ void legacyConversationMigration.runToCompletion().then((result) => {
     error: error instanceof Error ? error.message : String(error),
   });
 });
-const startupRecovery = turnRecoveryService.reconcileOnStartup();
-if (startupRecovery.interrupted.length > 0) {
-  logger.info("Interrupted unproved executions during startup recovery", {
-    count: startupRecovery.interrupted.length,
-  });
+/** Reconciles incomplete turns and reports any execution interrupted at boot. */
+function recoverTurnsAtStartup(): void {
+  const startupRecovery = turnRecoveryService.reconcileOnStartup();
+  if (startupRecovery.interrupted.length > 0) {
+    logger.info("Interrupted unproved executions during startup recovery", {
+      count: startupRecovery.interrupted.length,
+    });
+  }
 }
+
+recoverTurnsAtStartup();
 
 // Register broadcast callback so settings changes propagate to clients
 providerAvailability.onChange((list) => {
@@ -585,29 +592,37 @@ providerAvailability
 // Start background worktree cleanup worker
 cleanupWorker.start();
 
-// Run snapshot garbage collection on startup
-const maxAge = parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10);
-const removed = turnSnapshotRepo.deleteExpired(maxAge);
-if (removed > 0) {
-  logger.info(`Cleaned up ${removed} expired turn snapshots`);
+/** Removes expired turn snapshots before accepting new work. */
+function removeExpiredSnapshots(): void {
+  const maxAge = parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10);
+  const removed = turnSnapshotRepo.deleteExpired(maxAge);
+  if (removed > 0) logger.info(`Cleaned up ${removed} expired turn snapshots`);
 }
 
-// Initialize HEAD file watchers for all existing workspaces so branch changes
-// are detected after a server restart. Also correct any stale is_git_repo = false
-// values (can occur when git was unavailable at workspace creation time).
-const allWorkspaces = workspaceRepo.listAll();
-for (const ws of allWorkspaces) {
-  gitWatcherService.watchWorkspace(ws.id, ws.path);
-  for (const thread of threadService.list(ws.id)) {
+removeExpiredSnapshots();
+
+/** Starts workspace and worktree Git watchers, then repairs stale Git flags. */
+function initializeWorkspaceWatchers(): ReturnType<typeof workspaceRepo.listAll> {
+  const allWorkspaces = workspaceRepo.listAll();
+  for (const workspace of allWorkspaces) initializeWorkspaceWatcher(workspace);
+  return allWorkspaces;
+}
+
+/** Starts watchers and repairs metadata for one persisted workspace. */
+function initializeWorkspaceWatcher(workspace: ReturnType<typeof workspaceRepo.listAll>[number]): void {
+  gitWatcherService.watchWorkspace(workspace.id, workspace.path);
+  for (const thread of threadService.list(workspace.id)) {
     if (thread.mode === "worktree" && thread.worktree_path) {
       gitWatcherService.watchThreadWorktree(thread.id, thread.worktree_path);
     }
   }
-  if (!ws.is_git_repo && existsSync(join(ws.path, ".git"))) {
-    workspaceRepo.setIsGitRepo(ws.id, true);
-    logger.info("Corrected stale is_git_repo=false at startup", { workspaceId: ws.id, path: ws.path });
+  if (!workspace.is_git_repo && existsSync(join(workspace.path, ".git"))) {
+    workspaceRepo.setIsGitRepo(workspace.id, true);
+    logger.info("Corrected stale is_git_repo=false at startup", { workspaceId: workspace.id, path: workspace.path });
   }
 }
+
+const allWorkspaces = initializeWorkspaceWatchers();
 
 // Begin watching the user's Claude skills/commands/plugins directories so the
 // skill registry stays current without a server restart.
@@ -616,8 +631,8 @@ skillWatcherService.registerDebouncedInvalidateListener(() => {
   cursorProvider.onSkillRegistryDebouncedInvalidation();
 });
 
-// Seed CI check watcher with all threads that have open PRs
-{
+/** Seeds CI watching from threads that still have open pull requests. */
+function seedCiWatcher(allWorkspaces: ReturnType<typeof workspaceRepo.listAll>): void {
   const workspacePaths = new Map(allWorkspaces.map((ws) => [ws.id, ws.path]));
   const allThreads: ReturnType<typeof threadService.list> = [];
   for (const ws of allWorkspaces) {
@@ -633,14 +648,21 @@ skillWatcherService.registerDebouncedInvalidateListener(() => {
   });
 }
 
-for (const provider of providerRegistry.resolveAll()) {
+seedCiWatcher(allWorkspaces);
+
+/** Registers provider events that persist native plan output. */
+function registerProviderPlanListeners(): void {
+  for (const provider of providerRegistry.resolveAll()) {
   // ExitPlanMode: Claude SDK's native plan output. The provider intercepts
   // the tool call, captures the plan markdown, and emits this event. We
   // persist the plan and broadcast to clients.
   provider.on("exit_plan_mode", (data: { threadId: string; planMarkdown: string }) => {
     planTurnService.handleExitPlanMode(data.threadId, data.planMarkdown);
   });
+  }
 }
+
+registerProviderPlanListeners();
 
 providerCatalogService.onChanged((change) => {
   broadcast("provider.catalogChanged", change);
@@ -870,10 +892,7 @@ async function shutdown(): Promise<void> {
   shutdownCoordinator.setPhase("close external thread-control runtime");
   await externalThreadControlMcpRuntime.close();
 
-  // Clean up IPC socket file on non-Windows
-  if (process.platform !== "win32") {
-    try { unlinkSync(ipcPath); } catch { /* already removed */ }
-  }
+  removeIpcSocket(ipcPath);
 
   // 1. Capture active thread IDs before stopAll() clears them
   const activeThreadIds = agentService.runtimeAccess().activeThreadIds();
@@ -931,11 +950,7 @@ async function shutdown(): Promise<void> {
   await captureCleanupFailure(() => ciWatcherService.dispose());
 
   // 9. Close all WebSocket clients and shut down the WS server
-  for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.close(1001, "Server shutting down");
-    }
-  }
+  closeWebSocketClients(wss.clients);
 
   // 10. Await WS and HTTP server close so pending handshakes can finish
   shutdownCoordinator.setPhase("close HTTP and WebSocket servers");
@@ -991,6 +1006,19 @@ async function shutdown(): Promise<void> {
   shutdownCoordinator.setPhase("complete shutdown");
   logger.info("Shutdown complete");
   process.exit(0);
+}
+
+/** Removes the Unix IPC socket after its listener is closed. */
+function removeIpcSocket(path: string): void {
+  if (process.platform === "win32") return;
+  try { unlinkSync(path); } catch { /* already removed */ }
+}
+
+/** Sends the normal shutdown close code to every open WebSocket client. */
+function closeWebSocketClients(clients: Iterable<WebSocket>): void {
+  for (const client of clients) {
+    if (client.readyState === WebSocket.OPEN) client.close(1001, "Server shutting down");
+  }
 }
 
 let shutdownCoordinator: ShutdownCoordinator;

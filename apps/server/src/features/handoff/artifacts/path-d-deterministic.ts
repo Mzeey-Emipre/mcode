@@ -72,86 +72,74 @@ function renderHistoryBudget(lines: string[], historyBudget?: ForkHistoryBudget)
  * shape is a deterministic function of which inputs were supplied.
  */
 function renderBody(input: PathDInput): string {
-  const {
-    parentThread,
-    messagesUpToFork,
-    forkAnchorRole,
-    compactSummary,
-    forkAnchorBody,
-    toolCallRecords,
-    thoughtSegments,
-    filesChanged,
-    historyBudget,
-  } = input;
-
-  const lines: string[] = [];
-  lines.push("# Handoff (deterministic)");
-  lines.push("");
-  lines.push(`You are continuing work from a previous thread titled "${parentThread.title}".`);
-  const modelInfo = parentThread.model ? ` ${parentThread.model}` : "";
-  lines.push(`The previous thread used${modelInfo} on branch ${parentThread.branch}.`);
-  renderHistoryBudget(lines, historyBudget);
-
-  // Goal / summary: prefer the model-generated compact summary, then the
-  // fork-anchor body, then the last assistant message. No truncation.
-  const lastAssistant = [...messagesUpToFork].reverse().find((m) => m.role === "assistant");
-  const goal =
-    (compactSummary && compactSummary.trim()) ||
-    (forkAnchorBody && forkAnchorBody.trim()) ||
-    (lastAssistant?.content?.trim() ?? "");
-  if (goal) {
-    const heading = compactSummary && compactSummary.trim() ? "## Summary" : "## Recent context";
-    lines.push("");
-    lines.push(heading);
-    lines.push("");
-    lines.push(goal);
-  }
-
-  if (filesChanged && filesChanged.length > 0) {
-    lines.push("");
-    lines.push("## Recent files changed");
-    lines.push("");
-    for (const f of filesChanged) {
-      lines.push(`- ${f}`);
-    }
-  }
-
-  const tools = (toolCallRecords ?? []).filter((t) => t.tool_name);
-  if (tools.length > 0) {
-    lines.push("");
-    lines.push("## Recent tool activity");
-    lines.push("");
-    for (const t of tools) {
-      const summary = t.input_summary?.trim();
-      const status = t.status && t.status !== "completed" ? ` (${t.status})` : "";
-      lines.push(`- ${t.tool_name}${status}${summary ? `: ${summary}` : ""}`);
-    }
-  }
-
-  const highlights = (thoughtSegments ?? [])
-    .filter((s) => (s.is_final_response ?? 0) === 0 && s.text?.trim())
-    .slice(0, MAX_NARRATION_HIGHLIGHTS);
-  if (highlights.length > 0) {
-    lines.push("");
-    lines.push("## Narration / reasoning highlights");
-    lines.push("");
-    for (const s of highlights) {
-      lines.push(`- ${s.text.trim()}`);
-    }
-  }
-
-  // Fork-anchor context: surface the anchor body distinctly when it wasn't
-  // already used as the Goal source (i.e. a compact summary took that slot).
-  const anchor = forkAnchorBody && forkAnchorBody.trim();
-  const anchorUsedAsGoal = !(compactSummary && compactSummary.trim()) && !!anchor;
-  if (anchor && !anchorUsedAsGoal) {
-    lines.push("");
-    lines.push(`## Fork-anchor context (${forkAnchorRole} message)`);
-    lines.push("");
-    lines.push(anchor);
-  }
-
+  const lines = renderDocumentHeader(input.parentThread);
+  renderHistoryBudget(lines, input.historyBudget);
+  appendGoal(lines, input);
+  appendFilesChanged(lines, input.filesChanged);
+  appendToolActivity(lines, input.toolCallRecords);
+  appendNarrationHighlights(lines, input.thoughtSegments);
+  appendForkAnchor(lines, input);
   return lines.join("\n");
+}
+
+function renderDocumentHeader(parentThread: Thread): string[] {
+  const modelInfo = parentThread.model ? ` ${parentThread.model}` : "";
+  return [
+    "# Handoff (deterministic)",
+    "",
+    `You are continuing work from a previous thread titled "${parentThread.title}".`,
+    `The previous thread used${modelInfo} on branch ${parentThread.branch}.`,
+  ];
+}
+
+function appendGoal(lines: string[], input: PathDInput): void {
+  const compactSummary = input.compactSummary?.trim() || "";
+  const forkAnchor = input.forkAnchorBody?.trim() || "";
+  const lastAssistant = findLastAssistantText(input.messagesUpToFork);
+  const goal = compactSummary || forkAnchor || lastAssistant;
+  if (!goal) return;
+
+  appendSection(lines, compactSummary ? "## Summary" : "## Recent context", [goal]);
+}
+
+function findLastAssistantText(messages: Message[]): string {
+  const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+  return lastAssistant?.content?.trim() ?? "";
+}
+
+function appendFilesChanged(lines: string[], filesChanged?: string[]): void {
+  if (!filesChanged?.length) return;
+  appendSection(lines, "## Recent files changed", filesChanged.map((file) => `- ${file}`));
+}
+
+function appendToolActivity(lines: string[], toolCallRecords?: ToolCallRecord[]): void {
+  const tools = (toolCallRecords ?? []).filter((tool) => tool.tool_name);
+  if (tools.length === 0) return;
+  appendSection(lines, "## Recent tool activity", tools.map(formatToolActivity));
+}
+
+function formatToolActivity(tool: ToolCallRecord): string {
+  const summary = tool.input_summary?.trim();
+  const status = tool.status && tool.status !== "completed" ? ` (${tool.status})` : "";
+  return `- ${tool.tool_name}${status}${summary ? `: ${summary}` : ""}`;
+}
+
+function appendNarrationHighlights(lines: string[], thoughtSegments?: ThoughtSegmentRecord[]): void {
+  const highlights = (thoughtSegments ?? [])
+    .filter((segment) => (segment.is_final_response ?? 0) === 0 && segment.text?.trim())
+    .slice(0, MAX_NARRATION_HIGHLIGHTS);
+  if (highlights.length === 0) return;
+  appendSection(lines, "## Narration / reasoning highlights", highlights.map((segment) => `- ${segment.text.trim()}`));
+}
+
+function appendForkAnchor(lines: string[], input: PathDInput): void {
+  const anchor = input.forkAnchorBody?.trim() || "";
+  if (!anchor || !input.compactSummary?.trim()) return;
+  appendSection(lines, `## Fork-anchor context (${input.forkAnchorRole} message)`, [anchor]);
+}
+
+function appendSection(lines: string[], heading: string, body: string[]): void {
+  lines.push("", heading, "", ...body);
 }
 
 /**

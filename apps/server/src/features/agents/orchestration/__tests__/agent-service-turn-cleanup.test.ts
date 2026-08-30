@@ -33,7 +33,6 @@ import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProvide
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { broadcast } from "../../../../application/transport/push.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -45,7 +44,6 @@ import type { ToolCallRecordRepo } from "../../tools/persistence/tool-call-recor
 import type { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
-import type { TaskRepo } from "../persistence/task-repo.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
@@ -282,10 +280,6 @@ function buildService(
     onPressureChange: vi.fn(),
   } as unknown as MemoryPressureService;
 
-  const taskRepo = {
-    get: vi.fn(() => []),
-    upsert: vi.fn(),
-  } as unknown as TaskRepo;
 
   const settingsService = {
     get: vi.fn(() => ({

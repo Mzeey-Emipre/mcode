@@ -15,15 +15,12 @@ import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/datab
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
-import { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-repo.js";
 import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
-import { TaskRepo } from "../persistence/task-repo.js";
 import { AgentService } from "../agent-service.js";
 import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
@@ -97,7 +94,6 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
   let messageRepo: MessageRepo;
   let toolCallRecordRepo: ToolCallRecordRepo;
   let turnSnapshotRepo: TurnSnapshotRepo;
-  let taskRepo: TaskRepo;
   let svc: AgentService;
   let providerStub: EventEmitter & Partial<IAgentProvider>;
   let providerEventIngress: ProviderEventIngress;
@@ -109,7 +105,6 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
     messageRepo = new MessageRepo(db);
     toolCallRecordRepo = new ToolCallRecordRepo(db);
     turnSnapshotRepo = new TurnSnapshotRepo(db);
-    taskRepo = new TaskRepo(db);
 
     providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
       id: "claude" as ProviderId,
@@ -260,7 +255,8 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
     });
 
     expect(providerStub.sendTurn).toHaveBeenCalledTimes(2);
-    expect((vi.mocked(providerStub.sendTurn).mock.calls[1]?.[0] as TurnRequest).resumeFrom)
-      .toBe("cursor-session-1");
+    const secondTurn = vi.mocked(providerStub.sendTurn).mock.calls[1];
+    expect(secondTurn).toBeDefined();
+    expect((secondTurn![0] as TurnRequest).resumeFrom).toBe("cursor-session-1");
   });
 });

@@ -62,25 +62,29 @@ export function readReliabilityHarnessCapability(
   const normalizedPath = resolve(capabilityPath);
   try {
     const stat = lstatSync(normalizedPath);
-    if (!stat.isFile()) {
-      return null;
-    }
+    if (!stat.isFile()) return null;
     const parsed: unknown = JSON.parse(readFileSync(normalizedPath, "utf8"));
-    if (!parsed || typeof parsed !== "object") return null;
-    const value = parsed as Record<string, unknown>;
-    if (
-      value.version !== 1 ||
-      typeof value.token !== "string" ||
-      !/^[a-f0-9]{64}$/u.test(value.token) ||
-      typeof value.runId !== "string" ||
-      !/^[a-zA-Z0-9_-]{1,128}$/u.test(value.runId)
-    ) {
-      return null;
-    }
-    return { version: 1, token: value.token, runId: value.runId };
+    return parseReliabilityHarnessCapability(parsed);
   } catch {
     return null;
   }
+}
+
+function parseReliabilityHarnessCapability(value: unknown): ReliabilityHarnessCapability | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (record.version !== 1 || !isCapabilityToken(record.token) || !isCapabilityRunId(record.runId)) {
+    return null;
+  }
+  return { version: 1, token: record.token, runId: record.runId };
+}
+
+function isCapabilityToken(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function isCapabilityRunId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/u.test(value);
 }
 
 /** Build a server adapter only when the explicit capability is present. */
@@ -106,76 +110,118 @@ export function createReliabilityHarnessAdapter(
     enabled: true,
     async handleRequest(request, response, sockets): Promise<boolean> {
       const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (request.method !== "POST" || requestUrl.pathname !== RELIABILITY_PATH) {
-        return false;
-      }
-      const remoteAddress = request.socket.remoteAddress;
-      if (!isLoopbackAddress(remoteAddress)) {
-        response.writeHead(403);
-        response.end("Forbidden");
-        return true;
-      }
-
-      const presentedToken = request.headers["x-mcode-reliability-token"];
-      if (typeof presentedToken !== "string" || !safeTokenEqual(presentedToken, capability.token)) {
-        response.writeHead(401);
-        response.end("Unauthorized");
-        return true;
-      }
-
-      let body: ReliabilityHarnessCommand;
-      try {
-        body = await readCommand(request);
-      } catch (error) {
-        response.writeHead(400);
-        response.end(error instanceof Error ? error.message : "Invalid command");
-        return true;
-      }
-
-      let stream: ReliabilityHarnessAssistantStream | undefined;
-      try {
-        if (body.control === "assistant-stream") {
-          if (!hooks.streamAssistant) {
-            response.writeHead(409);
-            response.end("Assistant stream control is unavailable");
-            return true;
-          }
-          stream = hooks.streamAssistant(body.threadId!);
-        }
-
-        response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-        response.end(JSON.stringify({ accepted: true, control: body.control, ...(stream ? { stream } : {}) }));
-      } catch {
-        response.writeHead(500);
-        response.end("Reliability control failed");
-        return true;
-      }
-
-      switch (body.control) {
-        case "server-exit":
-          setImmediate(() => process.exit(137));
-          break;
-        case "server-hang":
-          setImmediate(() => block(body.durationMs ?? 1_000));
-          break;
-        case "transport-loss":
-          closeSockets(sockets);
-          break;
-        case "persistence-failure":
-          if (!persistenceFailure) {
-            database.pragma("query_only = ON");
-            persistenceFailure = true;
-          }
-          break;
-        case "assistant-stream":
-          break;
-      }
+      if (request.method !== "POST" || requestUrl.pathname !== RELIABILITY_PATH) return false;
+      if (!authorizeReliabilityRequest(request, response, capability)) return true;
+      const body = await readReliabilityCommand(request, response);
+      if (!body) return true;
+      const stream = executeAssistantStream(body, hooks, response);
+      if (stream === undefined) return true;
+      response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({ accepted: true, control: body.control, ...(stream ? { stream } : {}) }));
+      persistenceFailure = executeReliabilityControl(
+        body,
+        sockets,
+        block,
+        database,
+        persistenceFailure,
+        closeSockets,
+      );
       return true;
     },
   };
 }
 
+function authorizeReliabilityRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  capability: ReliabilityHarnessCapability,
+): boolean {
+  if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    response.writeHead(403);
+    response.end("Forbidden");
+    return false;
+  }
+  const token = request.headers["x-mcode-reliability-token"];
+  if (typeof token === "string" && safeTokenEqual(token, capability.token)) return true;
+  response.writeHead(401);
+  response.end("Unauthorized");
+  return false;
+}
+
+async function readReliabilityCommand(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<ReliabilityHarnessCommand | null> {
+  try {
+    return await readCommand(request);
+  } catch (error) {
+    response.writeHead(400);
+    response.end(error instanceof Error ? error.message : "Invalid command");
+    return null;
+  }
+}
+
+function executeAssistantStream(
+  command: ReliabilityHarnessCommand,
+  hooks: { readonly streamAssistant?: (threadId: string) => ReliabilityHarnessAssistantStream },
+  response: ServerResponse,
+): ReliabilityHarnessAssistantStream | null | undefined {
+  if (command.control !== "assistant-stream") return null;
+  if (!hooks.streamAssistant) {
+    response.writeHead(409);
+    response.end("Assistant stream control is unavailable");
+    return undefined;
+  }
+  try {
+    return hooks.streamAssistant(command.threadId!);
+  } catch {
+    response.writeHead(500);
+    response.end("Reliability control failed");
+    return undefined;
+  }
+}
+
+function executeReliabilityControl(
+  command: ReliabilityHarnessCommand,
+  sockets: WebSocketServer["clients"],
+  block: (durationMs: number) => void,
+  database: Database.Database,
+  persistenceFailure: boolean,
+  closeSockets: (sockets: WebSocketServer["clients"]) => void,
+): boolean {
+  switch (command.control) {
+    case "server-exit":
+      setImmediate(() => process.exit(137));
+      return persistenceFailure;
+    case "server-hang":
+      setImmediate(() => block(command.durationMs ?? 1_000));
+      return persistenceFailure;
+    case "transport-loss":
+      closeSockets(sockets);
+      return persistenceFailure;
+    case "persistence-failure":
+      if (!persistenceFailure) database.pragma("query_only = ON");
+      return true;
+    case "assistant-stream":
+      return persistenceFailure;
+  }
+}
+
 async function readCommand(request: IncomingMessage): Promise<ReliabilityHarnessCommand> {
+  const parsed = parseReliabilityCommandJson(await readReliabilityBody(request));
+  if (!parsed || typeof parsed !== "object") throw new Error("Reliability command must be an object");
+  const value = parsed as Record<string, unknown>;
+  const control = parseReliabilityControl(value.control);
+  const durationMs = parseReliabilityDuration(value.durationMs);
+  const threadId = parseAssistantThreadId(control, value.threadId);
+  return {
+    control,
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(threadId === undefined ? {} : { threadId }),
+  };
+}
+
+async function readReliabilityBody(request: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -184,32 +230,41 @@ async function readCommand(request: IncomingMessage): Promise<ReliabilityHarness
     if (size > MAX_BODY_BYTES) throw new Error("Reliability command is too large");
     chunks.push(buffer);
   }
-  let parsed: unknown;
+  return Buffer.concat(chunks);
+}
+
+function parseReliabilityCommandJson(body: Buffer): unknown {
   try {
-    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(body.toString("utf8"));
   } catch {
     throw new Error("Reliability command must be JSON");
   }
-  if (!parsed || typeof parsed !== "object") throw new Error("Reliability command must be an object");
-  const value = parsed as Record<string, unknown>;
-  if (!(RELIABILITY_HARNESS_CONTROLS as readonly string[]).includes(String(value.control))) {
+}
+
+function parseReliabilityControl(value: unknown): ReliabilityHarnessControl {
+  if (!(RELIABILITY_HARNESS_CONTROLS as readonly string[]).includes(String(value))) {
     throw new Error("Unknown reliability control");
   }
-  if (value.durationMs !== undefined && (typeof value.durationMs !== "number" || !Number.isSafeInteger(value.durationMs) || value.durationMs < 1 || value.durationMs > MAX_HANG_MS)) {
-    throw new Error(`Reliability hang duration must be between 1 and ${MAX_HANG_MS} milliseconds`);
+  return value as ReliabilityHarnessControl;
+}
+
+function parseReliabilityDuration(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= MAX_HANG_MS) {
+    return value;
   }
-  if (value.control === "assistant-stream" && (
-    typeof value.threadId !== "string"
-    || value.threadId.trim().length === 0
-    || value.threadId.trim().length > THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH
-  )) {
-    throw new Error(`Reliability assistant stream requires a thread id up to ${THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH} characters`);
+  throw new Error(`Reliability hang duration must be between 1 and ${MAX_HANG_MS} milliseconds`);
+}
+
+function parseAssistantThreadId(
+  control: ReliabilityHarnessControl,
+  value: unknown,
+): string | undefined {
+  if (control !== "assistant-stream") return undefined;
+  if (typeof value === "string" && value.trim().length > 0 && value.trim().length <= THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH) {
+    return value.trim();
   }
-  return {
-    control: value.control as ReliabilityHarnessControl,
-    ...(value.durationMs === undefined ? {} : { durationMs: value.durationMs as number }),
-    ...(value.control === "assistant-stream" ? { threadId: (value.threadId as string).trim() } : {}),
-  };
+  throw new Error(`Reliability assistant stream requires a thread id up to ${THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH} characters`);
 }
 
 function safeTokenEqual(left: string, right: string): boolean {

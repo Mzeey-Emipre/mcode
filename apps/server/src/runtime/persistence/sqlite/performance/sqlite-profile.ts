@@ -370,23 +370,26 @@ export function parseSQLiteProfileCliOptions(args: readonly string[]): SQLitePro
       throw new Error(`Missing value for ${name}.`);
     }
 
-    switch (name) {
-      case "--samples":
-        options.samples = parseBoundedInteger(value, name, MIN_SAMPLES, MAX_SAMPLES);
-        break;
-      case "--threshold-percent":
-        options.thresholdPercent = parseBoundedNumber(value, name, 0.01, 100);
-        break;
-      case "--baseline":
-        options.baselinePath = value;
-        break;
-      case "--output":
-        options.outputPath = value;
-        break;
-    }
+    applySQLiteProfileOption(options, name, value);
   }
 
   return options;
+}
+
+type SQLiteProfileMetricName = SQLiteProfileMetricComparison["metric"];
+
+function applySQLiteProfileOption(
+  options: SQLiteProfileCliOptions,
+  name: string,
+  value: string,
+): void {
+  switch (name) {
+    case "--samples": options.samples = parseBoundedInteger(value, name, MIN_SAMPLES, MAX_SAMPLES); return;
+    case "--threshold-percent": options.thresholdPercent = parseBoundedNumber(value, name, 0.01, 100); return;
+    case "--baseline": options.baselinePath = value; return;
+    case "--output": options.outputPath = value; return;
+    default: throw new Error(`Unknown option: ${name}`);
+  }
 }
 
 /** Validate an untrusted baseline report before comparison. */
@@ -419,39 +422,9 @@ export function compareSQLiteProfileReports(
   ] as const;
 
   for (const workload of SQLITE_PROFILE_WORKLOADS) {
-    const candidateAggregate = candidate.aggregates.find((item) => item.workload === workload);
-    const baselineAggregate = baseline.aggregates.find((item) => item.workload === workload);
-    if (!candidateAggregate || !baselineAggregate) {
-      throw new Error(`Profile report is missing the ${workload} aggregate.`);
-    }
-
-    for (const metric of metricNames) {
-      const baselineMedian = baselineAggregate[metric].median;
-      const candidateMedian = candidateAggregate[metric].median;
-      const changePercent = baselineMedian === 0
-        ? null
-        : ((candidateMedian - baselineMedian) / baselineMedian) * 100;
-      const isRegression = baselineMedian === 0
-        ? candidateMedian > 0
-        : changePercent! > thresholdPercent;
-      metrics.push({
-        workload,
-        metric,
-        baselineMedian,
-        candidateMedian,
-        changePercent,
-        thresholdPercent,
-        status: isRegression ? "regression" : "pass",
-      });
-    }
+    metrics.push(...compareWorkloadMetrics(candidate, baseline, workload, metricNames, thresholdPercent));
   }
-
-  const warnings: string[] = [];
-  for (const key of ["platform", "architecture", "nodeVersion", "electronVersion", "sqliteVersion", "cpu"] as const) {
-    if (candidate.runtime[key] !== baseline.runtime[key]) {
-      warnings.push(`Runtime mismatch for ${key}: baseline=${baseline.runtime[key] ?? "none"}, candidate=${candidate.runtime[key] ?? "none"}.`);
-    }
-  }
+  const warnings = compareProfileRuntime(candidate.runtime, baseline.runtime);
 
   return {
     baselinePath,
@@ -460,6 +433,40 @@ export function compareSQLiteProfileReports(
     metrics,
     warnings,
   };
+}
+
+function compareWorkloadMetrics(
+  candidate: Pick<SQLiteProfileReport, "aggregates">,
+  baseline: BaselineReport,
+  workload: SQLiteProfileWorkloadName,
+  metricNames: readonly SQLiteProfileMetricName[],
+  thresholdPercent: number,
+): SQLiteProfileMetricComparison[] {
+  const candidateAggregate = candidate.aggregates.find((item) => item.workload === workload);
+  const baselineAggregate = baseline.aggregates.find((item) => item.workload === workload);
+  if (!candidateAggregate || !baselineAggregate) throw new Error(`Profile report is missing the ${workload} aggregate.`);
+  return metricNames.map((metric) => compareProfileMetric(workload, metric, candidateAggregate[metric].median, baselineAggregate[metric].median, thresholdPercent));
+}
+
+function compareProfileMetric(
+  workload: SQLiteProfileWorkloadName,
+  metric: SQLiteProfileMetricName,
+  candidateMedian: number,
+  baselineMedian: number,
+  thresholdPercent: number,
+): SQLiteProfileMetricComparison {
+  const changePercent = baselineMedian === 0 ? null : ((candidateMedian - baselineMedian) / baselineMedian) * 100;
+  const isRegression = baselineMedian === 0 ? candidateMedian > 0 : changePercent! > thresholdPercent;
+  return { workload, metric, baselineMedian, candidateMedian, changePercent, thresholdPercent, status: isRegression ? "regression" : "pass" };
+}
+
+function compareProfileRuntime(
+  candidate: SQLiteProfileReport["runtime"],
+  baseline: BaselineReport["runtime"],
+): string[] {
+  return (["platform", "architecture", "nodeVersion", "electronVersion", "sqliteVersion", "cpu"] as const)
+    .filter((key) => candidate[key] !== baseline[key])
+    .map((key) => `Runtime mismatch for ${key}: baseline=${baseline[key] ?? "none"}, candidate=${candidate[key] ?? "none"}.`);
 }
 
 /** Run all five workloads against isolated deterministic databases. */
@@ -557,27 +564,7 @@ async function runWorkload(
   workload: SQLiteProfileWorkloadName,
   sample: number,
 ): Promise<SQLiteProfileSample> {
-  let measured: MeasuredResult<unknown>;
-  switch (workload) {
-    case "startup-and-migrations":
-      throw new Error("Startup must be measured while the database opens.");
-    case "active-turn-writes":
-      seedWorkspaceAndThread(db);
-      measured = await measureAsync(() => writeActiveTurn(db));
-      break;
-    case "conversation-read-100":
-      seedConversation(db);
-      measured = measureSync(() => readConversation(db, 100));
-      break;
-    case "conversation-read-1000":
-      seedConversation(db);
-      measured = measureSync(() => readConversation(db, 1000));
-      break;
-    case "cleanup":
-      seedConversation(db);
-      measured = measureSync(() => db.prepare("DELETE FROM threads WHERE id = ?").run(THREAD_ID));
-      break;
-  }
+  const measured = await measureSQLiteWorkload(db, workload);
 
   const queryPlans = workload === "conversation-read-100"
     ? captureConversationReadQueryPlans(db, 100)
@@ -600,6 +587,28 @@ async function runWorkload(
       ? { activeTurnWrite: measured.value as SQLiteProfileSample["activeTurnWrite"] }
       : {}),
   };
+}
+
+async function measureSQLiteWorkload(
+  db: Database.Database,
+  workload: SQLiteProfileWorkloadName,
+): Promise<MeasuredResult<unknown>> {
+  switch (workload) {
+    case "startup-and-migrations": throw new Error("Startup must be measured while the database opens.");
+    case "active-turn-writes":
+      seedWorkspaceAndThread(db);
+      return measureAsync(() => writeActiveTurn(db));
+    case "conversation-read-100": return measureConversationRead(db, 100);
+    case "conversation-read-1000": return measureConversationRead(db, 1000);
+    case "cleanup":
+      seedConversation(db);
+      return measureSync(() => db.prepare("DELETE FROM threads WHERE id = ?").run(THREAD_ID));
+  }
+}
+
+function measureConversationRead(db: Database.Database, limit: 100 | 1000): MeasuredResult<unknown> {
+  seedConversation(db);
+  return measureSync(() => readConversation(db, limit));
 }
 
 function seedWorkspaceAndThread(db: Database.Database): void {

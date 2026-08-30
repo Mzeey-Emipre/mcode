@@ -6,7 +6,6 @@ import { AgentService } from "../agent-service.js";
 import { createAgentServiceForTest } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
@@ -19,7 +18,6 @@ import type { HookExecutionRepo } from "../../events/persistence/hook-execution-
 import type { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
-import type { TaskRepo } from "../persistence/task-repo.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
@@ -112,7 +110,6 @@ function minimalService(): { service: AgentService; narrativeStore: NarrativeSto
     assertCanStartTurn: vi.fn(),
     onPressureChange: vi.fn(),
   } as unknown as MemoryPressureService;
-  const taskRepo = { get: vi.fn(() => []), upsert: vi.fn() } as unknown as TaskRepo;
   const settingsService = {
     get: vi.fn(() => ({
       model: { defaults: { fallbackId: undefined } },
@@ -200,11 +197,11 @@ function seedThreadState(
 }
 
 describe("AgentService stack-derived parent fallback", () => {
-  let service: AgentService;
+  let _service: AgentService;
   let narrativeStore: NarrativeStore;
 
   beforeEach(() => {
-    ({ service, narrativeStore } = minimalService());
+    ({ service: _service, narrativeStore } = minimalService());
   });
 
   it("returns undefined when every Agent on the stack is completed in the buffer", () => {

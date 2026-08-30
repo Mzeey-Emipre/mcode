@@ -76,7 +76,28 @@ function parseStoredReasoningLevel(value: string | null): ReasoningLevel | null 
   return parsed.success ? parsed.data : null;
 }
 
+const CLEANUP_STATES = new Set(["queued", "running", "retrying", "blocked"]);
+
+function parseCleanupState(value: string | null): Thread["cleanup_state"] {
+  return CLEANUP_STATES.has(value ?? "")
+    ? value as NonNullable<Thread["cleanup_state"]>
+    : null;
+}
+
 function rowToThread(row: ThreadRow): Thread {
+  return {
+    ...rowToThreadIdentity(row),
+    ...rowToThreadLifecycle(row),
+    ...rowToThreadPreferences(row),
+    ...rowToThreadProviderSettings(row),
+  };
+}
+
+function rowToThreadIdentity(row: ThreadRow): Pick<Thread,
+  "id" | "workspace_id" | "title" | "status" | "mode" | "worktree_path" | "branch"
+  | "checkout_state" | "base_branch" | "worktree_managed" | "issue_number" | "pr_number"
+  | "pr_status" | "sdk_session_id" | "model" | "provider" | "created_at" | "updated_at"
+> {
   return {
     id: row.id,
     workspace_id: row.workspace_id,
@@ -96,30 +117,22 @@ function rowToThread(row: ThreadRow): Thread {
     provider: row.provider,
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+function rowToThreadLifecycle(row: ThreadRow): Pick<Thread,
+  "deleted_at" | "user_completed_at" | "scheduled_deletion_at" | "cleanup_state" | "cleanup_reason"
+  | "last_context_tokens" | "context_window" | "parent_thread_id" | "forked_from_message_id"
+  | "last_compact_summary" | "has_file_changes"
+> {
+  return {
     deleted_at: row.deleted_at,
     user_completed_at: row.user_completed_at,
     scheduled_deletion_at: row.scheduled_deletion_at,
-    cleanup_state:
-      row.cleanup_state === "queued"
-      || row.cleanup_state === "running"
-      || row.cleanup_state === "retrying"
-      || row.cleanup_state === "blocked"
-        ? row.cleanup_state
-        : null,
+    cleanup_state: parseCleanupState(row.cleanup_state),
     cleanup_reason: row.cleanup_reason,
     last_context_tokens: row.last_context_tokens ?? null,
     context_window: row.context_window ?? null,
-    reasoning_level: parseStoredReasoningLevel(row.reasoning_level),
-    interaction_mode: (row.interaction_mode ?? null) as InteractionMode | null,
-    orchestration_mode: (row.orchestration_mode ?? null) as OrchestrationMode | null,
-    permission_mode: (row.permission_mode ?? null) as PermissionMode | null,
-    context_window_mode:
-      (row.context_window_mode ?? null) as ContextWindowMode | null,
-    thinking: row.thinking == null ? null : row.thinking === 1,
-    codex_fast_mode:
-      row.codex_fast_mode == null ? null : row.codex_fast_mode === 1,
-    copilot_agent: (row.copilot_agent ?? null) as string | null,
-    default_open_in_app: row.default_open_in_app ?? null,
     parent_thread_id: row.parent_thread_id,
     forked_from_message_id: row.forked_from_message_id,
     last_compact_summary: row.last_compact_summary,
@@ -127,8 +140,194 @@ function rowToThread(row: ThreadRow): Thread {
   };
 }
 
+function rowToThreadPreferences(row: ThreadRow): Pick<Thread,
+  "reasoning_level" | "interaction_mode" | "orchestration_mode" | "permission_mode" | "context_window_mode"
+> {
+  return {
+    reasoning_level: parseStoredReasoningLevel(row.reasoning_level),
+    interaction_mode: (row.interaction_mode ?? null) as InteractionMode | null,
+    orchestration_mode: (row.orchestration_mode ?? null) as OrchestrationMode | null,
+    permission_mode: (row.permission_mode ?? null) as PermissionMode | null,
+    context_window_mode:
+      (row.context_window_mode ?? null) as ContextWindowMode | null,
+  };
+}
+
+function rowToThreadProviderSettings(row: ThreadRow): Pick<Thread,
+  "thinking" | "codex_fast_mode" | "copilot_agent" | "default_open_in_app"
+> {
+  return {
+    thinking: row.thinking == null ? null : row.thinking === 1,
+    codex_fast_mode:
+      row.codex_fast_mode == null ? null : row.codex_fast_mode === 1,
+    copilot_agent: (row.copilot_agent ?? null) as string | null,
+    default_open_in_app: row.default_open_in_app ?? null,
+  };
+}
+
 const THREAD_COLUMNS =
   "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, user_completed_at, scheduled_deletion_at, cleanup_state, cleanup_reason, last_context_tokens, context_window, reasoning_level, interaction_mode, orchestration_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
+
+type ThreadCreateLineage = {
+  parentThreadId: string;
+  forkedFromMessageId: string;
+};
+
+type ThreadCreateRecordInput = {
+  id: string;
+  workspaceId: string;
+  title: string;
+  mode: ThreadMode;
+  branch: string;
+  worktreeManaged: boolean;
+  provider: string;
+  lineage: ThreadCreateLineage | undefined;
+  checkoutState: "named" | "branchless";
+  baseBranch: string | null;
+  now: string;
+};
+
+function createThreadRecord(input: ThreadCreateRecordInput): Thread {
+  return {
+    id: input.id,
+    workspace_id: input.workspaceId,
+    title: input.title,
+    status: "active",
+    mode: input.mode,
+    worktree_path: null,
+    branch: input.branch,
+    checkout_state: input.checkoutState,
+    base_branch: input.baseBranch,
+    worktree_managed: input.worktreeManaged,
+    issue_number: null,
+    pr_number: null,
+    pr_status: null,
+    sdk_session_id: null,
+    model: null,
+    provider: input.provider,
+    created_at: input.now,
+    updated_at: input.now,
+    deleted_at: null,
+    user_completed_at: null,
+    scheduled_deletion_at: null,
+    cleanup_state: null,
+    cleanup_reason: null,
+    last_context_tokens: null,
+    context_window: null,
+    reasoning_level: null,
+    interaction_mode: null,
+    orchestration_mode: null,
+    permission_mode: null,
+    context_window_mode: null,
+    thinking: null,
+    codex_fast_mode: null,
+    copilot_agent: null,
+    default_open_in_app: null,
+    parent_thread_id: input.lineage?.parentThreadId ?? null,
+    forked_from_message_id: input.lineage?.forkedFromMessageId ?? null,
+    last_compact_summary: null,
+    has_file_changes: false,
+  };
+}
+
+type ThreadSearchOptions = {
+  query: string;
+  filters?: { status?: string[]; provider?: string[] };
+  workspaceIds?: string[];
+  excludeThreadId?: string;
+  createdByIntegrationId?: string;
+  sort?: { field: "updated_at" | "created_at" | "title"; direction: "asc" | "desc" };
+  limit?: number;
+};
+
+function appendSearchQuery(conditions: string[], params: unknown[], query: string): void {
+  if (!query) return;
+  const escapedQuery = query.replace(/[%_]/g, "\\$&");
+  const pattern = `%${escapedQuery}%`;
+  conditions.push(`(
+    t.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+    w.name LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+    w.path LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+    t.provider LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+    t.branch LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+    COALESCE(t.worktree_path, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
+  )`);
+  params.push(pattern, pattern, pattern, pattern, pattern, pattern);
+}
+
+function appendArraySearchFilter(
+  conditions: string[],
+  params: unknown[],
+  column: "status" | "provider" | "workspace_id",
+  values: string[] | undefined,
+): void {
+  if (!values?.length) return;
+  const placeholders = values.map(() => "?").join(", ");
+  conditions.push(`t.${column} IN (${placeholders})`);
+  params.push(...values);
+}
+
+function appendSearchValue(
+  conditions: string[],
+  params: unknown[],
+  condition: string,
+  value: string | undefined,
+): void {
+  if (value === undefined) return;
+  conditions.push(condition);
+  params.push(value);
+}
+
+function resolveSearchOrder(sort: ThreadSearchOptions["sort"]): string {
+  const sortField = sort?.field ?? "updated_at";
+  const sortDirection = sort?.direction ?? "desc";
+  const validFields = new Set(["updated_at", "created_at", "title"]);
+  const validDirections = new Set(["asc", "desc"]);
+  if (!validFields.has(sortField) || !validDirections.has(sortDirection)) {
+    throw new Error(`Invalid sort parameters: ${sortField} ${sortDirection}`);
+  }
+  return sortField === "updated_at" && sortDirection === "desc"
+    ? "t.updated_at DESC, t.id ASC"
+    : `t.${sortField} ${sortDirection.toUpperCase()}`;
+}
+
+function createSearchResult(
+  rows: Array<ThreadRow & { w_id: string; w_name: string; w_path: string }>,
+): { threads: Thread[]; workspaces: { id: string; name: string; path: string }[] } {
+  const workspaceMap = new Map<string, { id: string; name: string; path: string }>();
+  for (const row of rows) {
+    if (!workspaceMap.has(row.w_id)) {
+      workspaceMap.set(row.w_id, { id: row.w_id, name: row.w_name, path: row.w_path });
+    }
+  }
+  return { threads: rows.map(rowToThread), workspaces: [...workspaceMap.values()] };
+}
+
+function resolveNextBaseBranch(
+  current: Thread,
+  checkoutState: "named" | "branchless",
+  baseBranch: string | null,
+): string | null {
+  return checkoutState === "named" && current.checkout_state === "branchless" && baseBranch === null
+    ? current.base_branch
+    : baseBranch;
+}
+
+function appendThreadSetting<T>(
+  fields: string[],
+  values: unknown[],
+  column: string,
+  value: T | undefined,
+  serialize: (value: T) => unknown = (entry) => entry,
+): void {
+  if (value === undefined) return;
+  fields.push(`${column} = ?`);
+  values.push(serialize(value));
+}
+
+function serializeBooleanOverride(value: boolean | null): number | null {
+  return value == null ? null : value ? 1 : 0;
+}
 
 /** Maximum active sibling paths considered during one worktree ownership decision. */
 export const MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS = 512;
@@ -196,46 +395,19 @@ export class ThreadRepo {
         now,
       );
 
-    return {
+    return createThreadRecord({
       id,
-      workspace_id: workspaceId,
+      workspaceId,
       title,
-      status: "active",
       mode,
-      worktree_path: null,
       branch,
-      checkout_state: checkoutState,
-      base_branch: baseBranch,
-      worktree_managed: worktreeManaged,
-      issue_number: null,
-      pr_number: null,
-      pr_status: null,
-      sdk_session_id: null,
-      model: null,
+      worktreeManaged,
       provider,
-      created_at: now,
-      updated_at: now,
-      deleted_at: null,
-      user_completed_at: null,
-      scheduled_deletion_at: null,
-      cleanup_state: null,
-      cleanup_reason: null,
-      last_context_tokens: null,
-      context_window: null,
-      reasoning_level: null,
-      interaction_mode: null,
-      orchestration_mode: null,
-      permission_mode: null,
-      context_window_mode: null,
-      thinking: null,
-      codex_fast_mode: null,
-      copilot_agent: null,
-      default_open_in_app: null,
-      parent_thread_id: lineage?.parentThreadId ?? null,
-      forked_from_message_id: lineage?.forkedFromMessageId ?? null,
-      last_compact_summary: null,
-      has_file_changes: false,
-    };
+      lineage,
+      checkoutState,
+      baseBranch,
+      now,
+    });
   }
 
   /** Find a thread by its primary key, optionally constrained to one external owner. */
@@ -301,15 +473,7 @@ export class ThreadRepo {
   }
 
   /** Search non-deleted threads across title, project, provider, and checkout metadata. */
-  search(opts: {
-    query: string;
-    filters?: { status?: string[]; provider?: string[] };
-    workspaceIds?: string[];
-    excludeThreadId?: string;
-    createdByIntegrationId?: string;
-    sort?: { field: "updated_at" | "created_at" | "title"; direction: "asc" | "desc" };
-    limit?: number;
-  }): { threads: Thread[]; workspaces: { id: string; name: string; path: string }[] } {
+  search(opts: ThreadSearchOptions): { threads: Thread[]; workspaces: { id: string; name: string; path: string }[] } {
     const clampedLimit = Math.max(1, Math.min(200, opts.limit ?? 100));
     const conditions: string[] = [
       "t.deleted_at IS NULL",
@@ -318,58 +482,14 @@ export class ThreadRepo {
     ];
     const params: unknown[] = [];
 
-    if (opts.query) {
-      const escapedQuery = opts.query.replace(/[%_]/g, "\\$&");
-      const pattern = `%${escapedQuery}%`;
-      conditions.push(`(
-        t.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-        w.name LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-        w.path LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-        t.provider LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-        t.branch LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-        COALESCE(t.worktree_path, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
-      )`);
-      params.push(pattern, pattern, pattern, pattern, pattern, pattern);
-    }
+    appendSearchQuery(conditions, params, opts.query);
+    appendArraySearchFilter(conditions, params, "status", opts.filters?.status);
+    appendArraySearchFilter(conditions, params, "provider", opts.filters?.provider);
+    appendArraySearchFilter(conditions, params, "workspace_id", opts.workspaceIds);
+    if (opts.excludeThreadId) appendSearchValue(conditions, params, "t.id != ?", opts.excludeThreadId);
+    appendSearchValue(conditions, params, "t.created_by_integration_id = ?", opts.createdByIntegrationId);
 
-    if (opts.filters?.status?.length) {
-      const placeholders = opts.filters.status.map(() => "?").join(", ");
-      conditions.push(`t.status IN (${placeholders})`);
-      params.push(...opts.filters.status);
-    }
-
-    if (opts.filters?.provider?.length) {
-      const placeholders = opts.filters.provider.map(() => "?").join(", ");
-      conditions.push(`t.provider IN (${placeholders})`);
-      params.push(...opts.filters.provider);
-    }
-
-    if (opts.workspaceIds?.length) {
-      const placeholders = opts.workspaceIds.map(() => "?").join(", ");
-      conditions.push(`t.workspace_id IN (${placeholders})`);
-      params.push(...opts.workspaceIds);
-    }
-
-    if (opts.excludeThreadId) {
-      conditions.push("t.id != ?");
-      params.push(opts.excludeThreadId);
-    }
-
-    if (opts.createdByIntegrationId !== undefined) {
-      conditions.push("t.created_by_integration_id = ?");
-      params.push(opts.createdByIntegrationId);
-    }
-
-    const sortField = opts.sort?.field ?? "updated_at";
-    const sortDir = opts.sort?.direction ?? "desc";
-    const ALLOWED_SORT_FIELDS = new Set(["updated_at", "created_at", "title"]);
-    const ALLOWED_SORT_DIRS = new Set(["asc", "desc"]);
-    if (!ALLOWED_SORT_FIELDS.has(sortField) || !ALLOWED_SORT_DIRS.has(sortDir)) {
-      throw new Error(`Invalid sort parameters: ${sortField} ${sortDir}`);
-    }
-    const orderBy = sortField === "updated_at" && sortDir === "desc"
-      ? "t.updated_at DESC, t.id ASC"
-      : `t.${sortField} ${sortDir.toUpperCase()}`;
+    const orderBy = resolveSearchOrder(opts.sort);
 
     const threadCols = THREAD_COLUMNS.split(", ").map((c) => `t.${c}`).join(", ");
     const sql = `
@@ -386,15 +506,7 @@ export class ThreadRepo {
       ThreadRow & { w_id: string; w_name: string; w_path: string }
     >;
 
-    const threads = rows.map((row) => rowToThread(row));
-    const workspaceMap = new Map<string, { id: string; name: string; path: string }>();
-    for (const row of rows) {
-      if (!workspaceMap.has(row.w_id)) {
-        workspaceMap.set(row.w_id, { id: row.w_id, name: row.w_name, path: row.w_path });
-      }
-    }
-
-    return { threads, workspaces: [...workspaceMap.values()] };
+    return createSearchResult(rows);
   }
 
   /** Update a thread's lifecycle status. Returns true if a row was changed. */
@@ -618,10 +730,7 @@ export class ThreadRepo {
 
     const changed =
       current.branch !== branch || current.checkout_state !== checkoutState;
-    const nextBaseBranch =
-      checkoutState === "named" && current.checkout_state === "branchless" && baseBranch === null
-        ? current.base_branch
-        : baseBranch;
+    const nextBaseBranch = resolveNextBaseBranch(current, checkoutState, baseBranch);
     if (
       !changed &&
       current.base_branch === nextBaseBranch
@@ -827,48 +936,15 @@ export class ThreadRepo {
   ): boolean {
     const fields: string[] = [];
     const values: unknown[] = [];
-    if (settings.reasoning_level !== undefined) {
-      fields.push("reasoning_level = ?");
-      values.push(settings.reasoning_level);
-    }
-    if (settings.interaction_mode !== undefined) {
-      fields.push("interaction_mode = ?");
-      values.push(settings.interaction_mode);
-    }
-    if (settings.orchestration_mode !== undefined) {
-      fields.push("orchestration_mode = ?");
-      values.push(settings.orchestration_mode);
-    }
-    if (settings.permission_mode !== undefined) {
-      fields.push("permission_mode = ?");
-      values.push(settings.permission_mode);
-    }
-    if (settings.context_window_mode !== undefined) {
-      fields.push("context_window_mode = ?");
-      // null clears the override so the thread inherits from settings.
-      values.push(settings.context_window_mode);
-    }
-    if (settings.thinking !== undefined) {
-      fields.push("thinking = ?");
-      // SQLite has no native boolean — store 0/1 to match the column convention.
-      // null clears the override so the thread inherits from settings.
-      values.push(settings.thinking == null ? null : settings.thinking ? 1 : 0);
-    }
-    if (settings.codex_fast_mode !== undefined) {
-      fields.push("codex_fast_mode = ?");
-      values.push(
-        settings.codex_fast_mode == null ? null : settings.codex_fast_mode ? 1 : 0,
-      );
-    }
-    if (settings.copilot_agent !== undefined) {
-      fields.push("copilot_agent = ?");
-      values.push(settings.copilot_agent);
-    }
-    if (settings.default_open_in_app !== undefined) {
-      fields.push("default_open_in_app = ?");
-      // null clears the override so the thread inherits the global default.
-      values.push(settings.default_open_in_app);
-    }
+    appendThreadSetting(fields, values, "reasoning_level", settings.reasoning_level);
+    appendThreadSetting(fields, values, "interaction_mode", settings.interaction_mode);
+    appendThreadSetting(fields, values, "orchestration_mode", settings.orchestration_mode);
+    appendThreadSetting(fields, values, "permission_mode", settings.permission_mode);
+    appendThreadSetting(fields, values, "context_window_mode", settings.context_window_mode);
+    appendThreadSetting(fields, values, "thinking", settings.thinking, serializeBooleanOverride);
+    appendThreadSetting(fields, values, "codex_fast_mode", settings.codex_fast_mode, serializeBooleanOverride);
+    appendThreadSetting(fields, values, "copilot_agent", settings.copilot_agent);
+    appendThreadSetting(fields, values, "default_open_in_app", settings.default_open_in_app);
     if (fields.length === 0) return false;
 
     const now = new Date().toISOString();

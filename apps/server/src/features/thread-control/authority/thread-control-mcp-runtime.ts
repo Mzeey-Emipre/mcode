@@ -29,6 +29,14 @@ type HttpProviderSession = {
   closed: boolean;
 };
 
+type AuthorizedHttpRequest = {
+  sessionId: string;
+  entry: HttpProviderSession;
+  clientSessionId: string | undefined;
+};
+
+type HttpRequestRoute = "initialize" | "dispatch" | "method-not-allowed" | "not-found";
+
 /** Authenticated HTTP MCP connection details for one pooled provider session. */
 export interface InternalThreadControlMcpHttpConnection {
   name: string;
@@ -127,8 +135,8 @@ export class InternalThreadControlMcpRuntime {
     if (!credential) return undefined;
     return {
       configOverrides: [
-        `mcp_servers.${connection.name}.url=\"${connection.url}\"`,
-        `mcp_servers.${connection.name}.bearer_token_env_var=\"${CODEX_MCP_TOKEN_ENV}\"`,
+        `mcp_servers.${connection.name}.url="${connection.url}"`,
+        `mcp_servers.${connection.name}.bearer_token_env_var="${CODEX_MCP_TOKEN_ENV}"`,
       ],
       env: { [CODEX_MCP_TOKEN_ENV]: credential },
     };
@@ -172,59 +180,7 @@ export class InternalThreadControlMcpRuntime {
   }
 
   private async startHttpServer(): Promise<void> {
-    const server = createServer((request, response) => {
-      request.setTimeout(INTERNAL_MCP_REQUEST_TIMEOUT_MS, () => {
-        if (!response.headersSent) response.writeHead(408).end();
-        request.destroy();
-      });
-      const encodedSessionId = request.url?.split("?", 1)[0]?.slice(1);
-      if (!encodedSessionId) {
-        response.writeHead(404).end();
-        return;
-      }
-      let sessionId: string;
-      try {
-        sessionId = decodeURIComponent(encodedSessionId);
-      } catch {
-        response.writeHead(401).end();
-        return;
-      }
-      const entry = this.httpSessions.get(sessionId);
-      const credential = entry && this.authority.credential(sessionId);
-      if (!entry || entry.closed || !credential || !constantTimeCredentialEqual(request.headers.authorization ?? "", `Bearer ${credential}`)) {
-        response.writeHead(401).end();
-        return;
-      }
-      const clientSession = readClientSessionHeader(request);
-      if (clientSession.invalid) {
-        response.writeHead(404).end();
-        return;
-      }
-      if (request.method === "GET" && !clientSession.value) {
-        response.writeHead(405).end();
-        return;
-      }
-      if (request.method === "POST" && !clientSession.value) {
-        void this.handleBoundedRequest(request, response, (boundedRequest) =>
-          this.handleHttpInitialize(sessionId, entry, boundedRequest, response));
-        return;
-      }
-      if (request.method !== "POST" && request.method !== "GET" && request.method !== "DELETE") {
-        response.writeHead(404).end();
-        return;
-      }
-      if (!clientSession.value) {
-        response.writeHead(404).end();
-        return;
-      }
-      const client = entry.clients.get(clientSession.value);
-      if (!client) {
-        response.writeHead(404).end();
-        return;
-      }
-      void this.handleBoundedRequest(request, response, (boundedRequest) =>
-        client.transport.handleRequest(boundedRequest, response));
-    });
+    const server = createServer((request, response) => this.handleHttpRequest(request, response));
     server.requestTimeout = INTERNAL_MCP_REQUEST_TIMEOUT_MS;
     server.headersTimeout = INTERNAL_MCP_REQUEST_TIMEOUT_MS;
     server.timeout = INTERNAL_MCP_REQUEST_TIMEOUT_MS;
@@ -242,6 +198,68 @@ export class InternalThreadControlMcpRuntime {
     }
     this.httpServer = server;
     this.httpPort = address.port;
+  }
+
+  private handleHttpRequest(request: IncomingMessage, response: ServerResponse): void {
+    this.applyRequestTimeout(request, response);
+    const authorized = this.authorizeHttpRequest(request, response);
+    if (!authorized) return;
+    this.routeHttpRequest(request, response, authorized);
+  }
+
+  private applyRequestTimeout(request: IncomingMessage, response: ServerResponse): void {
+    request.setTimeout(INTERNAL_MCP_REQUEST_TIMEOUT_MS, () => {
+      if (!response.headersSent) response.writeHead(408).end();
+      request.destroy();
+    });
+  }
+
+  private authorizeHttpRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): AuthorizedHttpRequest | undefined {
+    const sessionId = readRequestSessionId(request, response);
+    if (!sessionId) return undefined;
+    const entry = this.httpSessions.get(sessionId);
+    const credential = entry && this.authority.credential(sessionId);
+    if (!entry || entry.closed || !credential || !constantTimeCredentialEqual(request.headers.authorization ?? "", `Bearer ${credential}`)) {
+      response.writeHead(401).end();
+      return undefined;
+    }
+    const clientSession = readClientSessionHeader(request);
+    if (clientSession.invalid) {
+      response.writeHead(404).end();
+      return undefined;
+    }
+    return { sessionId, entry, clientSessionId: clientSession.value };
+  }
+
+  private routeHttpRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    authorized: AuthorizedHttpRequest,
+  ): void {
+    const route = resolveHttpRequestRoute(request.method, authorized.clientSessionId);
+    if (route === "method-not-allowed") {
+      response.writeHead(405).end();
+      return;
+    }
+    if (route === "not-found") {
+      response.writeHead(404).end();
+      return;
+    }
+    if (route === "initialize") {
+      void this.handleBoundedRequest(request, response, (boundedRequest) =>
+        this.handleHttpInitialize(authorized.sessionId, authorized.entry, boundedRequest, response));
+      return;
+    }
+    const client = authorized.entry.clients.get(authorized.clientSessionId!);
+    if (!client) {
+      response.writeHead(404).end();
+      return;
+    }
+    void this.handleBoundedRequest(request, response, (boundedRequest) =>
+      client.transport.handleRequest(boundedRequest, response));
   }
 
   private async handleHttpInitialize(
@@ -368,6 +386,30 @@ function readClientSessionHeader(request: IncomingMessage): { value?: string; in
   if (header === undefined) return { invalid: false };
   if (typeof header !== "string" || header.length === 0 || header.length > 256) return { invalid: true };
   return { value: header, invalid: false };
+}
+
+function readRequestSessionId(request: IncomingMessage, response: ServerResponse): string | undefined {
+  const encodedSessionId = request.url?.split("?", 1)[0]?.slice(1);
+  if (!encodedSessionId) {
+    response.writeHead(404).end();
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(encodedSessionId);
+  } catch {
+    response.writeHead(401).end();
+    return undefined;
+  }
+}
+
+function resolveHttpRequestRoute(
+  method: string | undefined,
+  clientSessionId: string | undefined,
+): HttpRequestRoute {
+  if (method === "GET" && !clientSessionId) return "method-not-allowed";
+  if (method === "POST" && !clientSessionId) return "initialize";
+  if (method !== "POST" && method !== "GET" && method !== "DELETE") return "not-found";
+  return clientSessionId ? "dispatch" : "not-found";
 }
 
 function parseContentLength(request: IncomingMessage): number | "invalid" | undefined {

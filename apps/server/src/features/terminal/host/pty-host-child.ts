@@ -30,30 +30,7 @@ export function spawnPtyHostChild(
       windowsHide: true,
     },
   );
-  let disposeContainment: () => void;
-  if (process.platform === "win32" && child.pid) {
-    const hostScope = new WindowsProcessScopeFactory().create();
-    const assigned = hostScope.assign(child.pid);
-    if (!assigned.ok) {
-      child.kill("SIGKILL");
-      hostScope.close();
-      throw new Error(
-        assigned.error ?? "Could not contain the isolated PTY host process",
-      );
-    }
-    disposeContainment = () => hostScope.close();
-  } else if (child.pid) {
-    const hostProcessGroupId = child.pid;
-    disposeContainment = () => {
-      try {
-        process.kill(-hostProcessGroupId, "SIGKILL");
-      } catch {
-        // The host process group is already empty.
-      }
-    };
-  } else {
-    disposeContainment = () => undefined;
-  }
+  const disposeContainment = createHostContainment(child.pid, () => child.kill("SIGKILL"));
   if (options.onStderr) {
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", options.onStderr);
@@ -61,4 +38,36 @@ export function spawnPtyHostChild(
   return Object.assign(child, {
     disposeContainment,
   }) as unknown as PtyHostChild;
+}
+
+function createHostContainment(
+  pid: number | undefined,
+  terminateOnFailure: () => void,
+): () => void {
+  if (!pid) return () => undefined;
+  if (process.platform === "win32") {
+    return createWindowsHostContainment(pid, terminateOnFailure);
+  }
+  return createPosixHostContainment(pid);
+}
+
+function createWindowsHostContainment(pid: number, terminateOnFailure: () => void): () => void {
+  const hostScope = new WindowsProcessScopeFactory().create();
+  const assigned = hostScope.assign(pid);
+  if (!assigned.ok) {
+    terminateOnFailure();
+    hostScope.close();
+    throw new Error(assigned.error ?? "Could not contain the isolated PTY host process");
+  }
+  return () => hostScope.close();
+}
+
+function createPosixHostContainment(processGroupId: number): () => void {
+  return () => {
+    try {
+      process.kill(-processGroupId, "SIGKILL");
+    } catch {
+      // The host process group is already empty.
+    }
+  };
 }

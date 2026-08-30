@@ -45,6 +45,101 @@ function branchListOutput(
 
 const REPO = "/repo";
 
+type BranchComparisonScenario = {
+  current: string;
+  branches: Array<{ full: string; short: string; head?: boolean }>;
+  hasCommits?: boolean;
+  defaultBranch?: string | null;
+  localDefaultBranches?: string[];
+  upstream?: string | null;
+};
+
+type GitScenarioResponse = { stdout: string; stderr: string };
+
+function resolveBranchComparisonScenario(scenario: BranchComparisonScenario) {
+  return {
+    ...scenario,
+    hasCommits: scenario.hasCommits ?? true,
+    defaultBranch: scenario.defaultBranch === undefined ? "main" : scenario.defaultBranch,
+    localDefaultBranches: scenario.localDefaultBranches ?? [],
+    upstream: scenario.upstream === undefined ? null : scenario.upstream,
+  };
+}
+
+function mockBranchComparisonGit(
+  args: string[],
+  scenario: ReturnType<typeof resolveBranchComparisonScenario>,
+): GitScenarioResponse {
+  const handlers = [
+    branchListScenarioResponse,
+    abbreviatedRefScenarioResponse,
+    verifiedHeadScenarioResponse,
+    symbolicRefScenarioResponse,
+    missingRemoteScenarioResponse,
+    localRefScenarioResponse,
+  ];
+  for (const handler of handlers) {
+    const response = handler(args, scenario);
+    if (response) return response;
+  }
+  return { stdout: "", stderr: "" };
+}
+
+function branchListScenarioResponse(
+  args: string[],
+  scenario: ReturnType<typeof resolveBranchComparisonScenario>,
+): GitScenarioResponse | null {
+  return args.includes("branch") && args.includes("-a")
+    ? { stdout: branchListOutput(scenario.branches), stderr: "" }
+    : null;
+}
+
+function abbreviatedRefScenarioResponse(
+  args: string[],
+  scenario: ReturnType<typeof resolveBranchComparisonScenario>,
+): GitScenarioResponse | null {
+  if (!args.includes("rev-parse") || !args.includes("--abbrev-ref")) return null;
+  if (!args.includes("@{upstream}")) return { stdout: `${scenario.current}\n`, stderr: "" };
+  if (!scenario.upstream) throw new Error("no upstream");
+  return { stdout: `${scenario.upstream}\n`, stderr: "" };
+}
+
+function verifiedHeadScenarioResponse(
+  args: string[],
+  scenario: ReturnType<typeof resolveBranchComparisonScenario>,
+): GitScenarioResponse | null {
+  if (!args.includes("rev-parse") || !args.includes("--verify")) return null;
+  if (!scenario.hasCommits) throw new Error("unborn");
+  return { stdout: "deadbeef\n", stderr: "" };
+}
+
+function symbolicRefScenarioResponse(
+  args: string[],
+  scenario: ReturnType<typeof resolveBranchComparisonScenario>,
+): GitScenarioResponse | null {
+  if (!args.includes("symbolic-ref")) return null;
+  if (scenario.defaultBranch === null) throw new Error("no origin head");
+  return { stdout: `origin/${scenario.defaultBranch}\n`, stderr: "" };
+}
+
+function missingRemoteScenarioResponse(
+  args: string[],
+  _scenario: ReturnType<typeof resolveBranchComparisonScenario>,
+): GitScenarioResponse | null {
+  if (!args.includes("remote")) return null;
+  throw new Error("no origin");
+}
+
+function localRefScenarioResponse(
+  args: string[],
+  scenario: ReturnType<typeof resolveBranchComparisonScenario>,
+): GitScenarioResponse | null {
+  if (!args.includes("show-ref")) return null;
+  const branch = (args.at(-1) ?? "").replace("refs/heads/", "");
+  if (!scenario.localDefaultBranches.includes(branch)) throw new Error("missing local default");
+  return { stdout: "", stderr: "" };
+}
+
 describe("GitComparisonService.resolveBranchComparison", () => {
   let gitService: GitComparisonService;
   let execFn: Mock<(args: string[], opts?: GitExecOptions) => Promise<GitExecResult>>;
@@ -66,48 +161,9 @@ describe("GitComparisonService.resolveBranchComparison", () => {
    * (a branch name, or "HEAD" when detached); `hasCommits` toggles the unborn
    * path; `defaultBranch` is what `symbolic-ref origin/HEAD` resolves to.
    */
-  function setup(opts: {
-    current: string;
-    branches: Array<{ full: string; short: string; head?: boolean }>;
-    hasCommits?: boolean;
-    defaultBranch?: string | null;
-    localDefaultBranches?: string[];
-    /** Tracked upstream ref from `@{upstream}`; omit to simulate no upstream. */
-    upstream?: string | null;
-  }) {
-    const hasCommits = opts.hasCommits ?? true;
-    const defaultBranch = opts.defaultBranch === undefined ? "main" : opts.defaultBranch;
-    const localDefaultBranches = opts.localDefaultBranches ?? [];
-    const upstream = opts.upstream === undefined ? null : opts.upstream;
-
-    execFn.mockImplementation(async (args: string[]) => {
-      if (args.includes("branch") && args.includes("-a")) {
-        return { stdout: branchListOutput(opts.branches), stderr: "" };
-      }
-      if (args.includes("rev-parse") && args.includes("--abbrev-ref")) {
-        if (args.includes("@{upstream}")) {
-          if (!upstream) throw new Error("no upstream");
-          return { stdout: `${upstream}\n`, stderr: "" };
-        }
-        return { stdout: `${opts.current}\n`, stderr: "" };
-      }
-      if (args.includes("rev-parse") && args.includes("--verify")) {
-        if (!hasCommits) throw new Error("unborn");
-        return { stdout: "deadbeef\n", stderr: "" };
-      }
-      if (args.includes("symbolic-ref")) {
-        if (defaultBranch === null) throw new Error("no origin head");
-        return { stdout: `origin/${defaultBranch}\n`, stderr: "" };
-      }
-      if (args.includes("remote")) throw new Error("no origin");
-      if (args.includes("show-ref")) {
-        const ref = args.at(-1) ?? "";
-        const branch = ref.replace("refs/heads/", "");
-        if (localDefaultBranches.includes(branch)) return { stdout: "", stderr: "" };
-        throw new Error("missing local default");
-      }
-      return { stdout: "", stderr: "" };
-    });
+  function setup(opts: BranchComparisonScenario) {
+    const scenario = resolveBranchComparisonScenario(opts);
+    execFn.mockImplementation(async (args: string[]) => mockBranchComparisonGit(args, scenario));
   }
 
   it("prefers upstream over origin default when the branch tracks a remote", async () => {

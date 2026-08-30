@@ -1234,6 +1234,54 @@ describe("routeMessage thread.create", () => {
   });
 });
 
+describe("routeMessage workspace.create", () => {
+  it("initializes the workspace environment before starting its branch watcher", async () => {
+    const workspace = {
+      id: "ws-1",
+      name: "Project",
+      path: "C:/repo",
+      provider_config: {},
+      is_git_repo: true,
+      created_at: "2026-08-30T00:00:00.000Z",
+      updated_at: "2026-08-30T00:00:00.000Z",
+      pinned: false,
+      last_opened_at: null,
+      sort_order: 0,
+      deleted_at: null,
+    };
+    const environmentReadStarted = deferred<void>();
+    const environmentRead = deferred<void>();
+    const read = vi.fn(() => {
+      environmentReadStarted.resolve();
+      return environmentRead.promise;
+    });
+    const watchWorkspace = vi.fn();
+    const deps = {
+      workspaceService: { create: vi.fn().mockResolvedValue(workspace) },
+      workspaceEnvironmentService: { read },
+      gitWatcherService: { watchWorkspace },
+    } as unknown as RouterDeps;
+
+    const responsePromise = routeMessage(JSON.stringify({
+      id: "workspace-create",
+      method: "workspace.create",
+      params: { name: workspace.name, path: workspace.path },
+    }), deps);
+
+    await environmentReadStarted.promise;
+    expect(watchWorkspace).not.toHaveBeenCalled();
+
+    environmentRead.resolve();
+
+    await expect(responsePromise).resolves.toEqual({
+      id: "workspace-create",
+      result: workspace,
+    });
+    expect(read).toHaveBeenCalledWith(workspace.id);
+    expect(watchWorkspace).toHaveBeenCalledWith(workspace.id, workspace.path);
+  });
+});
+
 describe("routeMessage workspace.delete watcher teardown", () => {
   it("keeps thread worktree watchers when any workspace thread teardown fails", async () => {
     const unwatchThreadWorktree = vi.fn();

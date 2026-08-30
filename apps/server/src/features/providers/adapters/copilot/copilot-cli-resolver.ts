@@ -56,7 +56,7 @@ interface Strategy {
 }
 
 /** Shell control characters that must not appear in a CLI path passed to `shell: true`. */
-const SHELL_METACHAR_RE = /[;&|`$<>\"'\n\r]/;
+const SHELL_METACHAR_RE = /[;&|`$<>"'\n\r]/;
 
 /** TTL for cached resolution results (5 minutes). */
 const RESOLUTION_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -193,18 +193,24 @@ const npmGlobalStrategy: Strategy = {
   },
 };
 
+/** Gets the first non-empty executable path from command output. */
+function firstPathLine(output: string | null): string | null {
+  if (!output) return null;
+  return output.split(/\r?\n/)[0]?.trim() || null;
+}
+
+/** Finds the Copilot command through Windows command resolution. */
+function locateWindowsCopilot(io: CopilotCliResolverIO): string | null {
+  // `where.exe` cannot see ExternalScript/.ps1 shims; Get-Command can. Prefer
+  // it, fall back to `where` for .cmd/.exe shims.
+  const powerShellPath = firstPathLine(io.exec("powershell", ["-NoProfile", "-Command", "(Get-Command copilot).Source"]));
+  return powerShellPath ?? firstPathLine(io.exec("where", ["copilot"]));
+}
+
 /** Returns the first command source on PATH: PowerShell-aware on win32, `which` on posix. */
 function locateOnPath(io: CopilotCliResolverIO): string | null {
-  if (io.platform === "win32") {
-    // `where.exe` cannot see ExternalScript/.ps1 shims; Get-Command can. Prefer
-    // it, fall back to `where` for .cmd/.exe shims.
-    const viaPwsh = io.exec("powershell", ["-NoProfile", "-Command", "(Get-Command copilot).Source"]);
-    if (viaPwsh) return viaPwsh.split(/\r?\n/)[0]?.trim() ?? null;
-    const viaWhere = io.exec("where", ["copilot"]);
-    return viaWhere ? (viaWhere.split(/\r?\n/)[0]?.trim() ?? null) : null;
-  }
-  const viaWhich = io.exec("which", ["copilot"]);
-  return viaWhich ? (viaWhich.split(/\r?\n/)[0]?.trim() ?? null) : null;
+  if (io.platform === "win32") return locateWindowsCopilot(io);
+  return firstPathLine(io.exec("which", ["copilot"]));
 }
 
 /**

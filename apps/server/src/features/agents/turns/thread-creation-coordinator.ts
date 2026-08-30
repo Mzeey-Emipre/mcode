@@ -54,6 +54,36 @@ export interface CreateThreadForTurnInput {
   codexFastMode?: boolean;
 }
 
+interface BranchedInitialTurnParams {
+  workspaceId: string;
+  content: string;
+  model: string;
+  permissionMode: PermissionMode | "default";
+  mode: "direct" | "worktree";
+  branch: string;
+  worktreeBranchMode?: "branchless" | "named";
+  existingWorktreePath?: string;
+  existingWorktreeBaseBranch?: string;
+  attachments: SendMessageCommand["attachments"];
+  reasoningLevel?: ReasoningLevel;
+  provider: ProviderId;
+  interactionMode?: InteractionMode;
+  parentThreadId: string | undefined;
+  forkedFromMessageId?: string;
+  title: string;
+  maxBudgetUsd?: number;
+  maxTurns?: number;
+  copilotAgent?: string;
+  contextWindowMode?: ContextWindowMode;
+  thinking?: boolean;
+  codexFastMode?: boolean;
+  displayContent?: string;
+  mentions: SendMessageCommand["mentions"];
+  previewAnnotations?: SendMessageCommand["previewAnnotations"];
+  goalObjective?: string;
+  orchestrationMode?: OrchestrationMode;
+}
+
 /** Owns persistence and worktree provisioning for a thread before first-turn admission. */
 @injectable()
 export class ThreadCreationCoordinator {
@@ -67,6 +97,13 @@ export class ThreadCreationCoordinator {
 
   /** Provision a thread and prepare its first command without acquiring runtime authority. */
   async createInitialTurn(command: CreateAndSendCommand): Promise<CreatedInitialTurn> {
+    const params = this.initialTurnParams(command);
+    return params.parentThreadId
+      ? this.createBranchedInitialTurn(params as BranchedInitialTurnParams & { parentThreadId: string })
+      : this.createStandaloneInitialTurn(command, params);
+  }
+
+  private initialTurnParams(command: CreateAndSendCommand): BranchedInitialTurnParams {
     const {
       workspaceId,
       content,
@@ -95,85 +132,68 @@ export class ThreadCreationCoordinator {
       goalObjective,
       orchestrationMode,
     } = command;
-    const title = titleFrom(displayContent ?? content);
-    if (parentThreadId) {
-      return this.createBranchedInitialTurn({
-        workspaceId,
-        content,
-        model,
-        permissionMode,
-        mode,
-        branch,
-        worktreeBranchMode,
-        existingWorktreePath,
-        existingWorktreeBaseBranch,
-        attachments,
-        reasoningLevel,
-        provider,
-        interactionMode,
-        parentThreadId,
-        forkedFromMessageId,
-        title,
-        maxBudgetUsd,
-        maxTurns,
-        copilotAgent,
-        contextWindowMode,
-        thinking,
-        codexFastMode,
-        displayContent,
-        mentions,
-        previewAnnotations,
-        goalObjective,
-        orchestrationMode,
-      });
-    }
-    const creation = {
-      workspaceId,
-      title,
-      mode,
-      branch,
-      worktreeBranchMode,
-      provider,
-      model,
-      permissionMode,
-      reasoningLevel,
-      interactionMode,
-      orchestrationMode,
-      contextWindowMode,
-      thinking,
-      copilotAgent,
-      codexFastMode,
+    const params: BranchedInitialTurnParams = {
+      workspaceId, content, model, permissionMode, mode, branch, worktreeBranchMode,
+      existingWorktreePath, existingWorktreeBaseBranch, attachments, reasoningLevel,
+      provider, interactionMode, parentThreadId, forkedFromMessageId,
+      title: titleFrom(displayContent ?? content), maxBudgetUsd, maxTurns, copilotAgent,
+      contextWindowMode, thinking, codexFastMode, displayContent, mentions,
+      previewAnnotations, goalObjective, orchestrationMode,
     };
-    const thread = existingWorktreePath
+    return params;
+  }
+
+  private async createStandaloneInitialTurn(
+    command: CreateAndSendCommand,
+    params: BranchedInitialTurnParams,
+  ): Promise<CreatedInitialTurn> {
+    const creation = {
+      workspaceId: params.workspaceId,
+      title: params.title,
+      mode: params.mode,
+      branch: params.branch,
+      worktreeBranchMode: params.worktreeBranchMode,
+      provider: params.provider,
+      model: params.model,
+      permissionMode: params.permissionMode,
+      reasoningLevel: params.reasoningLevel,
+      interactionMode: params.interactionMode,
+      orchestrationMode: params.orchestrationMode,
+      contextWindowMode: params.contextWindowMode,
+      thinking: params.thinking,
+      copilotAgent: params.copilotAgent,
+      codexFastMode: params.codexFastMode,
+    };
+    const thread = params.existingWorktreePath
       ? this.configure(await this.admissions.createAttachedExistingWorktreeThread({
-        workspaceId,
-        title,
-        existingWorktreePath,
-        provider,
-        baseBranch: existingWorktreeBaseBranch,
+        workspaceId: params.workspaceId,
+        title: params.title,
+        existingWorktreePath: params.existingWorktreePath,
+        provider: params.provider,
+        baseBranch: params.existingWorktreeBaseBranch,
       }), creation)
       : await this.create(creation);
     const automatic = await this.admissions.admitInitialAutomaticTurn({
       ...command,
       threadId: thread.id,
-      content,
-      permissionMode,
-      model,
-      attachments,
-      provider,
-      reasoningLevel,
-      interactionMode,
-      maxBudgetUsd,
-      maxTurns,
-      copilotAgent,
-      contextWindow: contextWindowMode,
-      thinking,
-      displayContent,
-      mentions,
-      previewAnnotations,
-      goalObjective,
-      orchestrationMode,
-      codexFastMode,
+      content: params.content,
+      permissionMode: params.permissionMode,
+      model: params.model,
+      attachments: params.attachments,
+      provider: params.provider,
+      reasoningLevel: params.reasoningLevel,
+      interactionMode: params.interactionMode,
+      maxBudgetUsd: params.maxBudgetUsd,
+      maxTurns: params.maxTurns,
+      copilotAgent: params.copilotAgent,
+      contextWindow: params.contextWindowMode,
+      thinking: params.thinking,
+      displayContent: params.displayContent,
+      mentions: params.mentions,
+      previewAnnotations: params.previewAnnotations,
+      goalObjective: params.goalObjective,
+      orchestrationMode: params.orchestrationMode,
+      codexFastMode: params.codexFastMode,
     });
     if (automatic.kind === "queued") return { kind: "queued", thread };
     return {
@@ -182,23 +202,23 @@ export class ThreadCreationCoordinator {
       command: {
         ...command,
         threadId: thread.id,
-        content,
-        permissionMode,
-        model,
-        attachments: automatic.kind === "ready" ? [] : attachments,
-        provider,
-        reasoningLevel,
-        interactionMode,
-        maxBudgetUsd,
-        maxTurns,
-        copilotAgent,
-        contextWindow: contextWindowMode,
-        thinking,
-        displayContent,
-        mentions,
-        previewAnnotations,
-        goalObjective,
-        orchestrationMode,
+        content: params.content,
+        permissionMode: params.permissionMode,
+        model: params.model,
+        attachments: automatic.kind === "ready" ? [] : params.attachments,
+        provider: params.provider,
+        reasoningLevel: params.reasoningLevel,
+        interactionMode: params.interactionMode,
+        maxBudgetUsd: params.maxBudgetUsd,
+        maxTurns: params.maxTurns,
+        copilotAgent: params.copilotAgent,
+        contextWindow: params.contextWindowMode,
+        thinking: params.thinking,
+        displayContent: params.displayContent,
+        mentions: params.mentions,
+        previewAnnotations: params.previewAnnotations,
+        goalObjective: params.goalObjective,
+        orchestrationMode: params.orchestrationMode,
         ...(automatic.kind === "ready" ? {
           persistedAttachmentData: automatic.attachments,
           cleanupPersistedAttachmentsOnHandledCommand: true,
@@ -288,35 +308,9 @@ export class ThreadCreationCoordinator {
     };
   }
 
-  private async createBranchedInitialTurn(params: {
-    workspaceId: string;
-    content: string;
-    model: string;
-    permissionMode: PermissionMode | "default";
-    mode: "direct" | "worktree";
-    branch: string;
-    worktreeBranchMode?: "branchless" | "named";
-    existingWorktreePath?: string;
-    existingWorktreeBaseBranch?: string;
-    attachments: SendMessageCommand["attachments"];
-    reasoningLevel?: ReasoningLevel;
-    provider: ProviderId;
-    interactionMode?: InteractionMode;
-    parentThreadId: string;
-    forkedFromMessageId?: string;
-    title: string;
-    maxBudgetUsd?: number;
-    maxTurns?: number;
-    copilotAgent?: string;
-    contextWindowMode?: ContextWindowMode;
-    thinking?: boolean;
-    codexFastMode?: boolean;
-    displayContent?: string;
-    mentions: SendMessageCommand["mentions"];
-    previewAnnotations?: SendMessageCommand["previewAnnotations"];
-    goalObjective?: string;
-    orchestrationMode?: OrchestrationMode;
-  }): Promise<CreatedInitialTurn> {
+  private async createBranchedInitialTurn(
+    params: BranchedInitialTurnParams & { parentThreadId: string },
+  ): Promise<CreatedInitialTurn> {
     const branching = this.branching?.();
     if (!branching) throw new Error("Thread branching is not configured");
     const provisioned = await branching.create({

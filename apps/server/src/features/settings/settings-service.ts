@@ -168,78 +168,13 @@ export class SettingsService {
    * Runtime-aware defaults if the file is missing or contains invalid JSON.
    */
   get(): Settings {
-    if (this.cache !== null) {
-      return this.cache;
-    }
-
+    if (this.cache !== null) return this.cache;
     try {
-      const raw = readFileSync(this.filePath, "utf-8");
-      if (Buffer.byteLength(raw, "utf8") > SETTINGS_MAX_BYTES) {
-        this.terminalMigrationStatus = { status: "blocked", reason: "malformed" };
-        this.blockedTerminalProfiles = [];
-        this.blockedTerminalProfileReference = null;
-        return getSettingsDefaults();
-      }
-      const parsed = JSON.parse(raw) as unknown;
-      const migration = removeLegacyPreviewRenderingSetting(parsed);
-      const terminalMigration = migrateTerminalSettingsDocument(migration.document);
-      if (terminalMigration.status === "blocked") {
-        this.terminalMigrationStatus = {
-          status: "blocked",
-          reason: terminalMigration.reason,
-        };
-        this.blockedTerminalProfiles = terminalMigration.reason === "missing-profile-reference"
-          ? parseBlockedTerminalProfiles(terminalMigration.original)
-          : [];
-        this.blockedTerminalProfileReference = terminalMigration.reason === "missing-profile-reference"
-          ? parseBlockedTerminalProfileReference(terminalMigration.original)
-          : null;
-        logger.warn("Settings file failed Terminal migration, returning temporary defaults", {
-          reason: terminalMigration.reason,
-        });
-        return getSettingsDefaults();
-      }
-      const result = SettingsSchema().safeParse(terminalMigration.document);
-      if (result.success) {
-        this.blockedTerminalProfiles = [];
-        this.blockedTerminalProfileReference = null;
-        this.terminalMigrationStatus = { status: terminalMigration.status };
-        if (migration.changed || terminalMigration.status === "migrated") {
-          try {
-            if (terminalMigration.status === "migrated") {
-              this.preserveTerminalMigrationBackup();
-            }
-            this.writeAtomically(result.data);
-          } catch (error) {
-            if (terminalMigration.status === "migrated") {
-              this.terminalMigrationStatus = {
-                status: "blocked",
-                reason: "migration-write-failed",
-              };
-            }
-            logger.warn("Failed to persist migrated settings", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-        this.cache = result.data;
-        return this.cache;
-      }
-      logger.warn("Settings file failed validation, returning defaults", {
-        error: result.error.message,
-      });
-      this.blockedTerminalProfiles = [];
-      this.blockedTerminalProfileReference = null;
-      return getSettingsDefaults();
+      const settings = this.readSettingsFile();
+      if (settings) this.cache = settings;
+      return settings ?? getSettingsDefaults();
     } catch {
-      if (existsSync(this.filePath)) {
-        this.terminalMigrationStatus = { status: "blocked", reason: "malformed" };
-      } else {
-        this.terminalMigrationStatus = { status: "current" };
-      }
-      this.blockedTerminalProfiles = [];
-      this.blockedTerminalProfileReference = null;
-      return getSettingsDefaults();
+      return this.handleSettingsReadFailure();
     }
   }
 
@@ -357,6 +292,90 @@ export class SettingsService {
     if (this.terminalMigrationStatus.status === "blocked") {
       throw new SettingsWriteBlockedError();
     }
+  }
+
+  private readSettingsFile(): Settings | null {
+    const raw = readFileSync(this.filePath, "utf-8");
+    if (Buffer.byteLength(raw, "utf8") > SETTINGS_MAX_BYTES) {
+      this.blockTerminalMigration("malformed");
+      return null;
+    }
+    return this.readSettingsDocument(JSON.parse(raw) as unknown);
+  }
+
+  private readSettingsDocument(parsed: unknown): Settings | null {
+    const migration = removeLegacyPreviewRenderingSetting(parsed);
+    const terminalMigration = migrateTerminalSettingsDocument(migration.document);
+    if (terminalMigration.status === "blocked") {
+      this.blockTerminalMigration(terminalMigration.reason, terminalMigration.original);
+      logger.warn("Settings file failed Terminal migration, returning temporary defaults", {
+        reason: terminalMigration.reason,
+      });
+      return null;
+    }
+
+    const result = SettingsSchema().safeParse(terminalMigration.document);
+    if (!result.success) {
+      logger.warn("Settings file failed validation, returning defaults", {
+        error: result.error.message,
+      });
+      this.clearBlockedTerminalRecovery();
+      return null;
+    }
+
+    const migratedTerminalSettings = terminalMigration.status === "migrated";
+    this.clearBlockedTerminalRecovery();
+    this.terminalMigrationStatus = { status: terminalMigration.status };
+    this.persistSettingsMigration(result.data, migration.changed || migratedTerminalSettings, migratedTerminalSettings);
+    return result.data;
+  }
+
+  private persistSettingsMigration(
+    settings: Settings,
+    shouldPersist: boolean,
+    requiresBackup: boolean,
+  ): void {
+    if (!shouldPersist) return;
+    try {
+      if (requiresBackup) this.preserveTerminalMigrationBackup();
+      this.writeAtomically(settings);
+    } catch (error) {
+      if (requiresBackup) {
+        this.terminalMigrationStatus = {
+          status: "blocked",
+          reason: "migration-write-failed",
+        };
+      }
+      logger.warn("Failed to persist migrated settings", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private blockTerminalMigration(
+    reason: "malformed" | "future-version" | "missing-profile-reference",
+    original?: unknown,
+  ): void {
+    this.terminalMigrationStatus = { status: "blocked", reason };
+    this.blockedTerminalProfiles = reason === "missing-profile-reference"
+      ? parseBlockedTerminalProfiles(original)
+      : [];
+    this.blockedTerminalProfileReference = reason === "missing-profile-reference"
+      ? parseBlockedTerminalProfileReference(original)
+      : null;
+  }
+
+  private clearBlockedTerminalRecovery(): void {
+    this.blockedTerminalProfiles = [];
+    this.blockedTerminalProfileReference = null;
+  }
+
+  private handleSettingsReadFailure(): Settings {
+    this.terminalMigrationStatus = existsSync(this.filePath)
+      ? { status: "blocked", reason: "malformed" }
+      : { status: "current" };
+    this.clearBlockedTerminalRecovery();
+    return getSettingsDefaults();
   }
 
   private persistValidatedSettings(validated: Settings): void {

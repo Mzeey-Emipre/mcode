@@ -4,7 +4,6 @@ import { EventEmitter } from "events";
 import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
 import type {
-  AgentEvent,
   IAgentProvider,
   IProviderRegistry,
   ProviderId,
@@ -14,15 +13,12 @@ import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/datab
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
-import { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-repo.js";
 import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
-import { TaskRepo } from "../persistence/task-repo.js";
 import { AgentService } from "../agent-service.js";
 import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
@@ -46,7 +42,6 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
   let messageRepo: MessageRepo;
   let toolCallRecordRepo: ToolCallRecordRepo;
   let turnSnapshotRepo: TurnSnapshotRepo;
-  let taskRepo: TaskRepo;
   let svc: AgentService;
   let canonicalSink: CanonicalAgentEventSink;
   let providerStub: EventEmitter & Partial<IAgentProvider> & {
@@ -64,7 +59,6 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     messageRepo = new MessageRepo(db);
     toolCallRecordRepo = new ToolCallRecordRepo(db);
     turnSnapshotRepo = new TurnSnapshotRepo(db);
-    taskRepo = new TaskRepo(db);
 
     // Capture runtime envelopes emitted on the provider bus.
     capturedEvents = [];

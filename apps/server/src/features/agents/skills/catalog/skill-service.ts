@@ -37,18 +37,25 @@ const SOURCE_PRIORITY: Record<SkillSource, number> = {
 /** Extract `description:` from the leading YAML frontmatter of a markdown file. */
 function readSkillFileMetadata(filePath: string): SkillFileMetadata {
   try {
-    const content = readFileSync(filePath, "utf-8");
-    const fm = FRONTMATTER_RE.exec(content);
-    if (!fm) return { name: undefined, description: "" };
-    const name = NAME_RE.exec(fm[1]);
-    const desc = DESC_RE.exec(fm[1]);
-    return {
-      name: name ? (name[1] ?? name[2] ?? name[3] ?? "").trim() : undefined,
-      description: desc ? (desc[1] ?? desc[2] ?? desc[3] ?? "").trim() : "",
-    };
+    return skillFileMetadata(readFileSync(filePath, "utf-8"));
   } catch {
     return { name: undefined, description: "" };
   }
+}
+
+function skillFileMetadata(content: string): SkillFileMetadata {
+  const frontmatter = FRONTMATTER_RE.exec(content);
+  if (!frontmatter) return { name: undefined, description: "" };
+  const name = NAME_RE.exec(frontmatter[1]);
+  const description = DESC_RE.exec(frontmatter[1]);
+  return {
+    name: name ? frontmatterValue(name) : undefined,
+    description: description ? frontmatterValue(description) : "",
+  };
+}
+
+function frontmatterValue(match: RegExpExecArray): string {
+  return (match[1] ?? match[2] ?? match[3] ?? "").trim();
 }
 
 /** Extract `description:` from the leading YAML frontmatter of a markdown file. */
@@ -248,29 +255,40 @@ function scanCursorPluginVersionDir(
 function scanCursorPluginCacheDir(ctx: ScanContext, cacheDir: string, providers: string[]): void {
   for (const mp of scanDir(ctx, cacheDir)) {
     if (!mp.isDirectory()) continue;
-    const mpDir = join(cacheDir, mp.name);
-    for (const plugin of scanDir(ctx, mpDir)) {
-      if (!plugin.isDirectory()) continue;
-      const pluginDir = join(mpDir, plugin.name);
-      const versionDirs = scanDir(ctx, pluginDir).filter((e) => e.isDirectory());
-      if (versionDirs.length === 0) continue;
-      let best: { name: string; mtime: number } | null = null;
-      for (const e of versionDirs) {
-        const p = join(pluginDir, e.name);
-        let mtime = 0;
-        try {
-          mtime = statSync(p).mtimeMs;
-        } catch {
-          /* stale symlink / race — treat as 0 */
-        }
-        if (!best || mtime > best.mtime) {
-          best = { name: e.name, mtime };
-        }
-      }
-      if (best) {
-        scanCursorPluginVersionDir(ctx, join(pluginDir, best.name), plugin.name, providers);
-      }
-    }
+    scanCursorPluginMarketplace(ctx, join(cacheDir, mp.name), providers);
+  }
+}
+
+function scanCursorPluginMarketplace(ctx: ScanContext, marketplaceDir: string, providers: string[]): void {
+  for (const plugin of scanDir(ctx, marketplaceDir)) {
+    if (!plugin.isDirectory()) continue;
+    scanCursorPlugin(ctx, join(marketplaceDir, plugin.name), plugin.name, providers);
+  }
+}
+
+function scanCursorPlugin(ctx: ScanContext, pluginDir: string, pluginName: string, providers: string[]): void {
+  const newestVersion = newestCursorPluginVersion(pluginDir, scanDir(ctx, pluginDir));
+  if (newestVersion) {
+    scanCursorPluginVersionDir(ctx, join(pluginDir, newestVersion), pluginName, providers);
+  }
+}
+
+function newestCursorPluginVersion(pluginDir: string, entries: Dirent[]): string | undefined {
+  let newest: { name: string; mtime: number } | undefined;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const candidate = cursorPluginVersionMtime(pluginDir, entry.name);
+    if (!newest || candidate.mtime > newest.mtime) newest = candidate;
+  }
+  return newest?.name;
+}
+
+function cursorPluginVersionMtime(pluginDir: string, name: string): { name: string; mtime: number } {
+  try {
+    return { name, mtime: statSync(join(pluginDir, name)).mtimeMs };
+  } catch {
+    // A cache entry can disappear between directory listing and stat.
+    return { name, mtime: 0 };
   }
 }
 

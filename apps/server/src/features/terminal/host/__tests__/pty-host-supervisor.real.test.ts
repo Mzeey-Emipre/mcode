@@ -248,6 +248,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           state: "healthy",
         });
 
+        async function runAllWorkloads(): Promise<void> {
         const nodeExecutable = resolveNodeExecutable();
         const envNames = [
           "PATH",
@@ -269,7 +270,12 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           const value = process.env[name];
           return value === undefined ? [] : [{ name, value }];
         });
-        for (const [index, workload] of listTerminalWorkloads().entries()) {
+
+        async function runCorpusWorkloads(): Promise<void> {
+        async function runCorpusWorkload(
+          index: number,
+          workload: ReturnType<typeof listTerminalWorkloads>[number],
+        ): Promise<void> {
           const sessionId = corpusSessionId(index);
           const scriptPath = join(tempDir, `${workload.id}.cjs`);
           writeFileSync(scriptPath, workload.program.source, "utf8");
@@ -293,6 +299,12 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
               TEST_PLATFORM === "windows" ? value.includes(">") : value.length > 0,
             10_000,
           );
+          async function executeWorkload(): Promise<{
+            commandSeq: number;
+            detachedOutputBytes: number;
+            resizeTrace: TerminalResizeObservation[];
+            startedAt: number;
+          }> {
           const startedAt = Date.now();
           const resizeTrace: TerminalResizeObservation[] = [
             {
@@ -397,7 +409,9 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
             }
           }
 
-          if (workload.completion.input) {
+          async function sendCompletionInput(): Promise<void> {
+            const input = workload.completion.input;
+            if (!input) return;
             commandSeq += 1;
             await supervisor.send({
               sessionId,
@@ -405,13 +419,11 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
               attachmentEpoch: "1",
               commandSeq: String(commandSeq),
               kind: "input",
-              data: Buffer.from(
-                process.platform === "win32"
-                  ? workload.completion.input.replace(/\n/g, "\r")
-                  : workload.completion.input,
-              ),
+              data: Buffer.from(process.platform === "win32" ? input.replace(/\n/g, "\r") : input),
             });
           }
+
+          await sendCompletionInput();
 
           await waitForOutput(
             events,
@@ -428,6 +440,11 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
               `${workload.id}: ${error instanceof Error ? error.message : String(error)}; missing=${workload.expectedMarkers.filter((marker) => !outputText(events, sessionId).includes(marker)).join(",")}; output=${JSON.stringify(outputText(events, sessionId))}`,
             );
           });
+
+          return { commandSeq, detachedOutputBytes, resizeTrace, startedAt };
+          }
+
+          let { commandSeq, detachedOutputBytes, resizeTrace, startedAt } = await executeWorkload();
 
           let descendantPid: number | null = null;
           if (workload.completion.terminateAfter) {
@@ -484,7 +501,14 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           expect(result.failedChecks, workload.id).toEqual([]);
           expect(result.normalizedOutputSha256).toMatch(/^[a-f0-9]{64}$/);
         }
+        for (const [index, workload] of listTerminalWorkloads().entries()) {
+          await runCorpusWorkload(index, workload);
+        }
+        }
 
+        await runCorpusWorkloads();
+
+        async function verifyCrashRecovery(): Promise<void> {
         const cleanupWorkload = listTerminalWorkloads().find(
           (workload) => workload.id === "process-cleanup",
         );
@@ -553,6 +577,12 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           crashDescendantPid,
           TERMINAL_WORKLOAD_LIMITS.maxProcessLifetimeMs,
         );
+        }
+
+        await verifyCrashRecovery();
+        }
+
+        await runAllWorkloads();
       } finally {
         await supervisor?.shutdown();
         rmSync(tempDir, { recursive: true, force: true });

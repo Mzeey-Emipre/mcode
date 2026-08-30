@@ -150,26 +150,59 @@ The fenced block can appear anywhere in your response. The sections should mirro
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg.role !== "assistant") continue;
-      const match = PLAN_QUESTIONS_RE.exec(msg.content);
-      if (!match) continue;
-      try {
-        const raw = JSON.parse(match[1]);
-        if (!Array.isArray(raw)) break;
-        for (const q of raw) {
-          if (q && typeof q.id === "string" && typeof q.question === "string") {
-            const options = Array.isArray(q.options)
-              ? q.options
-                  .filter((o: unknown) => o && typeof (o as Record<string, unknown>).id === "string")
-                  .map((o: Record<string, unknown>) => ({ id: String(o.id), title: String(o.title ?? o.id) }))
-              : [];
-            map.set(q.id, { question: q.question, options });
-          }
-        }
-      } catch {
-        // Ignore - opaque IDs will be used as fallback
-      }
+      if (!this.appendQuestionContext(map, msg.content)) continue;
       break;
     }
     return map;
+  }
+
+  private appendQuestionContext(
+    context: Map<string, { question: string; options: Array<{ id: string; title: string }> }>,
+    content: string,
+  ): boolean {
+    const match = PLAN_QUESTIONS_RE.exec(content);
+    if (!match) return false;
+    try {
+      const raw = JSON.parse(match[1]);
+      if (Array.isArray(raw)) this.appendQuestions(context, raw);
+    } catch {
+      // Opaque IDs remain valid when prior plan output is malformed.
+    }
+    return true;
+  }
+
+  private appendQuestions(
+    context: Map<string, { question: string; options: Array<{ id: string; title: string }> }>,
+    questions: unknown[],
+  ): void {
+    for (const value of questions) {
+      const question = this.questionContext(value);
+      if (question) context.set(question.id, question);
+    }
+  }
+
+  private questionContext(value: unknown): {
+    id: string;
+    question: string;
+    options: Array<{ id: string; title: string }>;
+  } | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const record = value as Record<string, unknown>;
+    if (typeof record.id !== "string" || typeof record.question !== "string") return undefined;
+    return {
+      id: record.id,
+      question: record.question,
+      options: this.questionOptions(record.options),
+    };
+  }
+
+  private questionOptions(value: unknown): Array<{ id: string; title: string }> {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((option) => {
+      if (!option || typeof option !== "object") return [];
+      const record = option as Record<string, unknown>;
+      if (typeof record.id !== "string") return [];
+      return [{ id: record.id, title: String(record.title ?? record.id) }];
+    });
   }
 }

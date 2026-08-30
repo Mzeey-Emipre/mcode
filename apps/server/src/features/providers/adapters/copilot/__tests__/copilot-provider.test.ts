@@ -253,6 +253,54 @@ describe("CopilotProvider bootstrap", () => {
     });
   });
 
+  it("falls back to a fresh session when SDK resume fails", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    const freshSession = makeMockSession();
+    const setMode = vi.fn().mockResolvedValue(undefined);
+    Object.assign(freshSession, {
+      rpc: {
+        mode: { set: setMode },
+        agent: { select: vi.fn().mockResolvedValue(undefined) },
+      },
+    });
+    mockClient.resumeSession.mockRejectedValue(new Error("session expired"));
+    mockClient.createSession.mockResolvedValue(freshSession);
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      undefined,
+      makeThreadControlMcp() as any,
+    );
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
+
+    await provider.sendTurn({
+      turnExecutionId: "resume-fallback-execution",
+      sessionId: "mcode-resume-fallback",
+      resumeFrom: "expired-sdk-session",
+      threadId: "resume-fallback",
+      message: "continue",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build",
+      providerOptions: { agent: "plan" },
+      permissionMode: "auto",
+    });
+
+    expect(mockClient.resumeSession).toHaveBeenCalledWith("expired-sdk-session", expect.anything());
+    expect(mockClient.createSession).toHaveBeenCalledTimes(1);
+    expect(setMode).toHaveBeenCalledTimes(1);
+    expect(setMode).toHaveBeenCalledWith({ mode: "plan" });
+    expect(events).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({
+        type: "system",
+        subtype: "sdk_session_id:sdk-session-123",
+      }),
+    }));
+    await provider.stopSession("mcode-resume-fallback");
+  });
+
   it("configures only permission-compatible visible-browser MCP tools on a normal session", async () => {
     mockClient.getState.mockReturnValue("connected");
     const mockSession = makeMockSession();

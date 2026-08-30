@@ -88,6 +88,108 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     expect(ended).toHaveLength(1);
   });
 
+  it("serializes the full result message when an error result has no result field", async () => {
+    mockQuery.mockImplementation(mockSdkStream([
+      { type: "result", is_error: true },
+    ]));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
+
+    await provider.sendTurn({
+      turnExecutionId: "test-execution",
+      sessionId: "mcode-thread-error-without-result",
+      threadId: "thread-error-without-result",
+      message: "hi",
+      cwd: "/tmp",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const error = events.find((event) => event.event.type === AgentEventType.Error);
+    expect(error?.event.error).toContain('"is_error":true');
+    expect(events.filter((event) => event.event.type === AgentEventType.Ended)).toHaveLength(1);
+  });
+
+  it("serializes the full result message when an error result is null", async () => {
+    mockQuery.mockImplementation(mockSdkStream([
+      { type: "result", is_error: true, result: null },
+    ]));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
+
+    await provider.sendTurn({
+      turnExecutionId: "test-execution",
+      sessionId: "mcode-thread-null-result",
+      threadId: "thread-null-result",
+      message: "hi",
+      cwd: "/tmp",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const error = events.find((event) => event.event.type === AgentEventType.Error);
+    expect(error?.event.error).toContain('"result":null');
+    expect(events.filter((event) => event.event.type === AgentEventType.Ended)).toHaveLength(1);
+  });
+
+  it("uses the generic fallback when an error result is an empty string", async () => {
+    mockQuery.mockImplementation(mockSdkStream([
+      { type: "result", is_error: true, errors: [], result: "" },
+    ]));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
+
+    await provider.sendTurn({
+      turnExecutionId: "test-execution",
+      sessionId: "mcode-thread-empty-result",
+      threadId: "thread-empty-result",
+      message: "hi",
+      cwd: "/tmp",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const error = events.find((event) => event.event.type === AgentEventType.Error);
+    expect(error?.event.error).toBe("Claude SDK returned an error result");
+    expect(events.filter((event) => event.event.type === AgentEventType.Ended)).toHaveLength(1);
+  });
+
+  it("uses the result-error fallback when serializing the SDK message throws", async () => {
+    const circular: Record<string, unknown> = { type: "result", is_error: true };
+    circular.result = circular;
+    mockQuery.mockImplementation(mockSdkStream([circular]));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
+
+    await provider.sendTurn({
+      turnExecutionId: "test-execution",
+      sessionId: "mcode-thread-circular-result",
+      threadId: "thread-circular-result",
+      message: "hi",
+      cwd: "/tmp",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const errors = events.filter((event) => event.event.type === AgentEventType.Error);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.event.error).toBe("Claude SDK returned an error result");
+    expect(events.some((event) => event.event.type === AgentEventType.TurnComplete)).toBe(false);
+    expect(events.filter((event) => event.event.type === AgentEventType.Ended)).toHaveLength(1);
+  });
+
   it("emits TurnComplete (not Error) for a successful result", async () => {
     mockQuery.mockImplementation(mockSdkStream([
       { type: "result", is_error: false, result: "ok", usage: {}, modelUsage: {} },

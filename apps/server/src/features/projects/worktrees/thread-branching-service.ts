@@ -63,6 +63,12 @@ type Fork = {
   messageId: string;
 };
 
+type InheritedThreadSettings = {
+  contextWindowMode: ContextWindowMode | undefined;
+  thinking: boolean | undefined;
+  codexFastMode: boolean | undefined;
+};
+
 /** Owns branch validation, workspace creation, lineage persistence, and handoff setup. */
 @injectable()
 export class ThreadBranchingService {
@@ -123,7 +129,7 @@ export class ThreadBranchingService {
     return message.id;
   }
 
-  private inheritSettings(parent: Thread, input: CreateBranchedThreadInput) {
+  private inheritSettings(parent: Thread, input: CreateBranchedThreadInput): InheritedThreadSettings {
     return {
       contextWindowMode: input.contextWindowMode ?? parent.context_window_mode as ContextWindowMode | null ?? undefined,
       thinking: input.thinking ?? (parent.thinking === null ? undefined : Boolean(parent.thinking)),
@@ -184,36 +190,12 @@ export class ThreadBranchingService {
   private configureChild(
     thread: Thread,
     input: CreateBranchedThreadInput,
-    inherited: ReturnType<ThreadBranchingService["inheritSettings"]>,
+    inherited: InheritedThreadSettings,
     _messageId: string,
   ): Thread {
-    const permission = input.permissionMode === "default" ? thread.permission_mode : input.permissionMode;
     this.threads.updateModel(thread.id, input.model);
-    this.threads.updateSettings(thread.id, {
-      ...(input.reasoningLevel !== undefined && { reasoning_level: input.reasoningLevel }),
-      ...(input.interactionMode !== undefined && { interaction_mode: input.interactionMode }),
-      ...(input.orchestrationMode !== undefined && { orchestration_mode: input.orchestrationMode }),
-      ...(input.permissionMode !== "default" && { permission_mode: input.permissionMode }),
-      ...(inherited.contextWindowMode !== undefined && { context_window_mode: inherited.contextWindowMode }),
-      ...(inherited.thinking !== undefined && { thinking: inherited.thinking }),
-      ...(input.copilotAgent !== undefined && { copilot_agent: input.copilotAgent }),
-      ...(input.provider === "codex" && inherited.codexFastMode !== undefined && { codex_fast_mode: inherited.codexFastMode }),
-    });
-    return {
-      ...thread,
-      model: input.model,
-      provider: input.provider,
-      reasoning_level: input.reasoningLevel ?? thread.reasoning_level,
-      interaction_mode: input.interactionMode ?? thread.interaction_mode,
-      orchestration_mode: input.orchestrationMode ?? thread.orchestration_mode,
-      permission_mode: permission,
-      context_window_mode: inherited.contextWindowMode ?? thread.context_window_mode,
-      thinking: inherited.thinking ?? thread.thinking,
-      copilot_agent: input.copilotAgent ?? thread.copilot_agent,
-      codex_fast_mode: input.provider === "codex" && inherited.codexFastMode !== undefined
-        ? inherited.codexFastMode
-        : thread.codex_fast_mode,
-    };
+    this.threads.updateSettings(thread.id, threadSettings(input, inherited));
+    return configuredChildThread(thread, input, inherited);
   }
 
   private samePath(left: string, right: string): boolean {
@@ -224,4 +206,87 @@ export class ThreadBranchingService {
       ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
       : normalizedLeft === normalizedRight;
   }
+}
+
+function threadSettings(
+  input: CreateBranchedThreadInput,
+  inherited: InheritedThreadSettings,
+) {
+  return {
+    ...reasoningLevelSetting(input),
+    ...interactionModeSetting(input),
+    ...orchestrationModeSetting(input),
+    ...permissionModeSetting(input),
+    ...contextWindowModeSetting(inherited),
+    ...thinkingSetting(inherited),
+    ...copilotAgentSetting(input),
+    ...codexFastModeSetting(input, inherited),
+  };
+}
+
+function reasoningLevelSetting(input: CreateBranchedThreadInput) {
+  return input.reasoningLevel === undefined ? {} : { reasoning_level: input.reasoningLevel };
+}
+
+function interactionModeSetting(input: CreateBranchedThreadInput) {
+  return input.interactionMode === undefined ? {} : { interaction_mode: input.interactionMode };
+}
+
+function orchestrationModeSetting(input: CreateBranchedThreadInput) {
+  return input.orchestrationMode === undefined ? {} : { orchestration_mode: input.orchestrationMode };
+}
+
+function permissionModeSetting(input: CreateBranchedThreadInput) {
+  return input.permissionMode === "default" ? {} : { permission_mode: input.permissionMode };
+}
+
+function contextWindowModeSetting(inherited: InheritedThreadSettings) {
+  return inherited.contextWindowMode === undefined ? {} : { context_window_mode: inherited.contextWindowMode };
+}
+
+function thinkingSetting(inherited: InheritedThreadSettings) {
+  return inherited.thinking === undefined ? {} : { thinking: inherited.thinking };
+}
+
+function copilotAgentSetting(input: CreateBranchedThreadInput) {
+  return input.copilotAgent === undefined ? {} : { copilot_agent: input.copilotAgent };
+}
+
+function codexFastModeSetting(
+  input: CreateBranchedThreadInput,
+  inherited: InheritedThreadSettings,
+) {
+  if (input.provider !== "codex" || inherited.codexFastMode === undefined) return {};
+  return { codex_fast_mode: inherited.codexFastMode };
+}
+
+function configuredChildThread(
+  thread: Thread,
+  input: CreateBranchedThreadInput,
+  inherited: InheritedThreadSettings,
+): Thread {
+  return {
+    ...thread,
+    model: input.model,
+    provider: input.provider,
+    reasoning_level: input.reasoningLevel ?? thread.reasoning_level,
+    interaction_mode: input.interactionMode ?? thread.interaction_mode,
+    orchestration_mode: input.orchestrationMode ?? thread.orchestration_mode,
+    permission_mode: input.permissionMode === "default" ? thread.permission_mode : input.permissionMode,
+    context_window_mode: inherited.contextWindowMode ?? thread.context_window_mode,
+    thinking: inherited.thinking ?? thread.thinking,
+    copilot_agent: input.copilotAgent ?? thread.copilot_agent,
+    codex_fast_mode: configuredCodexFastMode(thread, input, inherited),
+  };
+}
+
+function configuredCodexFastMode(
+  thread: Thread,
+  input: CreateBranchedThreadInput,
+  inherited: InheritedThreadSettings,
+) {
+  if (input.provider === "codex" && inherited.codexFastMode !== undefined) {
+    return inherited.codexFastMode;
+  }
+  return thread.codex_fast_mode;
 }

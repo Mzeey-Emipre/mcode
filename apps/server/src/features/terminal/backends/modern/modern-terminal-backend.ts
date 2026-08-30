@@ -10,6 +10,7 @@ import {
   type TerminalBackendCapabilities,
   type TerminalBinaryFrame,
   type TerminalHealthSnapshot,
+  type TerminalHydrationDescriptor,
 } from "@mcode/contracts";
 import type {
   PtyHostAdapter,
@@ -131,6 +132,11 @@ export class ModernTerminalBackend extends TerminalBackend {
     if (method === "terminal.capabilities") return this.capabilities();
     if (method === "terminal.diagnostics.report") return this.diagnostics.report(input);
     if (method === "terminal.diagnostics.getBundle") return this.diagnostics.getBundle();
+    await this.ensureHostStarted();
+    return this.routeSessionRequest(method, input, client);
+  }
+
+  private async ensureHostStarted(): Promise<void> {
     try {
       await this.startPromise;
     } catch (error) {
@@ -140,6 +146,13 @@ export class ModernTerminalBackend extends TerminalBackend {
         error instanceof Error ? error.message : "The Terminal host failed to start",
       );
     }
+  }
+
+  private async routeSessionRequest(
+    method: string,
+    input: Record<string, unknown>,
+    client: WebSocket,
+  ): Promise<unknown> {
     switch (method) {
       case "terminal.session.create":
         return this.sessions.createSession(input as Parameters<TerminalSessionService["createSession"]>[0]);
@@ -153,44 +166,55 @@ export class ModernTerminalBackend extends TerminalBackend {
         this.attachments.delete(String(input.sessionId));
         return { detached: true };
       case "terminal.session.close":
-        {
-          const closed = await this.sessions.closeSession(
-            String(input.sessionId),
-            input.reason as Parameters<TerminalSessionService["closeSession"]>[1],
-          );
-          const route = this.attachments.get(String(input.sessionId));
-          if (route && !route.provisional && closed.exit) {
-            this.send(route, {
-              kind: "exitBarrier",
-              primarySeq: closed.lastOutputSeq,
-              relatedSeq: closed.lastOutputSeq,
-              payload: jsonBytes({
-                finalOutputSeq: closed.lastOutputSeq,
-                exit: closed.exit,
-              }),
-            });
-          }
-          this.cleanupSession(String(input.sessionId));
-          return closed;
-        }
+        return this.closeSession(input);
       case "terminal.session.hasChildren": {
         const snapshot = this.requireSession(String(input.sessionId));
         return this.host.inspectChildren(snapshot.sessionId, snapshot.hostGeneration);
       }
       case "terminal.session.checkpoint.begin":
-        this.requireAttachmentDetails(
-          client,
-          String(input.sessionId),
-          String(input.attachmentId),
-          String(input.attachmentEpoch),
-          String(input.hostGeneration),
-        );
-        return this.beginCheckpoint(input, client);
+        return this.beginCheckpointForAttachment(input, client);
       case "terminal.session.checkpoint.complete":
         return this.completeCheckpoint(input, client);
       default:
         throw new Error(`Terminal v1 method is outside the protected session path: ${method}`);
     }
+  }
+
+  private async closeSession(input: Record<string, unknown>): Promise<unknown> {
+    const sessionId = String(input.sessionId);
+    const closed = await this.sessions.closeSession(
+      sessionId,
+      input.reason as Parameters<TerminalSessionService["closeSession"]>[1],
+    );
+    this.publishExitBarrier(sessionId, closed.lastOutputSeq, closed.exit);
+    this.cleanupSession(sessionId);
+    return closed;
+  }
+
+  private publishExitBarrier(
+    sessionId: string,
+    lastOutputSeq: string,
+    exit: { readonly code: number | null; readonly signal: number | null } | null,
+  ): void {
+    const route = this.attachments.get(sessionId);
+    if (!route || route.provisional || !exit) return;
+    this.send(route, {
+      kind: "exitBarrier",
+      primarySeq: lastOutputSeq,
+      relatedSeq: lastOutputSeq,
+      payload: jsonBytes({ finalOutputSeq: lastOutputSeq, exit }),
+    });
+  }
+
+  private beginCheckpointForAttachment(input: Record<string, unknown>, client: WebSocket): unknown {
+    this.requireAttachmentDetails(
+      client,
+      String(input.sessionId),
+      String(input.attachmentId),
+      String(input.attachmentEpoch),
+      String(input.hostGeneration),
+    );
+    return this.beginCheckpoint(input, client);
   }
 
   private healthSnapshot(): TerminalHealthSnapshot {
@@ -299,53 +323,78 @@ export class ModernTerminalBackend extends TerminalBackend {
       provisional.hostGeneration = descriptor.hostGeneration;
       provisional.hydrationId = descriptor.hydrationId;
       provisional.provisional = false;
-      const hydration = this.runtime.consumeHydration({
-        sessionId: provisional.sessionId,
-        hostGeneration: provisional.hostGeneration,
-        attachmentEpoch: provisional.attachmentEpoch,
-        hydrationId: provisional.hydrationId,
-      });
-      const checkpointChunks = chunkBytes(hydration.checkpoint?.data ?? new Uint8Array());
-      checkpointChunks.forEach((payload, index) => this.send(provisional, {
-        kind: "hydrationChunk",
-        hydrationId: provisional.hydrationId,
-        primarySeq: String(index),
-        relatedSeq: String(checkpointChunks.length),
-        payload,
-      }));
-      for (const output of chunkReplayOutput(hydration.output)) {
-        this.send(provisional, {
-          kind: "output",
-          hydrationId: provisional.hydrationId,
-          primarySeq: output.outputSeq,
-          relatedSeq: "0",
-          payload: output.data,
-        });
-      }
-      if (hydration.descriptor.gap) {
-        this.send(provisional, {
-          kind: "gap",
-          hydrationId: provisional.hydrationId,
-          primarySeq: hydration.descriptor.gap.firstMissingSeq,
-          relatedSeq: hydration.descriptor.gap.lastMissingSeq,
-          payload: jsonBytes(hydration.descriptor.gap),
-        });
-      }
-      this.send(provisional, {
-        kind: "hydrationComplete",
-        hydrationId: provisional.hydrationId,
-        primarySeq: hydration.descriptor.lastOutputSeq ?? "0",
-        relatedSeq: "0",
-        payload: jsonBytes(hydration.descriptor),
-      });
+      this.sendHydration(provisional);
       provisional.hydrated = true;
-      for (const event of provisional.pendingDelivery.splice(0)) {
-        if (event.attachmentEpoch === provisional.attachmentEpoch) this.deliver(event);
-      }
+      this.flushPendingDelivery(provisional);
       return descriptor;
     } catch (error) {
       if (this.attachments.get(provisional.sessionId) === provisional) this.attachments.delete(provisional.sessionId);
       throw error;
+    }
+  }
+
+  private sendHydration(route: AttachmentRoute): void {
+    const hydration = this.runtime.consumeHydration({
+      sessionId: route.sessionId,
+      hostGeneration: route.hostGeneration,
+      attachmentEpoch: route.attachmentEpoch,
+      hydrationId: route.hydrationId,
+    });
+    this.sendCheckpointChunks(route, hydration.checkpoint?.data ?? new Uint8Array());
+    this.sendReplayOutput(route, hydration.output);
+    this.sendHydrationGap(route, hydration.descriptor.gap);
+    this.send(route, {
+      kind: "hydrationComplete",
+      hydrationId: route.hydrationId,
+      primarySeq: hydration.descriptor.lastOutputSeq ?? "0",
+      relatedSeq: "0",
+      payload: jsonBytes(hydration.descriptor),
+    });
+  }
+
+  private sendCheckpointChunks(route: AttachmentRoute, data: Uint8Array): void {
+    const chunks = chunkBytes(data);
+    chunks.forEach((payload, index) => this.send(route, {
+      kind: "hydrationChunk",
+      hydrationId: route.hydrationId,
+      primarySeq: String(index),
+      relatedSeq: String(chunks.length),
+      payload,
+    }));
+  }
+
+  private sendReplayOutput(
+    route: AttachmentRoute,
+    output: ReadonlyArray<{ readonly outputSeq: string; readonly data: Uint8Array }>,
+  ): void {
+    for (const chunk of chunkReplayOutput(output)) {
+      this.send(route, {
+        kind: "output",
+        hydrationId: route.hydrationId,
+        primarySeq: chunk.outputSeq,
+        relatedSeq: "0",
+        payload: chunk.data,
+      });
+    }
+  }
+
+  private sendHydrationGap(
+    route: AttachmentRoute,
+    gap: TerminalHydrationDescriptor["gap"],
+  ): void {
+    if (!gap) return;
+    this.send(route, {
+      kind: "gap",
+      hydrationId: route.hydrationId,
+      primarySeq: gap.firstMissingSeq,
+      relatedSeq: gap.lastMissingSeq,
+      payload: jsonBytes(gap),
+    });
+  }
+
+  private flushPendingDelivery(route: AttachmentRoute): void {
+    for (const event of route.pendingDelivery.splice(0)) {
+      if (event.attachmentEpoch === route.attachmentEpoch) this.deliver(event);
     }
   }
 
@@ -374,39 +423,19 @@ export class ModernTerminalBackend extends TerminalBackend {
   }
 
   private acceptCheckpointChunk(client: WebSocket, frame: TerminalBinaryFrame): void {
-    const upload = frame.uploadId ? this.uploads.get(frame.uploadId) : null;
-    if (!upload || upload.owner !== client || upload.expiresAt < Date.now()) {
-      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is unavailable");
-    }
+    const upload = this.requireCheckpointUpload(frame.uploadId, client);
     const route = this.requireAttachment(client, frame);
-    if (
-      upload.sessionId !== route.sessionId ||
-      upload.attachmentId !== route.attachmentId ||
-      upload.attachmentEpoch !== route.attachmentEpoch ||
-      upload.hostGeneration !== route.hostGeneration
-    ) {
+    if (!this.matchesAttachment(upload, route)) {
       throw terminalBackendError("STALE_ATTACHMENT", "REATTACH", "Terminal checkpoint attachment is stale");
     }
     const index = Number(frame.primarySeq);
-    const expectedChunks = Math.ceil(upload.declaredBytes / TERMINAL_CHECKPOINT_CHUNK_BYTES);
-    if (Number(frame.relatedSeq) !== expectedChunks || index >= expectedChunks || upload.chunks.has(index)) {
-      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint chunks are not contiguous");
-    }
-    if (frame.payload.byteLength !== (index === expectedChunks - 1
-      ? upload.declaredBytes - index * TERMINAL_CHECKPOINT_CHUNK_BYTES
-      : TERMINAL_CHECKPOINT_CHUNK_BYTES)) {
-      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint chunk size is invalid");
-    }
+    const expectedChunks = this.validateCheckpointChunkPosition(upload, frame, index);
+    this.validateCheckpointChunkSize(upload, frame.payload, index, expectedChunks);
     upload.chunks.set(index, Uint8Array.from(frame.payload));
   }
 
   private async completeCheckpoint(input: Record<string, unknown>, client: WebSocket): Promise<unknown> {
-    const uploadId = String(input.uploadId);
-    const upload = this.uploads.get(uploadId);
-    this.uploads.delete(uploadId);
-    if (!upload || upload.owner !== client || upload.expiresAt < Date.now()) {
-      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is unavailable");
-    }
+    const upload = this.takeCheckpointUpload(String(input.uploadId), client);
     this.requireAttachmentDetails(
       client,
       upload.sessionId,
@@ -414,23 +443,13 @@ export class ModernTerminalBackend extends TerminalBackend {
       upload.attachmentEpoch,
       upload.hostGeneration,
     );
-    if (
-      String(input.sessionId) !== upload.sessionId ||
-      String(input.attachmentId) !== upload.attachmentId ||
-      String(input.attachmentEpoch) !== upload.attachmentEpoch ||
-      String(input.hostGeneration) !== upload.hostGeneration
-    ) {
+    if (!this.matchesCheckpointCompletion(input, upload)) {
       throw terminalBackendError("STALE_ATTACHMENT", "REATTACH", "Terminal checkpoint attachment is stale");
     }
-    const expectedChunks = Math.ceil(upload.declaredBytes / TERMINAL_CHECKPOINT_CHUNK_BYTES);
-    if (upload.chunks.size !== expectedChunks || [...Array(expectedChunks).keys()].some((index) => !upload.chunks.has(index))) {
-      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is incomplete");
-    }
+    this.validateCheckpointCompleteness(upload);
     const data = concatBytes([...upload.chunks.entries()].sort(([a], [b]) => a - b).map(([, value]) => value));
     const sha256 = createHash("sha256").update(data).digest("hex");
-    if (data.byteLength !== upload.declaredBytes || data.byteLength !== Number(input.totalBytes) || sha256 !== upload.sha256 || sha256 !== input.sha256) {
-      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload failed validation");
-    }
+    this.validateCheckpointContents(input, upload, data, sha256);
     await this.runtime.saveCheckpoint({
       sessionId: upload.sessionId,
       hostGeneration: upload.hostGeneration,
@@ -440,6 +459,90 @@ export class ModernTerminalBackend extends TerminalBackend {
       sha256,
     });
     return { accepted: true, checkpointThroughSeq: upload.baseOutputSeq };
+  }
+
+  private requireCheckpointUpload(uploadId: string | undefined, client: WebSocket): CheckpointUpload {
+    const upload = uploadId ? this.uploads.get(uploadId) : null;
+    if (!upload || upload.owner !== client || upload.expiresAt < Date.now()) {
+      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is unavailable");
+    }
+    return upload;
+  }
+
+  private takeCheckpointUpload(uploadId: string, client: WebSocket): CheckpointUpload {
+    const upload = this.uploads.get(uploadId);
+    this.uploads.delete(uploadId);
+    if (!upload || upload.owner !== client || upload.expiresAt < Date.now()) {
+      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is unavailable");
+    }
+    return upload;
+  }
+
+  private matchesAttachment(upload: CheckpointUpload, route: AttachmentRoute): boolean {
+    return upload.sessionId === route.sessionId &&
+      upload.attachmentId === route.attachmentId &&
+      upload.attachmentEpoch === route.attachmentEpoch &&
+      upload.hostGeneration === route.hostGeneration;
+  }
+
+  private validateCheckpointChunkPosition(
+    upload: CheckpointUpload,
+    frame: TerminalBinaryFrame,
+    index: number,
+  ): number {
+    const expectedChunks = Math.ceil(upload.declaredBytes / TERMINAL_CHECKPOINT_CHUNK_BYTES);
+    if (Number(frame.relatedSeq) !== expectedChunks || index >= expectedChunks || upload.chunks.has(index)) {
+      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint chunks are not contiguous");
+    }
+    return expectedChunks;
+  }
+
+  private validateCheckpointChunkSize(
+    upload: CheckpointUpload,
+    payload: Uint8Array,
+    index: number,
+    expectedChunks: number,
+  ): void {
+    const expectedBytes = index === expectedChunks - 1
+      ? upload.declaredBytes - index * TERMINAL_CHECKPOINT_CHUNK_BYTES
+      : TERMINAL_CHECKPOINT_CHUNK_BYTES;
+    if (payload.byteLength !== expectedBytes) {
+      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint chunk size is invalid");
+    }
+  }
+
+  private matchesCheckpointCompletion(
+    input: Record<string, unknown>,
+    upload: CheckpointUpload,
+  ): boolean {
+    return String(input.sessionId) === upload.sessionId &&
+      String(input.attachmentId) === upload.attachmentId &&
+      String(input.attachmentEpoch) === upload.attachmentEpoch &&
+      String(input.hostGeneration) === upload.hostGeneration;
+  }
+
+  private validateCheckpointCompleteness(upload: CheckpointUpload): void {
+    const expectedChunks = Math.ceil(upload.declaredBytes / TERMINAL_CHECKPOINT_CHUNK_BYTES);
+    const incomplete = upload.chunks.size !== expectedChunks ||
+      [...Array(expectedChunks).keys()].some((index) => !upload.chunks.has(index));
+    if (incomplete) {
+      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is incomplete");
+    }
+  }
+
+  private validateCheckpointContents(
+    input: Record<string, unknown>,
+    upload: CheckpointUpload,
+    data: Uint8Array,
+    sha256: string,
+  ): void {
+    const invalid = data.byteLength !== upload.declaredBytes ||
+      data.byteLength !== Number(input.totalBytes) ||
+      sha256 !== upload.sha256 ||
+      sha256 !== input.sha256;
+    if (invalid) {
+      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload failed validation");
+    }
   }
 
   private deliver(event: TerminalRuntimeDeliveryEvent): void {
@@ -537,40 +640,56 @@ export class ModernTerminalBackend extends TerminalBackend {
     const workspaceId = this.workspaceForThread?.(input.threadId);
     if (!workspaceId) throw new Error("Prepared command Thread is unavailable");
     await this.startPromise;
-    let created: PreparedTerminalSession;
+    const created = await this.createPreparedSession(input, workspaceId);
+    return this.createPreparedCommandSession(created, input);
+  }
+
+  private async createPreparedSession(
+    input: PreparedTerminalCommandRequest,
+    workspaceId: string,
+  ): Promise<PreparedTerminalSession> {
     try {
-      created = await this.sessions.createPreparedSession({
+      return await this.sessions.createPreparedSession({
         scope: { kind: "thread", workspaceId, threadId: input.threadId },
         script: input.script,
         expectedLaunch: input.expectedLaunch,
       });
     } catch (error) {
       if (error instanceof PreparedTerminalSessionApprovalMismatchError) {
-        throw new PreparedTerminalCommandApprovalMismatchError({
-          platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
-          script: input.script,
-          checkoutPath: error.plan.checkoutPath,
-          terminal: {
-            executable: error.plan.terminal.executable,
-            arguments: [...error.plan.terminal.arguments],
-          },
-          environmentNames: [...error.plan.environmentNames],
-        });
+        throw new PreparedTerminalCommandApprovalMismatchError(
+          this.preparedCommandSnapshot(input.script, error.plan),
+        );
       }
       if (error instanceof PreparedTerminalSessionLaunchError) {
-        throw new PreparedTerminalCommandStartError({
-          platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
-          script: input.script,
-          checkoutPath: error.plan.checkoutPath,
-          terminal: {
-            executable: error.plan.terminal.executable,
-            arguments: [...error.plan.terminal.arguments],
-          },
-          environmentNames: [...error.plan.environmentNames],
-        }, error);
+        throw new PreparedTerminalCommandStartError(
+          this.preparedCommandSnapshot(input.script, error.plan),
+          error,
+        );
       }
       throw error;
     }
+  }
+
+  private preparedCommandSnapshot(
+    script: string,
+    plan: PreparedTerminalSessionApprovalMismatchError["plan"],
+  ): ConstructorParameters<typeof PreparedTerminalCommandApprovalMismatchError>[0] {
+    return {
+      platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+      script,
+      checkoutPath: plan.checkoutPath,
+      terminal: {
+        executable: plan.terminal.executable,
+        arguments: [...plan.terminal.arguments],
+      },
+      environmentNames: [...plan.environmentNames],
+    };
+  }
+
+  private createPreparedCommandSession(
+    created: PreparedTerminalSession,
+    input: PreparedTerminalCommandRequest,
+  ): PreparedTerminalCommandSession {
     const outputListeners = new Set<(data: Uint8Array) => void>();
     const exitListeners = new Set<(exit: { readonly exitCode: number | null }) => void>();
     let retainedOutput: Uint8Array[] = [];

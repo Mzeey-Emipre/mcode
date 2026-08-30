@@ -29,6 +29,19 @@ export interface RemoveWorktreeOptions {
 const PARENT_RMDIR_MAX_RETRIES = 5;
 const PARENT_RMDIR_RETRY_DELAY_MS = 300;
 
+type WorktreeCreationRequest = {
+  branch: string;
+  name: string;
+  path: string;
+  repoPath: string;
+  options: { branchless?: boolean; baseRef?: string };
+};
+
+type WorktreeRemovalRequest = {
+  branch: string | null;
+  path: string;
+};
+
 /** Creates, discovers, and removes Mcode-managed Git worktrees. */
 @injectable()
 export class GitWorktreeService {
@@ -70,57 +83,17 @@ export class GitWorktreeService {
     branchName?: string,
     options: { branchless?: boolean; baseRef?: string } = {},
   ): Promise<WorktreeInfo & { createdBranch: boolean; warnings: string[] }> {
-    validateWorktreeName(name);
-    if (!existsSync(repoPath)) {
-      throw new Error(`Repository path does not exist: ${repoPath}`);
-    }
-
-    const branch = branchName ?? `mcode/${name}`;
-    validateBranchName(branch);
-    if (options.baseRef) validateBranchName(options.baseRef);
-    const worktreePath = join(ensureManagedWorktreeBaseDir(repoPath), name);
-    if (existsSync(worktreePath)) {
-      throw new Error(`Worktree directory already exists: ${worktreePath}`);
-    }
-
-    const createdBranch = options.branchless
-      ? false
-      : !(await this.gitRepository.branchExists(repoPath, branch));
-    const warnings: string[] = [];
-    try {
-      if (options.branchless) {
-        await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", "--detach", worktreePath, branch]);
-      } else if (!createdBranch) {
-        await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", worktreePath, branch]);
-      } else {
-        await this.gitExecutor.exec([
-          "-C",
-          repoPath,
-          "worktree",
-          "add",
-          worktreePath,
-          "-b",
-          branch,
-          ...(options.baseRef ? [options.baseRef] : []),
-        ]);
-      }
-    } catch (error) {
-      if (existsSync(join(worktreePath, ".git"))) {
-        const stderr = error instanceof Error && "stderr" in error
-          ? String((error as { stderr: unknown }).stderr)
-          : String(error);
-        warnings.push(stderr || String(error));
-        logger.warn("Worktree created but post-checkout hook failed", {
-          wtPath: worktreePath,
-          branch,
-          error: stderr,
-        });
-      } else {
-        throw error;
-      }
-    }
-
-    return { name, path: worktreePath, branch, managed: true, createdBranch, warnings };
+    const request = this.createWorktreeRequest(repoPath, name, branchName, options);
+    const createdBranch = await this.shouldCreateBranch(request);
+    const warning = await this.createGitWorktree(request, createdBranch);
+    return {
+      name: request.name,
+      path: request.path,
+      branch: request.branch,
+      managed: true,
+      createdBranch,
+      warnings: warning ? [warning] : [],
+    };
   }
 
   /** Remove a worktree and, when requested, its branch. */
@@ -129,70 +102,17 @@ export class GitWorktreeService {
     name: string,
     options: RemoveWorktreeOptions = {},
   ): Promise<boolean> {
-    validateWorktreeName(name);
-
-    let worktreePath = options.worktreePath ?? join(getManagedWorktreeBaseDir(repoPath), name);
-    const managedCanonicalOnly = options.managedCanonicalOnly === true;
-    if (managedCanonicalOnly) {
-      worktreePath = await this.worktreeSafety.resolveManagedCanonicalWorktreePath(worktreePath);
-    }
-    const deleteBranch = options.deleteBranch ?? true;
-    const branch = deleteBranch ? (options.branchName ?? `mcode/${name}`) : null;
-    if (branch) validateBranchName(branch);
-
-    await this.assertRemovableWorktreePath(repoPath, worktreePath, managedCanonicalOnly);
-    try {
-      // Git needs the second flag to remove a worktree held by another Windows process.
-      await this.gitExecutor.exec(
-        ["-C", repoPath, "worktree", "remove", worktreePath, "--force", "--force"],
-        { timeout: 30_000 },
-      );
-    } catch (error) {
-      logger.warn("git worktree remove failed", {
-        wtPath: worktreePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    if (existsSync(worktreePath)) {
-      logger.warn(
-        "Worktree directory still exists after git remove, falling back to bounded child removal",
-        { wtPath: worktreePath },
-      );
-      try {
-        await this.worktreeDirectoryRemover.remove(worktreePath);
-      } catch (error) {
-        logger.error("Fallback worktree removal failed", {
-          wtPath: worktreePath,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    if (existsSync(worktreePath)) {
-      logger.error("Worktree directory could not be removed", { wtPath: worktreePath });
+    const request = await this.createWorktreeRemovalRequest(repoPath, name, options);
+    await this.tryGitWorktreeRemoval(repoPath, request.path);
+    await this.tryFallbackWorktreeRemoval(request.path);
+    if (existsSync(request.path)) {
+      logger.error("Worktree directory could not be removed", { wtPath: request.path });
       return false;
     }
 
-    try {
-      await this.gitExecutor.exec(["-C", repoPath, "worktree", "prune"], { timeout: 10_000 });
-    } catch (error) {
-      logger.warn("git worktree prune failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    const parentsCleaned = await this.removeEmptyManagedParentDirs(worktreePath);
-    if (branch) {
-      try {
-        await this.gitExecutor.exec(["-C", repoPath, "branch", "-d", branch], { timeout: 10_000 });
-      } catch (error) {
-        logger.warn("Branch deletion failed (may not exist)", {
-          branch,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    await this.tryPruneWorktrees(repoPath);
+    const parentsCleaned = await this.removeEmptyManagedParentDirs(request.path);
+    await this.tryDeleteWorktreeBranch(repoPath, request.branch);
     return parentsCleaned;
   }
 
@@ -267,10 +187,110 @@ export class GitWorktreeService {
     }
   }
 
+  private createWorktreeRequest(
+    repoPath: string,
+    name: string,
+    branchName: string | undefined,
+    options: { branchless?: boolean; baseRef?: string },
+  ): WorktreeCreationRequest {
+    validateWorktreeName(name);
+    if (!existsSync(repoPath)) throw new Error(`Repository path does not exist: ${repoPath}`);
+    const branch = branchName ?? `mcode/${name}`;
+    validateBranchName(branch);
+    if (options.baseRef) validateBranchName(options.baseRef);
+    const path = join(ensureManagedWorktreeBaseDir(repoPath), name);
+    if (existsSync(path)) throw new Error(`Worktree directory already exists: ${path}`);
+    return { branch, name, path, repoPath, options };
+  }
+
+  private async shouldCreateBranch(request: WorktreeCreationRequest): Promise<boolean> {
+    if (request.options.branchless) return false;
+    return !(await this.gitRepository.branchExists(request.repoPath, request.branch));
+  }
+
+  private async createGitWorktree(
+    request: WorktreeCreationRequest,
+    createdBranch: boolean,
+  ): Promise<string | null> {
+    try {
+      await this.gitExecutor.exec(createWorktreeArgs(request, createdBranch));
+      return null;
+    } catch (error) {
+      return this.handleWorktreeCreateFailure(request, error);
+    }
+  }
+
+  private handleWorktreeCreateFailure(request: WorktreeCreationRequest, error: unknown): string {
+    if (!existsSync(join(request.path, ".git"))) throw error;
+    const message = gitErrorMessage(error);
+    logger.warn("Worktree created but post-checkout hook failed", {
+      wtPath: request.path,
+      branch: request.branch,
+      error: message,
+    });
+    return message;
+  }
+
+  private async createWorktreeRemovalRequest(
+    repoPath: string,
+    name: string,
+    options: RemoveWorktreeOptions,
+  ): Promise<WorktreeRemovalRequest> {
+    validateWorktreeName(name);
+    const managedCanonicalOnly = options.managedCanonicalOnly === true;
+    const requestedPath = options.worktreePath ?? join(getManagedWorktreeBaseDir(repoPath), name);
+    const path = managedCanonicalOnly
+      ? await this.worktreeSafety.resolveManagedCanonicalWorktreePath(requestedPath)
+      : requestedPath;
+    const branch = resolveWorktreeBranch(name, options);
+    await this.assertRemovableWorktreePath(repoPath, path, managedCanonicalOnly);
+    return { branch, path };
+  }
+
+  private async tryGitWorktreeRemoval(repoPath: string, worktreePath: string): Promise<void> {
+    try {
+      await this.gitExecutor.exec(
+        ["-C", repoPath, "worktree", "remove", worktreePath, "--force", "--force"],
+        { timeout: 30_000 },
+      );
+    } catch (error) {
+      logger.warn("git worktree remove failed", { wtPath: worktreePath, error: gitErrorMessage(error) });
+    }
+  }
+
+  private async tryFallbackWorktreeRemoval(worktreePath: string): Promise<void> {
+    if (!existsSync(worktreePath)) return;
+    logger.warn(
+      "Worktree directory still exists after git remove, falling back to bounded child removal",
+      { wtPath: worktreePath },
+    );
+    try {
+      await this.worktreeDirectoryRemover.remove(worktreePath);
+    } catch (error) {
+      logger.error("Fallback worktree removal failed", { wtPath: worktreePath, error: gitErrorMessage(error) });
+    }
+  }
+
+  private async tryPruneWorktrees(repoPath: string): Promise<void> {
+    try {
+      await this.gitExecutor.exec(["-C", repoPath, "worktree", "prune"], { timeout: 10_000 });
+    } catch (error) {
+      logger.warn("git worktree prune failed", { error: gitErrorMessage(error) });
+    }
+  }
+
+  private async tryDeleteWorktreeBranch(repoPath: string, branch: string | null): Promise<void> {
+    if (!branch) return;
+    try {
+      await this.gitExecutor.exec(["-C", repoPath, "branch", "-d", branch], { timeout: 10_000 });
+    } catch (error) {
+      logger.warn("Branch deletion failed (may not exist)", { branch, error: gitErrorMessage(error) });
+    }
+  }
+
   private async removeEmptyManagedParentDirs(worktreePath: string): Promise<boolean> {
     const managedRoot = resolve(getMcodeDir(), "worktrees");
-    const relativePath = relative(managedRoot, resolve(worktreePath));
-    if (relativePath.startsWith("..") || isAbsolute(relativePath)) return true;
+    if (!isManagedWorktreeDescendant(managedRoot, worktreePath)) return true;
 
     let current = dirname(resolve(worktreePath));
     while (current !== managedRoot) {
@@ -279,17 +299,15 @@ export class GitWorktreeService {
         logger.info("Removed empty managed worktree parent dir", { path: current });
         current = dirname(current);
       } catch (error) {
-        const code = error && typeof error === "object" && "code" in error
-          ? String((error as NodeJS.ErrnoException).code)
-          : "";
-        if (code === "ENOTEMPTY" || code === "EEXIST") break;
-        if (code === "ENOENT") {
+        const outcome = managedParentRemovalOutcome(error);
+        if (outcome === "stop") break;
+        if (outcome === "continue") {
           current = dirname(current);
           continue;
         }
         logger.warn("Failed to remove empty managed worktree parent dir", {
           path: current,
-          error: error instanceof Error ? error.message : String(error),
+          error: gitErrorMessage(error),
         });
         return false;
       }
@@ -324,4 +342,41 @@ function normalizeWorktreePath(path: string): string {
   const resolvedPath = resolve(path);
   const identityPath = existsSync(resolvedPath) ? realpathSync.native(resolvedPath) : resolvedPath;
   return identityPath.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+}
+
+function createWorktreeArgs(request: WorktreeCreationRequest, createdBranch: boolean): string[] {
+  const args = ["-C", request.repoPath, "worktree", "add"];
+  if (request.options.branchless) return [...args, "--detach", request.path, request.branch];
+  if (!createdBranch) return [...args, request.path, request.branch];
+  args.push(request.path, "-b", request.branch);
+  if (request.options.baseRef) args.push(request.options.baseRef);
+  return args;
+}
+
+function resolveWorktreeBranch(name: string, options: RemoveWorktreeOptions): string | null {
+  if (options.deleteBranch === false) return null;
+  const branch = options.branchName ?? `mcode/${name}`;
+  validateBranchName(branch);
+  return branch;
+}
+
+function isManagedWorktreeDescendant(managedRoot: string, worktreePath: string): boolean {
+  const relativePath = relative(managedRoot, resolve(worktreePath));
+  return !relativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
+function managedParentRemovalOutcome(error: unknown): "stop" | "continue" | "fail" {
+  const code = errorCode(error);
+  if (code === "ENOTEMPTY" || code === "EEXIST") return "stop";
+  if (code === "ENOENT") return "continue";
+  return "fail";
+}
+
+function errorCode(error: unknown): string {
+  if (!error || typeof error !== "object" || !("code" in error)) return "";
+  return String((error as NodeJS.ErrnoException).code);
+}
+
+function gitErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

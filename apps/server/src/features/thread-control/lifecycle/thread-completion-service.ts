@@ -100,46 +100,62 @@ export class ThreadCompletionService {
     try {
       const thread = this.requireThread(threadId);
       if (thread.user_completed_at !== null) return thread;
-      if (this.agentService.runtimeAccess().activeThreadIds().includes(threadId)) {
-        throw new Error("Thread cannot be completed while it is running");
-      }
-      if (this.permissions.listPendingPermissions(threadId).length > 0) {
-        throw new Error("Thread cannot be completed while permission is pending");
-      }
-
-      const completedAt = this.clock?.() ?? new Date();
-      const retentionDays = this.retentionDays(this.settingsService.get());
-      const releases = await Promise.allSettled([
-        this.teardownService.teardownThread(threadId),
-        ...[...this.resourceOwners.values()].map((release) => release(threadId)),
-      ]);
-      const failures = releases.filter(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
-      );
-      const barriers = releases.flatMap((result) =>
-        result.status === "fulfilled" && typeof result.value === "function" ? [result.value] : [],
-      );
+      this.assertCompletable(threadId);
+      const { failures, barriers } = await this.releaseThreadResources(threadId);
       try {
-        if (failures.length > 0) {
-          throw new Error(
-            `Thread completion failed for ${threadId}: ${failures.map(completionFailureMessage).join("; ")}`,
-          );
-        }
-        const completed = this.threadRepo.complete(
-          thread.id,
-          completedAt.toISOString(),
-          retentionDays === null
-            ? null
-            : new Date(completedAt.getTime() + retentionDays * DAY_MS).toISOString(),
-        );
-        if (!completed) throw new Error(`Thread not found: ${threadId}`);
-        return completed;
+        this.throwOnCompletionFailures(threadId, failures);
+        return this.persistCompletion(thread);
       } finally {
         for (const release of barriers) release();
       }
     } finally {
       this.mutationReservations.release(threadId, token);
     }
+  }
+
+  private assertCompletable(threadId: string): void {
+    if (this.agentService.runtimeAccess().activeThreadIds().includes(threadId)) {
+      throw new Error("Thread cannot be completed while it is running");
+    }
+    if (this.permissions.listPendingPermissions(threadId).length > 0) {
+      throw new Error("Thread cannot be completed while permission is pending");
+    }
+  }
+
+  private async releaseThreadResources(threadId: string): Promise<{
+    failures: PromiseRejectedResult[];
+    barriers: Array<() => void>;
+  }> {
+    const releases = await Promise.allSettled([
+      this.teardownService.teardownThread(threadId),
+      ...[...this.resourceOwners.values()].map((release) => release(threadId)),
+    ]);
+    return {
+      failures: releases.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      ),
+      barriers: releases.flatMap((result) =>
+        result.status === "fulfilled" && typeof result.value === "function" ? [result.value] : [],
+      ),
+    };
+  }
+
+  private throwOnCompletionFailures(threadId: string, failures: PromiseRejectedResult[]): void {
+    if (failures.length === 0) return;
+    throw new Error(
+      `Thread completion failed for ${threadId}: ${failures.map(completionFailureMessage).join("; ")}`,
+    );
+  }
+
+  private persistCompletion(thread: Thread): Thread {
+    const completedAt = this.clock?.() ?? new Date();
+    const retentionDays = this.retentionDays(this.settingsService.get());
+    const scheduledDeletionAt = retentionDays === null
+      ? null
+      : new Date(completedAt.getTime() + retentionDays * DAY_MS).toISOString();
+    const completed = this.threadRepo.complete(thread.id, completedAt.toISOString(), scheduledDeletionAt);
+    if (!completed) throw new Error(`Thread not found: ${thread.id}`);
+    return completed;
   }
 
   /** Reopen a completed thread and cancel its pending automatic deletion. */

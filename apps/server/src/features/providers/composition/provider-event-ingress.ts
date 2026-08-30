@@ -119,27 +119,32 @@ export class ProviderEventIngress {
       this.report({ reason: "invalid-runtime-event", sourceKind: "provider-runtime", providerId: parsedProviderId.data });
       return;
     }
-    if (this.seenLegacyEvents.has(runtimeEvent)) {
-      this.report({ reason: "duplicate-event", sourceKind: "provider-runtime", providerId: parsedProviderId.data });
-      return;
-    }
-    const parsedRuntimeEvent = ProviderRuntimeEventSchema().safeParse(runtimeEvent);
-    if (!parsedRuntimeEvent.success || !agentEventMatchesProvider(parsedRuntimeEvent.data.event, parsedProviderId.data)) {
-      this.report({ reason: "invalid-runtime-event", sourceKind: "provider-runtime", providerId: parsedProviderId.data });
-      return;
-    }
-    if (parsedRuntimeEvent.data.extension?.providerId !== undefined
-      && parsedRuntimeEvent.data.extension.providerId !== parsedProviderId.data) {
-      this.report({ reason: "runtime-extension-mismatch", sourceKind: "provider-runtime", providerId: parsedProviderId.data });
-      return;
-    }
+    const parsedRuntimeEvent = this.parseLegacyRuntimeEvent(parsedProviderId.data, runtimeEvent);
+    if (!parsedRuntimeEvent) return;
     this.seenLegacyEvents.add(runtimeEvent);
     this.acceptRuntimeEvent({
       providerId: parsedProviderId.data,
       sourceKind: "provider-runtime",
-      event: parsedRuntimeEvent.data.event,
-      ...(parsedRuntimeEvent.data.extension ? { runtimeExtension: parsedRuntimeEvent.data.extension } : {}),
+      event: parsedRuntimeEvent.event,
+      ...(parsedRuntimeEvent.extension ? { runtimeExtension: parsedRuntimeEvent.extension } : {}),
     });
+  }
+
+  private parseLegacyRuntimeEvent(providerId: ProviderId, runtimeEvent: object): ProviderRuntimeEvent | undefined {
+    if (this.seenLegacyEvents.has(runtimeEvent)) {
+      this.report({ reason: "duplicate-event", sourceKind: "provider-runtime", providerId });
+      return undefined;
+    }
+    const parsed = ProviderRuntimeEventSchema().safeParse(runtimeEvent);
+    if (!parsed.success || !agentEventMatchesProvider(parsed.data.event, providerId)) {
+      this.report({ reason: "invalid-runtime-event", sourceKind: "provider-runtime", providerId });
+      return undefined;
+    }
+    if (parsed.data.extension?.providerId !== undefined && parsed.data.extension.providerId !== providerId) {
+      this.report({ reason: "runtime-extension-mismatch", sourceKind: "provider-runtime", providerId });
+      return undefined;
+    }
+    return parsed.data;
   }
 
   /** Accept one committed canonical batch and queue its runtime events in receipt order. */
@@ -188,20 +193,10 @@ export class ProviderEventIngress {
     envelope: CanonicalAgentEventEnvelope,
     providerId: ProviderId,
   ): ProviderRuntimeEvent | undefined {
-    if (envelope.payload.type !== "item.recorded" || envelope.payload.item.payload.projection !== "providerRuntimeEvent") {
-      return undefined;
-    }
+    if (!this.isProviderRuntimeItem(envelope)) return undefined;
     const { item } = envelope.payload;
     const parsedRuntimeEvent = ProviderRuntimeEventSchema().safeParse(item.payload.runtimeEvent);
-    if (!parsedRuntimeEvent.success
-      || envelope.routing.threadId !== item.threadId
-      || envelope.routing.turnId !== item.turnId
-      || envelope.routing.itemId !== item.id
-      || parsedRuntimeEvent.data.event.threadId !== envelope.routing.threadId
-      || parsedRuntimeEvent.data.event.turnExecutionId !== envelope.routing.executionId
-      || !agentEventMatchesProvider(parsedRuntimeEvent.data.event, providerId)
-      || (parsedRuntimeEvent.data.extension?.providerId !== undefined
-        && parsedRuntimeEvent.data.extension.providerId !== providerId)) {
+    if (!parsedRuntimeEvent.success || !this.matchesCanonicalRouting(envelope, item, parsedRuntimeEvent.data, providerId)) {
       this.report({
         reason: "invalid-runtime-event",
         sourceKind: "canonical-commit",
@@ -211,6 +206,41 @@ export class ProviderEventIngress {
       return undefined;
     }
     return parsedRuntimeEvent.data;
+  }
+
+  private isProviderRuntimeItem(
+    envelope: CanonicalAgentEventEnvelope,
+  ): envelope is CanonicalAgentEventEnvelope & {
+    payload: Extract<CanonicalAgentEventEnvelope["payload"], { type: "item.recorded" }>;
+  } {
+    return envelope.payload.type === "item.recorded"
+      && envelope.payload.item.payload.projection === "providerRuntimeEvent";
+  }
+
+  private matchesCanonicalRouting(
+    envelope: CanonicalAgentEventEnvelope,
+    item: Extract<CanonicalAgentEventEnvelope["payload"], { type: "item.recorded" }>['item'],
+    runtimeEvent: ProviderRuntimeEvent,
+    providerId: ProviderId,
+  ): boolean {
+    return this.matchesItemRouting(envelope, item)
+      && runtimeEvent.event.threadId === envelope.routing.threadId
+      && runtimeEvent.event.turnExecutionId === envelope.routing.executionId
+      && agentEventMatchesProvider(runtimeEvent.event, providerId)
+      && this.matchesRuntimeExtension(runtimeEvent, providerId);
+  }
+
+  private matchesItemRouting(
+    envelope: CanonicalAgentEventEnvelope,
+    item: Extract<CanonicalAgentEventEnvelope["payload"], { type: "item.recorded" }>['item'],
+  ): boolean {
+    return envelope.routing.threadId === item.threadId
+      && envelope.routing.turnId === item.turnId
+      && envelope.routing.itemId === item.id;
+  }
+
+  private matchesRuntimeExtension(runtimeEvent: ProviderRuntimeEvent, providerId: ProviderId): boolean {
+    return runtimeEvent.extension?.providerId === undefined || runtimeEvent.extension.providerId === providerId;
   }
 
   private acceptRuntimeEvent(event: ProviderEventIngressEvent): boolean {

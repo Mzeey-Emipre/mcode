@@ -52,6 +52,23 @@ type RetentionBlockCode =
   | "workspace-repository-inaccessible"
   | "worktree-safety";
 
+type JobExecutionContext = {
+  releaseSetupBarrier: () => void;
+  mutationToken: string | null;
+};
+
+type CleanupPaths = {
+  workspacePath: string;
+  worktreePath: string;
+  worktreeName: string;
+  canonicalPath: boolean;
+};
+
+type LockedRemovalResult = {
+  removed: boolean;
+  preserveWorktreeReason: string | null;
+};
+
 /**
  * Drains the cleanup_jobs table with retry logic.
  * Must be started via start() after DI is fully resolved.
@@ -181,6 +198,20 @@ export class CleanupWorker {
   }
 
   private async executeJob(job: CleanupJob): Promise<void> {
+    this.logJobStarted(job);
+    const context = this.beginJobExecution(job);
+    if (!context) return;
+    try {
+      await this.executeReservedJob(job);
+    } catch (error) {
+      this.recordJobFailure(job, error);
+    } finally {
+      context.releaseSetupBarrier();
+      if (context.mutationToken) this.mutationReservations.release(job.thread_id, context.mutationToken);
+    }
+  }
+
+  private logJobStarted(job: CleanupJob): void {
     logger.info("CleanupWorker job started", {
       jobId: job.id,
       threadId: job.thread_id,
@@ -188,259 +219,293 @@ export class CleanupWorker {
       worktreePath: job.worktree_path,
       attempt: job.attempts + 1,
     });
+  }
 
+  private beginJobExecution(job: CleanupJob): JobExecutionContext | null {
     const releaseSetupBarrier = this.workspaceEnvironmentService.beginThreadDeletion(job.thread_id);
-    const mutationToken = job.kind === "retention"
-      ? this.mutationReservations.reserve(job.thread_id, "cleaning")
-      : null;
-    if (job.kind === "retention" && !mutationToken) {
-      logger.info("CleanupWorker job deferred", {
-        jobId: job.id,
-        threadId: job.thread_id,
-        kind: job.kind,
-        reason: "mutation-reservation-unavailable",
-      });
-      releaseSetupBarrier();
-      return;
+    if (job.kind !== "retention") return { releaseSetupBarrier, mutationToken: null };
+    const mutationToken = this.mutationReservations.reserve(job.thread_id, "cleaning");
+    if (mutationToken) return { releaseSetupBarrier, mutationToken };
+    logger.info("CleanupWorker job deferred", {
+      jobId: job.id,
+      threadId: job.thread_id,
+      kind: job.kind,
+      reason: "mutation-reservation-unavailable",
+    });
+    releaseSetupBarrier();
+    return null;
+  }
+
+  private async executeReservedJob(job: CleanupJob): Promise<void> {
+    await this.workspaceEnvironmentService.cancelSetupForThread(job.thread_id);
+    const retentionThread = this.claimRetentionCleanup(job);
+    if (job.kind === "retention" && !retentionThread) return;
+    const paths = await this.prepareWorktreeCleanup(job, retentionThread);
+    if (!paths) return;
+    await this.executeFilesystemCleanup(job, retentionThread, paths);
+  }
+
+  private claimRetentionCleanup(job: CleanupJob): ReturnType<ThreadRepo["claimRetentionCleanup"]> | undefined {
+    if (job.kind !== "retention") return undefined;
+    const thread = this.threadRepo.claimRetentionCleanup(job.thread_id, new Date().toISOString());
+    if (thread) return thread;
+    this.db.transaction(() => {
+      this.cleanupJobRepo.delete(job.id);
+      this.threadRepo.releaseRetentionCleanup(job.thread_id);
+    })();
+    logger.info("CleanupWorker job cancelled", {
+      jobId: job.id,
+      threadId: job.thread_id,
+      kind: job.kind,
+      reason: "no-longer-eligible",
+    });
+    return null;
+  }
+
+  private async prepareWorktreeCleanup(
+    job: CleanupJob,
+    retentionThread: ReturnType<ThreadRepo["claimRetentionCleanup"]> | undefined,
+  ): Promise<CleanupPaths | null> {
+    if (job.kind === "retention" && !job.worktree_path) {
+      await this.completeCleanupWithoutWorktree(job);
+      return null;
     }
-
-    try {
-      await this.workspaceEnvironmentService.cancelSetupForThread(job.thread_id);
-      const retentionThread = job.kind === "retention"
-        ? this.threadRepo.claimRetentionCleanup(job.thread_id, new Date().toISOString())
-        : null;
-      if (job.kind === "retention" && !retentionThread) {
-        this.db.transaction(() => {
-          this.cleanupJobRepo.delete(job.id);
-          this.threadRepo.releaseRetentionCleanup(job.thread_id);
-        })();
-        logger.info("CleanupWorker job cancelled", {
-          jobId: job.id,
-          threadId: job.thread_id,
-          kind: job.kind,
-          reason: "no-longer-eligible",
-        });
-        return;
-      }
-      if (job.kind === "retention" && !job.worktree_path) {
-        await this.completeCleanupWithoutWorktree(job);
-        return;
-      }
-      if (!job.worktree_path) {
-        throw new Error("Explicit worktree cleanup job has no worktree path");
-      }
-      // Validate paths from DB before using them in filesystem operations.
-      // Normalise Windows backslashes so resolve() works on all platforms.
-      const worktreeBase = resolve(getMcodeDir(), "worktrees");
-      const resolvedWt = resolve(job.worktree_path.replace(/\\/g, "/"));
-      const resolvedWs = resolve(job.workspace_path.replace(/\\/g, "/"));
-      const rel = relative(worktreeBase, resolvedWt);
-      const lexicalCanonicalPath =
-        rel !== ""
-        && !(rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel));
-      const isCanonicalPath = !existsSync(resolvedWt)
-        ? lexicalCanonicalPath
-        : this.isCanonicalWorktreePath(worktreeBase, resolvedWt, lexicalCanonicalPath);
-      if (
-        job.kind === "retention"
-        && (!isCanonicalPath || retentionThread?.worktree_managed !== true)
-      ) {
-        await this.teardownThreadRuntime(job.thread_id, job.id);
-        await this.completeCleanupWithoutWorktree(job);
-        await this.finalizeWorkspaceIfDone(job.workspace_path);
-        return;
-      }
-      if (retentionThread?.checkout_state === "branchless" && !retentionThread.base_branch) {
-        this.blockRetentionCleanup(job, "Mcode cannot verify the branchless worktree base.", "missing-base-branch");
-        return;
-      }
-
-      if (!existsSync(resolvedWs)) {
-        // The workspace directory is already gone (e.g. external deletion, re-installation).
-        // Treat this as a successful cleanup: there's nothing on disk to remove.
-        logger.info("Workspace directory gone, skipping filesystem cleanup", {
-          threadId: job.thread_id,
-          workspacePath: resolvedWs,
-        });
-        if (job.kind === "retention" && existsSync(resolvedWt)) {
-          this.blockRetentionCleanup(
-            job,
-            "Mcode cannot access the Project repository.",
-            "workspace-repository-inaccessible",
-          );
-          return;
-        }
-        await this.completeCleanupWithoutWorktree(job);
-        await this.finalizeWorkspaceIfDone(job.workspace_path);
-        return;
-      }
-      if (resolvedWt === resolvedWs) {
-        throw new Error(`worktree_path must not equal workspace_path: ${resolvedWt}`);
-      }
-
-      if (!isCanonicalPath && !(await this.gitWorktrees.isRegisteredWorktreePath(resolvedWs, resolvedWt))) {
-        throw new Error(`worktree_path is not a registered worktree for repo: ${resolvedWt}`);
-      }
-
+    if (!job.worktree_path) throw new Error("Explicit worktree cleanup job has no worktree path");
+    const paths = this.resolveCleanupPaths(job);
+    if (this.requiresRetentionPathFallback(job, retentionThread, paths)) {
       await this.teardownThreadRuntime(job.thread_id, job.id);
-
-      if (!existsSync(resolvedWt)) {
-        // The worktree directory is already gone but the workspace root exists.
-        // Treat this as a successful cleanup: no git operation needed.
-        logger.info("Worktree directory already removed, skipping filesystem cleanup", {
-          threadId: job.thread_id,
-          worktreePath: resolvedWt,
-        });
-        await this.completeCleanupWithoutWorktree(job);
-        await this.finalizeWorkspaceIfDone(job.workspace_path);
-        return;
-      }
-
-      // 5. Remove the canonical worktree and delete its exact thread branch when
-      //    no active sibling references that branch. Rollback paths are handled
-      //    separately in ThreadService.
-      const wtName = resolvedWt.replace(/\\/g, "/").split("/").pop() ?? resolvedWt;
-      let preserveWorktreeReason: string | null = null;
-      const removed = await this.repositoryMutationLock.run(
-        resolvedWs,
-        async () => {
-          const siblings = this.threadRepo.listActiveSiblingWorktreePaths(job.thread_id);
-          const safety = await this.worktreeSafety.assessWorktreeRemovalSafety(
-            resolvedWt,
-            siblings.paths,
-            siblings.truncated,
-          );
-          if (!safety.safe) {
-            preserveWorktreeReason = safety.reason;
-            return true;
-          }
-          const gitStillOwnsWorktree = await this.gitWorktrees.isRegisteredWorktreePath(
-            resolvedWs,
-            resolvedWt,
-          );
-          if (
-            gitStillOwnsWorktree
-            && job.kind === "retention"
-            && retentionThread?.checkout_state === "named"
-          ) {
-            const namedSafety = await this.worktreeSafety.assessNamedWorktreeRemoval(resolvedWt);
-            if (
-              !namedSafety.safe
-              && !(this.unsafeWorktreePolicy() === "delete" && namedSafety.reason === "dirty")
-            ) {
-              preserveWorktreeReason = namedSafety.reason;
-              return true;
-            }
-          }
-          if (
-            gitStillOwnsWorktree
-            &&
-            job.kind === "retention"
-            && retentionThread?.checkout_state === "branchless"
-            && retentionThread.base_branch
-          ) {
-            const automaticSafety = await this.worktreeSafety.assessBranchlessWorktreeRemoval(
-              resolvedWt,
-              retentionThread.base_branch,
-            );
-            if (
-              !automaticSafety.safe
-              && !(
-                this.unsafeWorktreePolicy() === "delete"
-                && (automaticSafety.reason === "dirty" || automaticSafety.reason === "unique_commits")
-              )
-            ) {
-              preserveWorktreeReason = automaticSafety.reason;
-              return true;
-            }
-          }
-          const shouldDelete = job.kind === "explicit" && job.branch
-            ? this.shouldDeleteBranch(job)
-            : false;
-          // Retention cleanup never deletes a local branch. Explicit user
-          // deletion retains its existing branch-deletion behavior.
-          const removeOptions = job.kind === "retention"
-            ? { deleteBranch: false, worktreePath: resolvedWt, managedCanonicalOnly: true }
-            : (job.branch && shouldDelete)
-            ? { branchName: job.branch, worktreePath: resolvedWt }
-            : { deleteBranch: false, worktreePath: resolvedWt };
-          return this.gitWorktrees.removeWorktree(resolvedWs, wtName, removeOptions);
-        },
-      );
-
-      if (preserveWorktreeReason) {
-        logger.info("Worktree preserved because removal ownership is not exclusive", {
-          threadId: job.thread_id,
-          worktreePath: resolvedWt,
-          reason: preserveWorktreeReason,
-        });
-        if (job.kind === "retention" && preserveWorktreeReason !== "shared") {
-          this.blockRetentionCleanup(
-            job,
-            this.userSafeBlockReason(preserveWorktreeReason),
-            "worktree-safety",
-          );
-          return;
-        }
-        await this.completeCleanupWithoutWorktree(job);
-        await this.finalizeWorkspaceIfDone(job.workspace_path);
-        return;
-      }
-
-      if (!removed) {
-        throw new Error(`Worktree directory still exists after removal: ${resolvedWt}`);
-      }
-
-      // 5b. Clean up attachment files for this thread (idempotent - ignores missing dirs)
-      this.attachmentService.removeForThread(job.thread_id);
-      // 5c. Wipe handoff artifacts for this thread (idempotent via rm --force).
-      await this.handoffStorage.deleteThreadFiles(job.thread_id);
-
-      // 6. Hard-delete thread row and cleanup job atomically.
-      //    Wrapping in a transaction ensures no orphaned job if either statement fails.
-      this.db.transaction(() => {
-        this.threadRepo.hardDelete(job.thread_id);
-        this.cleanupJobRepo.delete(job.id);
-      })();
-      if (job.kind === "retention") {
-        broadcast("thread.deleted", { threadId: job.thread_id });
-      }
-
-      logger.info("CleanupWorker job completed", {
-        jobId: job.id,
-        threadId: job.thread_id,
-        kind: job.kind,
-      });
-
-      // 7. If this was the last cleanup job for a soft-deleted workspace, hard-delete it.
-      this.finalizeWorkspaceIfDone(job.workspace_path);
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      const failed = this.cleanupJobRepo.recordFailure(job.id, error);
-      logger.warn("CleanupWorker job failed, scheduled for retry", {
-        jobId: job.id,
-        threadId: job.thread_id,
-        kind: job.kind,
-        attempt: failed?.attempts ?? job.attempts + 1,
-        nextRetryAt: failed?.next_retry_at ?? null,
-        error,
-      });
-      if (job.kind === "retention" && failed) {
-        const reason = failed.attempts >= MAX_CLEANUP_ATTEMPTS
-          ? `Cleanup failed after ${MAX_CLEANUP_ATTEMPTS} attempts.`
-          : "Cleanup failed. Mcode will retry.";
-        const thread = failed.attempts >= MAX_CLEANUP_ATTEMPTS
-          ? this.db.transaction(() => {
-              this.cleanupJobRepo.delete(job.id);
-              return this.threadRepo.blockRetentionCleanup(job.thread_id, reason);
-            })()
-          : this.threadRepo.retryRetentionCleanup(job.thread_id, reason);
-        if (thread) broadcast("thread.lifecycleChanged", { thread });
-      }
-    } finally {
-      releaseSetupBarrier();
-      if (mutationToken) this.mutationReservations.release(job.thread_id, mutationToken);
+      await this.completeCleanupWithoutWorktree(job);
+      await this.finalizeWorkspaceIfDone(job.workspace_path);
+      return null;
     }
+    if (retentionThread?.checkout_state === "branchless" && !retentionThread.base_branch) {
+      this.blockRetentionCleanup(job, "Mcode cannot verify the branchless worktree base.", "missing-base-branch");
+      return null;
+    }
+    if (await this.handleMissingWorkspace(job, paths)) return null;
+    this.assertDistinctCleanupPaths(paths);
+    await this.assertRegisteredWorktreePath(paths);
+    return paths;
+  }
+
+  private resolveCleanupPaths(job: CleanupJob): CleanupPaths {
+    const worktreeBase = resolve(getMcodeDir(), "worktrees");
+    const worktreePath = resolve(job.worktree_path!.replace(/\\/g, "/"));
+    const workspacePath = resolve(job.workspace_path.replace(/\\/g, "/"));
+    const relativePath = relative(worktreeBase, worktreePath);
+    const lexicalCanonicalPath = relativePath !== ""
+      && !(relativePath === ".." || relativePath.startsWith(".." + sep) || isAbsolute(relativePath));
+    return {
+      workspacePath,
+      worktreePath,
+      worktreeName: worktreePath.replace(/\\/g, "/").split("/").pop() ?? worktreePath,
+      canonicalPath: !existsSync(worktreePath)
+        ? lexicalCanonicalPath
+        : this.isCanonicalWorktreePath(worktreeBase, worktreePath, lexicalCanonicalPath),
+    };
+  }
+
+  private requiresRetentionPathFallback(
+    job: CleanupJob,
+    retentionThread: ReturnType<ThreadRepo["claimRetentionCleanup"]> | undefined,
+    paths: CleanupPaths,
+  ): boolean {
+    return job.kind === "retention" && (!paths.canonicalPath || retentionThread?.worktree_managed !== true);
+  }
+
+  private async handleMissingWorkspace(job: CleanupJob, paths: CleanupPaths): Promise<boolean> {
+    if (existsSync(paths.workspacePath)) return false;
+    logger.info("Workspace directory gone, skipping filesystem cleanup", {
+      threadId: job.thread_id,
+      workspacePath: paths.workspacePath,
+    });
+    if (job.kind === "retention" && existsSync(paths.worktreePath)) {
+      this.blockRetentionCleanup(job, "Mcode cannot access the Project repository.", "workspace-repository-inaccessible");
+      return true;
+    }
+    await this.completeCleanupWithoutWorktree(job);
+    await this.finalizeWorkspaceIfDone(job.workspace_path);
+    return true;
+  }
+
+  private assertDistinctCleanupPaths(paths: CleanupPaths): void {
+    if (paths.worktreePath === paths.workspacePath) {
+      throw new Error(`worktree_path must not equal workspace_path: ${paths.worktreePath}`);
+    }
+  }
+
+  private async assertRegisteredWorktreePath(paths: CleanupPaths): Promise<void> {
+    if (!paths.canonicalPath && !(await this.gitWorktrees.isRegisteredWorktreePath(paths.workspacePath, paths.worktreePath))) {
+      throw new Error(`worktree_path is not a registered worktree for repo: ${paths.worktreePath}`);
+    }
+  }
+
+  private async executeFilesystemCleanup(
+    job: CleanupJob,
+    retentionThread: ReturnType<ThreadRepo["claimRetentionCleanup"]> | undefined,
+    paths: CleanupPaths,
+  ): Promise<void> {
+    await this.teardownThreadRuntime(job.thread_id, job.id);
+    if (await this.completeIfWorktreeMissing(job, paths)) return;
+    const removal = await this.removeWorktree(job, retentionThread, paths);
+    if (await this.completePreservedWorktree(job, paths, removal.preserveWorktreeReason)) return;
+    if (!removal.removed) throw new Error(`Worktree directory still exists after removal: ${paths.worktreePath}`);
+    await this.completeRemovedWorktree(job);
+    await this.finalizeWorkspaceIfDone(job.workspace_path);
+  }
+
+  private async completeIfWorktreeMissing(job: CleanupJob, paths: CleanupPaths): Promise<boolean> {
+    if (existsSync(paths.worktreePath)) return false;
+    logger.info("Worktree directory already removed, skipping filesystem cleanup", {
+      threadId: job.thread_id,
+      worktreePath: paths.worktreePath,
+    });
+    await this.completeCleanupWithoutWorktree(job);
+    await this.finalizeWorkspaceIfDone(job.workspace_path);
+    return true;
+  }
+
+  private async removeWorktree(
+    job: CleanupJob,
+    retentionThread: ReturnType<ThreadRepo["claimRetentionCleanup"]> | undefined,
+    paths: CleanupPaths,
+  ): Promise<LockedRemovalResult> {
+    return this.repositoryMutationLock.run(
+      paths.workspacePath,
+      () => this.removeLockedWorktree(job, retentionThread, paths),
+    );
+  }
+
+  private async removeLockedWorktree(
+    job: CleanupJob,
+    retentionThread: ReturnType<ThreadRepo["claimRetentionCleanup"]> | undefined,
+    paths: CleanupPaths,
+  ): Promise<LockedRemovalResult> {
+    const siblings = this.threadRepo.listActiveSiblingWorktreePaths(job.thread_id);
+    const safety = await this.worktreeSafety.assessWorktreeRemovalSafety(
+      paths.worktreePath,
+      siblings.paths,
+      siblings.truncated,
+    );
+    if (!safety.safe) return { removed: true, preserveWorktreeReason: safety.reason };
+    const gitStillOwnsWorktree = await this.gitWorktrees.isRegisteredWorktreePath(
+      paths.workspacePath,
+      paths.worktreePath,
+    );
+    const retentionSafety = await this.assessRetentionWorktreeSafety(
+      job,
+      retentionThread,
+      paths.worktreePath,
+      gitStillOwnsWorktree,
+    );
+    if (!retentionSafety.safe) return { removed: true, preserveWorktreeReason: retentionSafety.reason };
+    return {
+      removed: await this.gitWorktrees.removeWorktree(
+        paths.workspacePath,
+        paths.worktreeName,
+        this.worktreeRemovalOptions(job, paths.worktreePath),
+      ),
+      preserveWorktreeReason: null,
+    };
+  }
+
+  private async assessRetentionWorktreeSafety(
+    job: CleanupJob,
+    retentionThread: ReturnType<ThreadRepo["claimRetentionCleanup"]> | undefined,
+    worktreePath: string,
+    gitStillOwnsWorktree: boolean,
+  ): Promise<{ safe: boolean; reason: string }> {
+    if (!gitStillOwnsWorktree || job.kind !== "retention") return { safe: true, reason: "" };
+    if (retentionThread?.checkout_state === "named") return this.assessNamedRetentionWorktree(worktreePath);
+    if (retentionThread?.checkout_state === "branchless" && retentionThread.base_branch) {
+      return this.assessBranchlessRetentionWorktree(worktreePath, retentionThread.base_branch);
+    }
+    return { safe: true, reason: "" };
+  }
+
+  private async assessNamedRetentionWorktree(worktreePath: string): Promise<{ safe: boolean; reason: string }> {
+    const safety = await this.worktreeSafety.assessNamedWorktreeRemoval(worktreePath);
+    return safety.safe || this.unsafeWorktreePolicy() === "delete" && safety.reason === "dirty"
+      ? { safe: true, reason: "" }
+      : safety;
+  }
+
+  private async assessBranchlessRetentionWorktree(
+    worktreePath: string,
+    baseBranch: string,
+  ): Promise<{ safe: boolean; reason: string }> {
+    const safety = await this.worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, baseBranch);
+    const unsafeRemovalAllowed = this.unsafeWorktreePolicy() === "delete"
+      && (safety.reason === "dirty" || safety.reason === "unique_commits");
+    return safety.safe || unsafeRemovalAllowed ? { safe: true, reason: "" } : safety;
+  }
+
+  private worktreeRemovalOptions(job: CleanupJob, worktreePath: string): {
+    deleteBranch?: boolean;
+    branchName?: string;
+    worktreePath: string;
+    managedCanonicalOnly?: boolean;
+  } {
+    if (job.kind === "retention") return { deleteBranch: false, worktreePath, managedCanonicalOnly: true };
+    if (job.branch && this.shouldDeleteBranch(job)) return { branchName: job.branch, worktreePath };
+    return { deleteBranch: false, worktreePath };
+  }
+
+  private async completePreservedWorktree(
+    job: CleanupJob,
+    paths: CleanupPaths,
+    preserveWorktreeReason: string | null,
+  ): Promise<boolean> {
+    if (!preserveWorktreeReason) return false;
+    logger.info("Worktree preserved because removal ownership is not exclusive", {
+      threadId: job.thread_id,
+      worktreePath: paths.worktreePath,
+      reason: preserveWorktreeReason,
+    });
+    if (job.kind === "retention" && preserveWorktreeReason !== "shared") {
+      this.blockRetentionCleanup(job, this.userSafeBlockReason(preserveWorktreeReason), "worktree-safety");
+      return true;
+    }
+    await this.completeCleanupWithoutWorktree(job);
+    await this.finalizeWorkspaceIfDone(job.workspace_path);
+    return true;
+  }
+
+  private async completeRemovedWorktree(job: CleanupJob): Promise<void> {
+    this.attachmentService.removeForThread(job.thread_id);
+    await this.handoffStorage.deleteThreadFiles(job.thread_id);
+    this.db.transaction(() => {
+      this.threadRepo.hardDelete(job.thread_id);
+      this.cleanupJobRepo.delete(job.id);
+    })();
+    if (job.kind === "retention") broadcast("thread.deleted", { threadId: job.thread_id });
+    logger.info("CleanupWorker job completed", { jobId: job.id, threadId: job.thread_id, kind: job.kind });
+  }
+
+  private recordJobFailure(job: CleanupJob, failure: unknown): void {
+    const error = failure instanceof Error ? failure.message : String(failure);
+    const failed = this.cleanupJobRepo.recordFailure(job.id, error);
+    logger.warn("CleanupWorker job failed, scheduled for retry", {
+      jobId: job.id,
+      threadId: job.thread_id,
+      kind: job.kind,
+      attempt: failed?.attempts ?? job.attempts + 1,
+      nextRetryAt: failed?.next_retry_at ?? null,
+      error,
+    });
+    if (job.kind === "retention" && failed) this.updateFailedRetentionJob(job, failed.attempts);
+  }
+
+  private updateFailedRetentionJob(job: CleanupJob, attempts: number): void {
+    const exhausted = attempts >= MAX_CLEANUP_ATTEMPTS;
+    const reason = exhausted ? `Cleanup failed after ${MAX_CLEANUP_ATTEMPTS} attempts.` : "Cleanup failed. Mcode will retry.";
+    const thread = exhausted
+      ? this.db.transaction(() => {
+          this.cleanupJobRepo.delete(job.id);
+          return this.threadRepo.blockRetentionCleanup(job.thread_id, reason);
+        })()
+      : this.threadRepo.retryRetentionCleanup(job.thread_id, reason);
+    if (thread) broadcast("thread.lifecycleChanged", { thread });
   }
 
   private async teardownThreadRuntime(threadId: string, jobId: string): Promise<void> {

@@ -65,6 +65,21 @@ export interface WindowsProcessScopeIdentity {
   readonly depth: number;
 }
 
+type ReconcileCapture =
+  | { readonly kind: "captured"; readonly identities: readonly WindowsProcessScopeIdentity[] }
+  | { readonly kind: "retry" }
+  | { readonly kind: "failed"; readonly error: string };
+
+type ReconcilePassOutcome = Exclude<ReconcileCapture, { readonly kind: "captured" }> | { readonly kind: "converged" };
+
+type ReconciliationInspection =
+  | { readonly ok: true; readonly missing: readonly WindowsProcessScopeIdentity[] }
+  | { readonly ok: false; readonly error: string };
+
+type ProcessSnapshotNative = WindowsProcessScopeNative & Required<Pick<WindowsProcessScopeNative,
+  "createToolhelp32Snapshot" | "process32First" | "process32Next" | "getProcessTimes"
+>>;
+
 /** Owns one terminal process tree with a nested Windows Job Object. */
 export class WindowsProcessScope {
   private native: WindowsProcessScopeNative | null;
@@ -121,75 +136,118 @@ export class WindowsProcessScope {
     }
     this.authoritative = false;
     for (let pass = 0; pass < RECONCILIATION_PASS_LIMIT; pass += 1) {
-      let descendants: readonly WindowsProcessScopeIdentity[];
-      try {
-        descendants = await capture();
-      } catch (error) {
-        if (pass + 1 < RECONCILIATION_PASS_LIMIT) continue;
-        return { ok: false, error: describeError(error) };
-      }
-      if (descendants.length === 0 || descendants[0]?.pid !== rootPid) {
-        return { ok: false, error: "root creation identity unavailable" };
-      }
-      if (descendants.length > MAX_PROCESS_IDS) {
-        return { ok: false, error: `process tree exceeds ${MAX_PROCESS_IDS}-process limit` };
-      }
-      const membership = this.queryProcessIds();
-      if (!membership.ok || membership.overflow) {
-        return { ok: false, error: membership.error ?? "job membership overflow" };
-      }
-      const memberIds = new Set(membership.processIds);
-      const missing = descendants
-        .filter((identity) => !memberIds.has(identity.pid))
-        .sort((left, right) => left.depth - right.depth);
-      if (missing.length === 0) {
+      const outcome = await this.reconcilePass(rootPid, capture, pass);
+      if (outcome.kind === "retry") continue;
+      if (outcome.kind === "converged") {
         this.authoritative = true;
         return { ok: true };
       }
-
-      let validation: readonly WindowsProcessScopeIdentity[];
-      try {
-        validation = await capture();
-      } catch (error) {
-        if (pass + 1 < RECONCILIATION_PASS_LIMIT) continue;
-        return { ok: false, error: describeError(error) };
-      }
-      const validationByPid = new Map(validation.map((identity) => [identity.pid, identity]));
-      for (const identity of missing) {
-        const current = validationByPid.get(identity.pid);
-        if (!current || current.startMarker !== identity.startMarker) {
-          return { ok: false, error: `process identity changed for PID ${identity.pid}` };
-        }
-        const currentMembership = this.queryProcessIds();
-        if (!currentMembership.ok || currentMembership.overflow) {
-          return { ok: false, error: currentMembership.error ?? "job membership overflow" };
-        }
-        if (currentMembership.processIds.includes(identity.pid)) continue;
-        const assignment = this.assignProcess(identity.pid);
-        if (!assignment.ok) {
-          const racedMembership = this.queryProcessIds();
-          let racedIdentity: WindowsProcessScopeIdentity | undefined;
-          try {
-            racedIdentity = (await capture()).find((candidate) => candidate.pid === identity.pid);
-          } catch {
-            // Preserve the original assignment failure when race validation is unavailable.
-          }
-          if (
-            racedMembership.ok &&
-            !racedMembership.overflow &&
-            racedMembership.processIds.includes(identity.pid) &&
-            racedIdentity?.startMarker === identity.startMarker
-          ) {
-            continue;
-          }
-          return {
-            ok: false,
-            error: `${assignment.error ?? "process assignment failed"} for PID ${identity.pid}`,
-          };
-        }
-      }
+      return { ok: false, error: outcome.error };
     }
     return { ok: false, error: `process scope did not converge after ${RECONCILIATION_PASS_LIMIT} passes` };
+  }
+
+  private async reconcilePass(
+    rootPid: number,
+    capture: () => Promise<readonly WindowsProcessScopeIdentity[]>,
+    pass: number,
+  ): Promise<ReconcilePassOutcome> {
+    const initialCapture = await this.captureForReconciliation(capture, pass);
+    if (initialCapture.kind !== "captured") return initialCapture;
+
+    const inspection = this.inspectReconciliation(rootPid, initialCapture.identities);
+    if (!inspection.ok) return { kind: "failed", error: inspection.error };
+    if (inspection.missing.length === 0) return { kind: "converged" };
+
+    const validationCapture = await this.captureForReconciliation(capture, pass);
+    if (validationCapture.kind !== "captured") return validationCapture;
+    const failure = await this.assignMissingProcesses(inspection.missing, validationCapture.identities, capture);
+    return failure ? { kind: "failed", error: failure.error ?? "process assignment failed" } : { kind: "retry" };
+  }
+
+  private async captureForReconciliation(
+    capture: () => Promise<readonly WindowsProcessScopeIdentity[]>,
+    pass: number,
+  ): Promise<ReconcileCapture> {
+    try {
+      return { kind: "captured", identities: await capture() };
+    } catch (error) {
+      return pass + 1 < RECONCILIATION_PASS_LIMIT
+        ? { kind: "retry" }
+        : { kind: "failed", error: describeError(error) };
+    }
+  }
+
+  private inspectReconciliation(
+    rootPid: number,
+    descendants: readonly WindowsProcessScopeIdentity[],
+  ): ReconciliationInspection {
+    if (descendants.length === 0 || descendants[0]?.pid !== rootPid) {
+      return { ok: false, error: "root creation identity unavailable" };
+    }
+    if (descendants.length > MAX_PROCESS_IDS) {
+      return { ok: false, error: `process tree exceeds ${MAX_PROCESS_IDS}-process limit` };
+    }
+    const membership = this.queryProcessIds();
+    if (!membership.ok || membership.overflow) {
+      return { ok: false, error: membership.error ?? "job membership overflow" };
+    }
+    const memberIds = new Set(membership.processIds);
+    return {
+      ok: true,
+      missing: descendants
+        .filter((identity) => !memberIds.has(identity.pid))
+        .sort((left, right) => left.depth - right.depth),
+    };
+  }
+
+  private async assignMissingProcesses(
+    missing: readonly WindowsProcessScopeIdentity[],
+    validation: readonly WindowsProcessScopeIdentity[],
+    capture: () => Promise<readonly WindowsProcessScopeIdentity[]>,
+  ): Promise<WindowsProcessScopeResult | null> {
+    const validationByPid = new Map(validation.map((identity) => [identity.pid, identity]));
+    for (const identity of missing) {
+      const failure = await this.assignReconciledProcess(identity, validationByPid, capture);
+      if (failure) return failure;
+    }
+    return null;
+  }
+
+  private async assignReconciledProcess(
+    identity: WindowsProcessScopeIdentity,
+    validationByPid: ReadonlyMap<number, WindowsProcessScopeIdentity>,
+    capture: () => Promise<readonly WindowsProcessScopeIdentity[]>,
+  ): Promise<WindowsProcessScopeResult | null> {
+    const current = validationByPid.get(identity.pid);
+    if (!current || current.startMarker !== identity.startMarker) {
+      return { ok: false, error: `process identity changed for PID ${identity.pid}` };
+    }
+    const membership = this.queryProcessIds();
+    if (!membership.ok || membership.overflow) {
+      return { ok: false, error: membership.error ?? "job membership overflow" };
+    }
+    if (membership.processIds.includes(identity.pid)) return null;
+
+    const assignment = this.assignProcess(identity.pid);
+    if (assignment.ok || await this.assignmentRaced(identity, capture)) return null;
+    return { ok: false, error: `${assignment.error ?? "process assignment failed"} for PID ${identity.pid}` };
+  }
+
+  private async assignmentRaced(
+    identity: WindowsProcessScopeIdentity,
+    capture: () => Promise<readonly WindowsProcessScopeIdentity[]>,
+  ): Promise<boolean> {
+    const membership = this.queryProcessIds();
+    try {
+      const current = (await capture()).find((candidate) => candidate.pid === identity.pid);
+      return membership.ok
+        && !membership.overflow
+        && membership.processIds.includes(identity.pid)
+        && current?.startMarker === identity.startMarker;
+    } catch {
+      return false;
+    }
   }
 
   /** Atomically terminate every process owned by this scope. */
@@ -285,53 +343,75 @@ export class WindowsProcessScope {
   }
 
   private captureProcessTree(rootPid: number): WindowsProcessScopeIdentity[] {
+    const native = this.getProcessSnapshotNative();
+    const parentByPid = this.readProcessParents(native);
+    return this.captureTreeIdentities(rootPid, parentByPid, this.createChildrenByParent(parentByPid));
+  }
+
+  private getProcessSnapshotNative(): ProcessSnapshotNative {
     const native = this.native;
-    if (
-      !native ||
-      !native.createToolhelp32Snapshot ||
-      !native.process32First ||
-      !native.process32Next ||
-      !native.getProcessTimes
-    ) {
+    if (!native || !native.createToolhelp32Snapshot || !native.process32First || !native.process32Next || !native.getProcessTimes) {
       throw new Error("native process snapshot unavailable");
     }
+    return native as ProcessSnapshotNative;
+  }
+
+  private readProcessParents(native: ProcessSnapshotNative): Map<number, number> {
     const snapshot = native.createToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (!snapshot) throw new Error(`CreateToolhelp32Snapshot failed (${native.getLastError()})`);
-    const parentByPid = new Map<number, number>();
     try {
-      const entry = Buffer.alloc(PROCESS_ENTRY_SIZE);
-      entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
-      let hasEntry = native.process32First(snapshot, entry);
-      if (!hasEntry) {
-        const errorCode = readLastError(native);
-        if (errorCode !== ERROR_NO_MORE_FILES) {
-          throw new Error(`Process32FirstW failed (${errorCode})`);
-        }
-        return [];
-      }
-      let count = 0;
-      while (hasEntry && count < PROCESS_ENUMERATION_LIMIT) {
-        parentByPid.set(entry.readUInt32LE(8), entry.readUInt32LE(PROCESS_ENTRY_PARENT_OFFSET));
-        entry.fill(0);
-        entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
-        hasEntry = native.process32Next(snapshot, entry);
-        count += 1;
-      }
-      if (hasEntry) throw new Error(`process enumeration exceeds ${PROCESS_ENUMERATION_LIMIT}-entry limit`);
-      const errorCode = readLastError(native);
-      if (errorCode !== ERROR_NO_MORE_FILES) {
-        throw new Error(`Process32NextW failed (${errorCode})`);
-      }
+      return this.scanProcessSnapshot(native, snapshot);
     } finally {
       native.closeHandle(snapshot);
     }
+  }
 
+  private scanProcessSnapshot(native: ProcessSnapshotNative, snapshot: unknown): Map<number, number> {
+    const entry = Buffer.alloc(PROCESS_ENTRY_SIZE);
+    entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
+    if (!native.process32First(snapshot, entry)) return this.emptyProcessSnapshot(native);
+
+    const parentByPid = new Map<number, number>();
+    let hasEntry = true;
+    let count = 0;
+    while (hasEntry && count < PROCESS_ENUMERATION_LIMIT) {
+      parentByPid.set(entry.readUInt32LE(8), entry.readUInt32LE(PROCESS_ENTRY_PARENT_OFFSET));
+      entry.fill(0);
+      entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
+      hasEntry = Boolean(native.process32Next(snapshot, entry));
+      count += 1;
+    }
+    if (hasEntry) throw new Error(`process enumeration exceeds ${PROCESS_ENUMERATION_LIMIT}-entry limit`);
+    this.assertProcessEnumerationComplete(native);
+    return parentByPid;
+  }
+
+  private emptyProcessSnapshot(native: ProcessSnapshotNative): Map<number, number> {
+    const errorCode = readLastError(native);
+    if (errorCode !== ERROR_NO_MORE_FILES) throw new Error(`Process32FirstW failed (${errorCode})`);
+    return new Map();
+  }
+
+  private assertProcessEnumerationComplete(native: ProcessSnapshotNative): void {
+    const errorCode = readLastError(native);
+    if (errorCode !== ERROR_NO_MORE_FILES) throw new Error(`Process32NextW failed (${errorCode})`);
+  }
+
+  private createChildrenByParent(parentByPid: ReadonlyMap<number, number>): Map<number, number[]> {
     const childrenByParent = new Map<number, number[]>();
     for (const [pid, parentPid] of parentByPid) {
       const children = childrenByParent.get(parentPid) ?? [];
       children.push(pid);
       childrenByParent.set(parentPid, children);
     }
+    return childrenByParent;
+  }
+
+  private captureTreeIdentities(
+    rootPid: number,
+    parentByPid: ReadonlyMap<number, number>,
+    childrenByParent: ReadonlyMap<number, readonly number[]>,
+  ): WindowsProcessScopeIdentity[] {
     const pending = [{ pid: rootPid, parentPid: null as number | null, depth: 0 }];
     const identities: WindowsProcessScopeIdentity[] = [];
     const visited = new Set<number>();

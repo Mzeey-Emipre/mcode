@@ -28,45 +28,78 @@ export class TurnRecoveryService {
   /** Interrupt executions for which no current provider can prove the exact live execution. */
   reconcileOnStartup(): { interrupted: string[] } {
     this.parentAssistantTextCheckpoints.importRecoveryJournals();
-    for (const checkpoint of this.canonicalSink.listUnmaterializedTerminalCheckpoints()) {
-      const checkpointChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId);
-      const recoveredNarrative = this.canonicalSink.loadParentNarrativeRecovery(checkpoint.turnId);
-      if (checkpointChunks.length === 0 && recoveredNarrative.length === 0) continue;
-      if (!this.canonicalSink.reopenUnmaterializedTerminalCheckpoint(checkpoint.executionId)) {
-        throw new Error(`Unmaterialized terminal checkpoint was not recoverable: ${checkpoint.executionId}`);
-      }
-    }
+    this.reopenMaterializableTerminalCheckpoints();
     this.parentAssistantTextCheckpoints.retireTerminalCheckpoints();
-    const interrupted: string[] = [];
-    for (const checkpoint of this.canonicalSink.listUnfinishedCheckpoints()) {
-      const checkpointChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId);
-      const canonicalAssistant = this.canonicalSink.loadTerminalProjection(checkpoint.turnId).message;
-      const recoveredNarrative = this.canonicalSink.loadParentNarrativeRecovery(checkpoint.turnId);
-      const recoveredText = canonicalAssistant
-        ? ""
-        : checkpointChunks.map((chunk) => chunk.text).join("");
-      const stagedAssistant = !canonicalAssistant && (recoveredText.length > 0 || recoveredNarrative.length > 0)
-        ? this.stageRecoveredAssistantProjection(checkpoint.threadId, checkpoint.executionId, recoveredText)
-        : undefined;
-      this.canonicalSink.markUnresolvedCodexChildDeliveriesUnknown(checkpoint.executionId);
-      this.canonicalSink.interruptUnfinishedExecution(
-        checkpoint.executionId,
-        UNPROVED_EXECUTION_REASON,
-        stagedAssistant,
-        (assistant, interruptedNarrative) => {
-          if (recoveredNarrative.length > 0) {
-            this.narrativeStore.persistRecoveredNarrative(assistant.id, interruptedNarrative);
-          }
-        },
-        recoveredNarrative,
-      );
-      if (checkpointChunks.length > 0 && !this.parentAssistantTextCheckpoints.retire(checkpoint.executionId)) {
-        throw new Error(`Recovered assistant text checkpoint was not retired: ${checkpoint.executionId}`);
-      }
-      this.threadRepo.updateStatus(checkpoint.threadId, "interrupted");
-      interrupted.push(checkpoint.executionId);
+    return { interrupted: this.canonicalSink.listUnfinishedCheckpoints().map(
+      (checkpoint) => this.interruptUnfinishedCheckpoint(checkpoint),
+    ) };
+  }
+
+  private reopenMaterializableTerminalCheckpoints(): void {
+    for (const checkpoint of this.canonicalSink.listUnmaterializedTerminalCheckpoints()) {
+      const hasChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId).length > 0;
+      const hasNarrative = this.canonicalSink.loadParentNarrativeRecovery(checkpoint.turnId).length > 0;
+      if (hasChunks || hasNarrative) this.reopenTerminalCheckpoint(checkpoint.executionId);
     }
-    return { interrupted };
+  }
+
+  private reopenTerminalCheckpoint(executionId: string): void {
+    if (!this.canonicalSink.reopenUnmaterializedTerminalCheckpoint(executionId)) {
+      throw new Error(`Unmaterialized terminal checkpoint was not recoverable: ${executionId}`);
+    }
+  }
+
+  private interruptUnfinishedCheckpoint(
+    checkpoint: ReturnType<CanonicalAgentBoundary["listUnfinishedCheckpoints"]>[number],
+  ): string {
+    const checkpointChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId);
+    const canonicalAssistant = this.canonicalSink.loadTerminalProjection(checkpoint.turnId).message;
+    const recoveredNarrative = this.canonicalSink.loadParentNarrativeRecovery(checkpoint.turnId);
+    const recoveredText = canonicalAssistant ? "" : checkpointChunks.map((chunk) => chunk.text).join("");
+    const stagedAssistant = this.stageRecoveredAssistant(
+      checkpoint.threadId,
+      checkpoint.executionId,
+      canonicalAssistant !== null,
+      recoveredText,
+      recoveredNarrative.length,
+    );
+    this.canonicalSink.markUnresolvedCodexChildDeliveriesUnknown(checkpoint.executionId);
+    this.canonicalSink.interruptUnfinishedExecution(
+      checkpoint.executionId,
+      UNPROVED_EXECUTION_REASON,
+      stagedAssistant,
+      this.persistInterruptedNarrative(recoveredNarrative.length),
+      recoveredNarrative,
+    );
+    this.retireRecoveredChunks(checkpoint.executionId, checkpointChunks.length);
+    this.threadRepo.updateStatus(checkpoint.threadId, "interrupted");
+    return checkpoint.executionId;
+  }
+
+  private stageRecoveredAssistant(
+    threadId: string,
+    executionId: string,
+    hasCanonicalAssistant: boolean,
+    recoveredText: string,
+    narrativeCount: number,
+  ) {
+    if (hasCanonicalAssistant || (recoveredText.length === 0 && narrativeCount === 0)) return undefined;
+    return this.stageRecoveredAssistantProjection(threadId, executionId, recoveredText);
+  }
+
+  private persistInterruptedNarrative(recoveredNarrativeCount: number) {
+    return (assistant: { id: string }, interruptedNarrative: Parameters<NarrativeStore["persistRecoveredNarrative"]>[1]) => {
+      if (recoveredNarrativeCount > 0) {
+        this.narrativeStore.persistRecoveredNarrative(assistant.id, interruptedNarrative);
+      }
+    };
+  }
+
+  private retireRecoveredChunks(executionId: string, chunkCount: number): void {
+    if (chunkCount === 0) return;
+    if (!this.parentAssistantTextCheckpoints.retire(executionId)) {
+      throw new Error(`Recovered assistant text checkpoint was not retired: ${executionId}`);
+    }
   }
 
   /** Stage recovered visible content before the canonical interruption makes it visible. */
@@ -122,30 +155,40 @@ export class TurnRecoveryService {
     if (!thread || !["interrupted", "errored"].includes(thread.status)) {
       throw new Error(`Recoverable thread not found: ${checkpoint.threadId}`);
     }
-    const attachments = this.attachmentService.prepareRetryAttachments(
-      thread.id,
-      message.attachments ?? [],
-    );
-    await dispatch({
+    const attachments = this.attachmentService.prepareRetryAttachments(thread.id, message.attachments ?? []);
+    await dispatch(this.retryCommand(thread, message, attachments, executionId));
+  }
+
+  private retryCommand(
+    thread: NonNullable<ReturnType<ThreadRepo["findById"]>>,
+    message: NonNullable<ReturnType<CanonicalAgentBoundary["loadUserMessage"]>>,
+    attachments: ReturnType<AttachmentService["prepareRetryAttachments"]>,
+    executionId: string,
+  ): SendMessageCommand {
+    return {
       threadId: thread.id,
       content: message.content,
-      model: thread.model ?? undefined,
-      permissionMode: thread.permission_mode ?? undefined,
+      model: this.optionalValue(thread.model),
+      permissionMode: this.optionalValue(thread.permission_mode),
       attachments,
-      reasoningLevel: thread.reasoning_level ?? undefined,
+      reasoningLevel: this.optionalValue(thread.reasoning_level),
       provider: thread.provider as SendMessageCommand["provider"],
-      interactionMode: thread.interaction_mode ?? undefined,
-      orchestrationMode: thread.orchestration_mode ?? undefined,
-      copilotAgent: thread.copilot_agent ?? undefined,
-      contextWindow: thread.context_window_mode ?? undefined,
-      thinking: thread.thinking ?? undefined,
-      codexFastMode: thread.codex_fast_mode ?? undefined,
-      replyToMessageId: message.reply_to_message_id ?? undefined,
-      quotedText: message.quoted_text ?? undefined,
-      mentions: message.mentions ?? undefined,
-      previewAnnotations: message.previewAnnotations ?? undefined,
+      interactionMode: this.optionalValue(thread.interaction_mode),
+      orchestrationMode: this.optionalValue(thread.orchestration_mode),
+      copilotAgent: this.optionalValue(thread.copilot_agent),
+      contextWindow: this.optionalValue(thread.context_window_mode),
+      thinking: this.optionalValue(thread.thinking),
+      codexFastMode: this.optionalValue(thread.codex_fast_mode),
+      replyToMessageId: this.optionalValue(message.reply_to_message_id),
+      quotedText: this.optionalValue(message.quoted_text),
+      mentions: this.optionalValue(message.mentions),
+      previewAnnotations: this.optionalValue(message.previewAnnotations),
       forceFreshSession: true,
       retryOfExecutionId: executionId,
-    });
+    };
+  }
+
+  private optionalValue<T>(value: T | null | undefined): T | undefined {
+    return value ?? undefined;
   }
 }

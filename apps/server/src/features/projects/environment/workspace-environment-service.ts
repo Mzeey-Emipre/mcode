@@ -77,6 +77,12 @@ interface StartingSetupAttempt {
   readonly promise: Promise<WorkspaceEnvironmentSetupAttempt>;
 }
 
+interface AutomaticSetupConfiguration {
+  readonly platform: WorkspaceEnvironmentPlatform;
+  readonly script: string | null;
+  readonly storageMode: WorkspaceEnvironmentStorageMode;
+}
+
 /** Thread fields used to determine whether manual Setup can start. */
 export interface WorkspaceEnvironmentSetupThread {
   readonly id: string;
@@ -163,11 +169,83 @@ export type WorkspaceEnvironmentCommandResolution =
     readonly action: WorkspaceEnvironmentAction | null;
   }
   | {
-    readonly kind: "unavailable" | "configuration";
+    readonly kind: "unavailable";
+    readonly output: string;
+    readonly snapshot: WorkspaceEnvironmentSetupLaunchSnapshot;
+    readonly action: WorkspaceEnvironmentAction | null;
+  }
+  | {
+    readonly kind: "configuration";
     readonly output: string;
     readonly snapshot: WorkspaceEnvironmentSetupLaunchSnapshot;
     readonly action: WorkspaceEnvironmentAction | null;
   };
+
+function commandForTarget(
+  setup: WorkspaceEnvironmentCommand | undefined,
+  action: WorkspaceEnvironmentAction | null,
+): WorkspaceEnvironmentCommand | undefined {
+  return action?.command ?? setup;
+}
+
+function unavailableCommandResolution(
+  platform: WorkspaceEnvironmentPlatform,
+  action: WorkspaceEnvironmentAction | null,
+): WorkspaceEnvironmentCommandResolution {
+  return {
+    kind: "unavailable",
+    output: "This Project command is not available on this system",
+    snapshot: unavailableSnapshot(platform, null),
+    action,
+  };
+}
+
+function queuedAutomaticAttemptId(snapshot: WorkspaceEnvironmentAutomaticSetupSnapshot): string | null {
+  return snapshot.attempt?.state === "queued" ? snapshot.attempt.id : null;
+}
+
+function hasAutomaticSetupScript(
+  configuration: AutomaticSetupConfiguration,
+): configuration is AutomaticSetupConfiguration & { script: string } {
+  return Boolean(configuration.script);
+}
+
+function isConfigurationResolutionError(error: unknown): boolean {
+  if (!(error instanceof WorkspaceEnvironmentServiceError)) return false;
+  return error.code === "WORKSPACE_ENVIRONMENT_VALIDATION"
+    || error.code === "WORKSPACE_ENVIRONMENT_UNSUPPORTED_VERSION";
+}
+
+function manualSetupLaunchFailure(): Extract<TerminalCommandCompletion, { kind: "launch_failure" }> {
+  return {
+    kind: "launch_failure",
+    output: "The Terminal could not launch Setup",
+    outputTruncated: false,
+  };
+}
+
+function manualCompletionResult(completion: TerminalCommandCompletion): {
+  status: "passed" | "failed";
+  outcome: WorkspaceEnvironmentSetupOutcome;
+  exitCode: number | null;
+} {
+  switch (completion.kind) {
+    case "exited": return exitedManualCompletionResult(completion.exitCode);
+    case "timeout": return { status: "failed", outcome: "timeout", exitCode: null };
+    case "containment_failure": return { status: "failed", outcome: "containment_failure", exitCode: null };
+    case "launch_failure": return { status: "failed", outcome: "launch_failure", exitCode: null };
+  }
+}
+
+function exitedManualCompletionResult(exitCode: number | null): {
+  status: "passed" | "failed";
+  outcome: "success" | "command_failure";
+  exitCode: number | null;
+} {
+  return exitCode === 0
+    ? { status: "passed", outcome: "success", exitCode }
+    : { status: "failed", outcome: "command_failure", exitCode };
+}
 
 function issue(
   path: (string | number)[],
@@ -329,43 +407,82 @@ export class WorkspaceEnvironmentService {
     this.requireAutomaticSetupThread(input.threadId);
     this.invalidateAutomaticRetry(input.threadId);
     const stopping = this.automaticStopPromises.get(input.threadId);
-    if (stopping) {
-      await stopping;
-      return this.requireAutomaticRepository().snapshot(input.threadId);
-    }
+    if (stopping) return this.snapshotAfterAutomaticStop(input.threadId, stopping);
     const repository = this.requireAutomaticRepository();
     const attemptId = repository.interruptCurrentAttempt(input.threadId);
     const starting = this.startingAutomaticSetupPromises.get(input.threadId);
     const resource = this.activeAutomaticSetupResources.get(input.threadId);
     const resourceAttemptId = attemptId ?? resource?.attemptId ?? null;
-    if (resourceAttemptId && (resource?.attemptId === resourceAttemptId || starting)) {
-      const closing = Promise.resolve().then(async () => {
-        const closeResource = async (candidate: ActiveAutomaticSetupResource | undefined): Promise<void> => {
-          if (!candidate || candidate.attemptId !== resourceAttemptId) return;
-          await this.closeActiveAutomaticSetupResource(input.threadId, candidate);
-        };
-        await closeResource(resource);
-        if (starting) {
-          await starting.catch((error: unknown) => {
-            if (!(error instanceof SetupStartCancelledError)) throw error;
-          });
-        }
-        await closeResource(this.activeAutomaticSetupResources.get(input.threadId));
-      });
-      this.automaticStopPromises.set(input.threadId, closing);
-      let contained = false;
-      try {
-        await closing;
-        contained = true;
-      } finally {
-        if (contained && this.automaticStopPromises.get(input.threadId) === closing) {
-          this.automaticStopPromises.delete(input.threadId);
-          this.clearAutomaticRecoveryGeneration(input.threadId);
-        }
-      }
+    if (resourceAttemptId && this.shouldCloseAutomaticSetup(resource, resourceAttemptId, starting)) {
+      await this.stopAutomaticSetupResources(input.threadId, resourceAttemptId, resource, starting);
     }
     this.clearAutomaticRecoveryGeneration(input.threadId);
     return repository.snapshot(input.threadId);
+  }
+
+  private async snapshotAfterAutomaticStop(threadId: string, stopping: Promise<void>): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot> {
+    await stopping;
+    return this.requireAutomaticRepository().snapshot(threadId);
+  }
+
+  private shouldCloseAutomaticSetup(
+    resource: ActiveAutomaticSetupResource | undefined,
+    attemptId: string,
+    starting: Promise<void> | undefined,
+  ): boolean {
+    return resource?.attemptId === attemptId || starting !== undefined;
+  }
+
+  private async stopAutomaticSetupResources(
+    threadId: string,
+    attemptId: string,
+    resource: ActiveAutomaticSetupResource | undefined,
+    starting: Promise<void> | undefined,
+  ): Promise<void> {
+    const closing = Promise.resolve().then(
+      () => this.closeAutomaticSetupResources(threadId, attemptId, resource, starting),
+    );
+    this.automaticStopPromises.set(threadId, closing);
+    let contained = false;
+    try {
+      await closing;
+      contained = true;
+    } finally {
+      if (contained && this.automaticStopPromises.get(threadId) === closing) {
+        this.automaticStopPromises.delete(threadId);
+        this.clearAutomaticRecoveryGeneration(threadId);
+      }
+    }
+  }
+
+  private async closeAutomaticSetupResources(
+    threadId: string,
+    attemptId: string,
+    resource: ActiveAutomaticSetupResource | undefined,
+    starting: Promise<void> | undefined,
+  ): Promise<void> {
+    await this.closeMatchingAutomaticSetupResource(threadId, attemptId, resource);
+    if (starting) await this.awaitCancelledAutomaticSetupStart(starting);
+    await this.closeMatchingAutomaticSetupResource(
+      threadId,
+      attemptId,
+      this.activeAutomaticSetupResources.get(threadId),
+    );
+  }
+
+  private async closeMatchingAutomaticSetupResource(
+    threadId: string,
+    attemptId: string,
+    resource: ActiveAutomaticSetupResource | undefined,
+  ): Promise<void> {
+    if (!resource || resource.attemptId !== attemptId) return;
+    await this.closeActiveAutomaticSetupResource(threadId, resource);
+  }
+
+  private async awaitCancelledAutomaticSetupStart(starting: Promise<void>): Promise<void> {
+    await starting.catch((error: unknown) => {
+      if (!(error instanceof SetupStartCancelledError)) throw error;
+    });
   }
 
   /** Re-resolve the current Project environment and start one new automatic Setup attempt. */
@@ -628,23 +745,39 @@ export class WorkspaceEnvironmentService {
   ): Promise<WorkspaceEnvironmentCommandResolution> {
     const platform = this.options.platform ?? platformForCurrentProcess();
     const environment = await this.readForThread(thread);
-    if (canContinue && !canContinue()) throw new SetupStartCancelledError();
-    const action = target.kind === "action"
-      ? environment.document.actions.find((candidate) => candidate.id === target.actionId) ?? null
-      : null;
-    if (target.kind === "action" && !action) {
-      throw new WorkspaceEnvironmentServiceError("WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND", "Project Action not found");
-    }
-    const command = target.kind === "setup" ? environment.document.setup : action?.command;
+    this.assertCommandResolutionCurrent(canContinue);
+    const action = this.resolveCommandAction(environment, target);
+    const command = commandForTarget(environment.document.setup, action);
     const script = command ? selectWorkspaceEnvironmentScript(command, platform) : null;
-    if (!script) {
-      return {
-        kind: "unavailable",
-        output: "This Project command is not available on this system",
-        snapshot: unavailableSnapshot(platform, null),
-        action,
-      };
+    if (!script) return unavailableCommandResolution(platform, action);
+    const preparation = await this.prepareWorkspaceCommand(thread, script);
+    await this.assertPreparedCommandCurrent(canContinue, preparation);
+    return this.resolvePreparedCommand(environment.storageMode, thread, target, platform, script, preparation, action);
+  }
+
+  private assertCommandResolutionCurrent(canContinue: (() => boolean) | undefined): void {
+    if (canContinue && !canContinue()) throw new SetupStartCancelledError();
+  }
+
+  private resolveCommandAction(
+    environment: WorkspaceEnvironmentReadResult,
+    target: WorkspaceEnvironmentCommandTarget,
+  ): WorkspaceEnvironmentAction | null {
+    if (target.kind === "setup") return null;
+    const action = environment.document.actions.find((candidate) => candidate.id === target.actionId) ?? null;
+    if (!action) {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND",
+        "Project Action not found",
+      );
     }
+    return action;
+  }
+
+  private async prepareWorkspaceCommand(
+    thread: WorkspaceEnvironmentSetupThread,
+    script: string,
+  ): Promise<TerminalCommandPreparation> {
     const terminalCommands = this.options.terminalCommands;
     if (!terminalCommands) {
       throw new WorkspaceEnvironmentServiceError(
@@ -652,16 +785,32 @@ export class WorkspaceEnvironmentService {
         "Project command execution is unavailable for this Thread",
       );
     }
-    const preparation = await terminalCommands.prepare({
+    return terminalCommands.prepare({
       scope: { kind: "thread", workspaceId: thread.workspace_id, threadId: thread.id },
       script,
       timeoutMs: this.options.manualSetupTimeoutMs ?? DEFAULT_MANUAL_SETUP_TIMEOUT_MS,
       outputMaxBytes: WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES,
     });
-    if (canContinue && !canContinue()) {
-      if (preparation.kind === "ready") await this.closeUnstartedCommand(preparation.command);
-      throw new SetupStartCancelledError();
-    }
+  }
+
+  private async assertPreparedCommandCurrent(
+    canContinue: (() => boolean) | undefined,
+    preparation: TerminalCommandPreparation,
+  ): Promise<void> {
+    if (!canContinue || canContinue()) return;
+    if (preparation.kind === "ready") await this.closeUnstartedCommand(preparation.command);
+    throw new SetupStartCancelledError();
+  }
+
+  private resolvePreparedCommand(
+    storageMode: WorkspaceEnvironmentStorageMode | undefined,
+    thread: WorkspaceEnvironmentSetupThread,
+    target: WorkspaceEnvironmentCommandTarget,
+    platform: WorkspaceEnvironmentPlatform,
+    script: string,
+    preparation: TerminalCommandPreparation,
+    action: WorkspaceEnvironmentAction | null,
+  ): WorkspaceEnvironmentCommandResolution {
     if (preparation.kind !== "ready") {
       return {
         kind: preparation.kind,
@@ -670,7 +819,7 @@ export class WorkspaceEnvironmentService {
         action,
       };
     }
-    const approval = environment.storageMode === "shared"
+    const approval = storageMode === "shared"
       ? this.pendingApproval(thread.workspace_id, target, platform, script, preparation.command.snapshot)
       : null;
     return {
@@ -750,49 +899,72 @@ export class WorkspaceEnvironmentService {
   async save(input: WorkspaceEnvironmentSaveInput): Promise<WorkspaceEnvironmentReadResult> {
     const parsed = WorkspaceEnvironmentDocumentSchema().safeParse(input.document);
     if (!parsed.success) throw validationError(parsed.error);
+    return this.enqueueSave(
+      input.workspaceId,
+      () => this.saveValidatedEnvironment(input, parsed.data),
+    );
+  }
 
-    return this.enqueueSave(input.workspaceId, async () => {
-      const current = await this.read(input.workspaceId, input.threadId);
-      if (current.revision !== input.sourceRevision) {
-        throw new WorkspaceEnvironmentServiceError(
-          "WORKSPACE_ENVIRONMENT_STALE",
-          "Workspace environment changed since it was loaded",
-        );
-      }
+  private async saveValidatedEnvironment(
+    input: WorkspaceEnvironmentSaveInput,
+    document: WorkspaceEnvironmentSaveInput["document"],
+  ): Promise<WorkspaceEnvironmentReadResult> {
+    const current = await this.read(input.workspaceId, input.threadId);
+    this.assertCurrentEnvironmentRevision(current, input.sourceRevision);
+    const thread = input.threadId ? this.requireSetupThread(input.threadId) : null;
+    this.assertSaveThreadWorkspace(thread, input.workspaceId);
+    const storageMode = current.storageMode ?? "system";
+    const filePath = thread
+      ? this.filePathForThread(thread, storageMode)
+      : this.filePathForWorkspace(input.workspaceId, storageMode);
+    const encoded = new TextEncoder().encode(JSON.stringify(document));
+    await this.writeEnvironmentDocument(filePath, encoded);
+    return { document, revision: revisionFor(encoded, storageMode, filePath), status: "present", storageMode: current.storageMode };
+  }
 
-      const thread = input.threadId ? this.requireSetupThread(input.threadId) : null;
-      if (thread && thread.workspace_id !== input.workspaceId) {
-        throw new WorkspaceEnvironmentServiceError(
-          "WORKSPACE_ENVIRONMENT_NOT_FOUND",
-          "Thread does not belong to this Project",
-        );
-      }
-      const filePath = thread
-        ? this.filePathForThread(thread, current.storageMode ?? "system")
-        : this.filePathForWorkspace(input.workspaceId, current.storageMode ?? "system");
-      const directory = dirname(filePath);
-      await mkdir(directory, { recursive: true });
-      const temporaryPath = join(directory, `.environment.${randomUUID()}.tmp`);
-      const encoded = new TextEncoder().encode(JSON.stringify(parsed.data));
-      try {
-        await writeFile(temporaryPath, encoded);
-        await rename(temporaryPath, filePath);
-      } catch (error) {
-        try {
-          await unlink(temporaryPath);
-        } catch {
-          // Cleanup is limited to this operation's own temporary file.
-        }
-        throw error;
-      }
+  private assertCurrentEnvironmentRevision(
+    current: WorkspaceEnvironmentReadResult,
+    sourceRevision: string | null,
+  ): void {
+    if (current.revision !== sourceRevision) {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_STALE",
+        "Workspace environment changed since it was loaded",
+      );
+    }
+  }
 
-      return {
-        document: parsed.data,
-        revision: revisionFor(encoded, current.storageMode ?? "system", filePath),
-        status: "present",
-        storageMode: current.storageMode,
-      };
-    });
+  private assertSaveThreadWorkspace(
+    thread: WorkspaceEnvironmentSetupThread | null,
+    workspaceId: string,
+  ): void {
+    if (thread && thread.workspace_id !== workspaceId) {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+        "Thread does not belong to this Project",
+      );
+    }
+  }
+
+  private async writeEnvironmentDocument(filePath: string, encoded: Uint8Array): Promise<void> {
+    const directory = dirname(filePath);
+    await mkdir(directory, { recursive: true });
+    const temporaryPath = join(directory, `.environment.${randomUUID()}.tmp`);
+    try {
+      await writeFile(temporaryPath, encoded);
+      await rename(temporaryPath, filePath);
+    } catch (error) {
+      await this.removeTemporaryEnvironmentFile(temporaryPath);
+      throw error;
+    }
+  }
+
+  private async removeTemporaryEnvironmentFile(filePath: string): Promise<void> {
+    try {
+      await unlink(filePath);
+    } catch {
+      // Cleanup is limited to this operation's own temporary file.
+    }
   }
 
   /** Starts one private manual Setup attempt for a Thread without changing its Turn state. */
@@ -871,26 +1043,8 @@ export class WorkspaceEnvironmentService {
 
   /** Cancels and clears manual Setup state for every Thread in one workspace. */
   async cancelSetupForWorkspace(workspaceId: string): Promise<void> {
-    const threadIds = new Set<string>();
-    for (const threadId of [
-      ...this.activeAutomaticSetupResources.keys(),
-      ...this.startingAutomaticSetupPromises.keys(),
-      ...this.automaticDrainLoops.keys(),
-    ]) {
-      if (this.options.threads?.findById(threadId)?.workspace_id === workspaceId) threadIds.add(threadId);
-    }
-    for (const [threadId, resource] of this.activeSetupResources) {
-      if (resource.attempt.workspaceId === workspaceId) threadIds.add(threadId);
-    }
-    for (const [threadId, attempt] of this.latestSetupAttempts) {
-      if (attempt.workspaceId === workspaceId) threadIds.add(threadId);
-    }
-    for (const [threadId, starting] of this.startingSetupAttempts) {
-      if (starting.workspaceId === workspaceId) threadIds.add(threadId);
-    }
-    const results = await Promise.allSettled([...threadIds].map((threadId) => this.cancelSetupForThread(threadId)));
-    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (failure) throw failure.reason;
+    const threadIds = this.workspaceSetupThreadIds(workspaceId);
+    await this.cancelSetupThreads(threadIds);
   }
 
   /** Cancels every active manual Setup command before server shutdown. */
@@ -903,17 +1057,56 @@ export class WorkspaceEnvironmentService {
 
   private async disposeActiveSetup(): Promise<void> {
     if (this.automaticRepository) await this.interruptActiveAutomaticSetups();
-    const results = await Promise.allSettled(
-      [...new Set([
-        ...this.activeSetupResources.keys(),
-        ...this.startingSetupAttempts.keys(),
-      ])].map((threadId) => this.cancelSetupForThread(threadId)),
-    );
-    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (failure) throw failure.reason;
+    const threadIds = new Set([
+      ...this.activeSetupResources.keys(),
+      ...this.startingSetupAttempts.keys(),
+    ]);
+    await this.cancelSetupThreads(threadIds);
     this.latestSetupAttempts.clear();
     this.completedSetupThreadIds.splice(0);
     if (this.startingSetupAttempts.size === 0) this.setupGenerations.clear();
+  }
+
+  private workspaceSetupThreadIds(workspaceId: string): Set<string> {
+    const threadIds = new Set<string>();
+    this.addAutomaticWorkspaceThreadIds(threadIds, workspaceId);
+    this.addManualWorkspaceThreadIds(threadIds, workspaceId);
+    this.addStartingWorkspaceThreadIds(threadIds, workspaceId);
+    return threadIds;
+  }
+
+  private addAutomaticWorkspaceThreadIds(threadIds: Set<string>, workspaceId: string): void {
+    const activeThreadIds = [
+      ...this.activeAutomaticSetupResources.keys(),
+      ...this.startingAutomaticSetupPromises.keys(),
+      ...this.automaticDrainLoops.keys(),
+    ];
+    for (const threadId of activeThreadIds) {
+      if (this.options.threads?.findById(threadId)?.workspace_id === workspaceId) threadIds.add(threadId);
+    }
+  }
+
+  private addManualWorkspaceThreadIds(threadIds: Set<string>, workspaceId: string): void {
+    for (const [threadId, resource] of this.activeSetupResources) {
+      if (resource.attempt.workspaceId === workspaceId) threadIds.add(threadId);
+    }
+    for (const [threadId, attempt] of this.latestSetupAttempts) {
+      if (attempt.workspaceId === workspaceId) threadIds.add(threadId);
+    }
+  }
+
+  private addStartingWorkspaceThreadIds(threadIds: Set<string>, workspaceId: string): void {
+    for (const [threadId, starting] of this.startingSetupAttempts) {
+      if (starting.workspaceId === workspaceId) threadIds.add(threadId);
+    }
+  }
+
+  private async cancelSetupThreads(threadIds: ReadonlySet<string>): Promise<void> {
+    const results = await Promise.allSettled(
+      Array.from(threadIds, (threadId) => this.cancelSetupForThread(threadId)),
+    );
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failure) throw failure.reason;
   }
 
   private requireAutomaticRepository(): WorkspaceEnvironmentAutomaticRepository {
@@ -963,97 +1156,163 @@ export class WorkspaceEnvironmentService {
   private async startAutomaticSetupAttempt(thread: WorkspaceEnvironmentSetupThread): Promise<void> {
     const repository = this.requireAutomaticRepository();
     const snapshot = repository.snapshot(thread.id);
-    if (snapshot.attempt?.state !== "queued") return;
-    const queuedAttemptId = snapshot.attempt.id;
+    const queuedAttemptId = queuedAutomaticAttemptId(snapshot);
+    if (!queuedAttemptId) return;
+    const configuration = await this.resolveAutomaticSetupConfiguration(repository, thread, queuedAttemptId);
+    if (!configuration) return;
+    if (!this.isAutomaticAttemptReadyToStart(repository, thread.id, queuedAttemptId)) return;
+    if (!hasAutomaticSetupScript(configuration)) {
+      await this.releaseAutomaticSetupWithoutCommand(repository, thread.id, queuedAttemptId);
+      return;
+    }
+    const preparation = await this.prepareAutomaticSetupCommand(
+      repository,
+      thread,
+      queuedAttemptId,
+      configuration,
+    );
+    if (!preparation) return;
+    await this.launchPreparedAutomaticSetup(
+      repository,
+      thread,
+      queuedAttemptId,
+      configuration,
+      preparation,
+    );
+  }
+
+  private async resolveAutomaticSetupConfiguration(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    thread: WorkspaceEnvironmentSetupThread,
+    attemptId: string,
+  ): Promise<AutomaticSetupConfiguration | null> {
     const platform = this.options.platform ?? platformForCurrentProcess();
-    let script: string | null;
-    let storageMode: WorkspaceEnvironmentStorageMode;
     try {
       const environment = await this.readForThread(thread);
-      script = environment.document.setup ? selectWorkspaceEnvironmentScript(environment.document.setup, platform) : null;
-      storageMode = environment.storageMode ?? "system";
+      return {
+        platform,
+        script: environment.document.setup
+          ? selectWorkspaceEnvironmentScript(environment.document.setup, platform)
+          : null,
+        storageMode: environment.storageMode ?? "system",
+      };
     } catch (error) {
-      if (error instanceof WorkspaceEnvironmentServiceError) {
-        repository.failQueuedAttempt({
-          threadId: thread.id,
-          attemptId: queuedAttemptId,
-          reason: "setup_configuration_invalid",
-          snapshot: unavailableSnapshot(platform, null),
-          outcome: "configuration_failure",
-        });
-        return;
-      }
-      repository.failQueuedAttempt({
-        threadId: thread.id,
-        attemptId: queuedAttemptId,
-        reason: "setup_unavailable",
-        snapshot: unavailableSnapshot(platform, null),
-        outcome: "unavailable",
-      });
-      return;
+      this.failAutomaticConfigurationRead(repository, thread.id, attemptId, platform, error);
+      return null;
     }
-    if (!this.isAutomaticAttemptQueued(repository, thread.id, queuedAttemptId)
-      || !this.isAutomaticSetupAdmissionAllowed(thread.id)) return;
-    if (!script) {
-      repository.releaseWithoutSetup(thread.id, queuedAttemptId);
-      await this.drainReleasedAutomaticTurn(thread.id);
-      return;
-    }
+  }
+
+  private failAutomaticConfigurationRead(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+    platform: WorkspaceEnvironmentPlatform,
+    error: unknown,
+  ): void {
+    const invalid = error instanceof WorkspaceEnvironmentServiceError;
+    repository.failQueuedAttempt({
+      threadId,
+      attemptId,
+      reason: invalid ? "setup_configuration_invalid" : "setup_unavailable",
+      snapshot: unavailableSnapshot(platform, null),
+      outcome: invalid ? "configuration_failure" : "unavailable",
+    });
+  }
+
+  private isAutomaticAttemptReadyToStart(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+  ): boolean {
+    return this.isAutomaticAttemptQueued(repository, threadId, attemptId)
+      && this.isAutomaticSetupAdmissionAllowed(threadId);
+  }
+
+  private async releaseAutomaticSetupWithoutCommand(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+  ): Promise<void> {
+    repository.releaseWithoutSetup(threadId, attemptId);
+    await this.drainReleasedAutomaticTurn(threadId);
+  }
+
+  private async prepareAutomaticSetupCommand(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    thread: WorkspaceEnvironmentSetupThread,
+    attemptId: string,
+    configuration: AutomaticSetupConfiguration & { script: string },
+  ): Promise<TerminalCommandPreparation | null> {
     const terminalCommands = this.options.terminalCommands;
     if (!terminalCommands) {
-      repository.failQueuedAttempt({
-        threadId: thread.id,
-        attemptId: queuedAttemptId,
-        reason: "setup_unavailable",
-        snapshot: unavailableSnapshot(platform, script),
-        outcome: "unavailable",
-      });
-      return;
+      this.failAutomaticSetupUnavailable(repository, thread.id, attemptId, configuration.platform, configuration.script);
+      return null;
     }
-    let preparation: TerminalCommandPreparation;
     try {
-      preparation = await terminalCommands.prepare({
+      const preparation = await terminalCommands.prepare({
         scope: { kind: "thread", workspaceId: thread.workspace_id, threadId: thread.id },
-        script,
+        script: configuration.script,
         timeoutMs: this.options.manualSetupTimeoutMs ?? DEFAULT_MANUAL_SETUP_TIMEOUT_MS,
         outputMaxBytes: WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES,
       });
+      return this.acceptAutomaticSetupPreparation(repository, thread.id, attemptId, configuration, preparation);
     } catch {
       repository.failQueuedAttempt({
         threadId: thread.id,
-        attemptId: queuedAttemptId,
+        attemptId,
         reason: "setup_unavailable",
-        snapshot: unavailableSnapshot(platform, script),
+        snapshot: unavailableSnapshot(configuration.platform, configuration.script),
         outcome: "launch_failure",
       });
-      return;
+      return null;
     }
-    if (preparation.kind !== "ready") {
-      repository.failQueuedAttempt({
-        threadId: thread.id,
-        attemptId: queuedAttemptId,
-        reason: preparation.kind === "unavailable" ? "setup_unavailable" : "setup_configuration_invalid",
-        snapshot: snapshotForPreparation(platform, script, preparation),
-        outcome: preparation.kind === "unavailable" ? "unavailable" : "configuration_failure",
-      });
-      return;
-    }
-    const approval = storageMode === "shared"
-      ? this.pendingApproval(
-        thread.workspace_id,
-        { kind: "setup" },
-        platform,
-        script,
-        preparation.command.snapshot,
-      )
-      : null;
+  }
+
+  private acceptAutomaticSetupPreparation(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+    configuration: AutomaticSetupConfiguration & { script: string },
+    preparation: TerminalCommandPreparation,
+  ): TerminalCommandPreparation | null {
+    if (preparation.kind === "ready") return preparation;
+    repository.failQueuedAttempt({
+      threadId,
+      attemptId,
+      reason: preparation.kind === "unavailable" ? "setup_unavailable" : "setup_configuration_invalid",
+      snapshot: snapshotForPreparation(configuration.platform, configuration.script, preparation),
+      outcome: preparation.kind === "unavailable" ? "unavailable" : "configuration_failure",
+    });
+    return null;
+  }
+
+  private failAutomaticSetupUnavailable(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+    platform: WorkspaceEnvironmentPlatform,
+    script: string,
+  ): void {
+    repository.failQueuedAttempt({
+      threadId,
+      attemptId,
+      reason: "setup_unavailable",
+      snapshot: unavailableSnapshot(platform, script),
+      outcome: "unavailable",
+    });
+  }
+
+  private async launchPreparedAutomaticSetup(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    thread: WorkspaceEnvironmentSetupThread,
+    queuedAttemptId: string,
+    configuration: AutomaticSetupConfiguration & { script: string },
+    preparation: TerminalCommandPreparation,
+  ): Promise<void> {
+    if (preparation.kind !== "ready") return;
+    const approval = this.automaticSetupApproval(thread, configuration, preparation.command);
     if (approval) {
-      await this.closeUnstartedCommand(preparation.command);
-      repository.awaitApproval({
-        threadId: thread.id,
-        attemptId: queuedAttemptId,
-        snapshot: snapshotForPreparation(platform, script, preparation, approval),
-      });
+      await this.deferAutomaticSetupForApproval(repository, thread.id, queuedAttemptId, configuration, preparation.command, approval);
       return;
     }
     if (!this.isAutomaticSetupAdmissionAllowed(thread.id)) {
@@ -1063,47 +1322,92 @@ export class WorkspaceEnvironmentService {
     const attemptId = repository.beginAttempt({
       threadId: thread.id,
       attemptId: queuedAttemptId,
-      snapshot: snapshotForPreparation(platform, script, preparation),
+      snapshot: snapshotForPreparation(configuration.platform, configuration.script, preparation),
     });
     if (!attemptId) {
       await this.closeUnstartedCommand(preparation.command);
       return;
     }
-    const resource: ActiveAutomaticSetupResource = { attemptId, command: preparation.command, cleanupPending: false };
-    this.activeAutomaticSetupResources.set(thread.id, resource);
-    void preparation.command.waitForRelease().then(() => {
-      if (this.activeAutomaticSetupResources.get(thread.id) === resource) {
-        this.activeAutomaticSetupResources.delete(thread.id);
-        this.automaticStopPromises.delete(thread.id);
-        this.clearAutomaticRecoveryGeneration(thread.id);
-      }
+    this.startAutomaticSetupCommand(repository, thread, attemptId, preparation.command);
+  }
+
+  private automaticSetupApproval(
+    thread: WorkspaceEnvironmentSetupThread,
+    configuration: AutomaticSetupConfiguration & { script: string },
+    command: PreparedTerminalCommand,
+  ): WorkspaceEnvironmentCommandApproval | null {
+    if (configuration.storageMode !== "shared") return null;
+    return this.pendingApproval(thread.workspace_id, { kind: "setup" }, configuration.platform, configuration.script, command.snapshot);
+  }
+
+  private async deferAutomaticSetupForApproval(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+    configuration: AutomaticSetupConfiguration & { script: string },
+    command: PreparedTerminalCommand,
+    approval: WorkspaceEnvironmentCommandApproval,
+  ): Promise<void> {
+    await this.closeUnstartedCommand(command);
+    repository.awaitApproval({
+      threadId,
+      attemptId,
+      snapshot: snapshotForPreparedCommand(configuration.platform, configuration.script, command, approval),
     });
+  }
+
+  private startAutomaticSetupCommand(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    thread: WorkspaceEnvironmentSetupThread,
+    attemptId: string,
+    command: PreparedTerminalCommand,
+  ): void {
+    const resource: ActiveAutomaticSetupResource = { attemptId, command, cleanupPending: false };
+    this.activeAutomaticSetupResources.set(thread.id, resource);
+    void command.waitForRelease().then(() => this.releaseAutomaticSetupResource(thread.id, resource));
     void Promise.resolve()
-      .then(() => preparation.command.start())
-      .then(async (completion) => {
-        const result = automaticCompletionResult(completion);
-        const completed = repository.completeAttempt({
-          threadId: thread.id,
-          attemptId,
-          ...result,
-        });
-        if (result.outcome === "containment_failure" && this.activeAutomaticSetupResources.get(thread.id) === resource) {
-          resource.cleanupPending = true;
-        }
-        if (completed && result.state === "passed") await this.drainReleasedAutomaticTurn(thread.id);
-      })
-      .catch(async () => {
-        repository.completeAttempt({
-          threadId: thread.id,
-          attemptId,
-          state: "failed",
-          reason: "setup_unavailable",
-          outcome: "launch_failure",
-          exitCode: null,
-          output: "",
-          outputTruncated: false,
-        });
-      });
+      .then(() => command.start())
+      .then((completion) => this.completeAutomaticSetupCommand(repository, thread.id, attemptId, resource, completion))
+      .catch(() => this.recordAutomaticSetupLaunchFailure(repository, thread.id, attemptId));
+  }
+
+  private releaseAutomaticSetupResource(threadId: string, resource: ActiveAutomaticSetupResource): void {
+    if (this.activeAutomaticSetupResources.get(threadId) !== resource) return;
+    this.activeAutomaticSetupResources.delete(threadId);
+    this.automaticStopPromises.delete(threadId);
+    this.clearAutomaticRecoveryGeneration(threadId);
+  }
+
+  private async completeAutomaticSetupCommand(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+    resource: ActiveAutomaticSetupResource,
+    completion: TerminalCommandCompletion,
+  ): Promise<void> {
+    const result = automaticCompletionResult(completion);
+    const completed = repository.completeAttempt({ threadId, attemptId, ...result });
+    if (result.outcome === "containment_failure" && this.activeAutomaticSetupResources.get(threadId) === resource) {
+      resource.cleanupPending = true;
+    }
+    if (completed && result.state === "passed") await this.drainReleasedAutomaticTurn(threadId);
+  }
+
+  private recordAutomaticSetupLaunchFailure(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+  ): void {
+    repository.completeAttempt({
+      threadId,
+      attemptId,
+      state: "failed",
+      reason: "setup_unavailable",
+      outcome: "launch_failure",
+      exitCode: null,
+      output: "",
+      outputTruncated: false,
+    });
   }
 
   private async interruptActiveAutomaticSetups(): Promise<void> {
@@ -1117,13 +1421,15 @@ export class WorkspaceEnvironmentService {
     const settlingFailure = settling.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (settlingFailure) throw settlingFailure.reason;
     const results = await Promise.allSettled(
-      [...this.activeAutomaticSetupResources.entries()].map(async ([threadId, resource]) =>
-        await this.closeActiveAutomaticSetupResource(threadId, resource)),
+      Array.from(
+        this.activeAutomaticSetupResources.entries(),
+        ([threadId, resource]) => this.closeActiveAutomaticSetupResource(threadId, resource),
+      ),
     );
     const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failure) throw failure.reason;
     this.activeAutomaticSetupResources.clear();
-    await Promise.allSettled([...this.automaticDrainLoops.values()]);
+    await Promise.allSettled(this.automaticDrainLoops.values());
   }
 
   private isAutomaticAttemptQueued(
@@ -1321,72 +1627,90 @@ export class WorkspaceEnvironmentService {
     try {
       resolved = await this.resolveCommand(thread, { kind: "setup" }, () => this.isStartCurrent(thread.id, generation));
     } catch (error) {
-      this.ensureStartCurrent(thread.id, generation);
-      if (
-        error instanceof WorkspaceEnvironmentServiceError &&
-        (error.code === "WORKSPACE_ENVIRONMENT_VALIDATION" ||
-          error.code === "WORKSPACE_ENVIRONMENT_UNSUPPORTED_VERSION")
-      ) {
-        return this.recordFinishedAttempt({
-          threadId: thread.id,
-          workspaceId: thread.workspace_id,
-          status: "failed",
-          outcome: "configuration_failure",
-          snapshot: unavailableSnapshot(platform, null),
-          startedAt: null,
-          exitCode: null,
-          output: "Project Setup configuration is invalid",
-          outputTruncated: false,
-        });
-      }
-      throw error;
+      return this.handleSetupCommandResolutionFailure(thread, generation, platform, error);
     }
     this.ensureStartCurrent(thread.id, generation);
-    if (resolved.kind === "unavailable") {
-      return this.recordFinishedAttempt({
-        threadId: thread.id,
-        workspaceId: thread.workspace_id,
-        status: "unavailable",
-        outcome: "unavailable",
-        snapshot: resolved.snapshot,
-        startedAt: null,
-        exitCode: null,
-        output: resolved.output,
-        outputTruncated: false,
-      });
-    }
-    if (!this.isStartCurrent(thread.id, generation)) {
-      if (resolved.kind === "ready") await this.closeUnstartedCommand(resolved.command);
-      throw new SetupStartCancelledError();
-    }
-    if (resolved.kind !== "ready") {
-      return this.recordFinishedAttempt({
-        threadId: thread.id,
-        workspaceId: thread.workspace_id,
-        status: "failed",
-        outcome: "configuration_failure",
-        snapshot: resolved.snapshot,
-        startedAt: null,
-        exitCode: null,
-        output: resolved.output,
-        outputTruncated: false,
-      });
-    }
-    const ready = resolved;
-    if (ready.approval) {
-      await this.closeUnstartedCommand(ready.command);
-      return this.recordAwaitingApprovalAttempt({
-        threadId: thread.id,
-        workspaceId: thread.workspace_id,
-        status: "awaiting-approval",
-        outcome: null,
-        snapshot: ready.snapshot,
-        startedAt: null,
-        exitCode: null,
-        output: "",
-        outputTruncated: false,
-      });
-    }
+    return this.createSetupAttemptFromResolution(thread, resolved);
+  }
+
+  private handleSetupCommandResolutionFailure(
+    thread: WorkspaceEnvironmentSetupThread,
+    generation: number,
+    platform: WorkspaceEnvironmentPlatform,
+    error: unknown,
+  ): WorkspaceEnvironmentSetupAttempt {
+    this.ensureStartCurrent(thread.id, generation);
+    if (!isConfigurationResolutionError(error)) throw error;
+    return this.recordConfigurationFailure(thread, unavailableSnapshot(platform, null), "Project Setup configuration is invalid");
+  }
+
+  private async createSetupAttemptFromResolution(
+    thread: WorkspaceEnvironmentSetupThread,
+    resolved: WorkspaceEnvironmentCommandResolution,
+  ): Promise<WorkspaceEnvironmentSetupAttempt> {
+    if (resolved.kind === "unavailable") return this.recordUnavailableSetupAttempt(thread, resolved);
+    if (resolved.kind === "configuration") return this.recordConfigurationFailure(thread, resolved.snapshot, resolved.output);
+    if (resolved.approval) return this.recordSetupAwaitingApproval(thread, resolved);
+    return this.startRunningSetupAttempt(thread, resolved);
+  }
+
+  private recordUnavailableSetupAttempt(
+    thread: WorkspaceEnvironmentSetupThread,
+    resolved: Extract<WorkspaceEnvironmentCommandResolution, { kind: "unavailable" }>,
+  ): WorkspaceEnvironmentSetupAttempt {
+    return this.recordFinishedAttempt({
+      threadId: thread.id,
+      workspaceId: thread.workspace_id,
+      status: "unavailable",
+      outcome: "unavailable",
+      snapshot: resolved.snapshot,
+      startedAt: null,
+      exitCode: null,
+      output: resolved.output,
+      outputTruncated: false,
+    });
+  }
+
+  private recordConfigurationFailure(
+    thread: WorkspaceEnvironmentSetupThread,
+    snapshot: WorkspaceEnvironmentSetupLaunchSnapshot,
+    output: string,
+  ): WorkspaceEnvironmentSetupAttempt {
+    return this.recordFinishedAttempt({
+      threadId: thread.id,
+      workspaceId: thread.workspace_id,
+      status: "failed",
+      outcome: "configuration_failure",
+      snapshot,
+      startedAt: null,
+      exitCode: null,
+      output,
+      outputTruncated: false,
+    });
+  }
+
+  private async recordSetupAwaitingApproval(
+    thread: WorkspaceEnvironmentSetupThread,
+    ready: Extract<WorkspaceEnvironmentCommandResolution, { kind: "ready" }>,
+  ): Promise<WorkspaceEnvironmentSetupAttempt> {
+    await this.closeUnstartedCommand(ready.command);
+    return this.recordAwaitingApprovalAttempt({
+      threadId: thread.id,
+      workspaceId: thread.workspace_id,
+      status: "awaiting-approval",
+      outcome: null,
+      snapshot: ready.snapshot,
+      startedAt: null,
+      exitCode: null,
+      output: "",
+      outputTruncated: false,
+    });
+  }
+
+  private startRunningSetupAttempt(
+    thread: WorkspaceEnvironmentSetupThread,
+    ready: Extract<WorkspaceEnvironmentCommandResolution, { kind: "ready" }>,
+  ): WorkspaceEnvironmentSetupAttempt {
     const createdAt = this.now();
     const running = freezeSetupAttempt({
       id: this.createAttemptId(),
@@ -1406,15 +1730,18 @@ export class WorkspaceEnvironmentService {
     this.latestSetupAttempts.set(thread.id, running);
     this.activeSetupResources.set(thread.id, { attempt: running, command: ready.command });
     void ready.command.waitForRelease().then(() => this.releaseActiveResource(thread.id, running.id));
-    void Promise.resolve()
-      .then(() => ready.command.start())
-      .then((completion) => this.finishRunningAttempt(running, completion))
-      .catch(() => this.finishRunningAttempt(running, {
-        kind: "launch_failure",
-        output: "The Terminal could not launch Setup",
-        outputTruncated: false,
-      }));
+    this.startManualSetupCommand(running, ready.command);
     return running;
+  }
+
+  private startManualSetupCommand(
+    running: WorkspaceEnvironmentSetupAttempt,
+    command: PreparedTerminalCommand,
+  ): void {
+    void Promise.resolve()
+      .then(() => command.start())
+      .then((completion) => this.finishRunningAttempt(running, completion))
+      .catch(() => this.finishRunningAttempt(running, manualSetupLaunchFailure()));
   }
 
   private requireSetupThread(threadId: string): WorkspaceEnvironmentSetupThread {
@@ -1482,15 +1809,7 @@ export class WorkspaceEnvironmentService {
     const active = this.activeSetupResources.get(running.threadId);
     const current = active?.attempt ?? this.latestSetupAttempts.get(running.threadId);
     if (!current || current.id !== running.id) return;
-    const result = completion.kind === "exited"
-      ? completion.exitCode === 0
-        ? { status: "passed" as const, outcome: "success" as const, exitCode: completion.exitCode }
-        : { status: "failed" as const, outcome: "command_failure" as const, exitCode: completion.exitCode }
-      : completion.kind === "timeout"
-        ? { status: "failed" as const, outcome: "timeout" as const, exitCode: null }
-        : completion.kind === "containment_failure"
-          ? { status: "failed" as const, outcome: "containment_failure" as const, exitCode: null }
-        : { status: "failed" as const, outcome: "launch_failure" as const, exitCode: null };
+    const result = manualCompletionResult(completion);
     const completed = freezeSetupAttempt({
       ...current,
       ...result,
@@ -1500,7 +1819,14 @@ export class WorkspaceEnvironmentService {
       cleanupPending: completion.kind === "containment_failure",
     });
     this.latestSetupAttempts.set(completed.threadId, completed);
-    if (completion.kind === "containment_failure" && active) {
+    this.finalizeRunningSetupAttempt(active, completed);
+  }
+
+  private finalizeRunningSetupAttempt(
+    active: ActiveSetupResource | undefined,
+    completed: WorkspaceEnvironmentSetupAttempt,
+  ): void {
+    if (completed.cleanupPending && active) {
       active.attempt = completed;
       return;
     }
@@ -1676,6 +2002,26 @@ function snapshotForPreparation(
     checkoutPath: snapshot.checkoutPath,
     terminal: snapshot.terminal
       ? { executable: snapshot.terminal.executable, arguments: [...snapshot.terminal.arguments] }
+      : null,
+    approval,
+  };
+}
+
+function snapshotForPreparedCommand(
+  platform: WorkspaceEnvironmentPlatform,
+  script: string,
+  command: PreparedTerminalCommand,
+  approval: WorkspaceEnvironmentCommandApproval | null = null,
+): WorkspaceEnvironmentSetupLaunchSnapshot {
+  return {
+    platform,
+    script,
+    checkoutPath: command.snapshot.checkoutPath,
+    terminal: command.snapshot.terminal
+      ? {
+        executable: command.snapshot.terminal.executable,
+        arguments: [...command.snapshot.terminal.arguments],
+      }
       : null,
     approval,
   };

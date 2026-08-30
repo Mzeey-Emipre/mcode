@@ -650,6 +650,209 @@ function staleCursorResult(message: string): PullRequestGetResult | PullRequestT
   };
 }
 
+function cancelledResult(): PullRequestGetResult {
+  return { ok: false, error: { code: "cancelled", message: "The pull request request was cancelled." } };
+}
+
+function checksNextCursor(
+  remote: Awaited<ReturnType<PullRequestRemoteClient["listChecks"]>>,
+  boundedData: PullRequestBoundedDataMarker | null,
+  fingerprint: string,
+  version: string,
+): string | null {
+  if (!remote.hasNextPage || boundedData) return null;
+  if (!remote.endCursor) {
+    throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned an invalid pull request checks cursor.");
+  }
+  return encodeChecksCursor(fingerprint, version, remote.endCursor);
+}
+
+function assertGithubCommentsCursor(
+  hasNextPage: boolean,
+  cursors: PullRequestRemoteCommentCursorState,
+): void {
+  if (hasNextPage && !Object.values(cursors).some((cursor) => typeof cursor === "string")) {
+    throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned an invalid pull request comments cursor.");
+  }
+}
+
+function cancelledTimelineResult(): PullRequestTimelineResult {
+  return { ok: false, error: { code: "cancelled", message: "The pull request request was cancelled." } };
+}
+
+function timelineCursorVersionChanged(
+  decoded: Exclude<ReturnType<typeof decodeTimelineCursor>, undefined>,
+  lane: PullRequestTimelineRequest["lane"],
+  version: string,
+  headVersion: string,
+): boolean {
+  if (!decoded) return false;
+  return decoded.snapshotVersion !== (lane === "newer" ? headVersion : version);
+}
+
+function timelinePageCursors(
+  request: PullRequestTimelineRequest,
+  remote: Awaited<ReturnType<PullRequestRemoteClient["listTimeline"]>>,
+  boundedData: PullRequestBoundedDataMarker | null,
+  version: string,
+  headVersion: string,
+): { older: string | null; newer: string | null; hasMoreOlder: boolean; hasMoreNewer: boolean } {
+  const wasTruncated = boundedData?.reason === "byte_limit";
+  const older = githubOlderTimelineCursor(request, remote, wasTruncated, version);
+  const newer = githubNewerTimelineCursor(request, remote, wasTruncated, headVersion);
+  assertGithubTimelineCursors(request, remote, wasTruncated, older, newer);
+  return {
+    older,
+    newer,
+    hasMoreOlder: !wasTruncated && request.lane !== "newer" && remote.hasPreviousPage,
+    hasMoreNewer: !wasTruncated && request.lane !== "older" && remote.hasNextPage,
+  };
+}
+
+function githubOlderTimelineCursor(
+  request: PullRequestTimelineRequest,
+  remote: Awaited<ReturnType<PullRequestRemoteClient["listTimeline"]>>,
+  wasTruncated: boolean,
+  version: string,
+): string | null {
+  if (wasTruncated || request.lane === "newer" || !remote.startCursor) return null;
+  return encodeTimelineCursor(timelineFingerprint(request), version, "older", remote.startCursor);
+}
+
+function githubNewerTimelineCursor(
+  request: PullRequestTimelineRequest,
+  remote: Awaited<ReturnType<PullRequestRemoteClient["listTimeline"]>>,
+  wasTruncated: boolean,
+  headVersion: string,
+): string | null {
+  if (wasTruncated || request.lane === "older" || !remote.endCursor) return null;
+  return encodeTimelineCursor(timelineFingerprint(request), headVersion, "newer", remote.endCursor);
+}
+
+function assertGithubTimelineCursors(
+  request: PullRequestTimelineRequest,
+  remote: Awaited<ReturnType<PullRequestRemoteClient["listTimeline"]>>,
+  wasTruncated: boolean,
+  older: string | null,
+  newer: string | null,
+): void {
+  if (wasTruncated) return;
+  if (request.lane !== "newer" && remote.hasPreviousPage && !older) {
+    throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned an invalid pull request Timeline cursor.");
+  }
+  if (request.lane !== "older" && remote.hasNextPage && !newer) {
+    throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned an invalid pull request Timeline cursor.");
+  }
+}
+
+interface FileScanState {
+  items: PullRequestFile[];
+  page: number;
+  offset: number;
+  nextState: { page: number; offset: number } | null;
+  boundedData: PullRequestBoundedDataMarker | null;
+  scannedPages: number;
+}
+
+function staleFilesCursorResult(): PullRequestFilesResult {
+  return {
+    ok: false,
+    error: { code: "stale_cursor", message: "The changed-files cursor does not match this comparison snapshot." },
+  };
+}
+
+function appendMatchingFiles(
+  state: FileScanState,
+  remote: Awaited<ReturnType<PullRequestRemoteClient["listFiles"]>>,
+  request: PullRequestFilesRequest,
+): boolean {
+  const pageStart = (state.page - 1) * GITHUB_FILES_PER_PAGE;
+  const candidates = remote.items
+    .filter((file) => file.globalPosition >= pageStart + state.offset)
+    .sort((left, right) => left.globalPosition - right.globalPosition);
+  for (const remoteFile of candidates) {
+    const file = remoteFileToContract(remoteFile);
+    if (!fileMatchesRequest(file, request)) continue;
+    state.items.push(file);
+    if (state.items.length < request.limit) continue;
+    state.nextState = nextFilesScanState(remote, remoteFile.globalPosition, pageStart, state.page);
+    if (remote.providerLimitReached) state.boundedData = { reason: "provider_limit" };
+    return true;
+  }
+  return false;
+}
+
+function nextFilesScanState(
+  remote: Awaited<ReturnType<PullRequestRemoteClient["listFiles"]>>,
+  globalPosition: number,
+  pageStart: number,
+  page: number,
+): { page: number; offset: number } | null {
+  const nextOffset = globalPosition - pageStart + 1;
+  if (remote.items.some((file) => file.globalPosition > globalPosition) && nextOffset < GITHUB_FILES_PER_PAGE) {
+    return { page, offset: nextOffset };
+  }
+  return remote.hasNextPage && page < GITHUB_FILES_MAX_PAGES ? { page: page + 1, offset: 0 } : null;
+}
+
+type MutableCacheRequest = PullRequestGetRequest | PullRequestTimelineRequest | PullRequestFilesRequest;
+
+function mutableResourceLane(request: MutableCacheRequest): string {
+  if ("resource" in request) return request.resource;
+  return "lane" in request ? request.lane : "files";
+}
+
+function mutableRequestLimit(request: MutableCacheRequest): number | null {
+  return "limit" in request ? request.limit : null;
+}
+
+function mutableRequestCursor(request: MutableCacheRequest): string {
+  return "cursor" in request ? request.cursor ?? "" : "";
+}
+
+function mutableRequestBaseOid(request: MutableCacheRequest): string | null {
+  return "baseOid" in request ? request.baseOid : null;
+}
+
+function mutableRequestHeadOid(request: MutableCacheRequest): string | null {
+  return "headOid" in request ? request.headOid : null;
+}
+
+function mutableRequestSearch(request: MutableCacheRequest): string {
+  return "search" in request ? request.search ?? "" : "";
+}
+
+function mutableRequestChangeTypes(request: MutableCacheRequest): string[] {
+  return "changeTypes" in request ? [...request.changeTypes].sort() : [];
+}
+
+function identitySnapshotChanged(
+  previous: IdentitySnapshot | undefined,
+  headVersion: string,
+  baseVersion: string | undefined,
+): boolean {
+  if (!previous || previous.headVersion === headVersion) {
+    return baseVersion !== undefined
+      && previous?.baseVersion !== undefined
+      && previous.baseVersion !== baseVersion;
+  }
+  return true;
+}
+
+function nextIdentitySnapshot(
+  previous: IdentitySnapshot | undefined,
+  headVersion: string,
+  baseVersion: string | undefined,
+  now: number,
+): IdentitySnapshot {
+  const retainedBaseVersion = baseVersion ?? previous?.baseVersion;
+  return {
+    headVersion,
+    ...(retainedBaseVersion === undefined ? {} : { baseVersion: retainedBaseVersion }),
+    staleAtMs: now + CACHE_TTL_MS,
+  };
+}
+
 function safeError(error: unknown, signal: AbortSignal): PullRequestError {
   if (signal.aborted) {
     return { code: "cancelled", message: "The pull request request was cancelled." };
@@ -883,167 +1086,116 @@ export class PullRequestService {
   ): Promise<PullRequestGetResult> {
     return this.runOperation(connection, request.operationId, async (signal) => {
       try {
-        const viewer = await this.getViewer(signal);
-        const fingerprint = detailFingerprint(request);
-        const decoded = request.resource === "detail"
-          ? null
-          : decodeDetailCursor(request);
-        if (decoded === undefined) {
-          return staleCursorResult(
-            "The pull request cursor does not match this detail query.",
-          ) as PullRequestGetResult;
-        }
-        const cacheKey = this.mutableCacheKey(viewer, request);
-        const cached = this.readCachedMutable<PullRequestGetResult & { ok: true }>(cacheKey);
-        if (cached) return cached;
-
-        if (request.resource === "detail") {
-          const remote = await this.client.getDetail({
-            viewer,
-            identity: request.identity,
-            signal,
-          });
-          if (signal.aborted) {
-            return {
-              ok: false,
-              error: { code: "cancelled", message: "The pull request request was cancelled." },
-            };
-          }
-          const fetchedAtMs = this.now();
-          const version = snapshotVersion(remote.snapshotMarker);
-          this.recordIdentitySnapshot(request.identity, version);
-          const result: PullRequestGetResult & { ok: true } = {
-            ok: true,
-            resource: "detail",
-            item: remote.item,
-            snapshotVersion: version,
-            fetchedAt: new Date(fetchedAtMs).toISOString(),
-            staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
-            boundedData: remote.boundedData,
-          };
-          this.writeCachedMutable(
-            cacheKey,
-            pullRequestIdentityKey(request.identity),
-            result,
-            fetchedAtMs + CACHE_TTL_MS,
-          );
-          return result;
-        }
-
-        if (request.resource === "checks") {
-          const providerCursor = decoded?.state.resource === "checks"
-            ? decoded.state.cursor
-            : undefined;
-          const remote = await this.client.listChecks({
-            viewer,
-            identity: request.identity,
-            limit: request.limit,
-            ...(providerCursor ? { cursor: providerCursor } : {}),
-            signal,
-          });
-          if (signal.aborted) {
-            return {
-              ok: false,
-              error: { code: "cancelled", message: "The pull request request was cancelled." },
-            };
-          }
-          const fetchedAtMs = this.now();
-          const version = snapshotVersion(remote.snapshotMarker);
-          if (decoded && decoded.snapshotVersion !== version) {
-            return staleCursorResult(
-              "The pull request checks changed while this page was loading.",
-            ) as PullRequestGetResult;
-          }
-          this.recordIdentitySnapshot(request.identity, version);
-          const bounded = boundItemsByBytes(remote.items);
-          const nextCursor = remote.hasNextPage && !bounded.boundedData
-            ? remote.endCursor
-              ? encodeChecksCursor(fingerprint, version, remote.endCursor)
-              : (() => {
-                  throw new GithubPullRequestClientError(
-                    "remote_unavailable",
-                    "GitHub returned an invalid pull request checks cursor.",
-                  );
-                })()
-            : null;
-          const result: PullRequestGetResult & { ok: true } = {
-            ok: true,
-            resource: "checks",
-            items: bounded.items,
-            nextCursor,
-            snapshotVersion: version,
-            fetchedAt: new Date(fetchedAtMs).toISOString(),
-            staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
-            boundedData: strongerBoundedData(remote.boundedData, bounded.boundedData),
-          };
-          this.writeCachedMutable(
-            cacheKey,
-            pullRequestIdentityKey(request.identity),
-            result,
-            fetchedAtMs + CACHE_TTL_MS,
-          );
-          return result;
-        }
-
-        const providerCursors = decoded?.state.resource === "comments"
-          ? decoded.state.cursors
-          : {};
-        const remote = await this.client.listComments({
-          viewer,
-          identity: request.identity,
-          limit: request.limit,
-          cursors: providerCursors,
-          signal,
-        });
-        if (signal.aborted) {
-          return {
-            ok: false,
-            error: { code: "cancelled", message: "The pull request request was cancelled." },
-          };
-        }
-        const fetchedAtMs = this.now();
-        const version = snapshotVersion(remote.snapshotMarker);
-        const headVersion = snapshotVersion(remote.headMarker);
-        if (decoded && decoded.snapshotVersion !== version) {
-          return staleCursorResult(
-            "The pull request comments changed while this page was loading.",
-          ) as PullRequestGetResult;
-        }
-        this.recordIdentitySnapshot(request.identity, headVersion);
-        const bounded = boundItemsByBytes(remote.items);
-        const hasProviderCursor = Object.values(remote.cursors).some(
-          (cursor) => typeof cursor === "string",
-        );
-        if (remote.hasNextPage && !hasProviderCursor) {
-          throw new GithubPullRequestClientError(
-            "remote_unavailable",
-            "GitHub returned an invalid pull request comments cursor.",
-          );
-        }
-        const result: PullRequestGetResult & { ok: true } = {
-          ok: true,
-          resource: "comments",
-          items: bounded.items,
-          nextCursor: remote.hasNextPage
-            && !bounded.boundedData
-            ? encodeCommentsCursor(fingerprint, version, remote.cursors)
-            : null,
-          snapshotVersion: version,
-          fetchedAt: new Date(fetchedAtMs).toISOString(),
-          staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
-          boundedData: strongerBoundedData(remote.boundedData, bounded.boundedData),
-        };
-        this.writeCachedMutable(
-          cacheKey,
-          pullRequestIdentityKey(request.identity),
-          result,
-          fetchedAtMs + CACHE_TTL_MS,
-        );
-        return result;
+        return await this.getPullRequestResource(request, signal);
       } catch (error) {
         return { ok: false, error: safeError(error, signal) };
       }
     });
+  }
+
+  private async getPullRequestResource(
+    request: PullRequestGetRequest,
+    signal: AbortSignal,
+  ): Promise<PullRequestGetResult> {
+    const viewer = await this.getViewer(signal);
+    const decoded = request.resource === "detail" ? null : decodeDetailCursor(request);
+    if (decoded === undefined) return staleCursorResult("The pull request cursor does not match this detail query.") as PullRequestGetResult;
+    const cacheKey = this.mutableCacheKey(viewer, request);
+    const cached = this.readCachedMutable<PullRequestGetResult & { ok: true }>(cacheKey);
+    if (cached) return cached;
+    return this.getUncachedPullRequestResource(viewer, request, cacheKey, decoded, signal);
+  }
+
+  private getUncachedPullRequestResource(
+    viewer: PullRequestViewerContext,
+    request: PullRequestGetRequest,
+    cacheKey: string,
+    decoded: Exclude<ReturnType<typeof decodeDetailCursor>, undefined>,
+    signal: AbortSignal,
+  ): Promise<PullRequestGetResult> {
+    if (request.resource === "detail") return this.getDetailResource(viewer, request, cacheKey, signal);
+    const fingerprint = detailFingerprint(request);
+    if (request.resource === "checks") {
+      const cursor = decoded?.state.resource === "checks" ? decoded.state.cursor : undefined;
+      return this.getChecksResource(viewer, request, cacheKey, fingerprint, decoded?.snapshotVersion, cursor, signal);
+    }
+    const cursors = decoded?.state.resource === "comments" ? decoded.state.cursors : {};
+    return this.getCommentsResource(viewer, request, cacheKey, fingerprint, decoded?.snapshotVersion, cursors, signal);
+  }
+
+  private async getDetailResource(
+    viewer: PullRequestViewerContext,
+    request: Extract<PullRequestGetRequest, { resource: "detail" }>,
+    cacheKey: string,
+    signal: AbortSignal,
+  ): Promise<PullRequestGetResult> {
+    const remote = await this.client.getDetail({ viewer, identity: request.identity, signal });
+    if (signal.aborted) return cancelledResult();
+    const fetchedAtMs = this.now();
+    const version = snapshotVersion(remote.snapshotMarker);
+    this.recordIdentitySnapshot(request.identity, version);
+    const result: PullRequestGetResult & { ok: true } = {
+      ok: true, resource: "detail", item: remote.item, snapshotVersion: version,
+      fetchedAt: new Date(fetchedAtMs).toISOString(), staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
+      boundedData: remote.boundedData,
+    };
+    this.writeCachedMutable(cacheKey, pullRequestIdentityKey(request.identity), result, fetchedAtMs + CACHE_TTL_MS);
+    return result;
+  }
+
+  private async getChecksResource(
+    viewer: PullRequestViewerContext,
+    request: Extract<PullRequestGetRequest, { resource: "checks" }>,
+    cacheKey: string,
+    fingerprint: string,
+    expectedVersion: string | undefined,
+    cursor: string | undefined,
+    signal: AbortSignal,
+  ): Promise<PullRequestGetResult> {
+    const remote = await this.client.listChecks({ viewer, identity: request.identity, limit: request.limit,
+      ...(cursor ? { cursor } : {}), signal });
+    if (signal.aborted) return cancelledResult();
+    const fetchedAtMs = this.now();
+    const version = snapshotVersion(remote.snapshotMarker);
+    if (expectedVersion && expectedVersion !== version) return staleCursorResult("The pull request checks changed while this page was loading.") as PullRequestGetResult;
+    this.recordIdentitySnapshot(request.identity, version);
+    const bounded = boundItemsByBytes(remote.items);
+    const result: PullRequestGetResult & { ok: true } = {
+      ok: true, resource: "checks", items: bounded.items,
+      nextCursor: checksNextCursor(remote, bounded.boundedData, fingerprint, version), snapshotVersion: version,
+      fetchedAt: new Date(fetchedAtMs).toISOString(), staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
+      boundedData: strongerBoundedData(remote.boundedData, bounded.boundedData),
+    };
+    this.writeCachedMutable(cacheKey, pullRequestIdentityKey(request.identity), result, fetchedAtMs + CACHE_TTL_MS);
+    return result;
+  }
+
+  private async getCommentsResource(
+    viewer: PullRequestViewerContext,
+    request: Extract<PullRequestGetRequest, { resource: "comments" }>,
+    cacheKey: string,
+    fingerprint: string,
+    expectedVersion: string | undefined,
+    cursors: PullRequestRemoteCommentCursorState,
+    signal: AbortSignal,
+  ): Promise<PullRequestGetResult> {
+    const remote = await this.client.listComments({ viewer, identity: request.identity, limit: request.limit, cursors, signal });
+    if (signal.aborted) return cancelledResult();
+    const fetchedAtMs = this.now();
+    const version = snapshotVersion(remote.snapshotMarker);
+    if (expectedVersion && expectedVersion !== version) return staleCursorResult("The pull request comments changed while this page was loading.") as PullRequestGetResult;
+    this.recordIdentitySnapshot(request.identity, snapshotVersion(remote.headMarker));
+    const bounded = boundItemsByBytes(remote.items);
+    assertGithubCommentsCursor(remote.hasNextPage, remote.cursors);
+    const result: PullRequestGetResult & { ok: true } = {
+      ok: true, resource: "comments", items: bounded.items,
+      nextCursor: remote.hasNextPage && !bounded.boundedData ? encodeCommentsCursor(fingerprint, version, remote.cursors) : null,
+      snapshotVersion: version, fetchedAt: new Date(fetchedAtMs).toISOString(),
+      staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
+      boundedData: strongerBoundedData(remote.boundedData, bounded.boundedData),
+    };
+    this.writeCachedMutable(cacheKey, pullRequestIdentityKey(request.identity), result, fetchedAtMs + CACHE_TTL_MS);
+    return result;
   }
 
   /** Load one cached initial, older, or newer pull request Timeline page. */
@@ -1059,89 +1211,42 @@ export class PullRequestService {
         ) as PullRequestTimelineResult;
       }
       try {
-        const viewer = await this.getViewer(signal);
-        const cacheKey = this.mutableCacheKey(viewer, request);
-        const cached = this.readCachedMutable<PullRequestTimelineResult & { ok: true }>(
-          cacheKey,
-        );
-        if (cached) return cached;
-        const remote = await this.client.listTimeline({
-          viewer,
-          identity: request.identity,
-          lane: request.lane,
-          limit: request.limit,
-          ...(decoded ? { cursor: decoded.cursor } : {}),
-          signal,
-        });
-        if (signal.aborted) {
-          return {
-            ok: false,
-            error: { code: "cancelled", message: "The pull request request was cancelled." },
-          };
-        }
-        const version = snapshotVersion(remote.snapshotMarker);
-        const headVersion = snapshotVersion(remote.headMarker);
-        const expectedCursorVersion = request.lane === "newer" ? headVersion : version;
-        if (decoded && decoded.snapshotVersion !== expectedCursorVersion) {
-          return staleCursorResult(
-            "The pull request Timeline changed while this page was loading.",
-          ) as PullRequestTimelineResult;
-        }
-        this.recordIdentitySnapshot(request.identity, headVersion);
-        const fingerprint = timelineFingerprint(request);
-        const bounded = boundItemsByBytes(remote.items);
-        const pageWasByteTruncated = bounded.boundedData?.reason === "byte_limit";
-        const olderCursor = pageWasByteTruncated
-          || request.lane === "newer"
-          || !remote.startCursor
-          ? null
-          : encodeTimelineCursor(fingerprint, version, "older", remote.startCursor);
-        const newerCursor = pageWasByteTruncated
-          || request.lane === "older"
-          || !remote.endCursor
-          ? null
-          : encodeTimelineCursor(fingerprint, headVersion, "newer", remote.endCursor);
-        if (
-          !pageWasByteTruncated
-          && (
-            (request.lane !== "newer" && remote.hasPreviousPage && !olderCursor)
-            || (request.lane !== "older" && remote.hasNextPage && !newerCursor)
-          )
-        ) {
-          throw new GithubPullRequestClientError(
-            "remote_unavailable",
-            "GitHub returned an invalid pull request Timeline cursor.",
-          );
-        }
-        const fetchedAtMs = this.now();
-        const result: PullRequestTimelineResult & { ok: true } = {
-          ok: true,
-          lane: request.lane,
-          items: bounded.items,
-          olderCursor,
-          newerCursor,
-          hasMoreOlder: pageWasByteTruncated || request.lane === "newer"
-            ? false
-            : remote.hasPreviousPage,
-          hasMoreNewer: pageWasByteTruncated || request.lane === "older"
-            ? false
-            : remote.hasNextPage,
-          snapshotVersion: version,
-          fetchedAt: new Date(fetchedAtMs).toISOString(),
-          staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
-          boundedData: strongerBoundedData(remote.boundedData, bounded.boundedData),
-        };
-        this.writeCachedMutable(
-          cacheKey,
-          pullRequestIdentityKey(request.identity),
-          result,
-          fetchedAtMs + CACHE_TTL_MS,
-        );
-        return result;
+        return await this.getTimelineResource(request, decoded, signal);
       } catch (error) {
         return { ok: false, error: safeError(error, signal) };
       }
     });
+  }
+
+  private async getTimelineResource(
+    request: PullRequestTimelineRequest,
+    decoded: Exclude<ReturnType<typeof decodeTimelineCursor>, undefined>,
+    signal: AbortSignal,
+  ): Promise<PullRequestTimelineResult> {
+    const viewer = await this.getViewer(signal);
+    const cacheKey = this.mutableCacheKey(viewer, request);
+    const cached = this.readCachedMutable<PullRequestTimelineResult & { ok: true }>(cacheKey);
+    if (cached) return cached;
+    const remote = await this.client.listTimeline({ viewer, identity: request.identity, lane: request.lane,
+      limit: request.limit, ...(decoded ? { cursor: decoded.cursor } : {}), signal });
+    if (signal.aborted) return cancelledTimelineResult();
+    const version = snapshotVersion(remote.snapshotMarker);
+    const headVersion = snapshotVersion(remote.headMarker);
+    if (timelineCursorVersionChanged(decoded, request.lane, version, headVersion)) {
+      return staleCursorResult("The pull request Timeline changed while this page was loading.") as PullRequestTimelineResult;
+    }
+    this.recordIdentitySnapshot(request.identity, headVersion);
+    const bounded = boundItemsByBytes(remote.items);
+    const cursors = timelinePageCursors(request, remote, bounded.boundedData, version, headVersion);
+    const fetchedAtMs = this.now();
+    const result: PullRequestTimelineResult & { ok: true } = {
+      ok: true, lane: request.lane, items: bounded.items, olderCursor: cursors.older, newerCursor: cursors.newer,
+      hasMoreOlder: cursors.hasMoreOlder, hasMoreNewer: cursors.hasMoreNewer, snapshotVersion: version,
+      fetchedAt: new Date(fetchedAtMs).toISOString(), staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
+      boundedData: strongerBoundedData(remote.boundedData, bounded.boundedData),
+    };
+    this.writeCachedMutable(cacheKey, pullRequestIdentityKey(request.identity), result, fetchedAtMs + CACHE_TTL_MS);
+    return result;
   }
 
   /** Load one bounded, filtered page of snapshot-qualified changed files. */
@@ -1151,122 +1256,78 @@ export class PullRequestService {
   ): Promise<PullRequestFilesResult> {
     return this.runOperation(connection, request.operationId, async (signal) => {
       try {
-        const decoded = decodeFilesCursor(request);
-        if (!decoded) {
-          return {
-            ok: false,
-            error: {
-              code: "stale_cursor",
-              message: "The changed-files cursor does not match this comparison snapshot.",
-            },
-          };
-        }
-        const viewer = await this.getViewer(signal);
-        const cacheKey = this.mutableCacheKey(viewer, request);
-        const cached = this.readCachedMutable<PullRequestFilesResult & { ok: true }>(cacheKey);
-        if (cached) return cached;
-
-        const items: PullRequestFile[] = [];
-        let page = decoded.page;
-        let offset = decoded.offset;
-        let nextState: { page: number; offset: number } | null = null;
-        let boundedData: PullRequestBoundedDataMarker | null = null;
-        let scannedPages = 0;
-
-        scan: while (scannedPages < FILE_SCAN_MAX_PAGES) {
-          nextState = null;
-          const remote = await this.client.listFiles({
-            viewer,
-            identity: request.identity,
-            page,
-            signal,
-          });
-          if (signal.aborted) {
-            return {
-              ok: false,
-              error: { code: "cancelled", message: "The pull request request was cancelled." },
-            };
-          }
-          if (remote.baseOid !== request.baseOid || remote.headOid !== request.headOid) {
-            this.recordIdentitySnapshot(
-              request.identity,
-              snapshotVersion(remote.headOid),
-              snapshotVersion(remote.baseOid),
-            );
-            return {
-              ok: false,
-              error: {
-                code: "conflict",
-                message: "The pull request comparison changed while files were loading.",
-              },
-            };
-          }
-          this.recordIdentitySnapshot(
-            request.identity,
-            snapshotVersion(remote.headOid),
-            snapshotVersion(remote.baseOid),
-          );
-          const pageStart = (page - 1) * GITHUB_FILES_PER_PAGE;
-          const candidates = remote.items
-            .filter((file) => file.globalPosition >= pageStart + offset)
-            .sort((left, right) => left.globalPosition - right.globalPosition);
-          for (const remoteFile of candidates) {
-            const file = remoteFileToContract(remoteFile);
-            if (!fileMatchesRequest(file, request)) continue;
-            items.push(file);
-            if (items.length >= request.limit) {
-              const nextOffset = remoteFile.globalPosition - pageStart + 1;
-              const hasLaterFile = remote.items.some(
-                (candidate) => candidate.globalPosition > remoteFile.globalPosition,
-              );
-              if (hasLaterFile && nextOffset < GITHUB_FILES_PER_PAGE) {
-                nextState = { page, offset: nextOffset };
-              } else if (remote.hasNextPage && page < GITHUB_FILES_MAX_PAGES) {
-                nextState = { page: page + 1, offset: 0 };
-              }
-              if (remote.providerLimitReached) boundedData = { reason: "provider_limit" };
-              break scan;
-            }
-          }
-          scannedPages += 1;
-          if (remote.providerLimitReached) {
-            boundedData = { reason: "provider_limit" };
-            break;
-          }
-          if (!remote.hasNextPage || page >= GITHUB_FILES_MAX_PAGES) break;
-          page += 1;
-          offset = 0;
-          nextState = { page, offset };
-        }
-        if (nextState && scannedPages >= FILE_SCAN_MAX_PAGES && items.length < request.limit) {
-          boundedData = { reason: "catch_up_limit" };
-        }
-
-        const fetchedAtMs = this.now();
-        const result: PullRequestFilesResult & { ok: true } = {
-          ok: true,
-          items,
-          nextCursor: nextState
-            ? encodeFilesCursor(request, nextState.page, nextState.offset)
-            : null,
-          baseOid: request.baseOid,
-          headOid: request.headOid,
-          snapshotVersion: snapshotVersion(`${request.baseOid}\0${request.headOid}`),
-          fetchedAt: new Date(fetchedAtMs).toISOString(),
-          staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
-          boundedData,
-        };
-        this.writeCachedMutable(
-          cacheKey,
-          pullRequestIdentityKey(request.identity),
-          result,
-          fetchedAtMs + CACHE_TTL_MS,
-        );
-        return result;
+        return await this.getFilesResource(request, signal);
       } catch (error) {
         return { ok: false, error: safeError(error, signal) };
       }
     });
+  }
+
+  private async getFilesResource(
+    request: PullRequestFilesRequest,
+    signal: AbortSignal,
+  ): Promise<PullRequestFilesResult> {
+    const decoded = decodeFilesCursor(request);
+    if (!decoded) return staleFilesCursorResult();
+    const viewer = await this.getViewer(signal);
+    const cacheKey = this.mutableCacheKey(viewer, request);
+    const cached = this.readCachedMutable<PullRequestFilesResult & { ok: true }>(cacheKey);
+    if (cached) return cached;
+    const scan = await this.scanPullRequestFiles(viewer, request, decoded, signal);
+    const fetchedAtMs = this.now();
+    const result: PullRequestFilesResult & { ok: true } = {
+      ok: true,
+      items: scan.items,
+      nextCursor: scan.nextState ? encodeFilesCursor(request, scan.nextState.page, scan.nextState.offset) : null,
+      baseOid: request.baseOid,
+      headOid: request.headOid,
+      snapshotVersion: snapshotVersion(`${request.baseOid}\0${request.headOid}`),
+      fetchedAt: new Date(fetchedAtMs).toISOString(),
+      staleAt: new Date(fetchedAtMs + CACHE_TTL_MS).toISOString(),
+      boundedData: scan.boundedData,
+    };
+    this.writeCachedMutable(cacheKey, pullRequestIdentityKey(request.identity), result, fetchedAtMs + CACHE_TTL_MS);
+    return result;
+  }
+
+  private async scanPullRequestFiles(
+    viewer: PullRequestViewerContext,
+    request: PullRequestFilesRequest,
+    decoded: Exclude<ReturnType<typeof decodeFilesCursor>, null>,
+    signal: AbortSignal,
+  ): Promise<FileScanState> {
+    const state: FileScanState = { items: [], page: decoded.page, offset: decoded.offset, nextState: null, boundedData: null, scannedPages: 0 };
+    while (state.scannedPages < FILE_SCAN_MAX_PAGES) {
+      state.nextState = null;
+      const remote = await this.client.listFiles({ viewer, identity: request.identity, page: state.page, signal });
+      this.assertFileScanSnapshot(request, remote, signal);
+      if (appendMatchingFiles(state, remote, request)) break;
+      state.scannedPages += 1;
+      if (remote.providerLimitReached) {
+        state.boundedData = { reason: "provider_limit" };
+        break;
+      }
+      if (!remote.hasNextPage || state.page >= GITHUB_FILES_MAX_PAGES) break;
+      state.page += 1;
+      state.offset = 0;
+      state.nextState = { page: state.page, offset: state.offset };
+    }
+    if (state.nextState && state.scannedPages >= FILE_SCAN_MAX_PAGES && state.items.length < request.limit) {
+      state.boundedData = { reason: "catch_up_limit" };
+    }
+    return state;
+  }
+
+  private assertFileScanSnapshot(
+    request: PullRequestFilesRequest,
+    remote: Awaited<ReturnType<PullRequestRemoteClient["listFiles"]>>,
+    signal: AbortSignal,
+  ): void {
+    if (signal.aborted) throw new GithubPullRequestClientError("cancelled", "The pull request request was cancelled.");
+    this.recordIdentitySnapshot(request.identity, snapshotVersion(remote.headOid), snapshotVersion(remote.baseOid));
+    if (remote.baseOid !== request.baseOid || remote.headOid !== request.headOid) {
+      throw new GithubPullRequestClientError("conflict", "The pull request comparison changed while files were loading.");
+    }
   }
 
   /** Load one immutable, snapshot-qualified changed-file patch. */
@@ -1325,40 +1386,7 @@ export class PullRequestService {
           snapshotVersion(remote.baseOid),
         );
         const fetchedAtMs = this.now();
-        const common = {
-          ok: true as const,
-          locator: request.locator,
-          path: remote.file.path,
-          previousPath: remote.file.previousPath,
-          changeType: remote.file.changeType,
-          blobOid: remote.file.blobOid,
-          baseOid: remote.baseOid,
-          headOid: remote.headOid,
-          fetchedAt: new Date(fetchedAtMs).toISOString(),
-          staleAt: new Date(fetchedAtMs + PATCH_CACHE_TTL_MS).toISOString(),
-        };
-        let result: PullRequestPatchResult & { ok: true };
-        if (remote.status === "available" || remote.status === "generated") {
-          if (remote.patch === null || remote.parsedLineCount === null) {
-            throw new GithubPullRequestClientError(
-              "remote_unavailable",
-              "GitHub returned an incomplete pull request patch.",
-            );
-          }
-          result = {
-            ...common,
-            status: remote.status,
-            patch: remote.patch,
-            parsedLineCount: remote.parsedLineCount,
-          };
-        } else {
-          result = {
-            ...common,
-            status: remote.status,
-            patch: null,
-            parsedLineCount: null,
-          };
-        }
+        const result = this.createPatchResult(request, remote, fetchedAtMs);
         this.writeCachedPatch(
           cacheKey,
           pullRequestIdentityKey(request.identity),
@@ -1370,6 +1398,32 @@ export class PullRequestService {
         return { ok: false, error: safeError(error, signal) };
       }
     });
+  }
+
+  private createPatchResult(
+    request: PullRequestPatchRequest,
+    remote: Extract<PullRequestRemotePatchResult, { kind: "patch" }>,
+    fetchedAtMs: number,
+  ): PullRequestPatchResult & { ok: true } {
+    const common = {
+      ok: true as const,
+      locator: request.locator,
+      path: remote.file.path,
+      previousPath: remote.file.previousPath,
+      changeType: remote.file.changeType,
+      blobOid: remote.file.blobOid,
+      baseOid: remote.baseOid,
+      headOid: remote.headOid,
+      fetchedAt: new Date(fetchedAtMs).toISOString(),
+      staleAt: new Date(fetchedAtMs + PATCH_CACHE_TTL_MS).toISOString(),
+    };
+    if (remote.status !== "available" && remote.status !== "generated") {
+      return { ...common, status: remote.status, patch: null, parsedLineCount: null };
+    }
+    if (remote.patch === null || remote.parsedLineCount === null) {
+      throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned an incomplete pull request patch.");
+    }
+    return { ...common, status: remote.status, patch: remote.patch, parsedLineCount: remote.parsedLineCount };
   }
 
   /** Cancel one active operation owned by the same WebSocket connection. */
@@ -1695,17 +1749,13 @@ export class PullRequestService {
     return JSON.stringify({
       viewer: viewer.actor.providerNodeId,
       identity: request.identity,
-      lane: "resource" in request
-        ? request.resource
-        : "lane" in request
-          ? request.lane
-          : "files",
-      limit: "limit" in request ? request.limit : null,
-      cursor: "cursor" in request ? request.cursor ?? "" : "",
-      baseOid: "baseOid" in request ? request.baseOid : null,
-      headOid: "headOid" in request ? request.headOid : null,
-      search: "search" in request ? request.search ?? "" : "",
-      changeTypes: "changeTypes" in request ? [...request.changeTypes].sort() : [],
+      lane: mutableResourceLane(request),
+      limit: mutableRequestLimit(request),
+      cursor: mutableRequestCursor(request),
+      baseOid: mutableRequestBaseOid(request),
+      headOid: mutableRequestHeadOid(request),
+      search: mutableRequestSearch(request),
+      changeTypes: mutableRequestChangeTypes(request),
     });
   }
 
@@ -1759,30 +1809,24 @@ export class PullRequestService {
   ): void {
     const key = pullRequestIdentityKey(identity);
     const now = this.now();
-    for (const [snapshotKey, snapshot] of this.identitySnapshots) {
-      if (now >= snapshot.staleAtMs) this.evictIdentitySnapshot(snapshotKey);
-    }
+    this.evictStaleIdentitySnapshots(now);
     const previous = this.identitySnapshots.get(key);
-    const snapshotChanged = previous && (
-      previous.headVersion !== headVersion
-      || (
-        baseVersion !== undefined
-        && previous.baseVersion !== undefined
-        && previous.baseVersion !== baseVersion
-      )
-    );
-    if (snapshotChanged) {
+    if (identitySnapshotChanged(previous, headVersion, baseVersion)) {
       this.invalidateMutableIdentity(key);
       this.invalidatePatchIdentity(key);
     }
     this.identitySnapshots.delete(key);
-    this.identitySnapshots.set(key, {
-      headVersion,
-      ...(baseVersion === undefined
-        ? previous?.baseVersion === undefined ? {} : { baseVersion: previous.baseVersion }
-        : { baseVersion }),
-      staleAtMs: now + CACHE_TTL_MS,
-    });
+    this.identitySnapshots.set(key, nextIdentitySnapshot(previous, headVersion, baseVersion, now));
+    this.enforceIdentitySnapshotLimit();
+  }
+
+  private evictStaleIdentitySnapshots(now: number): void {
+    for (const [key, snapshot] of this.identitySnapshots) {
+      if (now >= snapshot.staleAtMs) this.evictIdentitySnapshot(key);
+    }
+  }
+
+  private enforceIdentitySnapshotLimit(): void {
     while (this.identitySnapshots.size > this.identitySnapshotMaxEntries) {
       const oldestKey = this.identitySnapshots.keys().next().value;
       if (typeof oldestKey !== "string") break;

@@ -173,7 +173,7 @@ describe("BrowserAutomationBroker", () => {
   it("advertises bootstrap operations from a selected executor before a target exists", () => {
     const broker = new BrowserAutomationBroker(options());
     const hostSocket = socket("bootstrap-discovery");
-    broker.registerHost(hostSocket, {
+    void broker.registerHost(hostSocket, {
       ...registration("bootstrap-discovery", "workspace-a"),
       executorDescriptor: {
         ...registration("bootstrap-discovery", "workspace-a").executorDescriptor,
@@ -1049,7 +1049,7 @@ describe("BrowserAutomationBroker", () => {
       },
     }));
     const hostSocket = socket("bootstrap");
-    broker.registerHost(hostSocket, {
+    void broker.registerHost(hostSocket, {
       ...registration("bootstrap", "workspace-a"),
       capabilities: [{ operation: "open", available: true }],
     }, authorization("bootstrap"));
@@ -1812,10 +1812,11 @@ describe("BrowserAutomationBroker", () => {
       },
     }));
     const hostSocket = socket("pending-open");
-    broker.registerHost(hostSocket, {
+    const registeredHost = broker.registerHost(hostSocket, {
       ...registration("pending-open", "workspace-a"),
       capabilities: [{ operation: "open", available: true }],
-    }, authorization("pending-open")).generation;
+    }, authorization("pending-open"));
+    expect(registeredHost.generation).toBeGreaterThan(0);
     const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["open" as const] };
     const input = (requestId: string, sequence: number) => ({
       ...request(scope, sequence),

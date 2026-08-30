@@ -83,6 +83,15 @@ type InstanceCheckResult =
   | { ok: true }
   | { ok: false; code: "WRONG_INSTANCE"; expectedWorktree: string | null; presentedWorktree: string | null };
 
+type InstanceAttachmentExpectation = Pick<WsServerDeps, "singleInstance" | "authToken" | "instanceToken" | "worktreeIdentity">;
+
+interface WsMessageContext {
+  readonly ws: WebSocket;
+  readonly deps: WsServerDeps;
+  readonly resolveCurrentBrowserAutomationAuthorization: () => BrowserAutomationHostConnectionAuthorization | null;
+  pendingBinaryHeader: BinaryUploadHeader | null;
+}
+
 /** Query parameters used by browser clients to prove they target this dev instance. */
 export const INSTANCE_TOKEN_QUERY_PARAM = "instanceToken";
 export const WORKTREE_QUERY_PARAM = "worktree";
@@ -90,7 +99,7 @@ export const WORKTREE_QUERY_PARAM = "worktree";
 /** Validates the single-instance token and worktree identity from a WebSocket request. */
 export function validateInstanceAttachment(
   req: IncomingMessage,
-  expected: { singleInstance?: boolean; authToken: string; instanceToken?: string | null; worktreeIdentity?: string | null },
+  expected: InstanceAttachmentExpectation,
 ): InstanceCheckResult {
   if (!expected.singleInstance) return { ok: true };
 
@@ -99,20 +108,7 @@ export function validateInstanceAttachment(
   const presentedWorktree = parsedUrl.searchParams.get(WORKTREE_QUERY_PARAM);
   const presentedAuthToken = extractToken(req);
 
-  const matchesAuth =
-    typeof presentedAuthToken === "string" && safeTokenEqual(presentedAuthToken, expected.authToken);
-  const matchesInstance =
-    typeof expected.instanceToken === "string" &&
-    typeof presentedInstanceToken === "string" &&
-    safeTokenEqual(presentedInstanceToken, expected.instanceToken);
-  const matchesWorktree =
-    typeof expected.worktreeIdentity === "string" &&
-    typeof presentedWorktree === "string" &&
-    presentedWorktree === expected.worktreeIdentity;
-
-  if (matchesAuth && matchesInstance && matchesWorktree) {
-    return { ok: true };
-  }
+  if (matchesInstanceAttachment(presentedAuthToken, presentedInstanceToken, presentedWorktree, expected)) return { ok: true };
 
   return {
     ok: false,
@@ -120,6 +116,33 @@ export function validateInstanceAttachment(
     expectedWorktree: expected.worktreeIdentity ?? null,
     presentedWorktree,
   };
+}
+
+/** Checks every token and worktree value that identifies a single dev instance. */
+function matchesInstanceAttachment(
+  presentedAuthToken: string | null | undefined,
+  presentedInstanceToken: string | null,
+  presentedWorktree: string | null,
+  expected: InstanceAttachmentExpectation,
+): boolean {
+  return matchesAuthToken(presentedAuthToken, expected.authToken)
+    && matchesInstanceToken(presentedInstanceToken, expected.instanceToken)
+    && matchesWorktreeIdentity(presentedWorktree, expected.worktreeIdentity);
+}
+
+/** Checks the regular authenticated connection token. */
+function matchesAuthToken(presented: string | null | undefined, expected: string): boolean {
+  return typeof presented === "string" && safeTokenEqual(presented, expected);
+}
+
+/** Checks the per-instance attachment token. */
+function matchesInstanceToken(presented: string | null, expected: string | null | undefined): boolean {
+  return typeof presented === "string" && typeof expected === "string" && safeTokenEqual(presented, expected);
+}
+
+/** Checks the worktree identity that belongs to the instance token. */
+function matchesWorktreeIdentity(presented: string | null, expected: string | null | undefined): boolean {
+  return typeof presented === "string" && typeof expected === "string" && presented === expected;
 }
 
 /** Create and configure the HTTP + WebSocket server. */
@@ -130,123 +153,10 @@ export function createWsServer(deps: WsServerDeps): {
   let wss: WebSocketServer;
   const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
     const requestPath = new URL(req.url ?? "/", "http://localhost").pathname;
-    if (deps.reliabilityHarness?.enabled && requestPath === "/__mcode/reliability") {
-      void deps.reliabilityHarness.handleRequest(req, res, wss.clients).catch((error: unknown) => {
-        logger.error("Reliability harness request failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        if (!res.headersSent) res.writeHead(500);
-        res.end("Reliability harness failure");
-      });
-      return;
-    }
-    if (requestPath === "/mcp" && deps.browserAutomationMcpHandler) {
-      void deps.browserAutomationMcpHandler.handle(req, res).catch((error: unknown) => {
-        logger.error("Browser automation MCP request failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-        res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }));
-      });
-      return;
-    }
-    if (requestPath === EXTERNAL_THREAD_CONTROL_MCP_PATH && deps.externalThreadControlMcpRuntime) {
-      void deps.externalThreadControlMcpRuntime.handleRequest(req, res).catch((error: unknown) => {
-        logger.error("External thread-control MCP request failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        if (!res.headersSent) res.writeHead(500);
-        res.end();
-      });
-      return;
-    }
-    const token = extractToken(req);
-
-    if (req.method === "GET" && req.url?.startsWith("/health")) {
-      const body: Record<string, unknown> = {
-        status: "ok",
-        activeAgents: deps.agentService.runtimeAccess().activeCount(),
-      };
-      if (deps.browserAutomationBroker) {
-        body.browserAutomation = {
-          ...deps.browserAutomationBroker.status(),
-          reliability: deps.browserAutomationBroker.reliabilityStatus(),
-          nightlyEvidence: deps.browserAutomationBroker.nightlyEvidenceStatus(),
-        };
-      }
-      if (!deps.singleInstance) {
-        // Shared-server mode keeps the legacy localhost token recovery path.
-        body.authToken = deps.authToken;
-      }
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (!deps.singleInstance) {
-        headers["Set-Cookie"] = buildAuthCookie(deps.authToken);
-      }
-      res.writeHead(200, headers);
-      res.end(JSON.stringify(body));
-      return;
-    }
-
-    if (req.method === "POST" && req.url === "/shutdown") {
-      if (!token || !safeTokenEqual(token, deps.authToken)) {
-        res.writeHead(401);
-        res.end("Unauthorized");
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "shutting_down" }), () => deps.shutdown());
-      return;
-    }
-
-    if (req.method === "GET" && req.url?.startsWith("/attachments/")) {
-      const attachmentToken = extractToken(req);
-      if (!attachmentToken || !safeTokenEqual(attachmentToken, deps.authToken)) {
-        res.writeHead(401);
-        res.end("Unauthorized");
-        return;
-      }
-
-      const parsedUrl = new URL(req.url, "http://localhost");
-      const segments = parsedUrl.pathname.split("/").filter(Boolean);
-      if (segments.length !== 3 || segments[0] !== "attachments") {
-        res.writeHead(404);
-        res.end("Not found");
-        return;
-      }
-
-      const threadId = segments[1]!;
-      const filename = segments[2]!;
-      if (!ATTACHMENT_THREAD_SEGMENT.test(threadId) || !ATTACHMENT_FILE_SEGMENT.test(filename)) {
-        res.writeHead(400);
-        res.end("Invalid path");
-        return;
-      }
-
-      const filePath = join(getMcodeDir(), "attachments", threadId, filename);
-      if (!existsSync(filePath)) {
-        res.writeHead(404);
-        res.end("Not found");
-        return;
-      }
-
-      const ext = filename.split(".").pop() ?? "";
-      const stream = createReadStream(filePath);
-      stream.on("error", () => {
-        if (!res.headersSent) {
-          res.writeHead(404);
-        }
-        res.end();
-      });
-      res.writeHead(200, {
-        "Content-Type": ATTACHMENT_EXT_MIME[ext] ?? "application/octet-stream",
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "Content-Security-Policy": "default-src 'none'",
-      });
-      stream.pipe(res);
-      return;
-    }
+    if (handleSpecialHttpRequest(req, res, requestPath, deps, wss)) return;
+    if (handleHealthRequest(req, res, deps)) return;
+    if (handleShutdownRequest(req, res, deps)) return;
+    if (handleAttachmentRequest(req, res, deps)) return;
 
     res.writeHead(404);
     res.end("Not found");
@@ -325,117 +235,14 @@ export function createWsServer(deps: WsServerDeps): {
       }
     };
 
-    /** Pending binary upload header for this connection. */
-    let pendingBinaryHeader: BinaryUploadHeader | null = null;
+    const messageContext: WsMessageContext = {
+      ws,
+      deps,
+      resolveCurrentBrowserAutomationAuthorization,
+      pendingBinaryHeader: null,
+    };
 
-    ws.on("message", (data: Buffer | string, isBinary: boolean) => {
-      // Binary frame: match to pending header
-      if (isBinary) {
-        const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        if (bytes[0] === TERMINAL_BINARY_MAGIC[0] && bytes[1] === TERMINAL_BINARY_MAGIC[1]) {
-          void deps.terminalService.handleV1Frame(ws, bytes).catch((error: unknown) => {
-            logger.warn("Terminal v1 frame rejected", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-            // v1 has no error binary frame. A typed retry class is therefore
-            // recovered through the existing authenticated WebSocket reconnect,
-            // which re-lists and reattaches sessions in the renderer.
-            if (error instanceof TerminalBackendError && error.retry !== "SAFE_RETRY" && ws.readyState === WebSocket.OPEN) {
-              ws.close(4002, `Terminal ${error.retry.toLowerCase()} required`);
-            }
-          });
-          return;
-        }
-        const header = pendingBinaryHeader;
-        pendingBinaryHeader = null;
-
-        if (!header) {
-          logger.warn("Received binary frame with no pending upload header");
-          return;
-        }
-
-        if (header.method !== "clipboard.saveFile") {
-          logger.warn("Unsupported binary upload method", { method: header.method });
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              id: header.id,
-              error: { code: "UNSUPPORTED_METHOD", message: `Binary upload not supported for method: ${header.method}` },
-            }));
-          }
-          return;
-        }
-
-        const mimeType = header.meta.mimeType;
-        const fileName = header.meta.fileName;
-        if (typeof mimeType !== "string" || !mimeType || typeof fileName !== "string" || !fileName) {
-          logger.warn("Binary upload header missing required meta fields");
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              id: header.id,
-              error: { code: "INVALID_UPLOAD", message: "meta.mimeType and meta.fileName are required strings" },
-            }));
-          }
-          return;
-        }
-
-        const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-
-        handleBinaryUpload({ mimeType, fileName }, buffer)
-          .then((result) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ id: header.id, result }));
-            }
-          })
-          .catch((err: unknown) => {
-            const message = err instanceof Error ? err.message : String(err);
-            logger.error("Binary upload failed", { error: message });
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ id: header.id, error: { code: "UPLOAD_FAILED", message } }));
-            }
-          });
-        return;
-      }
-
-      // Text frame: check if it's a binary upload header or normal RPC
-      const raw = typeof data === "string" ? data : data.toString("utf-8");
-
-      try {
-        const parsed = JSON.parse(raw);
-        const headerResult = BinaryUploadHeaderSchema.safeParse(parsed);
-        if (headerResult.success) {
-          // If a previous header was pending without a binary frame, reject it
-          if (pendingBinaryHeader) {
-            const staleId = pendingBinaryHeader.id;
-            logger.warn("Binary upload header overwritten; previous upload abandoned", { staleId });
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                id: staleId,
-                error: { code: "UPLOAD_ABANDONED", message: "Upload header was overwritten by a subsequent upload" },
-              }));
-            }
-          }
-          pendingBinaryHeader = headerResult.data;
-          return; // Wait for the next binary frame
-        }
-      } catch {
-        // Not JSON or not a header — fall through to normal routing
-      }
-
-      routeMessage(raw, deps, {
-        client: ws,
-        browserAutomationAuthorization: resolveCurrentBrowserAutomationAuthorization(),
-      })
-        .then((response) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(response));
-          }
-        })
-        .catch((err: unknown) => {
-          logger.error("Unexpected router error", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-    });
+    ws.on("message", (data: Buffer | string, isBinary: boolean) => handleWsMessage(data, isBinary, messageContext));
 
     ws.on("close", () => {
       logger.info("WebSocket client disconnected");
@@ -453,4 +260,304 @@ export function createWsServer(deps: WsServerDeps): {
   });
 
   return { httpServer, wss };
+}
+
+/** Routes authenticated HTTP endpoints that require an asynchronous handler. */
+function handleSpecialHttpRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  requestPath: string,
+  deps: WsServerDeps,
+  wss: WebSocketServer,
+): boolean {
+  if (requestPath === "/__mcode/reliability" && deps.reliabilityHarness?.enabled) {
+    handleReliabilityRequest(req, res, deps.reliabilityHarness, wss);
+    return true;
+  }
+  if (requestPath === "/mcp" && deps.browserAutomationMcpHandler) {
+    handleBrowserAutomationMcpRequest(req, res, deps.browserAutomationMcpHandler);
+    return true;
+  }
+  if (requestPath === EXTERNAL_THREAD_CONTROL_MCP_PATH && deps.externalThreadControlMcpRuntime) {
+    handleThreadControlMcpRequest(req, res, deps.externalThreadControlMcpRuntime);
+    return true;
+  }
+  return false;
+}
+
+/** Starts a reliability control request and returns its existing failure response. */
+function handleReliabilityRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  reliabilityHarness: NonNullable<WsServerDeps["reliabilityHarness"]>,
+  wss: WebSocketServer,
+): void {
+  void reliabilityHarness.handleRequest(req, res, wss.clients).catch((error: unknown) => {
+    logger.error("Reliability harness request failed", { error: describeError(error) });
+    if (!res.headersSent) res.writeHead(500);
+    res.end("Reliability harness failure");
+  });
+}
+
+/** Starts a browser MCP request and returns its JSON-RPC failure response when required. */
+function handleBrowserAutomationMcpRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  handler: BrowserAutomationMcpHandler,
+): void {
+  void handler.handle(req, res).catch((error: unknown) => {
+    logger.error("Browser automation MCP request failed", { error: describeError(error) });
+    if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }));
+  });
+}
+
+/** Starts an external thread-control MCP request and returns its failure response when required. */
+function handleThreadControlMcpRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: NonNullable<WsServerDeps["externalThreadControlMcpRuntime"]>,
+): void {
+  void runtime.handleRequest(req, res).catch((error: unknown) => {
+    logger.error("External thread-control MCP request failed", { error: describeError(error) });
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  });
+}
+
+/** Serves the server health endpoint. */
+function handleHealthRequest(req: IncomingMessage, res: ServerResponse, deps: WsServerDeps): boolean {
+  if (req.method !== "GET" || !req.url?.startsWith("/health")) return false;
+  const body = createHealthBody(deps);
+  const headers = createHealthHeaders(deps);
+  res.writeHead(200, headers);
+  res.end(JSON.stringify(body));
+  return true;
+}
+
+/** Creates the health response body for the current server state. */
+function createHealthBody(deps: WsServerDeps): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    status: "ok",
+    activeAgents: deps.agentService.runtimeAccess().activeCount(),
+  };
+  if (deps.browserAutomationBroker) {
+    body.browserAutomation = {
+      ...deps.browserAutomationBroker.status(),
+      reliability: deps.browserAutomationBroker.reliabilityStatus(),
+      nightlyEvidence: deps.browserAutomationBroker.nightlyEvidenceStatus(),
+    };
+  }
+  if (!deps.singleInstance) body.authToken = deps.authToken;
+  return body;
+}
+
+/** Creates the health response headers for the current server mode. */
+function createHealthHeaders(deps: WsServerDeps): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (!deps.singleInstance) headers["Set-Cookie"] = buildAuthCookie(deps.authToken);
+  return headers;
+}
+
+/** Serves the authenticated shutdown endpoint. */
+function handleShutdownRequest(req: IncomingMessage, res: ServerResponse, deps: WsServerDeps): boolean {
+  if (req.method !== "POST" || req.url !== "/shutdown") return false;
+  if (!matchesAuthToken(extractToken(req), deps.authToken)) {
+    res.writeHead(401);
+    res.end("Unauthorized");
+    return true;
+  }
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ status: "shutting_down" }), () => deps.shutdown());
+  return true;
+}
+
+/** Serves an authenticated attachment request after path validation. */
+function handleAttachmentRequest(req: IncomingMessage, res: ServerResponse, deps: WsServerDeps): boolean {
+  if (req.method !== "GET" || !req.url?.startsWith("/attachments/")) return false;
+  if (!matchesAuthToken(extractToken(req), deps.authToken)) {
+    res.writeHead(401);
+    res.end("Unauthorized");
+    return true;
+  }
+  const attachment = parseAttachmentRequest(req, res);
+  if (!attachment) return true;
+  serveAttachment(attachment.threadId, attachment.filename, res);
+  return true;
+}
+
+/** Parses and validates attachment path segments. */
+function parseAttachmentRequest(req: IncomingMessage, res: ServerResponse): { threadId: string; filename: string } | null {
+  const segments = new URL(req.url ?? "/", "http://localhost").pathname.split("/").filter(Boolean);
+  if (segments.length !== 3 || segments[0] !== "attachments") {
+    res.writeHead(404);
+    res.end("Not found");
+    return null;
+  }
+  const [_, threadId, filename] = segments;
+  if (!ATTACHMENT_THREAD_SEGMENT.test(threadId!) || !ATTACHMENT_FILE_SEGMENT.test(filename!)) {
+    res.writeHead(400);
+    res.end("Invalid path");
+    return null;
+  }
+  return { threadId: threadId!, filename: filename! };
+}
+
+/** Streams one validated attachment file to the HTTP response. */
+function serveAttachment(threadId: string, filename: string, res: ServerResponse): void {
+  const filePath = join(getMcodeDir(), "attachments", threadId, filename);
+  if (!existsSync(filePath)) {
+    res.writeHead(404);
+    res.end("Not found");
+    return;
+  }
+  const ext = filename.split(".").pop() ?? "";
+  const stream = createReadStream(filePath);
+  stream.on("error", () => handleAttachmentStreamError(res));
+  res.writeHead(200, {
+    "Content-Type": ATTACHMENT_EXT_MIME[ext] ?? "application/octet-stream",
+    "Cache-Control": "public, max-age=31536000, immutable",
+    "Content-Security-Policy": "default-src 'none'",
+  });
+  stream.pipe(res);
+}
+
+/** Sends the attachment read failure response unless streaming already began. */
+function handleAttachmentStreamError(res: ServerResponse): void {
+  if (!res.headersSent) res.writeHead(404);
+  res.end();
+}
+
+/** Formats unknown thrown values for log metadata. */
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Routes one WebSocket frame to terminal upload handling or JSON-RPC. */
+function handleWsMessage(data: Buffer | string, isBinary: boolean, context: WsMessageContext): void {
+  if (isBinary) {
+    handleBinaryWsMessage(Buffer.isBuffer(data) ? data : Buffer.from(data), context);
+    return;
+  }
+  handleTextWsMessage(typeof data === "string" ? data : data.toString("utf-8"), context);
+}
+
+/** Routes a binary terminal frame or a binary file-upload frame. */
+function handleBinaryWsMessage(bytes: Buffer, context: WsMessageContext): void {
+  if (isTerminalBinaryFrame(bytes)) {
+    handleTerminalBinaryFrame(bytes, context);
+    return;
+  }
+  const header = context.pendingBinaryHeader;
+  context.pendingBinaryHeader = null;
+  if (!header) {
+    logger.warn("Received binary frame with no pending upload header");
+    return;
+  }
+  handleFileUploadFrame(header, bytes, context.ws);
+}
+
+/** Checks whether a binary frame uses the terminal v1 magic prefix. */
+function isTerminalBinaryFrame(bytes: Buffer): boolean {
+  return bytes[0] === TERMINAL_BINARY_MAGIC[0] && bytes[1] === TERMINAL_BINARY_MAGIC[1];
+}
+
+/** Sends a terminal v1 frame to the terminal service. */
+function handleTerminalBinaryFrame(bytes: Buffer, context: WsMessageContext): void {
+  void context.deps.terminalService.handleV1Frame(context.ws, bytes).catch((error: unknown) => {
+    logger.warn("Terminal v1 frame rejected", { error: describeError(error) });
+    closeForTerminalRetry(error, context.ws);
+  });
+}
+
+/** Closes a connection when a terminal error requires a non-safe retry. */
+function closeForTerminalRetry(error: unknown, ws: WebSocket): void {
+  if (!(error instanceof TerminalBackendError) || error.retry === "SAFE_RETRY" || ws.readyState !== WebSocket.OPEN) return;
+  ws.close(4002, `Terminal ${error.retry.toLowerCase()} required`);
+}
+
+/** Handles a clipboard file-upload frame after its text header. */
+function handleFileUploadFrame(header: BinaryUploadHeader, bytes: Buffer, ws: WebSocket): void {
+  if (header.method !== "clipboard.saveFile") {
+    logger.warn("Unsupported binary upload method", { method: header.method });
+    sendWsJson(ws, {
+      id: header.id,
+      error: { code: "UNSUPPORTED_METHOD", message: `Binary upload not supported for method: ${header.method}` },
+    });
+    return;
+  }
+  const metadata = readUploadMetadata(header);
+  if (!metadata) {
+    logger.warn("Binary upload header missing required meta fields");
+    sendWsJson(ws, {
+      id: header.id,
+      error: { code: "INVALID_UPLOAD", message: "meta.mimeType and meta.fileName are required strings" },
+    });
+    return;
+  }
+  void handleBinaryUpload(metadata, bytes)
+    .then((result) => sendWsJson(ws, { id: header.id, result }))
+    .catch((error: unknown) => handleFileUploadFailure(header.id, error, ws));
+}
+
+/** Reads the required file-upload metadata from an upload header. */
+function readUploadMetadata(header: BinaryUploadHeader): { mimeType: string; fileName: string } | null {
+  const { mimeType, fileName } = header.meta;
+  if (typeof mimeType !== "string" || !mimeType || typeof fileName !== "string" || !fileName) return null;
+  return { mimeType, fileName };
+}
+
+/** Reports a binary upload failure to the initiating WebSocket client. */
+function handleFileUploadFailure(id: string | number | null, error: unknown, ws: WebSocket): void {
+  const message = describeError(error);
+  logger.error("Binary upload failed", { error: message });
+  sendWsJson(ws, { id, error: { code: "UPLOAD_FAILED", message } });
+}
+
+/** Sends JSON only while the WebSocket remains open. */
+function sendWsJson(ws: WebSocket, value: unknown): void {
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value));
+}
+
+/** Routes a text upload header or a regular JSON-RPC message. */
+function handleTextWsMessage(raw: string, context: WsMessageContext): void {
+  const header = parseBinaryUploadHeader(raw);
+  if (header) {
+    replacePendingUploadHeader(header, context);
+    return;
+  }
+  routeWsMessage(raw, context);
+}
+
+/** Parses a text frame as a binary-upload header. */
+function parseBinaryUploadHeader(raw: string): BinaryUploadHeader | null {
+  try {
+    const headerResult = BinaryUploadHeaderSchema.safeParse(JSON.parse(raw));
+    return headerResult.success ? headerResult.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Replaces a pending upload header and reports the abandoned upload. */
+function replacePendingUploadHeader(header: BinaryUploadHeader, context: WsMessageContext): void {
+  const previous = context.pendingBinaryHeader;
+  if (previous) {
+    logger.warn("Binary upload header overwritten; previous upload abandoned", { staleId: previous.id });
+    sendWsJson(context.ws, {
+      id: previous.id,
+      error: { code: "UPLOAD_ABANDONED", message: "Upload header was overwritten by a subsequent upload" },
+    });
+  }
+  context.pendingBinaryHeader = header;
+}
+
+/** Routes a regular JSON-RPC frame and returns its response to the same client. */
+function routeWsMessage(raw: string, context: WsMessageContext): void {
+  void routeMessage(raw, context.deps, {
+    client: context.ws,
+    browserAutomationAuthorization: context.resolveCurrentBrowserAutomationAuthorization(),
+  })
+    .then((response) => sendWsJson(context.ws, response))
+    .catch((error: unknown) => logger.error("Unexpected router error", { error: describeError(error) }));
 }

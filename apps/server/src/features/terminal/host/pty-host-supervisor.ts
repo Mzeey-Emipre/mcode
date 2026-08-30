@@ -316,30 +316,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     this.clearStartupTimer();
     this.clearHeartbeatTimer();
     const child = this.child;
-    if (child?.connected && this.generation > 0n) {
-      let resolveExit!: () => void;
-      const exited = new Promise<void>((resolve) => {
-        resolveExit = resolve;
-      });
-      child.once("exit", resolveExit);
-      try {
-        this.sendMessage({
-          contractVersion: 1,
-          kind: "shutdown",
-          hostGeneration: this.generation.toString(),
-          reason: "app-shutdown",
-        });
-      } catch {
-        child.kill("SIGKILL");
-      }
-      const timeout = setTimeout(
-        resolveExit,
-        this.options.shutdownTimeoutMs ?? OPERATION_TIMEOUT_MS,
-      );
-      await exited;
-      clearTimeout(timeout);
-      if (child.connected) child.kill("SIGKILL");
-    }
+    await this.stopActiveHost(child);
     child?.disposeContainment?.();
     child?.removeAllListeners();
     this.child = null;
@@ -357,6 +334,32 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     if (failures.length > 0) {
       throw new AggregateError(failures, "PTY host shutdown cleanup failed");
     }
+  }
+
+  private async stopActiveHost(child: PtyHostChild | null): Promise<void> {
+    if (!child?.connected || this.generation === 0n) return;
+    let resolveExit!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      resolveExit = resolve;
+    });
+    child.once("exit", resolveExit);
+    try {
+      this.sendMessage({
+        contractVersion: 1,
+        kind: "shutdown",
+        hostGeneration: this.generation.toString(),
+        reason: "app-shutdown",
+      });
+    } catch {
+      child.kill("SIGKILL");
+    }
+    const timeout = setTimeout(
+      resolveExit,
+      this.options.shutdownTimeoutMs ?? OPERATION_TIMEOUT_MS,
+    );
+    await exited;
+    clearTimeout(timeout);
+    if (child.connected) child.kill("SIGKILL");
   }
 
   /** Subscribes to validated events from every supervised generation. */
@@ -415,97 +418,107 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     value: unknown,
   ): void {
     if (child !== this.child) return;
-    let event: PtyHostEvent;
-    try {
-      event = parsePtyHostEvent(value, generation);
-    } catch (error) {
-      this.handleHostFailure(
-        child,
-        error instanceof Error ? error : new Error(String(error)),
-      );
-      return;
-    }
-    if (event.kind === "ready") this.readyObserved = true;
-    if (event.kind === "heartbeat") {
-      this.heartbeatObserved = true;
-      const receivedAtMs = Date.now();
-      this.heartbeatEventLoopLagMs = this.lastHeartbeatReceivedAtMs === null
-        ? 0
-        : Math.max(0, receivedAtMs - this.lastHeartbeatReceivedAtMs - PTY_HOST_HEARTBEAT_INTERVAL_MS);
-      this.lastHeartbeatReceivedAtMs = receivedAtMs;
-      this.lastHeartbeatAtMs = receivedAtMs;
-      this.heartbeatQueueBytes = event.queueBytes;
-      this.heartbeatRssBytes = event.rssBytes;
-      if (this.state === "degraded") this.state = "healthy";
-      this.armHeartbeatWatchdog(child, generation);
-    }
-    if (event.kind === "running") {
-      try {
-        this.cleanupLedger.record({
-          sessionId: event.sessionId,
-          hostGeneration: event.hostGeneration,
-          rootPid: event.rootPid,
-          processGroupId: event.processGroupId,
-          containment: event.containment,
-        });
-      } catch (error) {
-        this.handleHostFailure(
-          child,
-          error instanceof Error ? error : new Error(String(error)),
-        );
-        return;
-      }
-      this.pendingCreates.get(event.sessionId)?.resolve({
-        sessionId: event.sessionId,
-        hostGeneration: event.hostGeneration,
-        state: "running",
-        containment: event.containment,
-      });
-      const pending = this.pendingCreates.get(event.sessionId);
-      if (pending) clearTimeout(pending.timer);
-      this.pendingCreates.delete(event.sessionId);
-    }
-    if (event.kind === "exit") {
-      this.cleanupLedger.remove(event.sessionId, event.hostGeneration);
-      const pendingInspection = this.pendingInspections.get(event.sessionId);
-      if (pendingInspection) {
-        clearTimeout(pendingInspection.timer);
-        pendingInspection.reject(
-          new Error(
-            `PTY session exited during child inspection: ${event.sessionId}`,
-          ),
-        );
-        this.pendingInspections.delete(event.sessionId);
-      }
-      const pending = this.pendingCloses.get(event.sessionId);
-      if (pending) {
-        clearTimeout(pending.timer);
-        pending.resolve();
-        this.pendingCloses.delete(event.sessionId);
-      }
-    }
-    if (event.kind === "children") {
-      const pending = this.pendingInspections.get(event.sessionId);
-      if (pending) {
-        clearTimeout(pending.timer);
-        pending.resolve({ hasChildren: event.hasChildren });
-        this.pendingInspections.delete(event.sessionId);
-      }
-    }
+    const event = this.parseHostEvent(child, generation, value);
+    if (!event) return;
+    this.observeHostEvent(child, generation, event);
+    if (event.kind === "running" && !this.handleRunningEvent(child, event)) return;
+    if (event.kind === "exit") this.handleExitEvent(event);
+    if (event.kind === "children") this.handleChildrenEvent(event);
     if (event.kind === "failure") this.rejectPending(new Error(event.code));
     this.publish(event);
-    if (
-      this.readyObserved &&
-      this.heartbeatObserved &&
-      this.state === "starting"
-    ) {
-      this.state = "healthy";
-      this.clearStartupTimer();
-      const health = this.health();
-      this.resolveStart?.(health);
-      this.resolveStart = null;
-      this.rejectStart = null;
+    this.markHealthyWhenReady();
+  }
+
+  private parseHostEvent(
+    child: PtyHostChild,
+    generation: string,
+    value: unknown,
+  ): PtyHostEvent | null {
+    try {
+      return parsePtyHostEvent(value, generation);
+    } catch (error) {
+      this.handleHostFailure(child, error instanceof Error ? error : new Error(String(error)));
+      return null;
     }
+  }
+
+  private observeHostEvent(child: PtyHostChild, generation: string, event: PtyHostEvent): void {
+    if (event.kind === "ready") this.readyObserved = true;
+    if (event.kind !== "heartbeat") return;
+    this.heartbeatObserved = true;
+    const receivedAtMs = Date.now();
+    this.heartbeatEventLoopLagMs = this.lastHeartbeatReceivedAtMs === null
+      ? 0
+      : Math.max(0, receivedAtMs - this.lastHeartbeatReceivedAtMs - PTY_HOST_HEARTBEAT_INTERVAL_MS);
+    this.lastHeartbeatReceivedAtMs = receivedAtMs;
+    this.lastHeartbeatAtMs = receivedAtMs;
+    this.heartbeatQueueBytes = event.queueBytes;
+    this.heartbeatRssBytes = event.rssBytes;
+    if (this.state === "degraded") this.state = "healthy";
+    this.armHeartbeatWatchdog(child, generation);
+  }
+
+  private handleRunningEvent(
+    child: PtyHostChild,
+    event: Extract<PtyHostEvent, { kind: "running" }>,
+  ): boolean {
+    try {
+      this.cleanupLedger.record({
+        sessionId: event.sessionId,
+        hostGeneration: event.hostGeneration,
+        rootPid: event.rootPid,
+        processGroupId: event.processGroupId,
+        containment: event.containment,
+      });
+    } catch (error) {
+      this.handleHostFailure(child, error instanceof Error ? error : new Error(String(error)));
+      return false;
+    }
+    this.pendingCreates.get(event.sessionId)?.resolve({
+      sessionId: event.sessionId,
+      hostGeneration: event.hostGeneration,
+      state: "running",
+      containment: event.containment,
+    });
+    const pending = this.pendingCreates.get(event.sessionId);
+    if (pending) clearTimeout(pending.timer);
+    this.pendingCreates.delete(event.sessionId);
+    return true;
+  }
+
+  private handleExitEvent(event: Extract<PtyHostEvent, { kind: "exit" }>): void {
+    this.cleanupLedger.remove(event.sessionId, event.hostGeneration);
+    this.rejectPendingInspectionForExit(event.sessionId);
+    const pending = this.pendingCloses.get(event.sessionId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending.resolve();
+    this.pendingCloses.delete(event.sessionId);
+  }
+
+  private rejectPendingInspectionForExit(sessionId: string): void {
+    const pending = this.pendingInspections.get(sessionId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending.reject(new Error(`PTY session exited during child inspection: ${sessionId}`));
+    this.pendingInspections.delete(sessionId);
+  }
+
+  private handleChildrenEvent(event: Extract<PtyHostEvent, { kind: "children" }>): void {
+    const pending = this.pendingInspections.get(event.sessionId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending.resolve({ hasChildren: event.hasChildren });
+    this.pendingInspections.delete(event.sessionId);
+  }
+
+  private markHealthyWhenReady(): void {
+    if (!this.readyObserved || !this.heartbeatObserved || this.state !== "starting") return;
+    this.state = "healthy";
+    this.clearStartupTimer();
+    this.resolveStart?.(this.health());
+    this.resolveStart = null;
+    this.rejectStart = null;
   }
 
   private handleHostFailure(child: PtyHostChild, error: Error): void {

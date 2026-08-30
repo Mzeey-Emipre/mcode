@@ -84,6 +84,13 @@ interface IThoughtSegmentRepo {
   listByMessage(messageId: string): Promise<ThoughtSegmentRecord[]> | ThoughtSegmentRecord[];
 }
 
+type PreparedForkContext = {
+  parent: any;
+  parentProvider: IAgentProvider | null;
+  forkMsg: Message;
+  parentCwd: string;
+};
+
 /**
  * How many of the parent thread's most recent assistant messages to mine for
  * tool-call / narration / files-changed signals when composing a deterministic
@@ -126,6 +133,30 @@ function prefixHistoryBudgetNotice(text: string, historyBudget?: ForkHistoryBudg
   const notice = formatHistoryBudgetNotice(historyBudget);
   if (!notice) return text;
   return text ? `${notice}\n\n${text}` : notice;
+}
+
+function collectFilesChanged(messages: Message[]): string[] {
+  const filesChanged: string[] = [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    appendMessageFilesChanged(filesChanged, seen, message);
+  }
+  return filesChanged;
+}
+
+function appendMessageFilesChanged(
+  target: string[],
+  seen: Set<string>,
+  message: Message,
+): void {
+  const filesChanged = (message as { files_changed?: unknown }).files_changed;
+  if (!Array.isArray(filesChanged)) return;
+  for (const file of filesChanged) {
+    if (typeof file === "string" && !seen.has(file)) {
+      seen.add(file);
+      target.push(file);
+    }
+  }
 }
 
 @injectable()
@@ -180,100 +211,107 @@ export class HandoffPipelineService {
    * free of disk I/O and is fully testable in isolation.
    */
   async orchestrate(req: HandoffRequest): Promise<HandoffArtifact> {
-    const parent = await this.threadRepo.findById(req.parentThreadId);
-    if (!parent) throw new Error(`Parent thread ${req.parentThreadId} not found`);
-    if (parent.deleted_at) throw new Error("Cannot fork from a deleted thread");
-
-    const workspace = await this.workspaceRepo.findById(parent.workspace_id);
-    if (!workspace) throw new Error(`Workspace ${parent.workspace_id} not found for parent thread`);
-    // Use worktree_path when the parent is running in a worktree; otherwise the
-    // workspace root. This ensures the side-channel SDK call sees the user's
-    // project files instead of the server's own working directory.
-    const parentCwd: string = parent.worktree_path ?? workspace.path;
-
-    const parentProvider = this.tryResolveProvider(parent.provider);
-    const messagesUpToFork = req.messagesUpToFork;
-    const forkIndex = messagesUpToFork.findIndex((m: any) => m.id === req.forkedFromMessageId);
-    if (forkIndex === -1) throw new Error(`Fork message ${req.forkedFromMessageId} not in parent`);
-    const forkMsg = messagesUpToFork[forkIndex];
-
-    const prompt = buildHandoffPrompt({
-      forkAnchorRole: req.forkAnchorRole,
-      parentThreadTitle: parent.title,
-      forkMessageExcerpt: forkMsg.content,
-      childProviderId: req.childProviderId,
-      userFollowUpMessage: req.userFollowUpMessage,
-    });
-
-    const capability: string = parentProvider?.sessionForkOnResume ?? "unsupported";
-    const parentSdkSession: string | null = parent.sdk_session_id ?? null;
-
-    // Build a budgeted history replay so that if a clean-resume session fails
-    // (e.g. after a server restart), the provider can retry without `resume:`
-    // and still produce a high-fidelity path-B result. This budget sizes the
-    // PARENT provider's side-channel resume body (not the child's delivery,
-    // which is off-band), so it is a fixed generous cap rather than a function
-    // of the child provider's per-turn input window.
-    const conversationHistory = prefixHistoryBudgetNotice(
-      buildConversationReplay(messagesUpToFork, REPLAY_BUDGET_CHARS, null),
-      req.historyBudget,
-    );
-
-    // Pre-gather the deterministic (path-D) signals from the parent thread so
-    // DeterministicForker stays stateless. These are no-ops for provider paths
-    // (path B) since the clean forker ignores the extra fields.
-    const deterministicInputs = await this.gatherDeterministicInputs(parent, messagesUpToFork, forkMsg);
-
-    const forkReq: ForkRequest = {
-      parentThreadId: req.parentThreadId,
-      forkedFromMessageId: req.forkedFromMessageId,
-      forkAnchorRole: req.forkAnchorRole,
-      prompt,
-      cwd: parentCwd,
-      parentSdkSessionId: parentSdkSession,
-      conversationHistory,
-      messagesUpToFork,
-      historyBudget: req.historyBudget,
-      parentThread: parent,
-      childThreadId: req.childThreadId,
-      ...deterministicInputs,
-    };
+    const context = await this.prepareForkContext(req);
+    const forkReq = await this.createForkRequest(req, context);
 
     // Providers that cannot fork a session (capability "unsupported") or a
     // clean-resume provider with no session id to resume go straight to the
     // deterministic forker. The DeterministicForker is also the cross-forker
     // fallback below.
-    const canProviderFork = !!parentProvider && capability === "clean" && !!parentSdkSession;
+    const canProviderFork = this.canProviderFork(context.parentProvider, forkReq.parentSdkSessionId ?? null);
     if (!canProviderFork) {
       return this.deterministicForker.fork({ ...forkReq, forkReason: null });
     }
+    return this.runProviderFork(context.parentProvider!, forkReq, req.parentThreadId);
+  }
 
-    const runFork = async (): Promise<HandoffArtifact> => {
-      const abort = new AbortController();
-      const timer = setTimeout(() => abort.abort(), PROVIDER_CALL_TIMEOUT_MS);
-      try {
-        // Off-band delivery (PRD #538): the full doc ships to the child via a
-        // temp file, so there is no inline budget to enforce here. Return the
-        // provider's markdown verbatim with the constant "full" mode.
-        const artifact = await parentProvider!.forker.fork({ ...forkReq, abortSignal: abort.signal });
-        return {
-          markdown: artifact.markdown,
-          meta: { ...artifact.meta, mode: "full", characterCount: artifact.markdown.length },
-        };
-      } catch (err) {
-        if ((abort.signal as AbortSignal).aborted) {
-          logger.warn("Handoff provider fork timed out; falling to D", { threadId: req.parentThreadId });
-          return this.deterministicForker.fork({ ...forkReq, forkReason: "transient" });
-        }
-        const cls = classifyProviderError(err);
-        logger.warn("Handoff provider fork failed", { error: describeError(err), cls, threadId: req.parentThreadId });
-        return this.deterministicForker.fork({ ...forkReq, forkReason: cls });
-      } finally {
-        clearTimeout(timer);
-      }
+  private async prepareForkContext(req: HandoffRequest): Promise<PreparedForkContext> {
+    const parent = await this.threadRepo.findById(req.parentThreadId);
+    if (!parent) throw new Error(`Parent thread ${req.parentThreadId} not found`);
+    if (parent.deleted_at) throw new Error("Cannot fork from a deleted thread");
+    const workspace = await this.workspaceRepo.findById(parent.workspace_id);
+    if (!workspace) throw new Error(`Workspace ${parent.workspace_id} not found for parent thread`);
+    const forkMsg = req.messagesUpToFork.find((message: any) => message.id === req.forkedFromMessageId);
+    if (!forkMsg) throw new Error(`Fork message ${req.forkedFromMessageId} not in parent`);
+    return {
+      parent,
+      parentProvider: this.tryResolveProvider(parent.provider),
+      forkMsg,
+      parentCwd: parent.worktree_path ?? workspace.path,
     };
+  }
 
-    return runFork();
+  private async createForkRequest(
+    req: HandoffRequest,
+    context: PreparedForkContext,
+  ): Promise<ForkRequest> {
+    const deterministicInputs = await this.gatherDeterministicInputs(
+      context.parent,
+      req.messagesUpToFork,
+      context.forkMsg,
+    );
+    return {
+      parentThreadId: req.parentThreadId,
+      forkedFromMessageId: req.forkedFromMessageId,
+      forkAnchorRole: req.forkAnchorRole,
+      prompt: buildHandoffPrompt({
+        forkAnchorRole: req.forkAnchorRole,
+        parentThreadTitle: context.parent.title,
+        forkMessageExcerpt: context.forkMsg.content,
+        childProviderId: req.childProviderId,
+        userFollowUpMessage: req.userFollowUpMessage,
+      }),
+      cwd: context.parentCwd,
+      parentSdkSessionId: context.parent.sdk_session_id ?? null,
+      conversationHistory: prefixHistoryBudgetNotice(
+        buildConversationReplay(req.messagesUpToFork, REPLAY_BUDGET_CHARS, null),
+        req.historyBudget,
+      ),
+      messagesUpToFork: req.messagesUpToFork,
+      historyBudget: req.historyBudget,
+      parentThread: context.parent,
+      childThreadId: req.childThreadId,
+      ...deterministicInputs,
+    };
+  }
+
+  private canProviderFork(provider: IAgentProvider | null, sessionId: string | null): boolean {
+    return provider?.sessionForkOnResume === "clean" && sessionId !== null;
+  }
+
+  private async runProviderFork(
+    provider: IAgentProvider,
+    forkReq: ForkRequest,
+    parentThreadId: string,
+  ): Promise<HandoffArtifact> {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), PROVIDER_CALL_TIMEOUT_MS);
+    try {
+      const artifact = await provider.forker.fork({ ...forkReq, abortSignal: abort.signal });
+      return {
+        markdown: artifact.markdown,
+        meta: { ...artifact.meta, mode: "full", characterCount: artifact.markdown.length },
+      };
+    } catch (error) {
+      return this.handleProviderForkFailure(error, abort.signal, forkReq, parentThreadId);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private handleProviderForkFailure(
+    error: unknown,
+    signal: AbortSignal,
+    forkReq: ForkRequest,
+    parentThreadId: string,
+  ): Promise<HandoffArtifact> {
+    if (signal.aborted) {
+      logger.warn("Handoff provider fork timed out; falling to D", { threadId: parentThreadId });
+      return this.deterministicForker.fork({ ...forkReq, forkReason: "transient" });
+    }
+    const classification = classifyProviderError(error);
+    logger.warn("Handoff provider fork failed", { error: describeError(error), cls: classification, threadId: parentThreadId });
+    return this.deterministicForker.fork({ ...forkReq, forkReason: classification });
   }
 
   /**
@@ -298,37 +336,39 @@ export class HandoffPipelineService {
       .filter((m) => m.role === "assistant")
       .slice(-RECENT_ASSISTANT_MESSAGES_FOR_D);
 
-    const toolCallRecords: ToolCallRecord[] = [];
-    const thoughtSegments: ThoughtSegmentRecord[] = [];
-    for (const m of recentAssistant) {
-      try {
-        toolCallRecords.push(...(await this.toolCallRecordRepo.listByMessage(m.id)));
-      } catch {
-        // Tolerate repo errors; the section is simply omitted.
-      }
-      try {
-        thoughtSegments.push(...(await this.thoughtSegmentRepo.listByMessage(m.id)));
-      } catch {
-        // Tolerate repo errors; the section is simply omitted.
-      }
-    }
-
-    // Aggregate files_changed across recent messages, de-duplicated and in
-    // first-seen order. files_changed is stored as a JSON array of strings.
-    const seen = new Set<string>();
-    const filesChanged: string[] = [];
-    for (const m of messagesUpToFork) {
-      const fc = (m as { files_changed?: unknown }).files_changed;
-      if (!Array.isArray(fc)) continue;
-      for (const f of fc) {
-        if (typeof f === "string" && !seen.has(f)) {
-          seen.add(f);
-          filesChanged.push(f);
-        }
-      }
-    }
+    const { toolCallRecords, thoughtSegments } = await this.collectRecentNarrative(recentAssistant);
+    const filesChanged = collectFilesChanged(messagesUpToFork);
 
     return { compactSummary, forkAnchorBody, toolCallRecords, thoughtSegments, filesChanged };
+  }
+
+  private async collectRecentNarrative(messages: Message[]): Promise<{
+    toolCallRecords: ToolCallRecord[];
+    thoughtSegments: ThoughtSegmentRecord[];
+  }> {
+    const toolCallRecords: ToolCallRecord[] = [];
+    const thoughtSegments: ThoughtSegmentRecord[] = [];
+    for (const message of messages) {
+      toolCallRecords.push(...(await this.listToolCallRecords(message.id)));
+      thoughtSegments.push(...(await this.listThoughtSegments(message.id)));
+    }
+    return { toolCallRecords, thoughtSegments };
+  }
+
+  private async listToolCallRecords(messageId: string): Promise<ToolCallRecord[]> {
+    try {
+      return await this.toolCallRecordRepo.listByMessage(messageId);
+    } catch {
+      return [];
+    }
+  }
+
+  private async listThoughtSegments(messageId: string): Promise<ThoughtSegmentRecord[]> {
+    try {
+      return await this.thoughtSegmentRepo.listByMessage(messageId);
+    } catch {
+      return [];
+    }
   }
 
   /**

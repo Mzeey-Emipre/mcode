@@ -48,6 +48,26 @@ interface BufferedBody {
   attachments: StoredAttachment[];
 }
 
+interface MaterializedAssistantRow {
+  id: string;
+  content: string;
+  shouldBroadcast: boolean;
+  attachments: StoredAttachment[];
+}
+
+interface CanonicalProjection {
+  materialized: MaterializedAssistantRow | null;
+  toolCallCount: number;
+  narrative: ReturnType<NarrativeStore["loadForMessages"]>;
+}
+
+interface AssistantMaterializationInput {
+  content: string;
+  model: string | null;
+  attachments: StoredAttachment[];
+  fromProvider: boolean;
+}
+
 /** Durable snapshot operations required by terminal materialization. */
 export type TurnSnapshotPersistence = Pick<TurnSnapshotRepo, "create" | "getByMessage">;
 
@@ -248,68 +268,81 @@ export class TurnFinalizer {
     if (this.persistingThreads.has(threadId)) return;
     this.persistingThreads.add(threadId);
     try {
-      const canonicalTurn = executionId
-        ? this.canonicalSink?.loadTurnByExecution(executionId)
-        : null;
-      if (canonicalTurn && executionId && this.canonicalSink) {
-        await this.runCanonicalFinalize(threadId, executionId, canonicalTurn.id, outcome, turnRef);
+      const canonicalTurnId = this.canonicalTurnId(executionId);
+      if (canonicalTurnId && executionId) {
+        await this.runCanonicalFinalize(threadId, executionId, canonicalTurnId, outcome, turnRef);
         return;
       }
-
-      // TurnSubstance guard: nothing worth keeping → leave no assistant row.
-      if (!this.hasRecordableActivity(threadId)) {
-        // This turn persisted no row, so a late hook for it must be discarded
-        // rather than mis-attached to the previous turn's still-cached id.
-        this.lastPersistedMessageIdByThread.delete(threadId);
-        this.clearTurn(threadId, turnRef);
-        return;
-      }
-
-      const materialized = this.materializeAssistantRow(threadId);
-      if (!materialized) {
-        // The row write failed; discard rather than persist narrative against
-        // the wrong (preceding) message id. Drop the prior id for the same
-        // reason as the empty-turn branch: a late hook has no row to attach to.
-        this.lastPersistedMessageIdByThread.delete(threadId);
-        this.clearTurn(threadId, turnRef);
-        return;
-      }
-
-      const messageId = materialized.id;
-      this.messageRepo.setAssistantOutcome(messageId, outcome, executionId);
-      // Record the message id so late hooks (Stop/SessionEnd) arriving after
-      // this point can attach to the correct persisted row.
-      this.lastPersistedMessageIdByThread.set(threadId, messageId);
-
-      const { toolCallCount } = await this.narrativeStore.persistNarrativeBatched(
-        threadId,
-        messageId,
-        materialized.content,
-        outcome,
-      );
-
-      const fileEffects = this.turnFileTracker
-        ? await this.turnFileTracker.finalizeTurn(threadId, turnRef?.fileTrackerGeneration)
-        : undefined;
-      const filesChanged = await this.captureSnapshot(threadId, messageId, turnRef, fileEffects);
-
-      broadcast("turn.persisted", {
-        threadId,
-        turnId: turnRef?.fileTrackerGeneration !== undefined
-          ? String(turnRef.fileTrackerGeneration)
-          : null,
-        messageId,
-        toolCallCount,
-        filesChanged,
-        outcome,
-        executionId: executionId ?? null,
-        ...(fileEffects ? { fileEffects } : {}),
-      });
-
-      this.clearTurn(threadId, turnRef);
+      await this.runCompatibilityFinalize(threadId, executionId, outcome, turnRef);
     } finally {
       this.persistingThreads.delete(threadId);
     }
+  }
+
+  private canonicalTurnId(executionId: string | undefined): string | undefined {
+    return executionId ? this.canonicalSink?.loadTurnByExecution(executionId)?.id : undefined;
+  }
+
+  private async runCompatibilityFinalize(
+    threadId: string,
+    executionId: string | undefined,
+    outcome: TurnOutcome,
+    turnRef: TurnRef | undefined,
+  ): Promise<void> {
+    if (!this.hasRecordableActivity(threadId)) {
+      this.discardUnmaterializedTurn(threadId, turnRef);
+      return;
+    }
+    const materialized = this.materializeAssistantRow(threadId);
+    if (!materialized) {
+      this.discardUnmaterializedTurn(threadId, turnRef);
+      return;
+    }
+    await this.persistCompatibilityFinalize(threadId, executionId, outcome, turnRef, materialized);
+  }
+
+  private discardUnmaterializedTurn(threadId: string, turnRef: TurnRef | undefined): void {
+    this.lastPersistedMessageIdByThread.delete(threadId);
+    this.clearTurn(threadId, turnRef);
+  }
+
+  private async persistCompatibilityFinalize(
+    threadId: string,
+    executionId: string | undefined,
+    outcome: TurnOutcome,
+    turnRef: TurnRef | undefined,
+    materialized: MaterializedAssistantRow,
+  ): Promise<void> {
+    this.messageRepo.setAssistantOutcome(materialized.id, outcome, executionId);
+    this.lastPersistedMessageIdByThread.set(threadId, materialized.id);
+    const { toolCallCount } = await this.narrativeStore.persistNarrativeBatched(
+      threadId,
+      materialized.id,
+      materialized.content,
+      outcome,
+    );
+    const fileEffects = await this.finalizeFileEffects(threadId, turnRef);
+    const filesChanged = await this.captureSnapshot(threadId, materialized.id, turnRef, fileEffects);
+    broadcast("turn.persisted", {
+      threadId,
+      turnId: turnRef?.fileTrackerGeneration !== undefined ? String(turnRef.fileTrackerGeneration) : null,
+      messageId: materialized.id,
+      toolCallCount,
+      filesChanged,
+      outcome,
+      executionId: executionId ?? null,
+      ...(fileEffects ? { fileEffects } : {}),
+    });
+    this.clearTurn(threadId, turnRef);
+  }
+
+  private async finalizeFileEffects(
+    threadId: string,
+    turnRef: TurnRef | undefined,
+  ): Promise<TurnFileEffectSummary | undefined> {
+    return this.turnFileTracker
+      ? this.turnFileTracker.finalizeTurn(threadId, turnRef?.fileTrackerGeneration)
+      : undefined;
   }
 
   /** Persist one canonical parent turn and its compatibility projection in one transaction. */
@@ -320,137 +353,155 @@ export class TurnFinalizer {
     outcome: TurnOutcome,
     turnRef: TurnRef | undefined,
   ): Promise<void> {
-    const canonicalThread = this.canonicalSink?.loadThread(threadId);
-    if (!canonicalThread || !this.canonicalSink) {
-      throw new Error(`Canonical thread missing for execution ${executionId}`);
-    }
-    const compatibilityThread = this.threadRepo.findById(threadId);
-    const providerIdentities = compatibilityThread?.sdk_session_id
-      && compatibilityThread.provider === canonicalThread.providerId
-      ? [{
-          providerId: canonicalThread.providerId,
-          scope: canonicalThread.providerId === "codex" ? "thread" as const : "session" as const,
-          value: compatibilityThread.sdk_session_id,
-          provenance: "native" as const,
-        }]
-      : canonicalThread.providerIdentities;
-
-    const projection: {
-      materialized: ReturnType<TurnFinalizer["materializeAssistantRow"]>;
-      toolCallCount: number;
-      narrative: ReturnType<NarrativeStore["loadForMessages"]>;
-    } = { materialized: null, toolCallCount: 0, narrative: [] };
-    const terminalAlreadyConfirmed = this.canonicalSink.loadCheckpoint(executionId)?.terminalOutcome != null;
-    if (!terminalAlreadyConfirmed && this.hasRecordableActivity(threadId)) {
-      projection.materialized = this.materializeAssistantRow(threadId, false, true, true);
-      if (!projection.materialized) {
-        throw new Error(`Assistant compatibility projection failed for ${threadId}`);
-      }
-      const persisted = await this.narrativeStore.persistNarrativeBatched(
-        threadId,
-        projection.materialized.id,
-        projection.materialized.content,
-        outcome,
-        { strict: true },
-      );
-      projection.toolCallCount = persisted.toolCallCount;
-      const message = this.messageRepo
-        .listIncludingInternal(threadId)
-        .find((candidate) => candidate.id === projection.materialized!.id);
-      if (!message) {
-        throw new Error(`Projected assistant message missing: ${projection.materialized.id}`);
-      }
-      projection.narrative = this.narrativeStore.loadForMessages([message]);
-    }
-    const commitResult = await this.canonicalSink.finishParentTurnBatched({
+    const canonical = this.requireCanonicalThread(threadId, executionId);
+    const projection = await this.createCanonicalProjection(threadId, executionId, outcome);
+    const commitResult = await canonical.sink.finishParentTurnBatched({
       threadId,
       turnId,
       executionId,
-      providerId: canonicalThread.providerId,
-      providerIdentities,
+      providerId: canonical.thread.providerId,
+      providerIdentities: this.providerIdentities(threadId, canonical.thread),
       outcome,
-      projectTurn: () => ({
-        message: projection.materialized
-          ? (() => {
-              const message = this.messageRepo
-                .listIncludingInternal(threadId)
-                .find((candidate) => candidate.id === projection.materialized!.id);
-              return message
-                ? {
-                    ...message,
-                    is_internal: false,
-                    outcome,
-                    outcomeExecutionId: executionId,
-                  }
-                : null;
-            })()
-          : null,
-        narrative: projection.narrative,
-      }),
-      finalizeCompatibility: () => {
-        if (projection.materialized) {
-          this.messageRepo.setAssistantOutcome(projection.materialized.id, outcome, executionId);
-          this.messageRepo.publishAssistant(projection.materialized.id);
-        }
-      },
+      projectTurn: () => this.projectCanonicalTurn(threadId, executionId, outcome, projection),
+      finalizeCompatibility: () => this.finalizeCanonicalCompatibility(executionId, outcome, projection),
     });
 
-    const verifiedTerminal = this.canonicalSink.loadCheckpoint(executionId);
+    const verifiedTerminal = canonical.sink.loadCheckpoint(executionId);
     if (verifiedTerminal?.terminalOutcome !== outcome) {
       throw new Error(`Canonical terminal outcome was not verified: ${executionId}`);
     }
 
-    let materialized = projection.materialized;
-    const replayedTerminal = !materialized
-      && commitResult.outcome === "terminal-outcome-confirmed";
-    if (replayedTerminal) {
-      const persisted = this.canonicalSink.loadTerminalProjection(turnId);
-      if (persisted.message) {
-        materialized = {
-          id: persisted.message.id,
-          content: persisted.message.content,
-          shouldBroadcast: false,
-          attachments: persisted.message.attachments ?? [],
-        };
-        projection.toolCallCount = persisted.toolCallCount;
-      }
-    }
+    const materialized = this.recoverCanonicalProjection(canonical.sink, turnId, projection, commitResult);
     if (!materialized) {
-      this.lastPersistedMessageIdByThread.delete(threadId);
-      this.parentAssistantTextCheckpoints?.retire(executionId);
-      this.clearTurn(threadId, turnRef);
+      this.discardCanonicalProjection(threadId, executionId, turnRef);
       return;
     }
+    await this.completeCanonicalFinalize(
+      threadId, executionId, turnId, outcome, turnRef, projection, materialized, !projection.materialized,
+    );
+  }
+
+  private requireCanonicalThread(threadId: string, executionId: string) {
+    const sink = this.canonicalSink;
+    const thread = sink?.loadThread(threadId);
+    if (!sink || !thread) throw new Error(`Canonical thread missing for execution ${executionId}`);
+    return { sink, thread };
+  }
+
+  private providerIdentities(threadId: string, canonicalThread: NonNullable<ReturnType<ParentTurnDurability["loadThread"]>>) {
+    const compatibilityThread = this.threadRepo.findById(threadId);
+    if (!compatibilityThread?.sdk_session_id || compatibilityThread.provider !== canonicalThread.providerId) {
+      return canonicalThread.providerIdentities;
+    }
+    return [{
+      providerId: canonicalThread.providerId,
+      scope: canonicalThread.providerId === "codex" ? "thread" as const : "session" as const,
+      value: compatibilityThread.sdk_session_id,
+      provenance: "native" as const,
+    }];
+  }
+
+  private async createCanonicalProjection(
+    threadId: string,
+    executionId: string,
+    outcome: TurnOutcome,
+  ): Promise<CanonicalProjection> {
+    const projection: CanonicalProjection = { materialized: null, toolCallCount: 0, narrative: [] };
+    if (this.canonicalSink?.loadCheckpoint(executionId)?.terminalOutcome != null || !this.hasRecordableActivity(threadId)) {
+      return projection;
+    }
+    const materialized = this.materializeAssistantRow(threadId, false, true, true);
+    if (!materialized) throw new Error(`Assistant compatibility projection failed for ${threadId}`);
+    projection.materialized = materialized;
+    projection.toolCallCount = (await this.narrativeStore.persistNarrativeBatched(
+      threadId, materialized.id, materialized.content, outcome, { strict: true },
+    )).toolCallCount;
+    projection.narrative = this.narrativeStore.loadForMessages([
+      this.projectedAssistantMessage(threadId, materialized.id),
+    ]);
+    return projection;
+  }
+
+  private projectedAssistantMessage(threadId: string, messageId: string) {
+    const message = this.messageRepo.listIncludingInternal(threadId).find((candidate) => candidate.id === messageId);
+    if (!message) throw new Error(`Projected assistant message missing: ${messageId}`);
+    return message;
+  }
+
+  private projectCanonicalTurn(
+    threadId: string,
+    executionId: string,
+    outcome: TurnOutcome,
+    projection: CanonicalProjection,
+  ) {
+    const materialized = projection.materialized;
+    return {
+      message: materialized
+        ? {
+            ...this.projectedAssistantMessage(threadId, materialized.id),
+            is_internal: false,
+            outcome,
+            outcomeExecutionId: executionId,
+          }
+        : null,
+      narrative: projection.narrative,
+    };
+  }
+
+  private finalizeCanonicalCompatibility(
+    executionId: string,
+    outcome: TurnOutcome,
+    projection: CanonicalProjection,
+  ): void {
+    if (!projection.materialized) return;
+    this.messageRepo.setAssistantOutcome(projection.materialized.id, outcome, executionId);
+    this.messageRepo.publishAssistant(projection.materialized.id);
+  }
+
+  private recoverCanonicalProjection(
+    sink: ParentTurnDurability,
+    turnId: string,
+    projection: CanonicalProjection,
+    commitResult: Awaited<ReturnType<ParentTurnDurability["finishParentTurnBatched"]>>,
+  ): MaterializedAssistantRow | null {
+    if (projection.materialized || commitResult.outcome !== "terminal-outcome-confirmed") return projection.materialized;
+    const persisted = sink.loadTerminalProjection(turnId);
+    if (!persisted.message) return null;
+    projection.toolCallCount = persisted.toolCallCount;
+    return {
+      id: persisted.message.id,
+      content: persisted.message.content,
+      shouldBroadcast: false,
+      attachments: persisted.message.attachments ?? [],
+    };
+  }
+
+  private discardCanonicalProjection(threadId: string, executionId: string, turnRef: TurnRef | undefined): void {
+    this.lastPersistedMessageIdByThread.delete(threadId);
+    this.parentAssistantTextCheckpoints?.retire(executionId);
+    this.clearTurn(threadId, turnRef);
+  }
+
+  private async completeCanonicalFinalize(
+    threadId: string,
+    executionId: string,
+    turnId: string,
+    outcome: TurnOutcome,
+    turnRef: TurnRef | undefined,
+    projection: CanonicalProjection,
+    materialized: MaterializedAssistantRow,
+    replayedTerminal: boolean,
+  ): Promise<void> {
     this.parentAssistantTextCheckpoints?.retire(executionId);
     this.commitAssistantMaterialization(threadId);
-
-    const messageId = materialized.id;
-    this.lastPersistedMessageIdByThread.set(threadId, messageId);
-    if (materialized.shouldBroadcast) {
-      broadcast("agent.event", {
-        type: AgentEventType.Message,
-        threadId,
-        content: materialized.content,
-        tokens: null,
-        messageId,
-        ...(materialized.attachments.length > 0 ? { attachments: materialized.attachments } : {}),
-      } satisfies AgentEvent);
-    }
-
-    const fileEffects = this.turnFileTracker
-      ? await this.turnFileTracker.finalizeTurn(threadId, turnRef?.fileTrackerGeneration)
-      : undefined;
-    const filesChanged = await this.captureSnapshot(
-      threadId,
-      messageId,
-      turnRef,
-      fileEffects,
-      replayedTerminal,
-    );
+    this.lastPersistedMessageIdByThread.set(threadId, materialized.id);
+    this.broadcastMaterializedAssistant(threadId, materialized);
+    const fileEffects = await this.finalizeFileEffects(threadId, turnRef);
+    const filesChanged = await this.captureSnapshot(threadId, materialized.id, turnRef, fileEffects, replayedTerminal);
     broadcast("turn.persisted", {
       threadId,
       turnId,
-      messageId,
+      messageId: materialized.id,
       toolCallCount: projection.toolCallCount,
       filesChanged,
       outcome,
@@ -477,31 +528,70 @@ export class TurnFinalizer {
       const existing = this.turnSnapshotRepo.getByMessage(messageId);
       if (existing) return existing.files_changed;
     }
-    let filesChanged = fileEffects
-      ? fileEffects.effects
-          .filter((effect) => effect.scope === "workspace")
-          .map((effect) => effect.path)
-      : [];
+    const filesChanged = this.workspaceEffectPaths(fileEffects);
     if (!refData) return filesChanged;
+    return this.captureSnapshotForRef(threadId, messageId, refData, fileEffects, filesChanged);
+  }
 
-    let refAfter: string | null = null;
-    if (refData.ref) {
-      try {
-        refAfter = await this.snapshotService.captureRef(refData.cwd);
-      } catch (err) {
-        logger.warn("Failed to capture ref_after", {
-          threadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    if (!fileEffects && refData.ref && refAfter) {
-      filesChanged = await this.snapshotService.getFilesChanged(refData.cwd, refData.ref, refAfter);
-    }
+  private workspaceEffectPaths(fileEffects: TurnFileEffectSummary | undefined): string[] {
+    return fileEffects
+      ? fileEffects.effects.filter((effect) => effect.scope === "workspace").map((effect) => effect.path)
+      : [];
+  }
 
+  private async captureSnapshotForRef(
+    threadId: string,
+    messageId: string,
+    refData: TurnRef,
+    fileEffects: TurnFileEffectSummary | undefined,
+    initialFilesChanged: string[],
+  ): Promise<string[]> {
+    const refAfter = await this.captureRefAfter(threadId, refData);
+    const filesChanged = await this.snapshotFilesChanged(refData, fileEffects, refAfter, initialFilesChanged);
+    if (this.shouldSkipSnapshot(fileEffects, refData.ref, refAfter)) return filesChanged;
+    return this.writeTurnSnapshot(threadId, messageId, refData, refAfter, fileEffects, filesChanged);
+  }
+
+  private async captureRefAfter(threadId: string, refData: TurnRef): Promise<string | null> {
+    if (!refData.ref) return null;
+    try {
+      return await this.snapshotService.captureRef(refData.cwd);
+    } catch (err) {
+      logger.warn("Failed to capture ref_after", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  private async snapshotFilesChanged(
+    refData: TurnRef,
+    fileEffects: TurnFileEffectSummary | undefined,
+    refAfter: string | null,
+    initialFilesChanged: string[],
+  ): Promise<string[]> {
+    if (fileEffects || !refData.ref || !refAfter) return initialFilesChanged;
+    return this.snapshotService.getFilesChanged(refData.cwd, refData.ref, refAfter);
+  }
+
+  private shouldSkipSnapshot(
+    fileEffects: TurnFileEffectSummary | undefined,
+    refBefore: string | null,
+    refAfter: string | null,
+  ): boolean {
+    return (fileEffects?.fileCount ?? 0) === 0 && (!refBefore || !refAfter);
+  }
+
+  private writeTurnSnapshot(
+    threadId: string,
+    messageId: string,
+    refData: TurnRef,
+    refAfter: string | null,
+    fileEffects: TurnFileEffectSummary | undefined,
+    filesChanged: string[],
+  ): string[] {
     const hasFileEffects = (fileEffects?.fileCount ?? 0) > 0;
-    if (!hasFileEffects && (!refData.ref || !refAfter)) return filesChanged;
-
     try {
       const writeTurn = this.db.transaction((files: string[]) => {
         this.turnSnapshotRepo.create({
@@ -550,56 +640,53 @@ export class TurnFinalizer {
     broadcastFallback = true,
     deferVolatileCommit = false,
     stageInternal = false,
-  ): { id: string; content: string; shouldBroadcast: boolean; attachments: StoredAttachment[] } | null {
+  ): MaterializedAssistantRow | null {
     const { messages } = this.messageRepo.listByThread(threadId, 1);
     const last = messages.length > 0 ? messages[messages.length - 1] : null;
-    if (last?.role === "assistant") {
-      const attachments = this.getBufferedAssistantAttachments(threadId);
-      if (attachments.length > 0) {
-        this.messageRepo.appendAttachments(last.id, attachments);
-      }
-      if (!deferVolatileCommit) this.commitAssistantMaterialization(threadId);
-      return { id: last.id, content: last.content ?? "", shouldBroadcast: false, attachments };
-    }
+    if (last?.role === "assistant") return this.reuseAssistantRow(threadId, last, deferVolatileCommit);
+    return this.createAssistantRow(threadId, last, broadcastFallback, deferVolatileCommit, stageInternal);
+  }
 
-    const buffered = this.bufferedBodyByThread.get(threadId);
-    const streamed = this.streamingAssistantTextByThread.get(threadId)?.trim();
-    // Provider body wins (may be empty for a tools-only turn); fall back to the
-    // interrupted streaming text. The streaming-text path is the only one that
-    // broadcasts, since no provider Message event reached the client.
-    const fromProvider = buffered != null;
-    const content = fromProvider ? buffered.content : (streamed ?? "");
-    const model = fromProvider ? buffered.model : (this.threadRepo.findById(threadId)?.model ?? null);
-    const bufferedAttachments = this.getBufferedAssistantAttachments(threadId);
-    const attachments = fromProvider
-      ? this.mergeAttachments(buffered.attachments, bufferedAttachments)
-      : bufferedAttachments;
+  private reuseAssistantRow(
+    threadId: string,
+    last: { id: string; content: string | null; },
+    deferVolatileCommit: boolean,
+  ): MaterializedAssistantRow {
+    const attachments = this.getBufferedAssistantAttachments(threadId);
+    if (attachments.length > 0) this.messageRepo.appendAttachments(last.id, attachments);
+    if (!deferVolatileCommit) this.commitAssistantMaterialization(threadId);
+    return { id: last.id, content: last.content ?? "", shouldBroadcast: false, attachments };
+  }
 
+  private createAssistantRow(
+    threadId: string,
+    last: { id: string } | null,
+    broadcastFallback: boolean,
+    deferVolatileCommit: boolean,
+    stageInternal: boolean,
+  ): MaterializedAssistantRow | null {
+    const input = this.assistantMaterializationInput(threadId);
     const nextSeq = this.messageRepo.getLatestSequenceIncludingInternal(threadId) + 1;
     const anchorId = last ? last.id : `seq:${nextSeq}`;
     try {
       const msg = this.messageRepo.createAssistantIdempotent({
         id: deriveTurnAssistantMessageId(threadId, anchorId),
         threadId,
-        content,
+        content: input.content,
         sequence: nextSeq,
-        model,
-        attachments: attachments.length > 0 ? attachments : undefined,
+        model: input.model,
+        attachments: input.attachments.length > 0 ? input.attachments : undefined,
         isInternal: stageInternal,
       });
       if (!deferVolatileCommit) this.commitAssistantMaterialization(threadId);
-      const shouldBroadcast = !fromProvider && (content.length > 0 || attachments.length > 0);
-      if (broadcastFallback && shouldBroadcast) {
-        broadcast("agent.event", {
-          type: AgentEventType.Message,
-          threadId,
-          content,
-          tokens: null,
-          messageId: msg.id,
-          ...(attachments.length > 0 ? { attachments } : {}),
-        } satisfies AgentEvent);
-      }
-      return { id: msg.id, content, shouldBroadcast, attachments };
+      const materialized = {
+        id: msg.id,
+        content: input.content,
+        shouldBroadcast: !input.fromProvider && (input.content.length > 0 || input.attachments.length > 0),
+        attachments: input.attachments,
+      };
+      if (broadcastFallback) this.broadcastMaterializedAssistant(threadId, materialized);
+      return materialized;
     } catch (err) {
       logger.error("Failed to materialize assistant message", {
         threadId,
@@ -607,6 +694,31 @@ export class TurnFinalizer {
       });
       return null;
     }
+  }
+
+  private assistantMaterializationInput(threadId: string): AssistantMaterializationInput {
+    const buffered = this.bufferedBodyByThread.get(threadId);
+    const streamed = this.streamingAssistantTextByThread.get(threadId)?.trim();
+    const fromProvider = buffered != null;
+    const content = fromProvider ? buffered.content : (streamed ?? "");
+    const model = fromProvider ? buffered.model : (this.threadRepo.findById(threadId)?.model ?? null);
+    const bufferedAttachments = this.getBufferedAssistantAttachments(threadId);
+    const attachments = fromProvider
+      ? this.mergeAttachments(buffered.attachments, bufferedAttachments)
+      : bufferedAttachments;
+    return { content, model, attachments, fromProvider };
+  }
+
+  private broadcastMaterializedAssistant(threadId: string, materialized: MaterializedAssistantRow): void {
+    if (!materialized.shouldBroadcast) return;
+    broadcast("agent.event", {
+      type: AgentEventType.Message,
+      threadId,
+      content: materialized.content,
+      tokens: null,
+      messageId: materialized.id,
+      ...(materialized.attachments.length > 0 ? { attachments: materialized.attachments } : {}),
+    } satisfies AgentEvent);
   }
 
   private commitAssistantMaterialization(threadId: string): void {

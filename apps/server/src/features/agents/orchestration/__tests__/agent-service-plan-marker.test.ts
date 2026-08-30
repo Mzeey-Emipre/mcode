@@ -9,7 +9,6 @@ import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
-import { AgentService } from "../agent-service.js";
 import { createAgentServiceForTest } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";

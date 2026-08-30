@@ -426,55 +426,9 @@ export function evaluateTerminalWorkload(
   const resizeCount = capture.resizeTrace.filter((resize) => resize.kind === "resize").length;
   const failedChecks: string[] = [];
 
-  if (missingMarkers.length > 0) failedChecks.push(`missing markers: ${missingMarkers.join(", ")}`);
-  if (capture.outputTruncated || capture.outputBytes > TERMINAL_WORKLOAD_LIMITS.maxOutputBytes) {
-    failedChecks.push("output exceeded the bounded capture");
-  }
-  if (capture.durationMs > TERMINAL_WORKLOAD_LIMITS.maxDurationMs) {
-    failedChecks.push("workload exceeded its duration budget");
-  }
-  if (!capture.synchronizationObserved) {
-    failedChecks.push("synchronization marker was not observed before workload steps");
-  }
-  if (!capture.exitObserved) failedChecks.push("terminal exit was not observed");
-  if (!workload.completion.terminateAfter && capture.exitCode !== 0) {
-    failedChecks.push("unexpected terminal exit code: " + String(capture.exitCode));
-  }
-  if (resizeCount > TERMINAL_WORKLOAD_LIMITS.maxResizeCount) {
-    failedChecks.push("resize count exceeded the corpus limit");
-  }
-  if (resizeCount !== workload.expectedResizeCount) {
-    failedChecks.push(
-      `resize count drifted from the declared plan (${workload.expectedResizeCount} expected, ${resizeCount} observed)`,
-    );
-  }
-  const resizeTimes = capture.resizeTrace
-    .filter((resize) => resize.kind === "resize")
-    .map((resize) => resize.elapsedMs);
-  for (let index = 1; index < resizeTimes.length; index += 1) {
-    if (
-      resizeTimes[index]! - resizeTimes[index - 1]! <
-      TERMINAL_WORKLOAD_LIMITS.minResizeIntervalMs
-    ) {
-      failedChecks.push("resize interval was below the corpus rate limit");
-      break;
-    }
-  }
-  if (capture.detachedOutputBytes > TERMINAL_WORKLOAD_LIMITS.maxReplayBytes) {
-    failedChecks.push("detached output exceeded the replay evidence bound");
-  }
-  if (workload.id === "reconnect-recovery" && capture.detachedOutputBytes === 0) {
-    failedChecks.push("reconnect captured no detached output");
-  }
-  if (capture.cleanupDurationMs > TERMINAL_WORKLOAD_LIMITS.maxProcessLifetimeMs) {
-    failedChecks.push("process cleanup exceeded its lifetime bound");
-  }
-  if (capture.childPidsAliveAfterKill.length > 0) {
-    failedChecks.push("child processes remained alive after PTY termination");
-  }
-  if (capture.childPidsAliveAfterCleanup.length > 0) {
-    failedChecks.push("child processes remained alive after cleanup escalation");
-  }
+  appendCaptureFailures(workload, capture, missingMarkers, failedChecks);
+  appendResizeFailures(workload, capture, resizeCount, failedChecks);
+  appendCleanupFailures(workload, capture, failedChecks);
 
   const facts = [
     ...workload.expectedFacts,
@@ -508,4 +462,77 @@ export function evaluateTerminalWorkload(
     failedChecks,
     facts,
   };
+}
+
+function appendCaptureFailures(
+  workload: TerminalWorkloadSpec,
+  capture: TerminalWorkloadCapture,
+  missingMarkers: readonly string[],
+  failedChecks: string[],
+): void {
+  if (missingMarkers.length > 0) failedChecks.push(`missing markers: ${missingMarkers.join(", ")}`);
+  if (capture.outputTruncated || capture.outputBytes > TERMINAL_WORKLOAD_LIMITS.maxOutputBytes) {
+    failedChecks.push("output exceeded the bounded capture");
+  }
+  if (capture.durationMs > TERMINAL_WORKLOAD_LIMITS.maxDurationMs) {
+    failedChecks.push("workload exceeded its duration budget");
+  }
+  if (!capture.synchronizationObserved) {
+    failedChecks.push("synchronization marker was not observed before workload steps");
+  }
+  if (!capture.exitObserved) failedChecks.push("terminal exit was not observed");
+  if (!workload.completion.terminateAfter && capture.exitCode !== 0) {
+    failedChecks.push("unexpected terminal exit code: " + String(capture.exitCode));
+  }
+}
+
+function appendResizeFailures(
+  workload: TerminalWorkloadSpec,
+  capture: TerminalWorkloadCapture,
+  resizeCount: number,
+  failedChecks: string[],
+): void {
+  if (resizeCount > TERMINAL_WORKLOAD_LIMITS.maxResizeCount) {
+    failedChecks.push("resize count exceeded the corpus limit");
+  }
+  if (resizeCount !== workload.expectedResizeCount) {
+    failedChecks.push(
+      `resize count drifted from the declared plan (${workload.expectedResizeCount} expected, ${resizeCount} observed)`,
+    );
+  }
+  if (hasResizeIntervalBelowLimit(capture)) {
+    failedChecks.push("resize interval was below the corpus rate limit");
+  }
+}
+
+function hasResizeIntervalBelowLimit(capture: TerminalWorkloadCapture): boolean {
+  const resizeTimes = capture.resizeTrace
+    .filter((resize) => resize.kind === "resize")
+    .map((resize) => resize.elapsedMs);
+  return resizeTimes.some(
+    (time, index) =>
+      index > 0 && time - resizeTimes[index - 1]! < TERMINAL_WORKLOAD_LIMITS.minResizeIntervalMs,
+  );
+}
+
+function appendCleanupFailures(
+  workload: TerminalWorkloadSpec,
+  capture: TerminalWorkloadCapture,
+  failedChecks: string[],
+): void {
+  if (capture.detachedOutputBytes > TERMINAL_WORKLOAD_LIMITS.maxReplayBytes) {
+    failedChecks.push("detached output exceeded the replay evidence bound");
+  }
+  if (workload.id === "reconnect-recovery" && capture.detachedOutputBytes === 0) {
+    failedChecks.push("reconnect captured no detached output");
+  }
+  if (capture.cleanupDurationMs > TERMINAL_WORKLOAD_LIMITS.maxProcessLifetimeMs) {
+    failedChecks.push("process cleanup exceeded its lifetime bound");
+  }
+  if (capture.childPidsAliveAfterKill.length > 0) {
+    failedChecks.push("child processes remained alive after PTY termination");
+  }
+  if (capture.childPidsAliveAfterCleanup.length > 0) {
+    failedChecks.push("child processes remained alive after cleanup escalation");
+  }
 }

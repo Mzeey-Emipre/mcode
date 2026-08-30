@@ -36,6 +36,33 @@ interface AgentYaml {
   description?: string;
 }
 
+function validAgentName(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function invalidOptionalString(value: unknown): boolean {
+  return value !== undefined && typeof value !== "string";
+}
+
+/** Parses one agent YAML file into a validated Copilot sub-agent. */
+function readAgentFile(filePath: string, source: "user" | "project"): CopilotSubagent | null {
+  try {
+    const parsed = parseYaml(fs.readFileSync(filePath, "utf-8")) as AgentYaml;
+    if (!validAgentName(parsed?.name)) return null;
+    if (invalidOptionalString(parsed.displayName)) return null;
+    if (invalidOptionalString(parsed.description)) return null;
+    return {
+      name: parsed.name,
+      displayName: parsed.displayName ?? parsed.name,
+      description: parsed.description ?? "",
+      source,
+    };
+  } catch {
+    // Silently skip malformed YAML so one bad file cannot stop discovery.
+    return null;
+  }
+}
+
 /** Scans a directory for `*.yml`/`*.yaml` files and parses each as a CopilotSubagent. */
 function scanAgentDir(dir: string, source: "user" | "project"): CopilotSubagent[] {
   if (!fs.existsSync(dir)) return [];
@@ -47,25 +74,9 @@ function scanAgentDir(dir: string, source: "user" | "project"): CopilotSubagent[
   }
   return entries
     .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
-    .flatMap((f) => {
-      try {
-        const raw = fs.readFileSync(path.join(dir, f), "utf-8");
-        const parsed = parseYaml(raw) as AgentYaml;
-        if (typeof parsed?.name !== "string" || !parsed.name.trim()) return [];
-        if (parsed.displayName !== undefined && typeof parsed.displayName !== "string") return [];
-        if (parsed.description !== undefined && typeof parsed.description !== "string") return [];
-        return [
-          {
-            name: parsed.name,
-            displayName: parsed.displayName ?? parsed.name,
-            description: parsed.description ?? "",
-            source,
-          } satisfies CopilotSubagent,
-        ];
-      } catch {
-        // Silently skip malformed YAML — don't crash discovery for one bad file.
-        return [];
-      }
+    .flatMap((fileName) => {
+      const agent = readAgentFile(path.join(dir, fileName), source);
+      return agent ? [agent] : [];
     });
 }
 

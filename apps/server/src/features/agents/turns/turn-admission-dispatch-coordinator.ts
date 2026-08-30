@@ -927,13 +927,41 @@ export class TurnAdmissionDispatchCoordinator {
 
   private providerDefaults(prepared: PreparedCommand, settings: ReturnType<SettingsService["get"]>) {
     const command = prepared.command;
-    const contextWindow = command.contextWindow
+    return {
+      contextWindow: this.contextWindowDefault(command, prepared, settings),
+      thinking: this.thinkingDefault(command, prepared, settings),
+      fastMode: this.fastModeDefault(command, prepared, settings),
+      copilotAgent: command.copilotAgent ?? prepared.thread.copilot_agent ?? undefined,
+    };
+  }
+
+  private contextWindowDefault(
+    command: SendMessageCommand,
+    prepared: PreparedCommand,
+    settings: ReturnType<SettingsService["get"]>,
+  ): ContextWindowMode {
+    return command.contextWindow
       ?? (prepared.thread.context_window_mode as ContextWindowMode | null)
       ?? settings.model.defaults.contextWindow;
-    const thinking = command.thinking ?? (prepared.thread.thinking ?? settings.model.defaults.thinking);
-    const fastMode = command.codexFastMode ?? prepared.thread.codex_fast_mode ?? settings.provider?.codex?.fastMode ?? false;
-    const copilotAgent = command.copilotAgent ?? prepared.thread.copilot_agent ?? undefined;
-    return { contextWindow, thinking, fastMode, copilotAgent };
+  }
+
+  private thinkingDefault(
+    command: SendMessageCommand,
+    prepared: PreparedCommand,
+    settings: ReturnType<SettingsService["get"]>,
+  ): boolean {
+    return command.thinking ?? prepared.thread.thinking ?? settings.model.defaults.thinking;
+  }
+
+  private fastModeDefault(
+    command: SendMessageCommand,
+    prepared: PreparedCommand,
+    settings: ReturnType<SettingsService["get"]>,
+  ): boolean {
+    return command.codexFastMode
+      ?? prepared.thread.codex_fast_mode
+      ?? settings.provider?.codex?.fastMode
+      ?? false;
   }
 
   private providerSpecificOptions(

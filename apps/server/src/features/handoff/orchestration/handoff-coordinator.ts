@@ -168,6 +168,11 @@ export interface HandoffDeliveryResult {
   providerWireOverride: string;
 }
 
+type LegacyReplay = {
+  providerWireOverride: string;
+  markdown: string;
+};
+
 /**
  * Owns branch-thread handoff path selection (B/A/D) and the legacy-replay
  * fallback. AgentService delegates branch-thread handoff delivery here.
@@ -217,247 +222,235 @@ export class HandoffCoordinator {
    * thread vanishes mid-handoff, so the caller aborts the branch.
    */
   async deliverHandoff(input: HandoffDeliveryInput): Promise<HandoffDeliveryResult> {
-    const { parentThread, childThreadId, childProvider, forkMessage, forkedMessages, historyBudget, userMessage, model } = input;
-    const parentThreadId = parentThread.id;
-    const resolvedForkMessageId = forkMessage.id;
-
-    // Derive the fork anchor role for the pipeline.
-    const forkAnchorRole = forkMessage.role === "user" ? "user" : "assistant";
-
-    // Orchestrate the handoff pipeline (B->A->D ladder). On failure, fall back to the
-    // legacy inline replay so the fork always succeeds.
-    let providerWireOverride: string;
-
-    // Signal to clients that the handoff is in progress so the UI can show a spinner
-    // before the artifact lands.
-    broadcast("thread.handoff", { threadId: childThreadId, status: "generating" });
-
+    broadcast("thread.handoff", { threadId: input.childThreadId, status: "generating" });
     try {
-      const artifact = await this.handoffPipeline.orchestrate({
-        parentThreadId,
-        forkedFromMessageId: resolvedForkMessageId,
-        forkAnchorRole,
-        childThreadId,
-        childProviderId: childProvider,
-        messagesUpToFork: forkedMessages,
-        historyBudget,
-        userFollowUpMessage: userMessage,
-      });
+      return { providerWireOverride: await this.deliverPipelineHandoff(input) };
+    } catch (error) {
+      return { providerWireOverride: await this.deliverLegacyHandoff(input, error) };
+    }
+  }
 
-      // Copy attachments from parent messages within the fork range into the child thread's dir.
-      // StoredAttachment has no path field; files live at {mcodeDir}/attachments/{threadId}/{id}{ext}.
-      const parentAttachmentsDir = join(getMcodeDir(), "attachments", parentThreadId);
-      const attachmentSources: AttachmentSource[] = [];
-      for (const msg of forkedMessages) {
-        if (!msg.attachments) continue;
-        for (const att of msg.attachments) {
-          const ext = storedAttachmentSuffix(att.mimeType);
-          const absolutePath = join(parentAttachmentsDir, `${att.id}${ext}`);
-          if (!existsSync(absolutePath)) {
-            logger.warn("deliverHandoff: parent attachment not found on disk, skipping", {
-              attachmentId: att.id,
-              parentThreadId,
-              absolutePath,
-            });
-            continue;
-          }
-          attachmentSources.push({
-            id: att.id,
+  private async deliverPipelineHandoff(input: HandoffDeliveryInput): Promise<string> {
+    const artifact = await this.handoffPipeline.orchestrate({
+      parentThreadId: input.parentThread.id,
+      forkedFromMessageId: input.forkMessage.id,
+      forkAnchorRole: input.forkMessage.role === "user" ? "user" : "assistant",
+      childThreadId: input.childThreadId,
+      childProviderId: input.childProvider,
+      messagesUpToFork: input.forkedMessages,
+      historyBudget: input.historyBudget,
+      userFollowUpMessage: input.userMessage,
+    });
+    await this.copyForkAttachments(input, artifact);
+    this.requireChildForArtifact(input.childThreadId);
+    await this.handoffStorage.write(input.childThreadId, artifact);
+    broadcast("thread.handoff", {
+      threadId: input.childThreadId,
+      status: artifact.meta.ladderStep === "D" ? "fallback" : "ready",
+      ladderStep: artifact.meta.ladderStep,
+      providerErrorOnGenerate: artifact.meta.providerErrorOnGenerate,
+    });
+    this.persistHandoffAnchor(input.childThreadId, artifact.markdown);
+    return this.createProviderWireOverride(input, artifact);
+  }
+
+  private async copyForkAttachments(input: HandoffDeliveryInput, artifact: HandoffArtifact): Promise<void> {
+    const attachmentSources = this.collectAttachmentSources(input.parentThread.id, input.forkedMessages);
+    if (attachmentSources.length === 0) return;
+    artifact.meta.attachments = await this.handoffStorage.copyAttachments(input.childThreadId, attachmentSources);
+  }
+
+  private collectAttachmentSources(parentThreadId: string, messages: Message[]): AttachmentSource[] {
+    const parentAttachmentsDir = join(getMcodeDir(), "attachments", parentThreadId);
+    const attachmentSources: AttachmentSource[] = [];
+    for (const message of messages) {
+      for (const attachment of message.attachments ?? []) {
+        const absolutePath = join(parentAttachmentsDir, `${attachment.id}${storedAttachmentSuffix(attachment.mimeType)}`);
+        if (!existsSync(absolutePath)) {
+          logger.warn("deliverHandoff: parent attachment not found on disk, skipping", {
+            attachmentId: attachment.id,
+            parentThreadId,
             absolutePath,
-            originalName: att.name,
-            mime: att.mimeType,
-            parentMessageId: msg.id,
           });
+          continue;
         }
-      }
-
-      if (attachmentSources.length > 0) {
-        artifact.meta.attachments = await this.handoffStorage.copyAttachments(childThreadId, attachmentSources);
-      }
-
-      // Guard against the child thread being hard-deleted between orchestration
-      // start and artifact write (e.g. rapid user delete during a slow path B).
-      const childCheck = this.threadRepo.findById(childThreadId);
-      if (!childCheck || childCheck.deleted_at) {
-        logger.info("Child thread vanished mid-handoff; dropping artifact", { childThreadId });
-        throw new Error("Child thread deleted before handoff artifact could be written");
-      }
-
-      await this.handoffStorage.write(childThreadId, artifact);
-
-      broadcast("thread.handoff", {
-        threadId: childThreadId,
-        status: artifact.meta.ladderStep === "D" ? "fallback" : "ready",
-        ladderStep: artifact.meta.ladderStep,
-        providerErrorOnGenerate: artifact.meta.providerErrorOnGenerate,
-      });
-
-      // Store an internal-only system message at seq 1 as a DB anchor for the
-      // handoff. We keep the FULL markdown here (not the pointer): it is not
-      // budget-bound, and a complete anchor lets reload reconstruct the doc even
-      // if the OS temp file has been swept. isInternal=true keeps it off the UI
-      // render path.
-      this.messageRepo.create(
-        childThreadId, "system", artifact.markdown, 1,
-        undefined, undefined, undefined, undefined, /* isInternal */ true,
-      );
-
-      if (shouldInlineHandoffArtifact(childProvider)) {
-        // Codex does not consume Mcode's Read pre-grant, so a temp-file prompt
-        // can stall on tool access. Inline the bounded artifact instead.
-        providerWireOverride = buildInlineHandoffPrompt(artifact.markdown, userMessage);
-      } else {
-        // Off-band delivery (PRD #538): write the FULL handoff doc to a stable OS
-        // temp path and shrink the child's inline first-Turn prompt to a small
-        // pointer + graceful-degradation summary + the user's message. Issue a
-        // ScopedPreGrant so the child can Read that one file on its first Turn
-        // without prompting, regardless of permissionMode.
-        const handoffTempPath = join(
-          tmpdir(),
-          `mcode-handoff-${childThreadId}-${Date.now()}.md`,
-        );
-        try {
-          await writeFile(handoffTempPath, artifact.markdown, "utf8");
-          this.scopedPreGrant.issue({
-            threadId: childThreadId,
-            toolName: "Read",
-            path: handoffTempPath,
-          });
-          providerWireOverride = buildOffBandHandoffPrompt(handoffTempPath, artifact.markdown, userMessage);
-        } catch (writeErr) {
-          // If the temp write fails we cannot pre-grant a Read, so fall back to
-          // inlining the full doc. The fork still succeeds.
-          logger.warn("Off-band handoff write failed; inlining full doc", {
-            threadId: childThreadId,
-            handoffTempPath,
-            error: writeErr instanceof Error ? writeErr.message : String(writeErr),
-          });
-          providerWireOverride = `${artifact.markdown}\n\n---\n\n${userMessage}`;
-        }
-      }
-    } catch (pipelineErr) {
-      // Re-check child thread existence before writing any fallback artifacts.
-      // The thread may have been hard-deleted between pipeline start and failure
-      // (e.g. rapid user delete during a slow path B), in which case proceeding
-      // would produce FK errors, stale files, or a misleading fallback event.
-      const childRecheck = this.threadRepo.findById(childThreadId);
-      if (!childRecheck || childRecheck.deleted_at) {
-        logger.info("Child thread vanished mid-handoff; aborting fallback", {
-          childThreadId,
-        });
-        throw pipelineErr;
-      }
-
-      // Classify the error so we know how to label the artifact and log usefully.
-      const errClass = classifyProviderError(pipelineErr);
-      logger.warn("deliverHandoff: handoff pipeline failed, falling back to legacy replay", {
-        threadId: childThreadId,
-        parentThreadId,
-        errClass,
-        error: pipelineErr instanceof Error ? pipelineErr.message : String(pipelineErr),
-        stack: pipelineErr instanceof Error ? pipelineErr.stack : undefined,
-      });
-
-      // Notify clients that the handoff fell back to the deterministic legacy replay.
-      // The pipeline itself threw, so treat as the classified error (or fatal if clean).
-      broadcast("thread.handoff", {
-        threadId: childThreadId,
-        status: "fallback",
-        ladderStep: "D" as const,
-        providerErrorOnGenerate: errClass === "clean" ? ("fatal" as const) : errClass,
-      });
-
-      // Legacy fallback: build handoff content + conversation replay inline.
-      const lastAssistantMsg = [...forkedMessages].reverse().find((m) => m.role === "assistant");
-      const lastAssistantText = lastAssistantMsg?.content ?? null;
-      const allSnapshots = this.turnSnapshotRepo.listByThread(parentThreadId);
-      const forkedMessageIds = new Set(forkedMessages.map((m) => m.id));
-      const forkSnapshot = resolveForkSnapshot(allSnapshots, forkedMessageIds);
-      const recentFilesChanged: string[] = forkSnapshot?.files_changed ?? [];
-      const sourceHead = forkSnapshot?.ref_after ?? null;
-      const rawTasks = this.taskRepo.get(parentThreadId);
-      const openTasks = (rawTasks ?? []).map((t) => ({ content: t.content, status: t.status }));
-      const handoffContent = buildHandoffContent({
-        parentThread,
-        forkMessageId: resolvedForkMessageId,
-        lastAssistantText,
-        recentFilesChanged,
-        openTasks,
-        sourceHead,
-      });
-
-      // isInternal=true keeps this off the UI render path, consistent with the
-      // pipeline path's system message (written below after replay is built).
-      // NOTE: we write this placeholder now; the legacy replay is stored via
-      // providerWireOverride, not as a second system message.
-      this.messageRepo.create(
-        childThreadId, "system", handoffContent, 1,
-        undefined, undefined, undefined, undefined, /* isInternal */ true,
-      );
-
-      const budget = replayBudgetChars(model);
-      let compactSummary: string | null = null;
-      if (parentThread.last_compact_summary) {
-        const lastForkCompactionIdx = findLastIndex(
-          forkedMessages,
-          (m) => m.role === "system" && m.content === "Context compacted",
-        );
-        if (lastForkCompactionIdx !== -1) {
-          const { messages: postForkWindow } = this.messageRepo.listByThread(parentThreadId, 100);
-          const postForkCompaction = postForkWindow.some(
-            (m) =>
-              m.role === "system" &&
-              m.content === "Context compacted" &&
-              m.sequence > forkMessage.sequence,
-          );
-          if (!postForkCompaction) {
-            compactSummary = parentThread.last_compact_summary;
-          }
-        }
-      }
-      const replay = prefixHistoryBudgetNotice(
-        buildConversationReplay(forkedMessages, budget, compactSummary),
-        historyBudget,
-      );
-      const replayHeader = `You are continuing work from a previous thread titled "${parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
-      providerWireOverride = replay ? `${replayHeader}${replay}\n\n---\n\n${userMessage}` : userMessage;
-
-      // Persist a HandoffArtifact so "View doc" has something to read.
-      // The markdown is the full replay that will be sent to the provider.
-      const legacyMarkdown = (replay ? `${replayHeader}${replay}` : handoffContent).trim();
-      const legacyArtifact: HandoffArtifact = {
-        markdown: legacyMarkdown,
-        meta: {
-          schemaVersion: 1,
-          parentThreadId,
-          forkedFromMessageId: resolvedForkMessageId,
-          forkAnchorRole,
-          childThreadId,
-          generatedBy: "deterministic",
-          provider: parentThread.provider,
-          ladderStep: "D",
-          mode: "full",
-          generatedAt: new Date().toISOString(),
-          characterCount: legacyMarkdown.length,
-          parentSdkSessionId: parentThread.sdk_session_id ?? null,
-          providerErrorOnGenerate: errClass === "clean" ? "fatal" : errClass,
-          regenerationHistory: [],
-          attachments: [],
-          ...(historyBudget && { historyBudget }),
-        },
-      };
-      try {
-        await this.handoffStorage.write(childThreadId, legacyArtifact);
-      } catch (storageErr) {
-        // Non-fatal: the fork still succeeds via providerWireOverride; View doc
-        // will show "not available" rather than blocking the user.
-        logger.warn("Failed to persist legacy handoff artifact (View doc will be unavailable)", {
-          threadId: childThreadId,
-          storageError: storageErr instanceof Error ? storageErr.message : String(storageErr),
+        attachmentSources.push({
+          id: attachment.id,
+          absolutePath,
+          originalName: attachment.name,
+          mime: attachment.mimeType,
+          parentMessageId: message.id,
         });
       }
     }
+    return attachmentSources;
+  }
 
-    return { providerWireOverride };
+  private requireChildForArtifact(childThreadId: string): void {
+    const child = this.threadRepo.findById(childThreadId);
+    if (!child || child.deleted_at) {
+      logger.info("Child thread vanished mid-handoff; dropping artifact", { childThreadId });
+      throw new Error("Child thread deleted before handoff artifact could be written");
+    }
+  }
+
+  private persistHandoffAnchor(childThreadId: string, markdown: string): void {
+    this.messageRepo.create(
+      childThreadId, "system", markdown, 1,
+      undefined, undefined, undefined, undefined, /* isInternal */ true,
+    );
+  }
+
+  private async createProviderWireOverride(
+    input: HandoffDeliveryInput,
+    artifact: HandoffArtifact,
+  ): Promise<string> {
+    if (shouldInlineHandoffArtifact(input.childProvider)) {
+      return buildInlineHandoffPrompt(artifact.markdown, input.userMessage);
+    }
+    return this.writeOffBandHandoff(input.childThreadId, artifact.markdown, input.userMessage);
+  }
+
+  private async writeOffBandHandoff(childThreadId: string, markdown: string, userMessage: string): Promise<string> {
+    const handoffTempPath = join(tmpdir(), `mcode-handoff-${childThreadId}-${Date.now()}.md`);
+    try {
+      await writeFile(handoffTempPath, markdown, "utf8");
+      this.scopedPreGrant.issue({ threadId: childThreadId, toolName: "Read", path: handoffTempPath });
+      return buildOffBandHandoffPrompt(handoffTempPath, markdown, userMessage);
+    } catch (error) {
+      logger.warn("Off-band handoff write failed; inlining full doc", {
+        threadId: childThreadId,
+        handoffTempPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return `${markdown}\n\n---\n\n${userMessage}`;
+    }
+  }
+
+  private async deliverLegacyHandoff(input: HandoffDeliveryInput, pipelineError: unknown): Promise<string> {
+    this.requireChildForLegacyFallback(input.childThreadId, pipelineError);
+    const errorClass = classifyProviderError(pipelineError);
+    this.publishLegacyFallback(input, pipelineError, errorClass);
+    const handoffContent = this.buildLegacyHandoffContent(input);
+    this.persistHandoffAnchor(input.childThreadId, handoffContent);
+    const replay = this.buildLegacyReplay(input, handoffContent);
+    const artifact = this.buildLegacyArtifact(input, replay.markdown, errorClass);
+    await this.persistLegacyArtifact(input.childThreadId, artifact);
+    return replay.providerWireOverride;
+  }
+
+  private requireChildForLegacyFallback(childThreadId: string, pipelineError: unknown): void {
+    const child = this.threadRepo.findById(childThreadId);
+    if (!child || child.deleted_at) {
+      logger.info("Child thread vanished mid-handoff; aborting fallback", { childThreadId });
+      throw pipelineError;
+    }
+  }
+
+  private publishLegacyFallback(
+    input: HandoffDeliveryInput,
+    pipelineError: unknown,
+    errorClass: ReturnType<typeof classifyProviderError>,
+  ): void {
+    logger.warn("deliverHandoff: handoff pipeline failed, falling back to legacy replay", {
+      threadId: input.childThreadId,
+      parentThreadId: input.parentThread.id,
+      errClass: errorClass,
+      error: pipelineError instanceof Error ? pipelineError.message : String(pipelineError),
+      stack: pipelineError instanceof Error ? pipelineError.stack : undefined,
+    });
+    broadcast("thread.handoff", {
+      threadId: input.childThreadId,
+      status: "fallback",
+      ladderStep: "D" as const,
+      providerErrorOnGenerate: errorClass === "clean" ? ("fatal" as const) : errorClass,
+    });
+  }
+
+  private buildLegacyHandoffContent(input: HandoffDeliveryInput): string {
+    const lastAssistant = [...input.forkedMessages].reverse().find((message) => message.role === "assistant");
+    const forkSnapshot = resolveForkSnapshot(
+      this.turnSnapshotRepo.listByThread(input.parentThread.id),
+      new Set(input.forkedMessages.map((message) => message.id)),
+    );
+    return buildHandoffContent({
+      parentThread: input.parentThread,
+      forkMessageId: input.forkMessage.id,
+      lastAssistantText: lastAssistant?.content ?? null,
+      recentFilesChanged: forkSnapshot?.files_changed ?? [],
+      openTasks: (this.taskRepo.get(input.parentThread.id) ?? [])
+        .map((task) => ({ content: task.content, status: task.status })),
+      sourceHead: forkSnapshot?.ref_after ?? null,
+    });
+  }
+
+  private buildLegacyReplay(input: HandoffDeliveryInput, handoffContent: string): LegacyReplay {
+    const replay = prefixHistoryBudgetNotice(
+      buildConversationReplay(
+        input.forkedMessages,
+        replayBudgetChars(input.model),
+        this.resolveLegacyCompactSummary(input),
+      ),
+      input.historyBudget,
+    );
+    const header = `You are continuing work from a previous thread titled "${input.parentThread.title}". Here is the conversation history up to the fork point:\n\n`;
+    return replay
+      ? { providerWireOverride: `${header}${replay}\n\n---\n\n${input.userMessage}`, markdown: `${header}${replay}`.trim() }
+      : { providerWireOverride: input.userMessage, markdown: handoffContent.trim() };
+  }
+
+  private resolveLegacyCompactSummary(input: HandoffDeliveryInput): string | null {
+    if (!input.parentThread.last_compact_summary) return null;
+    const compactionIndex = findLastIndex(
+      input.forkedMessages,
+      (message) => message.role === "system" && message.content === "Context compacted",
+    );
+    if (compactionIndex === -1) return null;
+    const { messages } = this.messageRepo.listByThread(input.parentThread.id, 100);
+    const compactedAfterFork = messages.some(
+      (message) => message.role === "system"
+        && message.content === "Context compacted"
+        && message.sequence > input.forkMessage.sequence,
+    );
+    return compactedAfterFork ? null : input.parentThread.last_compact_summary;
+  }
+
+  private buildLegacyArtifact(
+    input: HandoffDeliveryInput,
+    markdown: string,
+    errorClass: ReturnType<typeof classifyProviderError>,
+  ): HandoffArtifact {
+    return {
+      markdown,
+      meta: {
+        schemaVersion: 1,
+        parentThreadId: input.parentThread.id,
+        forkedFromMessageId: input.forkMessage.id,
+        forkAnchorRole: input.forkMessage.role === "user" ? "user" : "assistant",
+        childThreadId: input.childThreadId,
+        generatedBy: "deterministic",
+        provider: input.parentThread.provider,
+        ladderStep: "D",
+        mode: "full",
+        generatedAt: new Date().toISOString(),
+        characterCount: markdown.length,
+        parentSdkSessionId: input.parentThread.sdk_session_id ?? null,
+        providerErrorOnGenerate: errorClass === "clean" ? "fatal" : errorClass,
+        regenerationHistory: [],
+        attachments: [],
+        ...(input.historyBudget && { historyBudget: input.historyBudget }),
+      },
+    };
+  }
+
+  private async persistLegacyArtifact(childThreadId: string, artifact: HandoffArtifact): Promise<void> {
+    try {
+      await this.handoffStorage.write(childThreadId, artifact);
+    } catch (error) {
+      logger.warn("Failed to persist legacy handoff artifact (View doc will be unavailable)", {
+        threadId: childThreadId,
+        storageError: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

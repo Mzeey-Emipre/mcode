@@ -70,7 +70,7 @@ function conflict(
   conflictReason: PullRequestMutationError["conflictReason"],
   message: string,
   current?: PullRequestMutationExpected,
-): PullRequestMutationResult {
+): Extract<PullRequestMutationResult, { ok: false }> {
   return {
     ok: false,
     error: {
@@ -145,56 +145,45 @@ function mutationError(
   current?: PullRequestMutationExpected,
 ): PullRequestMutationError {
   if (error instanceof GithubPullRequestMutationClientError) {
-    if (error.outcome === "unknown") {
-      return {
-        code: "conflict",
-        message: "The outcome of the GitHub pull request action is unknown.",
-        conflictReason: "outcome_unknown",
-        ...(current ? { current } : {}),
-      };
-    }
-    if (error.failureKind === "permission") {
-      return {
-        code: "conflict",
-        message: "GitHub permission changed before the pull request action.",
-        conflictReason: "permission_changed",
-        ...(current ? { current } : {}),
-      };
-    }
-    if (error.failureKind === "head_changed") {
-      return {
-        code: "conflict",
-        message: "The pull request head changed before GitHub accepted the action.",
-        conflictReason: "head_changed",
-        ...(current ? { current } : {}),
-      };
-    }
-    if (error.failureKind === "merge_blocked") {
-      return {
-        code: "conflict",
-        message: "GitHub blocked the pull request merge.",
-        conflictReason: "merge_blocked",
-        ...(current ? { current } : {}),
-      };
-    }
-    if (error.code === "conflict") {
-      return {
-        code: "conflict",
-        message: "The pull request state changed before the action.",
-        conflictReason: "state_changed",
-        ...(current ? { current } : {}),
-      };
-    }
-    return {
-      code: error.code,
-      message: error.message.slice(0, 512),
-      ...(error.retryAfterSeconds === undefined
-        ? {}
-        : { retryAfterSeconds: error.retryAfterSeconds }),
-      ...(error.resetAt === undefined ? {} : { resetAt: error.resetAt }),
-    };
+    return mutationClientError(error, current);
   }
   return safeReadError(error);
+}
+
+function mutationClientError(
+  error: GithubPullRequestMutationClientError,
+  current?: PullRequestMutationExpected,
+): PullRequestMutationError {
+  const conflictDetail = mutationConflictDetail(error);
+  if (conflictDetail) return conflict(conflictDetail.reason, conflictDetail.message, current).error;
+  return {
+    code: error.code,
+    message: error.message.slice(0, 512),
+    ...(error.retryAfterSeconds === undefined
+      ? {}
+      : { retryAfterSeconds: error.retryAfterSeconds }),
+    ...(error.resetAt === undefined ? {} : { resetAt: error.resetAt }),
+  };
+}
+
+function mutationConflictDetail(
+  error: GithubPullRequestMutationClientError,
+): { reason: PullRequestMutationError["conflictReason"]; message: string } | null {
+  if (error.outcome === "unknown") {
+    return { reason: "outcome_unknown", message: "The outcome of the GitHub pull request action is unknown." };
+  }
+  if (error.failureKind === "permission") {
+    return { reason: "permission_changed", message: "GitHub permission changed before the pull request action." };
+  }
+  if (error.failureKind === "head_changed") {
+    return { reason: "head_changed", message: "The pull request head changed before GitHub accepted the action." };
+  }
+  if (error.failureKind === "merge_blocked") {
+    return { reason: "merge_blocked", message: "GitHub blocked the pull request merge." };
+  }
+  return error.code === "conflict"
+    ? { reason: "state_changed", message: "The pull request state changed before the action." }
+    : null;
 }
 
 function snapshotConflict(
@@ -521,18 +510,33 @@ export class PullRequestMutationService {
     request: PullRequestSubmitReviewRequest,
     preflight: PullRequestRemoteMutationPreflight,
   ): PullRequestMutationResult | null {
+    const eligibility = this.checkReviewEligibility(request, preflight);
+    if (eligibility) return eligibility;
+    return this.checkReplyDraftPolicy(request, preflight);
+  }
+
+  private checkReviewEligibility(
+    request: PullRequestSubmitReviewRequest,
+    preflight: PullRequestRemoteMutationPreflight,
+  ): PullRequestMutationResult | null {
     if (preflight.snapshot.state !== "open") {
       return conflict("state_changed", "Only open pull requests can be reviewed.", preflight.snapshot);
     }
     const commentPolicy = this.checkCommentPolicy(preflight);
     if (commentPolicy) return commentPolicy;
-    if (preflight.viewerDidAuthor && request.event !== "comment") {
-      return conflict(
+    return preflight.viewerDidAuthor && request.event !== "comment"
+      ? conflict(
         "permission_changed",
         "Pull request authors cannot approve or request changes on their own pull request.",
         preflight.snapshot,
-      );
-    }
+      )
+      : null;
+  }
+
+  private checkReplyDraftPolicy(
+    request: PullRequestSubmitReviewRequest,
+    preflight: PullRequestRemoteMutationPreflight,
+  ): PullRequestMutationResult | null {
     const threads = new Map(preflight.replyThreads.map((thread) => [thread.providerNodeId, thread]));
     for (const draft of request.drafts) {
       if (draft.kind !== "reply") continue;
@@ -617,10 +621,23 @@ export class PullRequestMutationService {
         preflight.snapshot,
       );
     }
-    if (
-      permissionRank(preflight.viewerPermission) < WRITE_PERMISSION_RANK
-      && !preflight.viewerCanMergeAsAdmin
-    ) {
+    const permission = this.checkMergePermission(request, preflight);
+    if (permission) return permission;
+    if (this.mergeIsBlocked(request, preflight)) {
+      return conflict(
+        "merge_blocked",
+        "The selected merge is blocked by current repository or pull request state.",
+        preflight.snapshot,
+      );
+    }
+    return null;
+  }
+
+  private checkMergePermission(
+    request: PullRequestMergeRequest,
+    preflight: PullRequestRemoteMutationPreflight,
+  ): PullRequestMutationResult | null {
+    if (permissionRank(preflight.viewerPermission) < WRITE_PERMISSION_RANK && !preflight.viewerCanMergeAsAdmin) {
       return conflict(
         "permission_changed",
         "GitHub no longer permits this viewer to merge the pull request.",
@@ -634,22 +651,18 @@ export class PullRequestMutationService {
         preflight.snapshot,
       );
     }
-    if (
-      !preflight.allowedMergeMethods.includes(request.method)
-      || preflight.mergeability === "conflicting"
-      || ["dirty", "draft"].includes(preflight.mergeStateStatus)
-      || (
-        preflight.mergeStateStatus === "blocked"
-        && !(request.bypassRequirements && preflight.viewerCanMergeAsAdmin)
-      )
-    ) {
-      return conflict(
-        "merge_blocked",
-        "The selected merge is blocked by current repository or pull request state.",
-        preflight.snapshot,
-      );
-    }
     return null;
+  }
+
+  private mergeIsBlocked(
+    request: PullRequestMergeRequest,
+    preflight: PullRequestRemoteMutationPreflight,
+  ): boolean {
+    if (!preflight.allowedMergeMethods.includes(request.method)) return true;
+    if (preflight.mergeability === "conflicting") return true;
+    if (["dirty", "draft"].includes(preflight.mergeStateStatus)) return true;
+    return preflight.mergeStateStatus === "blocked"
+      && !(request.bypassRequirements && preflight.viewerCanMergeAsAdmin);
   }
 
   private async cleanupPendingReview(

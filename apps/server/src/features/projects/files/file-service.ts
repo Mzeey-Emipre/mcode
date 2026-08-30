@@ -80,52 +80,12 @@ export class FileService {
     relativePath: string,
     threadId?: string,
   ): string {
+    assertRelativeFilePath(relativePath);
     const rootDir = this.resolveWorkingDir(workspaceId, threadId);
-
-    if (isAbsolute(relativePath) || relativePath.includes("..") || relativePath.includes("\0")) {
-      throw new Error(`Invalid file path: ${relativePath}`);
-    }
-
     const fullPath = resolve(rootDir, relativePath);
-
-    if (!existsSync(fullPath)) {
-      throw new Error(`File not found: ${relativePath}`);
-    }
-
-    // Use realpathSync to resolve symlinks before boundary check.
-    // This prevents symlink escape where a link inside the workspace
-    // points to a file outside the root (e.g., notes -> /etc/passwd).
-    const canonicalRoot = realpathSync(rootDir);
-    const canonicalPath = realpathSync(fullPath);
-
-    // On Windows, realpathSync and resolve may return paths with different
-    // drive letter casing (e.g., "C:" vs "c:"), so compare case-insensitively.
-    const compareRoot = process.platform === "win32"
-      ? canonicalRoot.toLowerCase()
-      : canonicalRoot;
-    const comparePath = process.platform === "win32"
-      ? canonicalPath.toLowerCase()
-      : canonicalPath;
-
-    const rootWithSep = compareRoot.endsWith(sep)
-      ? compareRoot
-      : compareRoot + sep;
-
-    if (
-      !comparePath.startsWith(rootWithSep) &&
-      comparePath !== compareRoot
-    ) {
-      throw new Error(`File path escapes workspace root: ${relativePath}`);
-    }
-
-    const MAX_FILE_SIZE = 256 * 1024; // 256 KB
-    const stats = statSync(fullPath);
-    if (stats.size > MAX_FILE_SIZE) {
-      throw new Error(
-        `File too large for injection: ${relativePath} (${stats.size} bytes, max ${MAX_FILE_SIZE})`,
-      );
-    }
-
+    assertFileExists(fullPath, relativePath);
+    const canonicalPath = assertPathWithinRoot(rootDir, fullPath, relativePath);
+    assertFileSize(fullPath, relativePath);
     return canonicalPath;
   }
 
@@ -158,6 +118,46 @@ export class FileService {
       workspace.path,
       thread?.mode ?? null,
       thread?.worktree_path ?? null,
+    );
+  }
+}
+
+function assertRelativeFilePath(relativePath: string): void {
+  if (isAbsolute(relativePath) || relativePath.includes("..") || relativePath.includes("\0")) {
+    throw new Error(`Invalid file path: ${relativePath}`);
+  }
+}
+
+function assertFileExists(fullPath: string, relativePath: string): void {
+  if (!existsSync(fullPath)) {
+    throw new Error(`File not found: ${relativePath}`);
+  }
+}
+
+function assertPathWithinRoot(rootDir: string, fullPath: string, relativePath: string): string {
+  const canonicalRoot = normalizePathForComparison(realpathSync(rootDir));
+  const canonicalPath = normalizePathForComparison(realpathSync(fullPath));
+  const rootWithSeparator = canonicalRoot.endsWith(sep)
+    ? canonicalRoot
+    : canonicalRoot + sep;
+
+  if (!canonicalPath.startsWith(rootWithSeparator) && canonicalPath !== canonicalRoot) {
+    throw new Error(`File path escapes workspace root: ${relativePath}`);
+  }
+
+  return canonicalPath;
+}
+
+function normalizePathForComparison(path: string): string {
+  return process.platform === "win32" ? path.toLowerCase() : path;
+}
+
+function assertFileSize(fullPath: string, relativePath: string): void {
+  const maxFileSize = 256 * 1024;
+  const { size } = statSync(fullPath);
+  if (size > maxFileSize) {
+    throw new Error(
+      `File too large for injection: ${relativePath} (${size} bytes, max ${maxFileSize})`,
     );
   }
 }

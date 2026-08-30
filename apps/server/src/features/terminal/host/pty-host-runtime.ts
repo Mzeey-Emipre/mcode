@@ -64,16 +64,27 @@ export class PtyHostProcessRuntime {
   /** Validates and applies one server message. */
   async receive(value: unknown): Promise<void> {
     if (this.disposed) throw new Error("PTY host runtime is stopped");
-    const message =
-      this.generation === null
-        ? PtyHostServerMessageSchema().parse(value)
-        : parsePtyHostServerMessage(value, this.generation);
+    const message = this.parseServerMessage(value);
     if (this.generation === null) {
-      if (message.kind !== "handshake")
-        throw new Error("PTY host handshake is required");
-      this.acceptHandshake(message);
-      return;
+      return this.receiveHandshake(message);
     }
+    return this.handleMessage(message);
+  }
+
+  private parseServerMessage(value: unknown): PtyHostServerMessage {
+    return this.generation === null
+      ? PtyHostServerMessageSchema().parse(value)
+      : parsePtyHostServerMessage(value, this.generation);
+  }
+
+  private receiveHandshake(message: PtyHostServerMessage): void {
+    if (message.kind !== "handshake") {
+      throw new Error("PTY host handshake is required");
+    }
+    this.acceptHandshake(message);
+  }
+
+  private async handleMessage(message: PtyHostServerMessage): Promise<void> {
     switch (message.kind) {
       case "handshake":
         throw new Error("PTY host handshake is already complete");

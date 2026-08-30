@@ -77,145 +77,249 @@ export async function killProcessTree(
   pid: number,
   deps?: KillProcessTreeDeps,
 ): Promise<void> {
-  const ef = deps?.execFile ?? execFile;
-  const platform = deps?.platform ?? process.platform;
-  const processKill =
-    deps?.processKill ??
-    ((targetPid: number, signal: string | number) => {
-      process.kill(targetPid, signal as NodeJS.Signals);
-    });
-  const sleep =
-    deps?.sleep ??
-    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const now = deps?.now ?? Date.now;
-  if (platform === "win32") {
-    return killWindowsProcessTree(pid, {
-      execFile: ef,
-      processKill,
-      sleep,
-      now,
-      getSnapshot:
-        deps?.getWindowsProcessSnapshot ??
-        (() => readWindowsProcessSnapshot(ef)),
-      isProcessAlive:
-        deps?.isProcessAlive ??
-        ((targetPid) => {
-          try {
-            processKill(targetPid, 0);
-            return true;
-          } catch (err) {
-            if (isProcessGoneError(err)) return false;
-            throw err;
-          }
-        }),
-    });
+  const context = createKillContext(deps);
+  if (context.platform === "win32") return killWindowsProcessTree(pid, context.windows);
+  return killUnixProcessTree(pid, context.unix);
+}
+
+interface UnixKillContext {
+  readonly execFile: typeof execFile;
+  readonly platform: NodeJS.Platform;
+  readonly processKill: (pid: number, signal: string | number) => void;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly now: () => number;
+  readonly getProcessStartMarker: (pid: number) => Promise<string | null>;
+  readonly getRemainingProcessStartMarkers: (identities: readonly ProcessIdentity[]) => Promise<Map<number, string | null>>;
+}
+
+interface SharedKillContext {
+  readonly platform: NodeJS.Platform;
+  readonly execFile: typeof execFile;
+  readonly processKill: (pid: number, signal: string | number) => void;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly now: () => number;
+}
+
+function createKillContext(deps: KillProcessTreeDeps | undefined): {
+  readonly platform: NodeJS.Platform;
+  readonly windows: WindowsKillContext;
+  readonly unix: UnixKillContext;
+} {
+  const shared = createSharedKillContext(deps);
+  return {
+    platform: shared.platform,
+    windows: createWindowsKillContext(deps, shared),
+    unix: createUnixKillContext(deps, shared),
+  };
+}
+
+function createSharedKillContext(deps: KillProcessTreeDeps | undefined): SharedKillContext {
+  return {
+    platform: resolveKillPlatform(deps),
+    execFile: resolveProcessExecutor(deps),
+    processKill: resolveProcessKiller(deps),
+    sleep: resolveProcessSleep(deps),
+    now: resolveProcessClock(deps),
+  };
+}
+
+function resolveKillPlatform(deps: KillProcessTreeDeps | undefined): NodeJS.Platform {
+  return deps?.platform ?? process.platform;
+}
+
+function resolveProcessExecutor(deps: KillProcessTreeDeps | undefined): typeof execFile {
+  return deps?.execFile ?? execFile;
+}
+
+function resolveProcessKiller(
+  deps: KillProcessTreeDeps | undefined,
+): (pid: number, signal: string | number) => void {
+  return deps?.processKill ?? defaultProcessKill;
+}
+
+function resolveProcessSleep(deps: KillProcessTreeDeps | undefined): (ms: number) => Promise<void> {
+  return deps?.sleep ?? defaultSleep;
+}
+
+function resolveProcessClock(deps: KillProcessTreeDeps | undefined): () => number {
+  return deps?.now ?? Date.now;
+}
+
+function createWindowsKillContext(
+  deps: KillProcessTreeDeps | undefined,
+  shared: SharedKillContext,
+): WindowsKillContext {
+  return {
+    execFile: shared.execFile,
+    processKill: shared.processKill,
+    sleep: shared.sleep,
+    now: shared.now,
+    getSnapshot: deps?.getWindowsProcessSnapshot ?? (() => readWindowsProcessSnapshot(shared.execFile)),
+    isProcessAlive: deps?.isProcessAlive ?? createProcessLivenessProbe(shared.processKill),
+  };
+}
+
+function createUnixKillContext(
+  deps: KillProcessTreeDeps | undefined,
+  shared: SharedKillContext,
+): UnixKillContext {
+  const getProcessStartMarker = resolveUnixStartMarker(deps, shared.processKill, shared.execFile);
+  return {
+    ...shared,
+    getProcessStartMarker,
+    getRemainingProcessStartMarkers: resolveRemainingMarkers(deps, getProcessStartMarker, shared.execFile),
+  };
+}
+
+function defaultProcessKill(pid: number, signal: string | number): void {
+  process.kill(pid, signal as NodeJS.Signals);
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function createProcessLivenessProbe(
+  processKill: (pid: number, signal: string | number) => void,
+): (pid: number) => boolean {
+  return (pid) => {
+    try {
+      processKill(pid, 0);
+      return true;
+    } catch (error) {
+      if (isProcessGoneError(error)) return false;
+      throw error;
+    }
+  };
+}
+
+function resolveUnixStartMarker(
+  deps: KillProcessTreeDeps | undefined,
+  processKill: (pid: number, signal: string | number) => void,
+  execFileForProcess: typeof execFile,
+): (pid: number) => Promise<string | null> {
+  if (deps?.getProcessStartMarker) return deps.getProcessStartMarker;
+  if (!deps?.processKill) return (pid) => readUnixProcessStartMarker(pid, execFileForProcess);
+  return async (pid) => {
+    try {
+      processKill(pid, 0);
+      return `probe:${pid}`;
+    } catch (error) {
+      if (isProcessGoneError(error)) return null;
+      throw error;
+    }
+  };
+}
+
+function resolveRemainingMarkers(
+  deps: KillProcessTreeDeps | undefined,
+  getProcessStartMarker: (pid: number) => Promise<string | null>,
+  execFileForProcess: typeof execFile,
+): (identities: readonly ProcessIdentity[]) => Promise<Map<number, string | null>> {
+  if (!deps?.getProcessStartMarker && !deps?.processKill) {
+    return (identities) => readUnixProcessStartMarkers(identities.map((identity) => identity.pid), execFileForProcess);
   }
-  const getProcessStartMarker =
-    deps?.getProcessStartMarker ??
-    (deps?.processKill
-      ? async (targetPid: number) => {
-          try {
-            processKill(targetPid, 0);
-            return `probe:${targetPid}`;
-          } catch (err) {
-            if (isProcessGoneError(err)) return null;
-            throw err;
-          }
-        }
-      : (targetPid: number) => readUnixProcessStartMarker(targetPid, ef));
-  const getRemainingProcessStartMarkers =
-    deps?.getProcessStartMarker || deps?.processKill
-    ? async (identities: readonly ProcessIdentity[]) => {
-        const markers = new Map<number, string | null>();
-        for (const identity of identities) {
-          markers.set(identity.pid, await getProcessStartMarker(identity.pid));
-        }
-        return markers;
-      }
-    : (identities: readonly ProcessIdentity[]) =>
-        readUnixProcessStartMarkers(identities.map((identity) => identity.pid), ef);
-  const capture = await captureProcessTree(pid, platform, ef, getProcessStartMarker);
+  return async (identities) => {
+    const markers = new Map<number, string | null>();
+    for (const identity of identities) markers.set(identity.pid, await getProcessStartMarker(identity.pid));
+    return markers;
+  };
+}
+
+async function killUnixProcessTree(pid: number, context: UnixKillContext): Promise<void> {
+  const capture = await captureProcessTree(pid, context.platform, context.execFile, context.getProcessStartMarker);
   const identities = capture.identities;
-  const capturedRoot = identities.find((identity) => identity.depth === 0);
-  const rootStillMatches =
-    capturedRoot !== undefined &&
-    await identityStillMatches(capturedRoot, getProcessStartMarker);
+  await killUnixProcessGroup(pid, identities, context.processKill, context.getProcessStartMarker);
+  await killUnixDescendants(identities, context.processKill, context.getProcessStartMarker);
+  const remaining = await verifyUnixTermination(pid, identities, context);
+  assertUnixTermination(pid, identities, remaining, capture.error);
+  logger.info("Process tree termination verified", { pid, capturedProcessCount: identities.length });
+}
 
+async function killUnixProcessGroup(
+  pid: number,
+  identities: readonly ProcessIdentity[],
+  processKill: UnixKillContext["processKill"],
+  getProcessStartMarker: UnixKillContext["getProcessStartMarker"],
+): Promise<void> {
+  const root = identities.find((identity) => identity.depth === 0);
+  if (pid <= 0 || !root || !(await identityStillMatches(root, getProcessStartMarker))) return;
   try {
-    // Guard against pid <= 0: process.kill(0) would kill the server's own group.
-    if (pid > 0 && rootStillMatches) {
-      processKill(-pid, "SIGKILL");
-    }
-  } catch (err) {
-    if (isProcessGoneError(err)) {
-      // Expected when the process already exited (e.g. cleanup pass after pty.kill()).
+    processKill(-pid, "SIGKILL");
+  } catch (error) {
+    if (isProcessGoneError(error)) {
       logger.debug("killProcessTree: process already gone", { pid });
-    } else {
-      logger.warn("killProcessTree: unexpected error killing process tree", {
-        pid,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
+      return;
     }
+    logger.warn("killProcessTree: unexpected error killing process tree", {
+      pid,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
+}
 
-  for (const identity of [...identities].sort((a, b) => b.depth - a.depth)) {
+async function killUnixDescendants(
+  identities: readonly ProcessIdentity[],
+  processKill: UnixKillContext["processKill"],
+  getProcessStartMarker: UnixKillContext["getProcessStartMarker"],
+): Promise<void> {
+  for (const identity of [...identities].sort((left, right) => right.depth - left.depth)) {
     if (!(await identityStillMatches(identity, getProcessStartMarker))) continue;
     try {
       processKill(identity.pid, "SIGKILL");
-    } catch (err) {
-      if (!isProcessGoneError(err)) throw err;
+    } catch (error) {
+      if (!isProcessGoneError(error)) throw error;
     }
   }
+}
 
-  const deadline = now() + TERMINATION_VERIFY_TIMEOUT_MS;
-  let remaining: ProcessIdentity[];
+async function verifyUnixTermination(
+  pid: number,
+  identities: readonly ProcessIdentity[],
+  context: UnixKillContext,
+): Promise<ProcessIdentity[]> {
+  const deadline = context.now() + TERMINATION_VERIFY_TIMEOUT_MS;
   try {
-    remaining = matchingIdentities(
-      identities,
-      await getRemainingProcessStartMarkers(identities),
-    );
-    while (remaining.length > 0 && now() < deadline) {
-      await sleep(TERMINATION_VERIFY_POLL_MS);
-      remaining = matchingIdentities(
-        remaining,
-        await getRemainingProcessStartMarkers(remaining),
-      );
+    let remaining = matchingIdentities(identities, await context.getRemainingProcessStartMarkers(identities));
+    while (remaining.length > 0 && context.now() < deadline) {
+      await context.sleep(TERMINATION_VERIFY_POLL_MS);
+      remaining = matchingIdentities(remaining, await context.getRemainingProcessStartMarkers(remaining));
     }
-  } catch (err) {
+    return remaining;
+  } catch (error) {
     logger.warn("killProcessTree: termination verification failed", {
       pid,
       capturedProcessCount: identities.length,
-      error: err instanceof Error ? err.message : String(err),
+      error: error instanceof Error ? error.message : String(error),
     });
-    throw err;
+    throw error;
   }
+}
+
+function assertUnixTermination(
+  pid: number,
+  identities: readonly ProcessIdentity[],
+  remaining: readonly ProcessIdentity[],
+  captureError: unknown,
+): void {
   if (remaining.length > 0) {
     logger.warn("killProcessTree: termination verification timed out", {
-      pid,
-      capturedProcessCount: identities.length,
-      remainingPids: remaining.map((identity) => identity.pid),
-      timeoutMs: TERMINATION_VERIFY_TIMEOUT_MS,
+      pid, capturedProcessCount: identities.length,
+      remainingPids: remaining.map((identity) => identity.pid), timeoutMs: TERMINATION_VERIFY_TIMEOUT_MS,
     });
-    throw new Error(
-      `Process-tree termination verification timed out for PTY PID ${pid}; ${remaining.length} process(es) remain`,
-    );
+    throw new Error(`Process-tree termination verification timed out for PTY PID ${pid}; ${remaining.length} process(es) remain`);
   }
-  if (capture.error) {
+  if (captureError) {
     logger.warn("killProcessTree: descendant verification unavailable", {
-      pid,
-      capturedProcessCount: identities.length,
-      error: capture.error instanceof Error ? capture.error.message : String(capture.error),
+      pid, capturedProcessCount: identities.length,
+      error: captureError instanceof Error ? captureError.message : String(captureError),
     });
     throw new Error(
       `Process tree rooted at PTY PID ${pid} was terminated, but descendant verification was unavailable`,
-      { cause: capture.error },
+      { cause: captureError },
     );
   }
-  logger.info("Process tree termination verified", {
-    pid,
-    capturedProcessCount: identities.length,
-  });
 }
 
 interface WindowsKillContext {
@@ -234,63 +338,78 @@ async function killWindowsProcessTree(
   if (pid <= 0) return;
   const captured = buildWindowsProcessTree(pid, await context.getSnapshot());
   const root = captured.find((identity) => identity.depth === 0);
-  const beforeKill = indexWindowsSnapshot(await context.getSnapshot());
-  const rootStillMatches =
-    root !== undefined &&
-    beforeKill.get(root.pid)?.startMarker === root.startMarker;
-
-  if (rootStillMatches) {
-    try {
-      await context.execFile("taskkill", ["/T", "/F", "/PID", String(pid)], {
-        timeout: TASKKILL_TIMEOUT_MS,
-      });
-    } catch (err) {
-      if (isProcessGoneError(err)) {
-        logger.debug("killProcessTree: process already gone", { pid });
-      } else {
-        logger.warn("killProcessTree: unexpected error killing process tree", {
-          pid,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
-      }
-    }
-  }
-
-  const survivors = await classifyMatchingWindowsProcesses(captured, context);
-  const signaled: ProcessIdentity[] = [];
-  for (const identity of [...survivors].sort((a, b) => b.depth - a.depth)) {
-    try {
-      await context.execFile("taskkill", ["/F", "/PID", String(identity.pid)], {
-        timeout: TASKKILL_TIMEOUT_MS,
-      });
-      signaled.push(identity);
-    } catch (err) {
-      if (!isProcessGoneError(err)) throw err;
-    }
-  }
-
-  const deadline = context.now() + TERMINATION_VERIFY_TIMEOUT_MS;
-  let remaining = await classifyMatchingWindowsProcesses(signaled, context);
-  while (remaining.length > 0 && context.now() < deadline) {
-    await context.sleep(TERMINATION_VERIFY_POLL_MS);
-    remaining = await classifyMatchingWindowsProcesses(remaining, context);
-  }
-  if (remaining.length > 0) {
-    logger.warn("killProcessTree: termination verification timed out", {
-      pid,
-      capturedProcessCount: captured.length,
-      remainingPids: remaining.map((identity) => identity.pid),
-      timeoutMs: TERMINATION_VERIFY_TIMEOUT_MS,
-    });
-    throw new Error(
-      `Process-tree termination verification timed out for PTY PID ${pid}; ${remaining.length} process(es) remain`,
-    );
-  }
+  await killWindowsProcessTreeRoot(pid, root, context);
+  const signaled = await killWindowsSurvivors(captured, context);
+  const remaining = await verifyWindowsTermination(signaled, context);
+  assertWindowsTermination(pid, captured, remaining);
   logger.info("Process tree termination verified", {
     pid,
     capturedProcessCount: captured.length,
   });
+}
+
+async function killWindowsProcessTreeRoot(
+  pid: number,
+  root: ProcessIdentity | undefined,
+  context: WindowsKillContext,
+): Promise<void> {
+  const beforeKill = indexWindowsSnapshot(await context.getSnapshot());
+  if (!root || beforeKill.get(root.pid)?.startMarker !== root.startMarker) return;
+  try {
+    await context.execFile("taskkill", ["/T", "/F", "/PID", String(pid)], { timeout: TASKKILL_TIMEOUT_MS });
+  } catch (error) {
+    if (isProcessGoneError(error)) {
+      logger.debug("killProcessTree: process already gone", { pid });
+      return;
+    }
+    logger.warn("killProcessTree: unexpected error killing process tree", {
+      pid, error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+async function killWindowsSurvivors(
+  captured: readonly ProcessIdentity[],
+  context: WindowsKillContext,
+): Promise<ProcessIdentity[]> {
+  const signaled: ProcessIdentity[] = [];
+  const survivors = await classifyMatchingWindowsProcesses(captured, context);
+  for (const identity of [...survivors].sort((left, right) => right.depth - left.depth)) {
+    try {
+      await context.execFile("taskkill", ["/F", "/PID", String(identity.pid)], { timeout: TASKKILL_TIMEOUT_MS });
+      signaled.push(identity);
+    } catch (error) {
+      if (!isProcessGoneError(error)) throw error;
+    }
+  }
+  return signaled;
+}
+
+async function verifyWindowsTermination(
+  identities: readonly ProcessIdentity[],
+  context: WindowsKillContext,
+): Promise<ProcessIdentity[]> {
+  const deadline = context.now() + TERMINATION_VERIFY_TIMEOUT_MS;
+  let remaining = await classifyMatchingWindowsProcesses(identities, context);
+  while (remaining.length > 0 && context.now() < deadline) {
+    await context.sleep(TERMINATION_VERIFY_POLL_MS);
+    remaining = await classifyMatchingWindowsProcesses(remaining, context);
+  }
+  return remaining;
+}
+
+function assertWindowsTermination(
+  pid: number,
+  captured: readonly ProcessIdentity[],
+  remaining: readonly ProcessIdentity[],
+): void {
+  if (remaining.length === 0) return;
+  logger.warn("killProcessTree: termination verification timed out", {
+    pid, capturedProcessCount: captured.length,
+    remainingPids: remaining.map((identity) => identity.pid), timeoutMs: TERMINATION_VERIFY_TIMEOUT_MS,
+  });
+  throw new Error(`Process-tree termination verification timed out for PTY PID ${pid}; ${remaining.length} process(es) remain`);
 }
 
 async function classifyMatchingWindowsProcesses(
@@ -376,29 +495,24 @@ function parseWindowsProcessSnapshot(output: string): WindowsProcessSnapshotEntr
   if (!output.trim()) return [];
   const parsed: unknown = JSON.parse(output);
   const values = Array.isArray(parsed) ? parsed : [parsed];
-  return values.flatMap((value) => {
-    if (typeof value !== "object" || value === null) return [];
-    const record = value as Record<string, unknown>;
-    const pid = record["ProcessId"];
-    const parentPid = record["ParentProcessId"];
-    const startMarker = record["CreationDate"];
-    const name = record["Name"];
-    if (
-      typeof pid !== "number" ||
-      !Number.isSafeInteger(pid) ||
-      pid <= 0 ||
-      typeof parentPid !== "number" ||
-      !Number.isSafeInteger(parentPid) ||
-      parentPid < 0 ||
-      typeof startMarker !== "string" ||
-      startMarker.length === 0 ||
-      typeof name !== "string" ||
-      name.length === 0
-    ) {
-      return [];
-    }
-    return [{ pid, parentPid, startMarker, name }];
-  });
+  return values.flatMap(parseWindowsProcessSnapshotEntry);
+}
+
+function parseWindowsProcessSnapshotEntry(value: unknown): WindowsProcessSnapshotEntry[] {
+  if (typeof value !== "object" || value === null) return [];
+  const record = value as Record<string, unknown>;
+  const pid = record["ProcessId"];
+  const parentPid = record["ParentProcessId"];
+  const startMarker = record["CreationDate"];
+  const name = record["Name"];
+  if (!isWindowsProcessId(pid, false) || !isWindowsProcessId(parentPid, true)) return [];
+  if (typeof startMarker !== "string" || startMarker.length === 0) return [];
+  if (typeof name !== "string" || name.length === 0) return [];
+  return [{ pid, parentPid, startMarker, name }];
+}
+
+function isWindowsProcessId(value: unknown, permitsZero: boolean): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && (permitsZero ? value >= 0 : value > 0);
 }
 
 async function captureProcessTree(
@@ -589,89 +703,102 @@ export async function gracefulKillProcessTree(
   pid: number,
   deps?: GracefulKillDeps,
 ): Promise<void> {
-  const kill = deps?.processKill ?? ((p: number, sig: string | number) => process.kill(p, sig as NodeJS.Signals));
-  const ef = deps?.execFile ?? execFile;
-  const platform = deps?.platform ?? process.platform;
-  const sleep =
-    deps?.sleep ??
-    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-
+  const context = createGracefulKillContext(deps);
   try {
-    if (platform === "win32") {
-      // Windows path: taskkill without /F first (graceful), then with /F (force)
-      try {
-        await ef("taskkill", ["/T", "/PID", String(pid)], {
-          timeout: TASKKILL_TIMEOUT_MS,
-        });
-        // Process terminated gracefully
-        return;
-      } catch {
-        // Process still alive — fall through to forced kill
-      }
-
-      await sleep(GRACEFUL_KILL_STEP_MS);
-
-      try {
-        await ef("taskkill", ["/T", "/F", "/PID", String(pid)], {
-          timeout: TASKKILL_TIMEOUT_MS,
-        });
-      } catch {
-        // Swallow — process may already be gone
-      }
-    } else {
-      // Unix path
-      if (pid <= 0) return;
-
-      // Step 1: SIGHUP
-      try {
-        kill(-pid, "SIGHUP");
-      } catch (err) {
-        if (isEsrch(err)) return;
-        // Unexpected error (e.g. EPERM) — log and abort the ladder rather than
-        // silently skipping so the caller's outer catch surfaces it.
-        throw err;
-      }
-
-      await sleep(GRACEFUL_KILL_STEP_MS);
-
-      // Liveness probe after SIGHUP
-      try {
-        kill(pid, 0);
-      } catch (err) {
-        if (isEsrch(err)) return;
-        return;
-      }
-
-      // Step 2: SIGTERM
-      try {
-        kill(-pid, "SIGTERM");
-      } catch (err) {
-        if (isEsrch(err)) return;
-        return;
-      }
-
-      await sleep(GRACEFUL_KILL_STEP_MS);
-
-      // Liveness probe after SIGTERM
-      try {
-        kill(pid, 0);
-      } catch (err) {
-        if (isEsrch(err)) return;
-        return;
-      }
-
-      // Step 3: SIGKILL
-      try {
-        kill(-pid, "SIGKILL");
-      } catch {
-        // Swallow — process may already be gone
-      }
-    }
+    await runGracefulKillProcessTree(pid, context);
   } catch (err) {
     logger.warn("gracefulKillProcessTree: unexpected error", {
       pid,
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+}
+
+interface GracefulKillContext {
+  readonly kill: (pid: number, signal: string | number) => void;
+  readonly execFile: NonNullable<GracefulKillDeps["execFile"]>;
+  readonly platform: NodeJS.Platform;
+  readonly sleep: (ms: number) => Promise<void>;
+}
+
+function createGracefulKillContext(deps: GracefulKillDeps | undefined): GracefulKillContext {
+  return {
+    kill: deps?.processKill ?? defaultProcessKill,
+    execFile: deps?.execFile ?? execFile,
+    platform: deps?.platform ?? process.platform,
+    sleep: deps?.sleep ?? defaultSleep,
+  };
+}
+
+async function runGracefulKillProcessTree(pid: number, context: GracefulKillContext): Promise<void> {
+  if (context.platform === "win32") {
+    return gracefulKillWindowsProcessTree(pid, context.execFile, context.sleep);
+  }
+  return gracefulKillUnixProcessTree(pid, context.kill, context.sleep);
+}
+
+async function gracefulKillWindowsProcessTree(
+  pid: number,
+  execFileForProcess: NonNullable<GracefulKillDeps["execFile"]>,
+  sleep: (ms: number) => Promise<void>,
+): Promise<void> {
+  try {
+    await execFileForProcess("taskkill", ["/T", "/PID", String(pid)], { timeout: TASKKILL_TIMEOUT_MS });
+    return;
+  } catch {
+    await sleep(GRACEFUL_KILL_STEP_MS);
+  }
+  try {
+    await execFileForProcess("taskkill", ["/T", "/F", "/PID", String(pid)], { timeout: TASKKILL_TIMEOUT_MS });
+  } catch {
+    // The process may already be gone.
+  }
+}
+
+async function gracefulKillUnixProcessTree(
+  pid: number,
+  kill: (pid: number, signal: string | number) => void,
+  sleep: (ms: number) => Promise<void>,
+): Promise<void> {
+  if (pid <= 0) return;
+  if (!sendGracefulSignal(kill, -pid, "SIGHUP", true)) return;
+  await sleep(GRACEFUL_KILL_STEP_MS);
+  if (!isAliveAfterGracefulSignal(kill, pid)) return;
+  if (!sendGracefulSignal(kill, -pid, "SIGTERM", false)) return;
+  await sleep(GRACEFUL_KILL_STEP_MS);
+  if (!isAliveAfterGracefulSignal(kill, pid)) return;
+  try {
+    kill(-pid, "SIGKILL");
+  } catch {
+    // The process may already be gone.
+  }
+}
+
+function sendGracefulSignal(
+  kill: (pid: number, signal: string | number) => void,
+  pid: number,
+  signal: "SIGHUP" | "SIGTERM",
+  rethrowUnexpected: boolean,
+): boolean {
+  try {
+    kill(pid, signal);
+    return true;
+  } catch (error) {
+    if (isEsrch(error)) return false;
+    if (rethrowUnexpected) throw error;
+    return false;
+  }
+}
+
+function isAliveAfterGracefulSignal(
+  kill: (pid: number, signal: string | number) => void,
+  pid: number,
+): boolean {
+  try {
+    kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 

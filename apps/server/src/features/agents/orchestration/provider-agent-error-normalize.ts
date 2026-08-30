@@ -30,6 +30,19 @@ function cursorRateLimitMessage(original: string): string {
   ].join("\n");
 }
 
+function cliNotFoundMessage(providerId: string): string {
+  switch (providerId) {
+    case "claude":
+      return "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code\n\nOr set a custom path in Settings > Model.";
+    case "codex":
+      return "Codex CLI not found. Install it with: npm install -g @openai/codex\n\nOr set a custom path in Settings > Model.";
+    case "copilot":
+      return "Copilot CLI not found. Install it with: npm install -g @github/copilot\n\nOr set a custom path in Settings > Provider > Copilot CLI path.";
+    default:
+      return `${providerId} CLI not found. Check the CLI path in Settings > Model.`;
+  }
+}
+
 /**
  * Applies provider-specific substitutions for repetitive failure patterns.
  *
@@ -57,21 +70,7 @@ export function normalizeAgentProviderError(providerId: string, message: string)
     return cursorUpstreamPreamble(message);
   }
 
-  const hasEnoent = message.includes("ENOENT");
-  const spawnWithEnoent = message.includes("spawn") && message.includes("ENOENT");
-
-  if (hasEnoent || spawnWithEnoent) {
-    if (providerId === "claude") {
-      return "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code\n\nOr set a custom path in Settings > Model.";
-    }
-    if (providerId === "codex") {
-      return "Codex CLI not found. Install it with: npm install -g @openai/codex\n\nOr set a custom path in Settings > Model.";
-    }
-    if (providerId === "copilot") {
-      return "Copilot CLI not found. Install it with: npm install -g @github/copilot\n\nOr set a custom path in Settings > Provider > Copilot CLI path.";
-    }
-    return `${providerId} CLI not found. Check the CLI path in Settings > Model.`;
-  }
+  if (message.includes("ENOENT")) return cliNotFoundMessage(providerId);
 
   return message;
 }

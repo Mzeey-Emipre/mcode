@@ -115,23 +115,41 @@ export class TerminalReplayBuffer {
     if (input.requestedAfterSeq > this.latestOutputSeq) {
       throw new Error("Terminal hydration requests future output");
     }
-    const retainedFromSeq = this.chunks[0]?.outputSeq ?? this.latestOutputSeq;
-    const requestedWasEvicted =
-      this.chunks.length > 0 && input.requestedAfterSeq + 1n < retainedFromSeq;
-    const checkpointRequested = input.checkpointSeq !== null;
-    const checkpointMatches =
-      checkpointRequested && this.checkpoint?.baseOutputSeq === input.checkpointSeq;
+    const state = this.hydrationState(input);
 
-    if (checkpointRequested && !checkpointMatches) {
-      return this.resetHydration(input, retainedFromSeq, "stale-checkpoint");
+    if (state.checkpointRequested && state.checkpoint === null) {
+      return this.resetHydration(input, state.retainedFromSeq, "stale-checkpoint");
     }
-    if (checkpointMatches && this.checkpoint) {
-      return this.checkpointHydration(input, this.checkpoint);
+    if (state.checkpoint !== null) {
+      return this.checkpointHydration(input, state.checkpoint);
     }
-    if (requestedWasEvicted) {
-      return this.resetHydration(input, retainedFromSeq, "evicted");
+    if (state.requestedWasEvicted) {
+      return this.resetHydration(input, state.retainedFromSeq, "evicted");
     }
     return this.deltaHydration(input);
+  }
+
+  private hydrationState(input: {
+    readonly requestedAfterSeq: bigint;
+    readonly checkpointSeq: bigint | null;
+  }): {
+    readonly retainedFromSeq: bigint;
+    readonly requestedWasEvicted: boolean;
+    readonly checkpointRequested: boolean;
+    readonly checkpoint: RetainedCheckpoint | null;
+  } {
+    const retainedFromSeq = this.chunks[0]?.outputSeq ?? this.latestOutputSeq;
+    const checkpointRequested = input.checkpointSeq !== null;
+    const checkpoint = checkpointRequested && this.checkpoint?.baseOutputSeq === input.checkpointSeq
+      ? this.checkpoint
+      : null;
+    return {
+      retainedFromSeq,
+      requestedWasEvicted:
+        this.chunks.length > 0 && input.requestedAfterSeq + 1n < retainedFromSeq,
+      checkpointRequested,
+      checkpoint,
+    };
   }
 
   /** Applies a new bounded retention limit and evicts the oldest output immediately. */
@@ -208,16 +226,7 @@ export class TerminalReplayBuffer {
     readonly output: ReadonlyArray<TerminalReplayChunk>;
     readonly gap: TerminalGap | null;
   }): TerminalHydration {
-    const totalBytes =
-      (input.checkpoint?.data.byteLength ?? 0) +
-      input.output.reduce((total, chunk) => total + chunk.data.byteLength, 0);
-    const outputBytes = input.output.reduce(
-      (total, chunk) => total + chunk.data.byteLength,
-      0,
-    );
-    const chunkCount =
-      Math.ceil((input.checkpoint?.data.byteLength ?? 0) / 65_536) +
-      Math.ceil(outputBytes / 65_536);
+    const metrics = hydrationMetrics(input.checkpoint, input.output);
     const descriptor = TerminalHydrationDescriptorSchema().parse({
       hydrationId: input.hydrationId,
       mode: input.mode,
@@ -226,8 +235,8 @@ export class TerminalReplayBuffer {
       firstOutputSeq: input.output[0]?.outputSeq ?? null,
       lastOutputSeq: input.output.at(-1)?.outputSeq ?? null,
       gap: input.gap,
-      chunkCount,
-      totalBytes,
+      chunkCount: metrics.chunkCount,
+      totalBytes: metrics.totalBytes,
     });
     return Object.freeze({
       descriptor: Object.freeze(descriptor),
@@ -272,6 +281,18 @@ export class TerminalReplayBuffer {
       this.checkpoint = null;
     }
   }
+}
+
+function hydrationMetrics(
+  checkpoint: TerminalReplayCheckpoint | null,
+  output: ReadonlyArray<TerminalReplayChunk>,
+): { readonly totalBytes: number; readonly chunkCount: number } {
+  const checkpointBytes = checkpoint?.data.byteLength ?? 0;
+  const outputBytes = output.reduce((total, chunk) => total + chunk.data.byteLength, 0);
+  return {
+    totalBytes: checkpointBytes + outputBytes,
+    chunkCount: Math.ceil(checkpointBytes / 65_536) + Math.ceil(outputBytes / 65_536),
+  };
 }
 
 function copyCheckpoint(checkpoint: RetainedCheckpoint): TerminalReplayCheckpoint {

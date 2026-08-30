@@ -24,7 +24,6 @@ import {
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { TaskPersistenceService } from "../../tasks/task-persistence-service.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import {
   ParentAssistantTextCheckpointService,
   PARENT_ASSISTANT_TEXT_RETAINED_LIMITS,
@@ -52,6 +51,31 @@ import type { TaskRepo } from "../persistence/task-repo.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
+
+type NarrativeTestTurnRuntime = {
+  start: (threadId: string) => { turnExecutionId: string };
+  snapshot: (threadId: string) => { turnExecutionId: string | null; phase: string } | undefined;
+};
+
+function normalizedNarrativeProviderEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return event.type === AgentEventType.TurnComplete
+    ? { reason: "completed", costUsd: null, ...event }
+    : event;
+}
+
+function needsNarrativeTurnExecutionId(event: unknown): event is Record<string, unknown> {
+  return Boolean(
+    event
+    && typeof event === "object"
+    && isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
+    && !(event as { turnExecutionId?: string }).turnExecutionId,
+  );
+}
+
+function providerRuntimeEventForNarrativeTest(eventName: string, event: unknown): unknown {
+  if (eventName !== "event" || !event || typeof event !== "object" || "event" in event) return event;
+  return runtimeProviderEvent(event as AgentEvent);
+}
 import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { CodexCollaborationEventAdapter } from "../../collaboration/adapters/codex-collaboration-event-adapter.js";
 import { ProviderEventIngress } from "../../../providers/composition/provider-event-ingress.js";
@@ -288,31 +312,20 @@ function build(options: {
   // Provider adapters always stamp turn-scoped events with the active execution
   // identity. Keep this fixture aligned with that production boundary while
   // leaving each test focused on the narrative payload it emits.
-  const turnRuntime = (service as unknown as {
-    turnRuntime: { start: (threadId: string) => { turnExecutionId: string }; snapshot: (threadId: string) => {
-      turnExecutionId: string | null;
-      phase: string;
-    } | undefined };
-  }).turnRuntime;
+  const turnRuntime = (service as unknown as { turnRuntime: NarrativeTestTurnRuntime }).turnRuntime;
   turnRuntime.start(THREAD_ID);
   const emit = providerEmitter.emit.bind(providerEmitter);
   providerEmitter.emit = ((eventName: string, event?: unknown, ...args: unknown[]) => {
     if (eventName === "event" && event && typeof event === "object") {
-      const providerEvent = event as Record<string, unknown>;
-      event = providerEvent.type === AgentEventType.TurnComplete
-        ? { reason: "completed", costUsd: null, ...providerEvent }
-        : providerEvent;
-      if (isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
-        && !(event as { turnExecutionId?: string }).turnExecutionId) {
+      event = normalizedNarrativeProviderEvent(event as Record<string, unknown>);
+      if (needsNarrativeTurnExecutionId(event)) {
         const runtime = turnRuntime.snapshot(THREAD_ID);
         event = { ...(event as Record<string, unknown>), turnExecutionId: runtime?.turnExecutionId };
       }
     }
     return emit(
       eventName,
-      eventName === "event" && event && typeof event === "object" && !("event" in event)
-        ? runtimeProviderEvent(event as AgentEvent)
-        : event,
+      providerRuntimeEventForNarrativeTest(eventName, event),
       ...args,
     );
   }) as typeof providerEmitter.emit;
@@ -2527,7 +2540,7 @@ describe("AgentService narrative persistence", () => {
   });
 
   it("rejects provider continuation evidence targeting another canonical thread", () => {
-    const { service, canonicalSink } = build();
+    const { service: _service, canonicalSink } = build();
     const sink = canonicalSink as unknown as {
       loadThreadByProviderIdentity: ReturnType<typeof vi.fn>;
       loadTurnByProviderIdentity: ReturnType<typeof vi.fn>;
@@ -2582,7 +2595,7 @@ describe("AgentService narrative persistence", () => {
   });
 
   it("records a failure signal when attributed child routing lacks parent execution context", () => {
-    const { service, canonicalSink } = build();
+    const { service: _service, canonicalSink } = build();
     const diagnostic = vi.fn(() => true);
     (canonicalSink as unknown as {
       recordCodexChildRoutingDiagnostic: typeof diagnostic;
@@ -2617,7 +2630,7 @@ describe("AgentService narrative persistence", () => {
   });
 
   it("consumes every child projection kind before parent narrative persistence", () => {
-    const { service, canonicalSink, thoughtBulk, hookBulk, toolBulk } = build();
+    const { service: _service, canonicalSink, thoughtBulk, hookBulk, toolBulk } = build();
     (canonicalSink as unknown as {
       recordCodexChildRoutingDiagnostic: () => boolean;
     }).recordCodexChildRoutingDiagnostic = vi.fn(() => true);
@@ -2653,7 +2666,7 @@ describe("AgentService narrative persistence", () => {
   });
 
   it("fails closed when an attributed child event has no canonical owner", () => {
-    const { service, canonicalSink } = build();
+    const { service: _service, canonicalSink } = build();
     const diagnostic = vi.fn(() => false);
     (canonicalSink as unknown as {
       recordCodexChildRoutingDiagnostic: typeof diagnostic;

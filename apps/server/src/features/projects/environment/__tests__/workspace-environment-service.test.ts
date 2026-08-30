@@ -50,6 +50,29 @@ async function waitFor(assertion: () => void): Promise<void> {
   throw failure;
 }
 
+function sharedEnvironmentThread(
+  id: string,
+  baseCheckout: string,
+  worktreeCheckout: string,
+) {
+  if (id === "direct") return { id, workspace_id: workspaceId, mode: "direct" };
+  if (id === "worktree") {
+    return {
+      id,
+      workspace_id: workspaceId,
+      mode: "worktree",
+      worktree_managed: false,
+      worktree_path: worktreeCheckout,
+    };
+  }
+  return null;
+}
+
+function requireTestValue<T>(value: T | null | undefined, message: string): T {
+  if (!value) throw new Error(message);
+  return value;
+}
+
 describe("WorkspaceEnvironmentService", () => {
   it("reads an absent default and saves at projects/<workspace-id>/environment.json", async () => {
     const { root, instance } = await service();
@@ -156,13 +179,7 @@ describe("WorkspaceEnvironmentService", () => {
     const instance = new WorkspaceEnvironmentService({
       mcodeDir: root,
       workspaces: { findById: (id) => id === workspaceId ? { id, path: baseCheckout } : null },
-      threads: {
-        findById: (id) => id === "direct"
-          ? { id, workspace_id: workspaceId, mode: "direct" }
-          : id === "worktree"
-            ? { id, workspace_id: workspaceId, mode: "worktree", worktree_managed: false, worktree_path: worktreeCheckout }
-            : null,
-      },
+      threads: { findById: (id) => sharedEnvironmentThread(id, baseCheckout, worktreeCheckout) },
       terminalCommands: { prepare },
     });
 
@@ -171,9 +188,7 @@ describe("WorkspaceEnvironmentService", () => {
     expect(pending.status).toBe("awaiting-approval");
     expect(pending.snapshot.script).toBe("bun run setup");
     expect(start).not.toHaveBeenCalled();
-    const approval = pending.snapshot.approval;
-    expect(approval).not.toBeNull();
-    if (!approval) throw new Error("Expected a shared command approval");
+    const approval = requireTestValue(pending.snapshot.approval, "Expected a shared command approval");
 
     await expect(instance.approveCommand({ ...approval, threadId: "direct", fingerprint: "0".repeat(64) }))
       .rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_APPROVAL_STALE" });

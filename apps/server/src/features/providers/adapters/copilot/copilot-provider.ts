@@ -173,20 +173,16 @@ export function normalizeQuotaSnapshots(
 
 /** Infer vendor group from model ID prefix for UI section headers. */
 function inferModelGroup(modelId: string): string | undefined {
-  if (
-    modelId.startsWith("gpt-") ||
-    modelId.startsWith("o1-") ||
-    modelId.startsWith("o3-") ||
-    modelId.startsWith("o4-") ||
-    modelId === "o1" ||
-    modelId === "o3" ||
-    modelId === "o4"
-  ) return "OpenAI";
-  if (modelId.startsWith("claude-")) return "Anthropic";
-  if (modelId.startsWith("gemini-")) return "Google";
-  if (modelId.startsWith("grok-")) return "xAI";
-  return undefined;
+  const group = MODEL_GROUPS.find(({ names }) => names.some((name) => modelId === name || modelId.startsWith(`${name}-`)));
+  return group?.label;
 }
+
+const MODEL_GROUPS = [
+  { label: "OpenAI", names: ["gpt", "o1", "o3", "o4"] },
+  { label: "Anthropic", names: ["claude"] },
+  { label: "Google", names: ["gemini"] },
+  { label: "xAI", names: ["grok"] },
+] as const;
 
 /** Names of built-in Copilot session modes, derived from COPILOT_DEFAULT_AGENTS. */
 const BUILTIN_MODE_NAMES = new Set<"interactive" | "plan" | "autopilot">(
@@ -218,6 +214,33 @@ interface CopilotSessionState {
   /** Browser permission class fixed to this SDK session at creation. */
   browserPermissionCapability: "observe" | "interact" | "privileged";
 }
+
+interface StagedCopilotTurn {
+  message: string;
+  model?: string;
+  copilotAgent?: string;
+  turnExecutionId: string;
+}
+
+interface PendingBrowserAccess {
+  scope: BrowserAutomationSessionLeaseScope;
+  stage: BrowserAutomationSessionLeaseStage;
+}
+
+interface CopilotSendMessageParams {
+  sessionId: string;
+  message: string;
+  cwd: string;
+  model: string;
+  fallbackModel?: string;
+  resume: boolean;
+  permissionMode: string;
+  attachments?: AttachmentMeta[];
+  reasoningLevel?: ReasoningLevel;
+  copilotAgent?: string;
+}
+
+type CopilotClientOptions = NonNullable<ConstructorParameters<typeof CopilotClient>[0]>;
 
 /** GitHub Copilot SDK adapter implementing IAgentProvider with callback-based event mapping. */
 @injectable()
@@ -253,12 +276,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    * state, so the turn message and agent routing are staged here keyed by
    * sessionId.
    */
-  private pendingSpawnTurns = new Map<string, { message: string; model?: string; copilotAgent?: string; turnExecutionId: string }>();
+  private pendingSpawnTurns = new Map<string, StagedCopilotTurn>();
   /** Browser scope staged only until a fresh normal SDK session starts. */
-  private pendingBrowserAccess = new Map<
-    string,
-    { scope: BrowserAutomationSessionLeaseScope; stage: BrowserAutomationSessionLeaseStage }
-  >();
+  private pendingBrowserAccess = new Map<string, PendingBrowserAccess>();
   /** Serialises setup of overlapping sends so staged browser handles cannot be overwritten. */
   private sendLocks = new Map<string, Promise<void>>();
   /** Serialises concurrent refreshClient() calls so only one rebuild runs at a time. */
@@ -402,37 +422,55 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     const client = this.client;
     if (!client) throw transientHandoffError("Copilot client not available");
 
+    const session = await this.createSideChannelSession(client, cwd, parentThreadId);
+    const sideChannelPrompt = this.buildSideChannelPrompt(prompt, conversationHistory);
+
+    try {
+      return await this.awaitSideChannelResponse(session, sideChannelPrompt, abortSignal);
+    } finally {
+      await this.disconnectSideChannelSession(session, parentThreadId);
+    }
+  }
+
+  private async createSideChannelSession(
+    client: CopilotClient,
+    cwd: string,
+    parentThreadId: string,
+  ): Promise<CopilotSession> {
     const userInstructions = readUserInstructions();
     const skillDirs = userSkillDirectories();
-    const sessionBase = {
-      onPermissionRequest: approveAll,
-      workingDirectory: cwd,
-      enableConfigDiscovery: true,
-      ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
-      ...(userInstructions && { systemMessage: { content: userInstructions } }),
-    };
-
-    let session: CopilotSession;
-    const usingSessionlessHistory = Boolean(conversationHistory);
     try {
-      session = await client.createSession(sessionBase);
+      return await client.createSession({
+        onPermissionRequest: approveAll,
+        workingDirectory: cwd,
+        enableConfigDiscovery: true,
+        ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
+        ...(userInstructions && { systemMessage: { content: userInstructions } }),
+      });
     } catch (err) {
       throw transientHandoffError(
         `Copilot side-channel could not create isolated session for parent thread ${parentThreadId}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
 
-    const sideChannelPrompt = usingSessionlessHistory && conversationHistory
-      ? `Conversation history up to the fork point:\n\n${conversationHistory}\n\n---\n\n${prompt}`
-      : prompt;
+  private buildSideChannelPrompt(prompt: string, conversationHistory?: string): string {
+    if (!conversationHistory) return prompt;
+    return `Conversation history up to the fork point:\n\n${conversationHistory}\n\n---\n\n${prompt}`;
+  }
 
+  private async awaitSideChannelResponse(
+    session: CopilotSession,
+    prompt: string,
+    abortSignal?: AbortSignal,
+  ): Promise<string> {
     const unsubscribers: Array<() => void> = [];
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let messageText = "";
     let deltaText = "";
 
     try {
-      const result = await new Promise<string>((resolve, reject) => {
+      return await new Promise<string>((resolve, reject) => {
         const finish = (value: string): void => {
           abortSignal?.removeEventListener("abort", abortDuringTurn);
           clearTimeout(timeout);
@@ -481,69 +519,76 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
           }),
         );
 
-        void session.send({ prompt: sideChannelPrompt })
+        void session.send({ prompt })
           .catch((err: unknown) => rejectTransient(err instanceof Error ? err.message : String(err)));
       });
-
-      return result;
     } finally {
       clearTimeout(timeout);
       for (const unsub of unsubscribers) unsub();
-      await session.disconnect().catch((err: unknown) =>
-        logger.debug("Copilot side-channel disconnect failed", { parentThreadId, error: String(err) }),
-      );
     }
+  }
+
+  private async disconnectSideChannelSession(session: CopilotSession, parentThreadId: string): Promise<void> {
+    await session.disconnect().catch((err: unknown) =>
+      logger.debug("Copilot side-channel disconnect failed", { parentThreadId, error: String(err) }),
+    );
   }
 
   /** Fetch available models from the Copilot SDK, with a 10-minute TTL cache. */
   async listModels(): Promise<ProviderModelInfo[]> {
-    const now = Date.now();
-    if (this.modelCache && (now - this.modelCacheTimestamp) < CopilotProvider.MODEL_CACHE_TTL_MS) {
-      return this.modelCache;
-    }
+    const cachedModels = this.getCachedModels();
+    if (cachedModels) return cachedModels;
+    if (!await this.refreshClientForModels()) return [];
 
+    const client = this.getClientForModels("Copilot client not available");
+    if (!client) return [];
+
+    const result = this.toProviderModels(await this.listSdkModels(client));
+    this.modelCache = result;
+    this.modelCacheTimestamp = Date.now();
+    return result;
+  }
+
+  private getCachedModels(): ProviderModelInfo[] | null {
+    const isFresh = this.modelCache &&
+      (Date.now() - this.modelCacheTimestamp) < CopilotProvider.MODEL_CACHE_TTL_MS;
+    return isFresh ? this.modelCache : null;
+  }
+
+  private async refreshClientForModels(): Promise<boolean> {
     try {
       await this.refreshClient();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("Could not find @github/copilot")) {
-        logger.warn("CopilotProvider: @github/copilot not installed, returning empty model list");
-        return [];
-      }
-      throw e;
+      return true;
+    } catch (error: unknown) {
+      if (!this.errorMessage(error).includes("Could not find @github/copilot")) throw error;
+      logger.warn("CopilotProvider: @github/copilot not installed, returning empty model list");
+      return false;
     }
+  }
 
-    const client = this.client;
-    if (!client) {
-      if (this.lastResolution?.source === "not-found") return [];
-      throw new Error("Copilot client not available");
-    }
+  private getClientForModels(errorMessage: string): CopilotClient | null {
+    if (this.client) return this.client;
+    if (this.lastResolution?.source === "not-found") return null;
+    throw new Error(errorMessage);
+  }
 
-    let sdkModels: ModelInfo[];
+  private async listSdkModels(client: CopilotClient): Promise<ModelInfo[]> {
     try {
-      sdkModels = await client.listModels();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // The SDK throws "Client not connected" when the CLI process died
-      // after the initial handshake. Force a fresh client and retry once.
-      if (msg.includes("not connected")) {
-        logger.warn("CopilotProvider: listModels connection lost, reconnecting", { error: msg });
-        this.client = null;
-        this.modelCache = null;
-        this.modelCacheTimestamp = 0;
-        await this.refreshClient();
-        const freshClient = this.client as CopilotClient | null;
-        if (!freshClient) {
-          if (this.lastResolution?.source === "not-found") return [];
-          throw new Error("Copilot client not available after reconnect");
-        }
-        sdkModels = await freshClient.listModels();
-      } else {
-        throw e;
-      }
-    }
+      return await client.listModels();
+    } catch (error: unknown) {
+      const message = this.errorMessage(error);
+      if (!message.includes("not connected")) throw error;
 
-    const result = sdkModels.map((m) => ({
+      logger.warn("CopilotProvider: listModels connection lost, reconnecting", { error: message });
+      this.resetClientAndModelCache();
+      await this.refreshClient();
+      const freshClient = this.getClientForModels("Copilot client not available after reconnect");
+      return freshClient ? freshClient.listModels() : [];
+    }
+  }
+
+  private toProviderModels(sdkModels: ModelInfo[]): ProviderModelInfo[] {
+    return sdkModels.map((m) => ({
       id: m.id,
       name: m.name,
       group: inferModelGroup(m.id),
@@ -555,9 +600,16 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       policy: m.policy ? { state: m.policy.state as "enabled" | "disabled" | "unconfigured" } : undefined,
       multiplier: m.billing?.multiplier,
     }));
-    this.modelCache = result;
-    this.modelCacheTimestamp = Date.now();
-    return result;
+  }
+
+  private resetClientAndModelCache(): void {
+    this.client = null;
+    this.modelCache = null;
+    this.modelCacheTimestamp = 0;
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 
   /** Return current usage/quota state by fetching from account.getQuota(). */
@@ -590,150 +642,157 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
   private async doRefreshClient(): Promise<void> {
     const settings = await this.settingsService.get();
     const configuredCliPath = settings.provider.cli.copilot?.trim() || undefined;
-    const state = this.client?.getState();
+    if (this.canReuseClient(configuredCliPath)) return;
 
-    // Reuse the existing client only when it is healthy. A "disconnected" or
-    // "error" state means the CLI process died; rebuild so the next session
-    // gets a fresh process rather than failing immediately.
-    if (
-      configuredCliPath === this.lastCliPath &&
+    await this.stopCurrentClient();
+    const options = await this.createClientOptions(configuredCliPath);
+    if (!options) return;
+
+    await this.startClient(options, configuredCliPath);
+  }
+
+  private canReuseClient(configuredCliPath: string | undefined): boolean {
+    return configuredCliPath === this.lastCliPath &&
       this.client !== null &&
-      state === "connected"
-    ) {
-      return;
-    }
+      this.client.getState() === "connected";
+  }
 
-    if (this.client) {
-      await this.client.stop().catch((err) =>
-        logger.warn("CopilotProvider: error stopping old client", { error: String(err) }),
-      );
-      this.client = null;
-      this.modelCache = null;
-      this.modelCacheTimestamp = 0;
-    }
+  private async stopCurrentClient(): Promise<void> {
+    if (!this.client) return;
+    await this.client.stop().catch((err) =>
+      logger.warn("CopilotProvider: error stopping old client", { error: String(err) }),
+    );
+    this.resetClientAndModelCache();
+  }
 
-    const opts: {
-      cliPath?: string;
-      cliArgs?: string[];
-      githubToken?: string;
-      env?: Record<string, string | undefined>;
-    } = {};
+  private async createClientOptions(configuredCliPath: string | undefined): Promise<CopilotClientOptions | undefined> {
+    const options: CopilotClientOptions = {
+      env: { ...this.envService.getEnv() },
+      cliArgs: ["--no-auto-update"],
+    };
+    const resolution = this.resolveConfiguredCli(options, configuredCliPath);
+    if (resolution === false) return undefined;
 
-    opts.env = { ...this.envService.getEnv() };
-    // Keep the SDK-managed or explicitly configured CLI from auto-updating during a session.
-    opts.cliArgs = ["--no-auto-update"];
+    await this.configureElectronNode(options, configuredCliPath);
+    await this.addGithubToken(options);
+    return options;
+  }
 
-    let resolution: CopilotCliResolution | undefined;
-    if (configuredCliPath) {
-      resolution = resolveCopilotCli(
-        { configuredPath: configuredCliPath },
-        createNodeResolverIO(this.envService.getEnv(), process.platform),
-      );
-      this.lastResolution = resolution;
-      if (resolution.source === "not-found") {
-        // Leave this.client null; sendTurn/listModels translate lastResolution
-        // into a user-facing error via the existing error seam.
-        logger.warn("CopilotProvider: CLI not found", { message: resolution.message });
-        this.lastCliPath = configuredCliPath;
-        return;
-      }
-      opts.cliPath = resolution.entry;
-      logger.info("CopilotProvider: resolved configured CLI", {
-        source: resolution.source,
-        version: resolution.version ?? "unknown",
-      });
-    } else {
-      // The SDK bundles a compatible CLI. Leaving cliPath unset is intentional:
-      // overriding it with a global install can mix incompatible SDK/CLI versions.
+  private resolveConfiguredCli(
+    options: CopilotClientOptions,
+    configuredCliPath: string | undefined,
+  ): CopilotCliResolution | false | undefined {
+    if (!configuredCliPath) {
       this.lastResolution = null;
+      return undefined;
     }
 
-    // Electron fix: resolve the real node binary path once. The SDK's
-    // getNodeExecPath() reads process.execPath to spawn .js CLI files,
-    // but in Electron that returns electron.exe which cannot host the
-    // CLI's server mode. We temporarily override process.execPath during
-    // client.start() and also prepend node's directory to PATH.
-    if (process.versions.electron && !configuredCliPath) {
-      if (this.cachedNodePath === undefined) {
-        this.cachedNodePath = await which("node", { nothrow: true });
-        if (!this.cachedNodePath) {
-          logger.warn(
-            "CopilotProvider: node not found in PATH; SDK will use process.execPath (electron)",
-          );
-        }
-      }
-      if (this.cachedNodePath) {
-        const nodeDir = dirname(this.cachedNodePath);
-        const sep = process.platform === "win32" ? ";" : ":";
-        const existingPath =
-          opts.env?.PATH ?? opts.env?.Path ?? "";
-        const pathValue = existingPath ? `${nodeDir}${sep}${existingPath}` : nodeDir;
-        opts.env = {
-          ...opts.env,
-          PATH: pathValue,
-          ...(process.platform === "win32" ? { Path: pathValue } : {}),
-        };
-      }
+    const resolution = resolveCopilotCli(
+      { configuredPath: configuredCliPath },
+      createNodeResolverIO(this.envService.getEnv(), process.platform),
+    );
+    this.lastResolution = resolution;
+    if (resolution.source === "not-found") {
+      logger.warn("CopilotProvider: CLI not found", { message: resolution.message });
+      this.lastCliPath = configuredCliPath;
+      return false;
     }
 
-    // Explicit auth: get token from gh CLI so the headless subprocess
-    // does not need to discover auth from its own environment.
+    options.cliPath = resolution.entry;
+    logger.info("CopilotProvider: resolved configured CLI", {
+      source: resolution.source,
+      version: resolution.version ?? "unknown",
+    });
+    return resolution;
+  }
+
+  private async configureElectronNode(options: CopilotClientOptions, configuredCliPath: string | undefined): Promise<void> {
+    if (!this.usesBundledCliInElectron(configuredCliPath)) return;
+    const nodePath = await this.resolveElectronNodePath();
+    if (!nodePath) return;
+
+    const nodeDir = dirname(nodePath);
+    const separator = process.platform === "win32" ? ";" : ":";
+    const existingPath = options.env?.PATH ?? options.env?.Path ?? "";
+    const pathValue = existingPath ? `${nodeDir}${separator}${existingPath}` : nodeDir;
+    options.env = {
+      ...options.env,
+      PATH: pathValue,
+      ...(process.platform === "win32" ? { Path: pathValue } : {}),
+    };
+  }
+
+  private usesBundledCliInElectron(configuredCliPath: string | undefined): boolean {
+    return Boolean(process.versions.electron) && !configuredCliPath;
+  }
+
+  private async resolveElectronNodePath(): Promise<string | null> {
+    if (this.cachedNodePath !== undefined) return this.cachedNodePath;
+
+    this.cachedNodePath = await which("node", { nothrow: true });
+    if (!this.cachedNodePath) {
+      logger.warn("CopilotProvider: node not found in PATH; SDK will use process.execPath (electron)");
+    }
+    return this.cachedNodePath;
+  }
+
+  private async addGithubToken(options: CopilotClientOptions): Promise<void> {
     try {
       const { stdout } = await execFileAsync("gh", ["auth", "token"], {
         timeout: 5000,
         windowsHide: true,
       });
       const token = stdout.trim();
-      if (token) {
-        opts.githubToken = token;
-      }
+      if (token) options.githubToken = token;
     } catch (err) {
       logger.debug("CopilotProvider: gh auth token unavailable, falling back to SDK auth", {
-        error: err instanceof Error ? err.message : String(err),
+        error: this.errorMessage(err),
       });
     }
+  }
 
-    const client = new CopilotClient(opts as ConstructorParameters<typeof CopilotClient>[0]);
-    // The SDK's createSession() auto-starts the connection, but listModels()
-    // does not. Eagerly start the client so both paths work.
-    //
-    // Electron fix: the SDK reads process.execPath to spawn the CLI .js file.
-    // In Electron that returns electron.exe, causing the CLI to exit immediately.
-    // Temporarily override process.execPath with the real node binary.
-    const needsElectronExecPathOverride =
-      process.versions.electron && !configuredCliPath && this.cachedNodePath;
-    try {
-      if (needsElectronExecPathOverride) {
-        const origExecPath = process.execPath;
-        process.execPath = this.cachedNodePath!;
-        try {
-          await client.start();
-        } finally {
-          process.execPath = origExecPath;
-        }
-      } else {
-        await client.start();
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("--headless") || msg.includes("unknown option")) {
-        this.lastResolution = {
-          source: "not-found",
-          entry: null,
-          version: null,
-          message: formatCopilotUpgradeMessage(resolution?.version ?? null),
-        };
-        this.lastCliPath = configuredCliPath;
-        logger.warn("CopilotProvider: CLI too old for SDK", { message: this.lastResolution.message });
-        return;
-      }
-      throw err;
-    }
-    // Assign only after start() succeeds so a failed startup never leaves
-    // a stale non-started client on the instance.
+  private async startClient(options: CopilotClientOptions, configuredCliPath: string | undefined): Promise<void> {
+    const client = new CopilotClient(options);
+    if (!await this.startSdkClient(client, configuredCliPath)) return;
+
     this.client = client;
     this.lastCliPath = configuredCliPath;
     logger.info("CopilotProvider: client started", { state: client.getState() });
+  }
+
+  private async startSdkClient(client: CopilotClient, configuredCliPath: string | undefined): Promise<boolean> {
+    try {
+      await this.startSdkClientWithElectronNode(client, configuredCliPath);
+      return true;
+    } catch (err: unknown) {
+      const message = this.errorMessage(err);
+      if (!message.includes("--headless") && !message.includes("unknown option")) throw err;
+
+      this.lastResolution = {
+        source: "not-found",
+        entry: null,
+        version: null,
+        message: formatCopilotUpgradeMessage(this.lastResolution?.version ?? null),
+      };
+      this.lastCliPath = configuredCliPath;
+      logger.warn("CopilotProvider: CLI too old for SDK", { message: this.lastResolution.message });
+      return false;
+    }
+  }
+
+  private async startSdkClientWithElectronNode(client: CopilotClient, configuredCliPath: string | undefined): Promise<void> {
+    if (!this.usesBundledCliInElectron(configuredCliPath) || !this.cachedNodePath) {
+      await client.start();
+      return;
+    }
+
+    const originalExecPath = process.execPath;
+    process.execPath = this.cachedNodePath;
+    try {
+      await client.start();
+    } finally {
+      process.execPath = originalExecPath;
+    }
   }
 
   /** Returns the resolver install message when the CLI could not be resolved. */
@@ -850,132 +909,160 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     }
   }
 
-  private async doSendMessage(params: {
-    sessionId: string;
-    message: string;
-    cwd: string;
-    model: string;
-    fallbackModel?: string;
-    resume: boolean;
-    permissionMode: string;
-    attachments?: AttachmentMeta[];
-    reasoningLevel?: ReasoningLevel;
-    /** Copilot sub-agent name. Built-in modes: "interactive" | "plan" | "autopilot". Custom: any YAML agent name. */
-    copilotAgent?: string;
-  }, routing: CanonicalLiveEventRouting): Promise<void> {
+  private async doSendMessage(params: CopilotSendMessageParams, routing: CanonicalLiveEventRouting): Promise<void> {
     await this.refreshClient();
 
-    const { sessionId, message, cwd, model, permissionMode, resume, copilotAgent } = params;
+    const { sessionId, message, copilotAgent } = params;
     const threadId = this.toThreadId(sessionId);
-    const emitTurnEvent = (event: AgentEvent): void => {
-      this.publishTurnEvent(routing, sessionId, event);
-    };
-
-    // The CLI could not be resolved during refreshClient; surface the resolver's
-    // install message via the existing error seam (mirrors Codex's abort-before-spawn).
-    if (this.lastResolution?.source === "not-found") {
-      emitTurnEvent({ type: "error", threadId, error: this.lastResolution.message } satisfies AgentEvent);
-      emitTurnEvent({ type: "ended", threadId, turnExecutionId: routing.executionId } satisfies AgentEvent);
-      await this.waitForCanonicalExecution(routing.executionId);
-      return;
-    }
-
-    // Re-read after the async refreshClient() await so concurrent sends that
-    // both passed the first check don't each create a new SDK session for the
-    // same sessionId.
-    let existing = this.runtime.get(sessionId);
     const browserAccess = this.pendingBrowserAccess.get(sessionId);
-    const browserScope = browserAccess?.scope;
-    if (
-      existing &&
-      browserScope &&
-      this.browserAutomationLease.isConfigured() &&
-      (existing.workspaceId !== browserScope.workspaceId ||
-        existing.browserPermissionCapability !== browserScope.permissionCapability ||
-        (existing.browserCredential &&
-          (existing.browserCredential.expiresAt <= Date.now() ||
-            (existing.browserLeaseId !== undefined && !this.browserAutomationLease.isActive(existing.browserLeaseId)))))
-    ) {
-      if (
-        existing.browserCredential &&
-        existing.browserLeaseId &&
-        existing.browserCredential.expiresAt <= Date.now() &&
-        this.browserAutomationLease.isActive(existing.browserLeaseId)
-      ) {
-        this.browserAutomationLease.refresh(existing.browserLeaseId);
-      }
-      await this.runtime.stop(sessionId);
-      existing = undefined;
-    }
+    if (await this.emitCliResolutionError(sessionId, threadId, routing)) return;
 
-    // Stage the per-turn options (model, agent routing) so `spawn` can build a
-    // fresh session correctly. The turn itself is run here after `acquire`
-    // (uniformly for fresh and reuse paths) so it never races the runtime's
-    // post-spawn pool write.
-    this.pendingSpawnTurns.set(sessionId, {
-      message,
-      model,
-      copilotAgent,
+    const existing = await this.getCompatibleSession(sessionId, browserAccess?.scope);
+    const state = await this.acquireTurnSession(params, threadId, routing, browserAccess);
+    this.completeBrowserAccessAfterAcquire(sessionId, browserAccess, Boolean(existing));
+    this.runtime.recordUsage(sessionId);
+
+    if (this.stopRequestedBeforeTurn(sessionId)) return;
+
+    state.lastUsedAt = Date.now();
+    if (existing) {
+      await this.applyCopilotAgent(state.session, sessionId, copilotAgent, true);
+    }
+    void this.runTurn(sessionId, threadId, state.session, message, routing);
+  }
+
+  private async emitCliResolutionError(
+    sessionId: string,
+    threadId: string,
+    routing: CanonicalLiveEventRouting,
+  ): Promise<boolean> {
+    if (this.lastResolution?.source !== "not-found") return false;
+
+    this.publishTurnEvent(routing, sessionId, {
+      type: "error",
+      threadId,
+      error: this.lastResolution.message,
+    } satisfies AgentEvent);
+    this.publishTurnEvent(routing, sessionId, {
+      type: "ended",
+      threadId,
+      turnExecutionId: routing.executionId,
+    } satisfies AgentEvent);
+    await this.waitForCanonicalExecution(routing.executionId);
+    return true;
+  }
+
+  private async getCompatibleSession(
+    sessionId: string,
+    browserScope: BrowserAutomationSessionLeaseScope | undefined,
+  ): Promise<CopilotSessionState | undefined> {
+    const existing = this.runtime.get(sessionId);
+    if (!existing || !this.needsBrowserSessionReplacement(existing, browserScope)) return existing;
+
+    this.refreshExpiredBrowserLease(existing);
+    await this.runtime.stop(sessionId);
+    return undefined;
+  }
+
+  private needsBrowserSessionReplacement(
+    state: CopilotSessionState,
+    browserScope: BrowserAutomationSessionLeaseScope | undefined,
+  ): boolean {
+    if (!browserScope || !this.browserAutomationLease.isConfigured()) return false;
+    if (state.workspaceId !== browserScope.workspaceId) return true;
+    if (state.browserPermissionCapability !== browserScope.permissionCapability) return true;
+    return this.hasInvalidBrowserCredential(state);
+  }
+
+  private hasInvalidBrowserCredential(state: CopilotSessionState): boolean {
+    const credential = state.browserCredential;
+    if (!credential) return false;
+    if (credential.expiresAt <= Date.now()) return true;
+    return state.browserLeaseId !== undefined && !this.browserAutomationLease.isActive(state.browserLeaseId);
+  }
+
+  private refreshExpiredBrowserLease(state: CopilotSessionState): void {
+    const credential = state.browserCredential;
+    const leaseId = state.browserLeaseId;
+    if (!credential || !leaseId || credential.expiresAt > Date.now()) return;
+    if (this.browserAutomationLease.isActive(leaseId)) this.browserAutomationLease.refresh(leaseId);
+  }
+
+  private async acquireTurnSession(
+    params: CopilotSendMessageParams,
+    threadId: string,
+    routing: CanonicalLiveEventRouting,
+    browserAccess: PendingBrowserAccess | undefined,
+  ): Promise<CopilotSessionState> {
+    this.pendingSpawnTurns.set(params.sessionId, {
+      message: params.message,
+      model: params.model,
+      copilotAgent: params.copilotAgent,
       turnExecutionId: routing.executionId,
     });
-
-    let state: CopilotSessionState;
     try {
-      state = await this.runtime.acquire({
-        sessionId,
+      const state = await this.runtime.acquire({
+        sessionId: params.sessionId,
         threadId,
-        cwd,
-        permissionMode,
-        resumeFrom: resume ? this.sdkSessionIds.get(sessionId) : undefined,
+        cwd: params.cwd,
+        permissionMode: params.permissionMode,
+        resumeFrom: params.resume ? this.sdkSessionIds.get(params.sessionId) : undefined,
       });
-    } catch (e: unknown) {
-      this.pendingSpawnTurns.delete(sessionId);
-      if (browserAccess) {
-        this.browserAutomationLease.release(browserAccess.stage.leaseId);
-        this.pendingBrowserAccess.delete(sessionId);
-      }
-      throw e;
+      this.pendingSpawnTurns.delete(params.sessionId);
+      return state;
+    } catch (error) {
+      this.pendingSpawnTurns.delete(params.sessionId);
+      this.releasePendingBrowserAccess(params.sessionId, browserAccess);
+      throw error;
     }
-    this.pendingSpawnTurns.delete(sessionId);
-    if (existing && browserAccess) {
+  }
+
+  private completeBrowserAccessAfterAcquire(
+    sessionId: string,
+    browserAccess: PendingBrowserAccess | undefined,
+    reusedSession: boolean,
+  ): void {
+    if (reusedSession && browserAccess) {
       this.browserAutomationLease.release(browserAccess.stage.leaseId);
     }
     this.pendingBrowserAccess.delete(sessionId);
-    this.runtime.recordUsage(sessionId);
+  }
 
-    // A stop requested before the session finished spawning: `spawn` already
-    // disconnected the SDK session and emitted Ended, so do not run the turn.
-    // `spawn` does not evict the runtime pool entry, and `isStale` always
-    // returns false, so without this the disconnected (dead) session would be
-    // reused on the next turn. Evict it now.
-    if (this.pendingStops.has(sessionId)) {
-      void this.runtime.stop(sessionId).catch((err: unknown) =>
-        logger.debug("CopilotProvider: stop of pending-stop session failed", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
+  private releasePendingBrowserAccess(sessionId: string, browserAccess: PendingBrowserAccess | undefined): void {
+    if (!browserAccess) return;
+    this.browserAutomationLease.release(browserAccess.stage.leaseId);
+    this.pendingBrowserAccess.delete(sessionId);
+  }
+
+  private stopRequestedBeforeTurn(sessionId: string): boolean {
+    if (!this.pendingStops.has(sessionId)) return false;
+
+    void this.runtime.stop(sessionId).catch((err: unknown) =>
+      logger.debug("CopilotProvider: stop of pending-stop session failed", {
+        sessionId,
+        error: this.errorMessage(err),
+      }),
+    );
+    return true;
+  }
+
+  private async applyCopilotAgent(
+    session: CopilotSession,
+    sessionId: string,
+    copilotAgent: string | undefined,
+    cachedSession: boolean,
+  ): Promise<void> {
+    if (!copilotAgent) return;
+
+    const cachedSuffix = cachedSession ? " on cached session" : "";
+    if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
+      await session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
+      logger.info(`CopilotProvider: set built-in mode${cachedSuffix}`, { sessionId, mode: copilotAgent });
       return;
     }
 
-    state.lastUsedAt = Date.now();
-
-    // Reuse path: `spawn` did not run, so apply agent routing here so mid-thread
-    // agent changes take effect on the cached session. (Fresh sessions get
-    // routing applied in `spawn` when first created.)
-    if (existing && copilotAgent) {
-      if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
-        await state.session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
-        logger.info("CopilotProvider: set built-in mode on cached session", { sessionId, mode: copilotAgent });
-      } else {
-        await state.session.rpc.agent.select({ name: copilotAgent });
-        logger.info("CopilotProvider: selected custom agent on cached session", { sessionId, agent: copilotAgent });
-      }
-    }
-
-    // Run the turn. Sending a new message on an existing session implicitly
-    // aborts any in-flight turn; the prior runTurn promise resolves on idle.
-    void this.runTurn(sessionId, threadId, state.session, message, routing);
+    await session.rpc.agent.select({ name: copilotAgent });
+    logger.info(`CopilotProvider: selected custom agent${cachedSuffix}`, { sessionId, agent: copilotAgent });
   }
 
   /**
@@ -990,165 +1077,216 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    */
   async spawn(args: SpawnArgs): Promise<SpawnResult<CopilotSessionState>> {
     const { sessionId, threadId, cwd, resumeFrom } = args;
-
-    const client = this.client;
-    if (!client) {
-      throw new Error("Copilot client not available");
-    }
-
+    const client = this.getClientForSpawn();
     const staged = this.pendingSpawnTurns.get(sessionId);
-    const copilotAgent = staged?.copilotAgent;
-    const stagedExecutionId = staged?.turnExecutionId;
-    const stagedRouting = stagedExecutionId
-      ? this.canonicalRoutings.get(stagedExecutionId)
-      : undefined;
     const browserAccess = this.pendingBrowserAccess.get(sessionId);
     const browserScope = browserAccess?.scope;
     const browserGrant = browserAccess
       ? this.browserAutomationLease.issue(browserAccess.stage)
       : null;
 
+    const routing = this.getStagedRouting(staged);
+    const sessionBase = await this.buildSessionOptions({
+      sessionId,
+      threadId,
+      cwd,
+      model: staged?.model,
+      browserGrant,
+    });
     let session: CopilotSession;
+    try {
+      session = await this.createOrResumeSession(client, sessionId, resumeFrom, sessionBase);
+    } catch (error) {
+      await this.releaseSpawnResources(sessionId, browserGrant);
+      throw error;
+    }
+    return this.finishSpawn({
+      sessionId,
+      threadId,
+      session,
+      copilotAgent: staged?.copilotAgent,
+      browserScope,
+      browserGrant,
+      routing,
+    });
+  }
 
-    // Discover custom YAML agents so the SDK knows about them before agent.select() is called.
-    // Only non-default agents are passed; built-in modes ("interactive", "plan", "autopilot")
-    // are handled via mode.set() and do not need to be in customAgents.
-    // Discovery runs only here (new session path) to avoid sync FS calls on every message.
-    const discoveredAgents = discoverCopilotAgents(cwd);
-    const customAgents = discoveredAgents
-      .filter((a) => a.source !== "default")
-      .map((a) => ({
-        name: a.name,
-        displayName: a.displayName,
-        description: a.description,
-        // SDK uses its own YAML-loaded prompt; empty string defers to CLI config.
+  private getClientForSpawn(): CopilotClient {
+    if (!this.client) throw new Error("Copilot client not available");
+    return this.client;
+  }
+
+  private getStagedRouting(staged: StagedCopilotTurn | undefined): CanonicalLiveEventRouting | undefined {
+    if (!staged) return undefined;
+    return this.canonicalRoutings.get(staged.turnExecutionId);
+  }
+
+  private async buildSessionOptions(args: {
+    sessionId: string;
+    threadId: string;
+    cwd: string;
+    model: string | undefined;
+    browserGrant: ReturnType<BrowserAutomationSessionLease["issue"]> | null;
+  }) {
+    const customAgents = discoverCopilotAgents(args.cwd)
+      .filter((agent) => agent.source !== "default")
+      .map((agent) => ({
+        name: agent.name,
+        displayName: agent.displayName,
+        description: agent.description,
         prompt: "",
       }));
-
-    // TODO(#258): respect args.permissionMode. Currently approveAll is used
-    // unconditionally because the Copilot SDK does not expose per-action gating.
-    // Until the SDK adds granular permission control, all tool actions are
-    // approved automatically regardless of the thread's permissionMode setting.
     const userInstructions = readUserInstructions();
     const skillDirs = userSkillDirectories();
-    const internalMcp = await this.threadControlMcp?.createHttpConnection(sessionId);
+    const internalMcp = await this.threadControlMcp?.createHttpConnection(args.sessionId);
     if (!internalMcp) {
-      logger.warn("Copilot thread-control MCP is unavailable; continuing without it", { threadId });
+      logger.warn("Copilot thread-control MCP is unavailable; continuing without it", { threadId: args.threadId });
     }
+
     const runtimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
-      sourceThreadId: threadId,
+      sourceThreadId: args.threadId,
       threadControlGranted: Boolean(internalMcp),
-      browserAutomationGranted: Boolean(browserGrant),
+      browserAutomationGranted: Boolean(args.browserGrant),
     }));
-    const sessionBase = {
+    return {
       onPermissionRequest: approveAll,
-      model: staged?.model || undefined,
-      workingDirectory: cwd,
+      model: args.model || undefined,
+      workingDirectory: args.cwd,
       enableConfigDiscovery: true,
       ...(customAgents.length > 0 && { customAgents }),
       ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
       systemMessage: composeCopilotSystemMessage(userInstructions, runtimeInstructions),
       mcpServers: {
         ...(internalMcp ? buildCopilotInternalMcpServers(internalMcp) : {}),
-        ...(browserGrant ? {
+        ...(args.browserGrant ? {
           "mcode-browser": {
             type: "http" as const,
-            url: browserGrant.mcpUrl,
-            headers: { Authorization: `Bearer ${browserGrant.token}` },
-            tools: browserGrant.allowedOperations.map(
+            url: args.browserGrant.mcpUrl,
+            headers: { Authorization: `Bearer ${args.browserGrant.token}` },
+            tools: args.browserGrant.allowedOperations.map(
               (operation) => BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
             ),
           },
         } : {}),
       },
     };
+  }
+
+  private async createOrResumeSession(
+    client: CopilotClient,
+    sessionId: string,
+    resumeFrom: string | undefined,
+    options: Parameters<CopilotClient["createSession"]>[0],
+  ): Promise<CopilotSession> {
+    if (!resumeFrom) return client.createSession(options);
 
     try {
-      if (resumeFrom) {
-        try {
-          session = await client.resumeSession(resumeFrom, sessionBase);
-          logger.info("Resumed Copilot session", { sessionId, sdkSessionId: resumeFrom });
-        } catch (err) {
-          logger.warn("CopilotProvider: resume failed, starting fresh session", {
-            sessionId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          this.sdkSessionIds.delete(sessionId);
-          session = await client.createSession(sessionBase);
-        }
-      } else {
-        session = await client.createSession(sessionBase);
-      }
-    } catch (error) {
-      if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
-      await this.threadControlMcp?.close(sessionId);
-      throw error;
-    }
-
-    try {
-      // Route to the appropriate Copilot SDK API based on the selected sub-agent.
-      // Built-in modes use session.rpc.mode.set(); custom YAML agents use session.rpc.agent.select().
-      if (copilotAgent) {
-        if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
-          await session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
-          logger.info("CopilotProvider: set built-in mode", { sessionId, mode: copilotAgent });
-        } else {
-          await session.rpc.agent.select({ name: copilotAgent });
-          logger.info("CopilotProvider: selected custom agent", { sessionId, agent: copilotAgent });
-        }
-      }
-
-      // Capture the SDK session ID for future resume and notify the service layer
-      const sdkId = session.sessionId;
-      if (sdkId && !this.sdkSessionIds.has(sessionId)) {
-        this.sdkSessionIds.set(sessionId, sdkId);
-        logger.info("Captured Copilot SDK session ID", { sessionId, sdkId });
-        if (stagedRouting) {
-          this.publishTurnEvent(stagedRouting, sessionId, {
-            type: "system",
-            threadId,
-            subtype: "sdk_session_id:" + sdkId,
-          } satisfies AgentEvent);
-        }
-      }
-
-      const state: CopilotSessionState = {
+      const session = await client.resumeSession(resumeFrom, options);
+      logger.info("Resumed Copilot session", { sessionId, sdkSessionId: resumeFrom });
+      return session;
+    } catch (err) {
+      logger.warn("CopilotProvider: resume failed, starting fresh session", {
         sessionId,
-        session,
-        lastUsedAt: Date.now(),
-        turnActive: false,
-        workspaceId: browserScope?.workspaceId ?? "unknown-workspace",
-        browserPermissionCapability: browserScope?.permissionCapability ?? "interact",
-        ...(browserGrant && {
-          browserCredential: {
-            credentialId: browserGrant.credentialId,
-            expiresAt: browserGrant.expiresAt,
-          },
-          browserLeaseId: browserGrant.leaseId,
-        }),
-      };
+        error: this.errorMessage(err),
+      });
+      this.sdkSessionIds.delete(sessionId);
+      return client.createSession(options);
+    }
+  }
 
-      if (this.pendingStops.has(sessionId)) {
-        logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
-        session.disconnect().catch(() => {});
-        if (stagedRouting) {
-          this.publishTurnEvent(stagedRouting, sessionId, {
-            type: AgentEventType.Ended,
-            threadId,
-            turnExecutionId: stagedRouting.executionId,
-          } satisfies AgentEvent);
-          await this.waitForCanonicalExecution(stagedRouting.executionId);
-        }
-      }
-
+  private async finishSpawn(args: {
+    sessionId: string;
+    threadId: string;
+    session: CopilotSession;
+    copilotAgent: string | undefined;
+    browserScope: BrowserAutomationSessionLeaseScope | undefined;
+    browserGrant: ReturnType<BrowserAutomationSessionLease["issue"]> | null;
+    routing: CanonicalLiveEventRouting | undefined;
+  }): Promise<SpawnResult<CopilotSessionState>> {
+    try {
+      await this.applyCopilotAgent(args.session, args.sessionId, args.copilotAgent, false);
+      this.captureSdkSessionId(args.sessionId, args.threadId, args.session, args.routing);
+      const state = this.createSessionState(args);
+      await this.consumePendingStop(args.sessionId, args.threadId, args.session, args.routing);
       return { state, pids: [] };
     } catch (error) {
-      if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
-      await session.disconnect().catch(() => {});
-      await this.threadControlMcp?.close(sessionId);
-      this.sdkSessionIds.delete(sessionId);
+      if (args.browserGrant) this.browserAutomationLease.release(args.browserGrant.leaseId);
+      await args.session.disconnect().catch(() => {});
+      await this.threadControlMcp?.close(args.sessionId);
+      this.sdkSessionIds.delete(args.sessionId);
       throw error;
     }
+  }
+
+  private captureSdkSessionId(
+    sessionId: string,
+    threadId: string,
+    session: CopilotSession,
+    routing: CanonicalLiveEventRouting | undefined,
+  ): void {
+    const sdkId = session.sessionId;
+    if (!sdkId || this.sdkSessionIds.has(sessionId)) return;
+
+    this.sdkSessionIds.set(sessionId, sdkId);
+    logger.info("Captured Copilot SDK session ID", { sessionId, sdkId });
+    if (!routing) return;
+
+    this.publishTurnEvent(routing, sessionId, {
+      type: "system",
+      threadId,
+      subtype: "sdk_session_id:" + sdkId,
+    } satisfies AgentEvent);
+  }
+
+  private createSessionState(args: {
+    sessionId: string;
+    session: CopilotSession;
+    browserScope: BrowserAutomationSessionLeaseScope | undefined;
+    browserGrant: ReturnType<BrowserAutomationSessionLease["issue"]> | null;
+  }): CopilotSessionState {
+    return {
+      sessionId: args.sessionId,
+      session: args.session,
+      lastUsedAt: Date.now(),
+      turnActive: false,
+      workspaceId: args.browserScope?.workspaceId ?? "unknown-workspace",
+      browserPermissionCapability: args.browserScope?.permissionCapability ?? "interact",
+      ...(args.browserGrant && {
+        browserCredential: {
+          credentialId: args.browserGrant.credentialId,
+          expiresAt: args.browserGrant.expiresAt,
+        },
+        browserLeaseId: args.browserGrant.leaseId,
+      }),
+    };
+  }
+
+  private async consumePendingStop(
+    sessionId: string,
+    threadId: string,
+    session: CopilotSession,
+    routing: CanonicalLiveEventRouting | undefined,
+  ): Promise<void> {
+    if (!this.pendingStops.has(sessionId)) return;
+
+    logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
+    void session.disconnect().catch(() => {});
+    if (!routing) return;
+
+    this.publishTurnEvent(routing, sessionId, {
+      type: AgentEventType.Ended,
+      threadId,
+      turnExecutionId: routing.executionId,
+    } satisfies AgentEvent);
+    await this.waitForCanonicalExecution(routing.executionId);
+  }
+
+  private async releaseSpawnResources(
+    sessionId: string,
+    browserGrant: ReturnType<BrowserAutomationSessionLease["issue"]> | null,
+  ): Promise<void> {
+    if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
+    await this.threadControlMcp?.close(sessionId);
   }
 
   /**

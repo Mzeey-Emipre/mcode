@@ -75,21 +75,28 @@ function normalizeRemoteUrl(remote: string): GitRemoteUrl | null {
   const trimmed = remote.trim();
   if (!trimmed) return null;
 
-  const scpLike = /^(?<user>[^@\s]+)@(?<host>[^@:\s/]+):(?<path>.+)$/.exec(trimmed);
-  if (scpLike?.groups) {
-    return buildHttpsRemote(scpLike.groups.host ?? "", scpLike.groups.path ?? "");
-  }
+  return normalizeScpRemoteUrl(trimmed) ?? normalizeStandardRemoteUrl(trimmed);
+}
 
+function normalizeScpRemoteUrl(remote: string): GitRemoteUrl | null {
+  const match = /^(?<user>[^@\s]+)@(?<host>[^@:\s/]+):(?<path>.+)$/.exec(remote);
+  if (!match?.groups) return null;
+  return buildHttpsRemote(match.groups.host ?? "", match.groups.path ?? "");
+}
+
+function normalizeStandardRemoteUrl(remote: string): GitRemoteUrl | null {
   try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:" && parsed.protocol !== "ssh:") {
-      return null;
-    }
+    const parsed = new URL(remote);
+    if (!isSupportedRemoteProtocol(parsed.protocol)) return null;
     const host = parsed.protocol === "ssh:" ? parsed.hostname : parsed.host;
     return buildHttpsRemote(host, parsed.pathname);
   } catch {
     return null;
   }
+}
+
+function isSupportedRemoteProtocol(protocol: string): boolean {
+  return protocol === "https:" || protocol === "http:" || protocol === "ssh:";
 }
 
 /** Normalize a configured remote URL to its repository identity fields. */
@@ -269,36 +276,10 @@ export class GitRepositoryService {
 
     const branches: GitBranch[] = [];
     for (const line of output.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      const [fullRefname, refname, shortSha, head, worktreepath] = trimmed.split("|||");
-      if (!fullRefname || !refname || /\/HEAD$/.test(fullRefname)) continue;
-      if (fullRefname === "(no branch)" || refname === "(no branch)") continue;
-
-      const type: GitBranch["type"] = worktreepath && worktreepath.length > 0
-        ? "worktree"
-        : fullRefname.startsWith("refs/remotes/")
-          ? "remote"
-          : "local";
-      branches.push({
-        name: refname,
-        shortSha: shortSha ?? "",
-        type,
-        isCurrent: head === "*",
-      });
+      const branch = parseBranchLine(line);
+      if (branch) branches.push(branch);
     }
-
-    const typeOrder: Record<GitBranch["type"], number> = {
-      local: 0,
-      worktree: 1,
-      remote: 2,
-    };
-    return branches.sort((left, right) => {
-      if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1;
-      const orderDiff = typeOrder[left.type] - typeOrder[right.type];
-      return orderDiff === 0 ? left.name.localeCompare(right.name) : orderDiff;
-    });
+    return branches.sort(compareBranches);
   }
 
   private requireWorkspace(workspaceId: string) {
@@ -306,4 +287,29 @@ export class GitRepositoryService {
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
     return workspace;
   }
+}
+
+function parseBranchLine(line: string): GitBranch | null {
+  const [fullRefname, refname, shortSha, head, worktreepath] = line.trim().split("|||");
+  if (!fullRefname || !refname) return null;
+  if (fullRefname.endsWith("/HEAD")) return null;
+  if (fullRefname === "(no branch)" || refname === "(no branch)") return null;
+  return {
+    name: refname,
+    shortSha: shortSha ?? "",
+    type: getBranchType(fullRefname, worktreepath),
+    isCurrent: head === "*",
+  };
+}
+
+function getBranchType(fullRefname: string, worktreepath: string | undefined): GitBranch["type"] {
+  if (worktreepath) return "worktree";
+  return fullRefname.startsWith("refs/remotes/") ? "remote" : "local";
+}
+
+function compareBranches(left: GitBranch, right: GitBranch): number {
+  if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1;
+  const typeOrder: Record<GitBranch["type"], number> = { local: 0, worktree: 1, remote: 2 };
+  const orderDiff = typeOrder[left.type] - typeOrder[right.type];
+  return orderDiff === 0 ? left.name.localeCompare(right.name) : orderDiff;
 }

@@ -278,6 +278,7 @@ describe("GithubService.getCheckRuns", () => {
       ghService.getCheckRuns("main", "/repo2"),
       ghService.getCheckRuns("main", "/repo3"),
     ]);
+    expect(callCount).toBe(3);
 
     // 4th call should succeed - gate not stuck
     mockExecFile.mockImplementation(

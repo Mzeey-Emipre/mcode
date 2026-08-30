@@ -47,6 +47,24 @@ function mergeNewestConversationMessages<T extends { id: string; sequence: numbe
   };
 }
 
+/** Merges compatibility and canonical messages into the oldest bounded window. */
+function mergeOldestConversationMessages<T extends { id: string; sequence: number }>(
+  compatibilityMessages: readonly T[],
+  canonicalMessages: readonly T[],
+  limit: number,
+): { messages: T[]; exceededLimit: boolean } {
+  const messagesById = new Map(compatibilityMessages.map((message) => [message.id, message]));
+  for (const message of canonicalMessages) messagesById.set(message.id, message);
+  const mergedMessages = [...messagesById.values()].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+  const exceededLimit = mergedMessages.length > limit;
+  return {
+    messages: exceededLimit ? mergedMessages.slice(0, limit) : mergedMessages,
+    exceededLimit,
+  };
+}
+
 /** Merge canonical and compatibility narrative rows without dropping append-only records. */
 function mergeNarrativeBatch(
   persisted: ConversationNarrativeBatch | undefined,
@@ -103,6 +121,29 @@ export function groupNarrativeEntriesByMessage(
   return grouped;
 }
 
+function mergeCanonicalNarrative(
+  narrativeByMessage: Record<string, ConversationNarrativeBatch>,
+  messages: readonly { id: string }[],
+  canonicalMessages: readonly { id: string }[],
+  canonicalNarrativeByMessage: Record<string, ConversationNarrativeBatch> | undefined,
+): void {
+  const messageIds = new Set(messages.map((message) => message.id));
+  for (const message of canonicalMessages) {
+    const narrative = canonicalNarrativeByMessage?.[message.id];
+    if (narrative && messageIds.has(message.id)) {
+      narrativeByMessage[message.id] = mergeNarrativeBatch(narrativeByMessage[message.id], narrative);
+    }
+  }
+}
+
+function conversationHasMore(
+  compatibilityHasMore: boolean,
+  canonicalHasMore: boolean | undefined,
+  exceededLimit: boolean,
+): boolean {
+  return compatibilityHasMore || canonicalHasMore === true || exceededLimit;
+}
+
 /** Loads messages and their persisted narrative for one thread page. */
 export function loadConversationPage(
   deps: ConversationPageDeps,
@@ -119,22 +160,18 @@ export function loadConversationPage(
     canonicalPage?.messages ?? [],
     input.limit,
   );
-  const messageIds = new Set(messages.map((message) => message.id));
   const entries = deps.narrativeStore.loadForMessages(messages);
   const narrativeByMessage = groupNarrativeEntriesByMessage(entries);
-  for (const message of canonicalPage?.messages ?? []) {
-    const canonicalNarrative = canonicalPage?.narrativeByMessage[message.id];
-    if (canonicalNarrative && messageIds.has(message.id)) {
-      narrativeByMessage[message.id] = mergeNarrativeBatch(
-        narrativeByMessage[message.id],
-        canonicalNarrative,
-      );
-    }
-  }
+  mergeCanonicalNarrative(
+    narrativeByMessage,
+    messages,
+    canonicalPage?.messages ?? [],
+    canonicalPage?.narrativeByMessage,
+  );
 
   return {
     messages,
-    hasMore: compatibilityPage.hasMore || canonicalPage?.hasMore === true || exceededLimit,
+    hasMore: conversationHasMore(compatibilityPage.hasMore, canonicalPage?.hasMore, exceededLimit),
     answeredPlanMessageIds:
       deps.planQuestionAnswersRepo.listAnsweredForThread(input.threadId),
     narrativeByMessage,
@@ -243,6 +280,14 @@ export function loadNewerConversationPage(
   deps: ConversationPageDeps,
   request: ConversationNewerPageRequest,
 ): ConversationNewerPage {
+  const page = loadNewerConversationSource(deps, request);
+  return fitNewerConversationPage(request, page);
+}
+
+function loadNewerConversationSource(
+  deps: ConversationPageDeps,
+  request: ConversationNewerPageRequest,
+): ConversationPage {
   const persistedPage = deps.messageRepo.listByThreadAfter(
     request.threadId,
     request.limit,
@@ -254,29 +299,31 @@ export function loadNewerConversationPage(
     undefined,
     request.cursor.afterSequence,
   );
-  const messagesById = new Map(
-    persistedPage.messages.map((message) => [message.id, message]),
+  const { messages, exceededLimit } = mergeOldestConversationMessages(
+    persistedPage.messages,
+    canonicalPage?.messages ?? [],
+    request.limit,
   );
-  for (const message of canonicalPage?.messages ?? []) messagesById.set(message.id, message);
-  const mergedMessages = [...messagesById.values()].sort((left, right) => left.sequence - right.sequence);
-  const exceededLimit = mergedMessages.length > request.limit;
-  const messages = exceededLimit ? mergedMessages.slice(0, request.limit) : mergedMessages;
-  const page: ConversationPage = {
+  const narrativeByMessage = groupNarrativeEntriesByMessage(deps.narrativeStore.loadForMessages(messages));
+  mergeCanonicalNarrative(
+    narrativeByMessage,
     messages,
-    hasMore: persistedPage.hasMore || canonicalPage?.hasMore === true || exceededLimit,
+    canonicalPage?.messages ?? [],
+    canonicalPage?.narrativeByMessage,
+  );
+  return {
+    messages,
+    hasMore: conversationHasMore(persistedPage.hasMore, canonicalPage?.hasMore, exceededLimit),
     answeredPlanMessageIds: deps.planQuestionAnswersRepo.listAnsweredForThread(request.threadId),
-    narrativeByMessage: groupNarrativeEntriesByMessage(deps.narrativeStore.loadForMessages(messages)),
+    narrativeByMessage,
   };
-  for (const message of canonicalPage?.messages ?? []) {
-    const canonicalNarrative = canonicalPage?.narrativeByMessage[message.id];
-    if (canonicalNarrative && messages.some((candidate) => candidate.id === message.id)) {
-      page.narrativeByMessage[message.id] = mergeNarrativeBatch(
-        page.narrativeByMessage[message.id],
-        canonicalNarrative,
-      );
-    }
-  }
-  let retainedMessages = messages;
+}
+
+function fitNewerConversationPage(
+  request: ConversationNewerPageRequest,
+  page: ConversationPage,
+): ConversationNewerPage {
+  let retainedMessages = page.messages;
   let droppedMessages = false;
 
   while (retainedMessages.length > 0) {
@@ -292,7 +339,7 @@ export function loadNewerConversationPage(
     droppedMessages = true;
   }
 
-  if (messages.length > 0) {
+  if (page.messages.length > 0) {
     throw new Error(
       `The nearest newer conversation message cannot fit within ${request.maxBytes} bytes`,
     );

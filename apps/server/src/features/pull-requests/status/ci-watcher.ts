@@ -255,7 +255,7 @@ export class CiWatcherService {
 
   /** Clean up all timers. Called on server shutdown. */
   async dispose(): Promise<void> {
-    for (const threadId of [...this.bumpTimers.keys()]) {
+    for (const threadId of this.bumpTimers.keys()) {
       this.clearBumpTimers(threadId);
     }
     this.stopActiveTimer();

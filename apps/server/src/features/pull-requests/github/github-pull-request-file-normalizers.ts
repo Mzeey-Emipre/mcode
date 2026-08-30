@@ -85,18 +85,9 @@ export function normalizeGithubPullRequestFile(
   globalPosition: number,
 ): PullRequestRemoteFile | null {
   const parsed = githubProjectedFileSchema.safeParse(input);
-  if (
-    !parsed.success
-    || !Number.isInteger(globalPosition)
-    || globalPosition < 0
-    || globalPosition >= PULL_REQUEST_FILE_MAX_COUNT
-  ) {
-    return null;
-  }
+  if (!parsed.success || !isValidGlobalFilePosition(globalPosition)) return null;
   const file = parsed.data;
-  if (!validRemotePath(file.filename)) return null;
-  if (file.status === "renamed" && !file.previous_filename) return null;
-  if (file.previous_filename && !validRemotePath(file.previous_filename)) return null;
+  if (!hasValidGithubPullRequestFilePaths(file)) return null;
   return {
     globalPosition,
     path: file.filename,
@@ -108,6 +99,20 @@ export function normalizeGithubPullRequestFile(
     blobOid: file.sha,
     hasPatch: file.has_patch,
   };
+}
+
+function isValidGlobalFilePosition(globalPosition: number): boolean {
+  return Number.isInteger(globalPosition)
+    && globalPosition >= 0
+    && globalPosition < PULL_REQUEST_FILE_MAX_COUNT;
+}
+
+function hasValidGithubPullRequestFilePaths(
+  file: z.infer<typeof githubProjectedFileSchema>,
+): boolean {
+  if (!validRemotePath(file.filename)) return false;
+  if (file.status === "renamed" && !file.previous_filename) return false;
+  return !file.previous_filename || validRemotePath(file.previous_filename);
 }
 
 /** Return a stable metadata fingerprint for a global-position file locator. */
@@ -165,24 +170,27 @@ function attributePatternTokens(pattern: string): AttributePatternToken[] | null
   }
   const tokens: AttributePatternToken[] = [];
   for (let index = 0; index < normalized.length; index += 1) {
-    const character = normalized[index];
-    if (character === "\\" && normalized[index + 1]) {
-      tokens.push({ kind: "literal", value: normalized[index + 1] });
-      index += 1;
-    } else if (character === "*") {
-      if (normalized[index + 1] === "*") {
-        tokens.push({ kind: "star", crossesDirectories: true });
-        index += 1;
-      } else {
-        tokens.push({ kind: "star", crossesDirectories: false });
-      }
-    } else if (character === "?") {
-      tokens.push({ kind: "single" });
-    } else {
-      tokens.push({ kind: "literal", value: character });
-    }
+    const token = attributePatternTokenAt(normalized, index);
+    tokens.push(token.value);
+    index += token.consumed;
   }
   return tokens;
+}
+
+function attributePatternTokenAt(
+  pattern: string,
+  index: number,
+): { value: AttributePatternToken; consumed: number } {
+  const character = pattern[index];
+  if (character === "\\" && pattern[index + 1]) {
+    return { value: { kind: "literal", value: pattern[index + 1] }, consumed: 1 };
+  }
+  if (character === "*" && pattern[index + 1] === "*") {
+    return { value: { kind: "star", crossesDirectories: true }, consumed: 1 };
+  }
+  if (character === "*") return { value: { kind: "star", crossesDirectories: false }, consumed: 0 };
+  if (character === "?") return { value: { kind: "single" }, consumed: 0 };
+  return { value: { kind: "literal", value: character }, consumed: 0 };
 }
 
 function relativeAttributePath(path: string, directory: string): string | null {
@@ -196,29 +204,46 @@ function patternMatchesPath(pattern: string, path: string): boolean {
   const tokens = attributePatternTokens(pattern);
   if (!tokens) return false;
   const candidate = pattern.includes("/") ? path : path.split("/").at(-1) ?? "";
-  let previous = new Array<boolean>(candidate.length + 1).fill(false);
+  let previous = Array.from({ length: candidate.length + 1 }, () => false);
   previous[0] = true;
   for (const token of tokens) {
-    const next = new Array<boolean>(candidate.length + 1).fill(false);
-    if (token.kind === "star") {
-      next[0] = previous[0];
-      for (let index = 1; index <= candidate.length; index += 1) {
-        next[index] = previous[index]
-          || (next[index - 1]
-            && (token.crossesDirectories || candidate[index - 1] !== "/"));
-      }
-    } else {
-      for (let index = 1; index <= candidate.length; index += 1) {
-        const character = candidate[index - 1];
-        const matches = token.kind === "single"
-          ? character !== "/"
-          : character === token.value;
-        next[index] = previous[index - 1] && matches;
-      }
-    }
-    previous = next;
+    previous = applyAttributePatternToken(token, candidate, previous);
   }
   return previous[candidate.length];
+}
+
+function applyAttributePatternToken(
+  token: AttributePatternToken,
+  candidate: string,
+  previous: readonly boolean[],
+): boolean[] {
+  const next = Array.from({ length: candidate.length + 1 }, () => false);
+  if (token.kind === "star") return applyAttributeStar(token, candidate, previous, next);
+  for (let index = 1; index <= candidate.length; index += 1) {
+    next[index] = previous[index - 1] && attributeTokenMatches(token, candidate[index - 1]);
+  }
+  return next;
+}
+
+function applyAttributeStar(
+  token: Extract<AttributePatternToken, { kind: "star" }>,
+  candidate: string,
+  previous: readonly boolean[],
+  next: boolean[],
+): boolean[] {
+  next[0] = previous[0];
+  for (let index = 1; index <= candidate.length; index += 1) {
+    next[index] = previous[index]
+      || (next[index - 1] && (token.crossesDirectories || candidate[index - 1] !== "/"));
+  }
+  return next;
+}
+
+function attributeTokenMatches(
+  token: Exclude<AttributePatternToken, { kind: "star" }>,
+  character: string,
+): boolean {
+  return token.kind === "single" ? character !== "/" : character === token.value;
 }
 
 function generatedAttributeValue(attributes: readonly string[]): boolean | null {
@@ -237,47 +262,79 @@ function generatedAttributeValue(attributes: readonly string[]): boolean | null 
   return value;
 }
 
+interface GeneratedAttributeState {
+  remainingLines: number;
+  generatedRules: number;
+  generated: boolean;
+}
+
+function orderedGeneratedAttributeFiles(
+  attributeFiles: readonly GithubGeneratedAttributeFile[],
+): GithubGeneratedAttributeFile[] {
+  return [...attributeFiles].sort((left, right) => {
+    const leftDepth = left.directory ? left.directory.split("/").length : 0;
+    const rightDepth = right.directory ? right.directory.split("/").length : 0;
+    const depth = leftDepth - rightDepth;
+    return depth !== 0 ? depth : left.directory.localeCompare(right.directory);
+  });
+}
+
+function applyGeneratedAttributeFile(
+  path: string,
+  attributeFile: GithubGeneratedAttributeFile,
+  state: GeneratedAttributeState,
+): boolean {
+  if (
+    new TextEncoder().encode(attributeFile.text).byteLength > GIT_ATTRIBUTES_MAX_BYTES
+    || attributeFile.directory.length > PULL_REQUEST_FILE_PATH_MAX_LENGTH
+  ) return false;
+  const relativePath = relativeAttributePath(path, attributeFile.directory);
+  if (relativePath === null) return true;
+  const lines = attributeFile.text.split(/\r?\n/);
+  if (lines.length > state.remainingLines) return false;
+  state.remainingLines -= lines.length;
+  return applyGeneratedAttributeLines(relativePath, lines, state);
+}
+
+function applyGeneratedAttributeLines(
+  path: string,
+  lines: readonly string[],
+  state: GeneratedAttributeState,
+): boolean {
+  for (const line of lines) {
+    const rule = generatedAttributeRule(line);
+    if (!rule) continue;
+    if (state.generatedRules >= GIT_ATTRIBUTES_MAX_GENERATED_RULES) return false;
+    state.generatedRules += 1;
+    if (patternMatchesPath(rule.pattern, path)) state.generated = rule.value;
+  }
+  return true;
+}
+
+function generatedAttributeRule(line: string): { pattern: string; value: boolean } | null {
+  if (line.length > GIT_ATTRIBUTES_MAX_LINE_LENGTH) return null;
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) return null;
+  const [pattern, ...attributes] = trimmed.split(/\s+/);
+  const value = generatedAttributeValue(attributes);
+  return value === null ? null : { pattern, value };
+}
+
 /** Resolve generated state only from bounded matching linguist-generated attributes. */
 export function isGithubGeneratedPath(
   path: string,
   attributeFiles: readonly GithubGeneratedAttributeFile[],
 ): boolean {
   if (!validRemotePath(path)) return false;
-  let generated = false;
-  let remainingLines = GIT_ATTRIBUTES_MAX_LINES;
-  let generatedRules = 0;
-  const ordered = [...attributeFiles].sort((left, right) => {
-    const leftDepth = left.directory ? left.directory.split("/").length : 0;
-    const rightDepth = right.directory ? right.directory.split("/").length : 0;
-    const depth = leftDepth - rightDepth;
-    return depth !== 0 ? depth : left.directory.localeCompare(right.directory);
-  });
-  for (const attributeFile of ordered) {
-    if (
-      new TextEncoder().encode(attributeFile.text).byteLength > GIT_ATTRIBUTES_MAX_BYTES
-      || attributeFile.directory.length > PULL_REQUEST_FILE_PATH_MAX_LENGTH
-    ) {
-      return false;
-    }
-    const relativePath = relativeAttributePath(path, attributeFile.directory);
-    if (relativePath === null) continue;
-    const allLines = attributeFile.text.split(/\r?\n/);
-    if (allLines.length > remainingLines) return false;
-    const lines = allLines;
-    remainingLines -= lines.length;
-    for (const line of lines) {
-      if (line.length > GIT_ATTRIBUTES_MAX_LINE_LENGTH) continue;
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const [pattern, ...attributes] = trimmed.split(/\s+/);
-      const value = generatedAttributeValue(attributes);
-      if (value === null) continue;
-      if (generatedRules >= GIT_ATTRIBUTES_MAX_GENERATED_RULES) return false;
-      generatedRules += 1;
-      if (patternMatchesPath(pattern, relativePath)) generated = value;
-    }
+  const state: GeneratedAttributeState = {
+    generated: false,
+    generatedRules: 0,
+    remainingLines: GIT_ATTRIBUTES_MAX_LINES,
+  };
+  for (const attributeFile of orderedGeneratedAttributeFiles(attributeFiles)) {
+    if (!applyGeneratedAttributeFile(path, attributeFile, state)) return false;
   }
-  return generated;
+  return state.generated;
 }
 
 function splitTextLines(text: string): string[] {

@@ -403,22 +403,48 @@ export class ExternalThreadControlPairingService {
 }
 
 function normalizePairingInput(input: ExternalThreadControlPairingInput): ExternalThreadControlPairingInput {
-  const workspaceIds = [...new Set(input.workspaceIds.map((value) => value.trim()).filter(Boolean))];
+  const integrationId = input.integrationId.trim();
+  const workspaceIds = normalizeWorkspaceIds(input.workspaceIds);
   const scopes = [...new Set(input.scopes)];
-  if (workspaceIds.length > 100 || workspaceIds.some((workspaceId) => workspaceId.length > 128)
-    || scopes.some((scope) => !VALID_SCOPES.has(scope))
-    || !input.integrationId.trim() || input.integrationId.trim().length > 128
-    || !Number.isSafeInteger(input.callsPerMinute) || input.callsPerMinute < 1 || input.callsPerMinute > 10_000
-    || !Number.isSafeInteger(input.maxActiveThreads) || input.maxActiveThreads < 1 || input.maxActiveThreads > 1_000) {
+  if (!isValidPairingPolicy(input, integrationId, workspaceIds, scopes)) {
     throw new ExternalThreadControlPairingError("conflict", "External pairing policy is invalid");
   }
   return {
-    integrationId: input.integrationId.trim(),
+    integrationId,
     workspaceIds,
     scopes,
     callsPerMinute: Math.trunc(input.callsPerMinute),
     maxActiveThreads: Math.trunc(input.maxActiveThreads),
   };
+}
+
+function normalizeWorkspaceIds(workspaceIds: readonly string[]): string[] {
+  return [...new Set(workspaceIds.map((value) => value.trim()).filter(Boolean))];
+}
+
+function isValidPairingPolicy(
+  input: ExternalThreadControlPairingInput,
+  integrationId: string,
+  workspaceIds: string[],
+  scopes: ExternalThreadControlScope[],
+): boolean {
+  return isValidIntegrationId(integrationId)
+    && isValidWorkspaceIds(workspaceIds)
+    && scopes.every((scope) => VALID_SCOPES.has(scope))
+    && isIntegerWithin(input.callsPerMinute, 1, 10_000)
+    && isIntegerWithin(input.maxActiveThreads, 1, 1_000);
+}
+
+function isValidIntegrationId(integrationId: string): boolean {
+  return integrationId.length > 0 && integrationId.length <= 128;
+}
+
+function isValidWorkspaceIds(workspaceIds: string[]): boolean {
+  return workspaceIds.length <= 100 && workspaceIds.every((workspaceId) => workspaceId.length <= 128);
+}
+
+function isIntegerWithin(value: number, minimum: number, maximum: number): boolean {
+  return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
 
 function rowToPairing(row: PairingRow): ExternalThreadControlPairingRecord {

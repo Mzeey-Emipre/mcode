@@ -104,15 +104,20 @@ export function resolveElectronNativeBinding(): string {
       `BETTER_SQLITE3_BINDING must be ${expectedBinding}. Run 'bun install' to install the Electron binding.`,
     );
   }
-  if (resolve(configuredBinding) === resolve(expectedBinding)) {
-    if (!existsSync(expectedBinding)) {
-      throw new Error(
-        `Workspace Electron better-sqlite3 binding not found: ${expectedBinding}. Run 'bun install'.`,
-      );
-    }
-    return expectedBinding;
-  }
+  if (resolve(configuredBinding) === resolve(expectedBinding)) return resolveWorkspaceBinding(expectedBinding);
+  return resolvePackagedBinding(configuredBinding);
+}
 
+function resolveWorkspaceBinding(expectedBinding: string): string {
+  if (!existsSync(expectedBinding)) {
+    throw new Error(
+      `Workspace Electron better-sqlite3 binding not found: ${expectedBinding}. Run 'bun install'.`,
+    );
+  }
+  return expectedBinding;
+}
+
+function resolvePackagedBinding(configuredBinding: string): string {
   const packagedResourcesRoot = process.env.MCODE_PACKAGED_RESOURCES_ROOT;
   if (!packagedResourcesRoot || !isAbsolute(packagedResourcesRoot)) {
     throw new Error("MCODE_PACKAGED_RESOURCES_ROOT must be an absolute canonical packaged resources directory.");
@@ -169,126 +174,66 @@ function hasSubagentIdentityMigration(migrationsDir: string | undefined): boolea
  * through Drizzle before the legacy fallback runs.
  */
 export function applySchemaPatches(db: Database.Database, migrationsDir?: string): void {
-  const cols = (
-    db.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>
-  ).map((r) => r.name);
+  applyWorkspaceSchemaPatches(db);
+  applyToolCallSchemaPatches(db, migrationsDir);
+  applyMessageSchemaPatches(db);
+}
 
-  // cols is empty when the table doesn't exist; nothing to patch in that case
-  if (cols.length > 0 && !cols.includes("sort_order")) {
-    try {
-      db.prepare(
-        "ALTER TABLE workspaces ADD COLUMN sort_order INTEGER DEFAULT 0 NOT NULL",
-      ).run();
-    } catch (err) {
-      if (
-        !(err instanceof Error) ||
-        !err.message.includes("duplicate column name")
-      ) {
-        throw err;
-      }
-    }
-  }
+function tableColumns(db: Database.Database, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
+}
 
-  // Normalize sort_order when duplicates exist (e.g. column added with DEFAULT 0).
-  // Without unique values, reorder operations silently fail.
-  if (cols.length > 0) {
-    const distinctCount = (
-      db
-        .prepare(
-          "SELECT COUNT(DISTINCT sort_order) AS cnt FROM workspaces",
-        )
-        .get() as { cnt: number }
-    ).cnt;
-    const totalCount = (
-      db.prepare("SELECT COUNT(*) AS cnt FROM workspaces").get() as {
-        cnt: number;
-      }
-    ).cnt;
+function addColumn(db: Database.Database, table: string, columnSql: string): void {
+  try {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run();
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("duplicate column name")) throw error;
+  }
+}
 
-    if (totalCount > 1 && distinctCount < totalCount) {
-      const ids = (
-        db
-          .prepare(
-            "SELECT id FROM workspaces ORDER BY sort_order ASC, created_at DESC, id ASC",
-          )
-          .all() as Array<{ id: string }>
-      ).map((r) => r.id);
-      const stmt = db.prepare(
-        "UPDATE workspaces SET sort_order = ? WHERE id = ?",
-      );
-      const assign = db.transaction(() => {
-        for (let i = 0; i < ids.length; i++) {
-          stmt.run(i, ids[i]);
-        }
-      });
-      assign();
-    }
+function applyWorkspaceSchemaPatches(db: Database.Database): void {
+  const columns = tableColumns(db, "workspaces");
+  if (columns.length === 0) return;
+  if (!columns.includes("sort_order")) {
+    addColumn(db, "workspaces", "sort_order INTEGER DEFAULT 0 NOT NULL");
   }
+  normalizeWorkspaceSortOrder(db);
+}
 
-  const toolCols = (
-    db.prepare("PRAGMA table_info(tool_call_records)").all() as Array<{ name: string }>
-  ).map((r) => r.name);
-  const addToolCallColumn = (columnSql: string): void => {
-    try {
-      db.prepare(`ALTER TABLE tool_call_records ADD COLUMN ${columnSql}`).run();
-    } catch (err) {
-      if (
-        !(err instanceof Error) ||
-        !err.message.includes("duplicate column name")
-      ) {
-        throw err;
-      }
-    }
-  };
+function normalizeWorkspaceSortOrder(db: Database.Database): void {
+  const distinctCount = (db.prepare("SELECT COUNT(DISTINCT sort_order) AS cnt FROM workspaces").get() as { cnt: number }).cnt;
+  const totalCount = (db.prepare("SELECT COUNT(*) AS cnt FROM workspaces").get() as { cnt: number }).cnt;
+  if (totalCount <= 1 || distinctCount >= totalCount) return;
+  const ids = (db.prepare("SELECT id FROM workspaces ORDER BY sort_order ASC, created_at DESC, id ASC").all() as Array<{ id: string }>).map((row) => row.id);
+  const statement = db.prepare("UPDATE workspaces SET sort_order = ? WHERE id = ?");
+  db.transaction(() => ids.forEach((id, index) => statement.run(index, id)))();
+}
 
-  if (toolCols.length > 0 && !toolCols.includes("output_truncated")) {
-    addToolCallColumn("output_truncated INTEGER DEFAULT 0 NOT NULL");
+function applyToolCallSchemaPatches(db: Database.Database, migrationsDir: string | undefined): void {
+  const columns = tableColumns(db, "tool_call_records");
+  if (columns.length === 0) return;
+  const patches = [
+    ["output_truncated", "output_truncated INTEGER DEFAULT 0 NOT NULL"],
+    ["output_total_bytes", "output_total_bytes INTEGER"],
+    ["output_artifact_path", "output_artifact_path TEXT"],
+    ["exit_code", "exit_code INTEGER"],
+    ["display_name", "display_name TEXT"],
+    ["provider_agent_key", "provider_agent_key TEXT"],
+    ["model", "model TEXT"],
+    ["reasoning_effort", "reasoning_effort TEXT"],
+  ] as const;
+  for (const [name, sql] of patches) {
+    if (!columns.includes(name)) addColumn(db, "tool_call_records", sql);
   }
-  if (toolCols.length > 0 && !toolCols.includes("output_total_bytes")) {
-    addToolCallColumn("output_total_bytes INTEGER");
+  if (!columns.includes("subagent_identity_key") && !hasSubagentIdentityMigration(migrationsDir)) {
+    addColumn(db, "tool_call_records", "subagent_identity_key TEXT");
   }
-  if (toolCols.length > 0 && !toolCols.includes("output_artifact_path")) {
-    addToolCallColumn("output_artifact_path TEXT");
-  }
-  if (toolCols.length > 0 && !toolCols.includes("exit_code")) {
-    addToolCallColumn("exit_code INTEGER");
-  }
-  if (toolCols.length > 0 && !toolCols.includes("display_name")) {
-    addToolCallColumn("display_name TEXT");
-  }
-  if (toolCols.length > 0 && !toolCols.includes("provider_agent_key")) {
-    addToolCallColumn("provider_agent_key TEXT");
-  }
-  if (
-    toolCols.length > 0
-    && !toolCols.includes("subagent_identity_key")
-    && !hasSubagentIdentityMigration(migrationsDir)
-  ) {
-    // Use the legacy fallback only when the generated migration is unavailable;
-    // staged certification runs defer to Drizzle when that artifact is present.
-    addToolCallColumn("subagent_identity_key TEXT");
-  }
-  if (toolCols.length > 0 && !toolCols.includes("model")) {
-    addToolCallColumn("model TEXT");
-  }
-  if (toolCols.length > 0 && !toolCols.includes("reasoning_effort")) {
-    addToolCallColumn("reasoning_effort TEXT");
-  }
+}
 
-  const messageCols = (
-    db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>
-  ).map((r) => r.name);
-  if (messageCols.length > 0 && !messageCols.includes("mentions")) {
-    try {
-      db.prepare("ALTER TABLE messages ADD COLUMN mentions TEXT").run();
-    } catch (err) {
-      if (
-        !(err instanceof Error) ||
-        !err.message.includes("duplicate column name")
-      ) {
-        throw err;
-      }
-    }
+function applyMessageSchemaPatches(db: Database.Database): void {
+  const columns = tableColumns(db, "messages");
+  if (columns.length > 0 && !columns.includes("mentions")) {
+    addColumn(db, "messages", "mentions TEXT");
   }
 }
 
@@ -326,19 +271,9 @@ export interface OpenDatabaseOptions {
  * branch opts in to `dbs/dev-<hash>.db`. Resolution matches `resolveDbPath` from `@mcode/shared`.
  */
 export function openDatabase(opts?: OpenDatabaseOptions): Database.Database {
-  const resolvedPath =
-    opts?.dbPath ??
-    process.env.MCODE_DB_PATH ??
-    resolveDbPath(getMcodeDir(), {
-      branch: opts?.branch ?? process.env.MCODE_GIT_BRANCH,
-      gitToplevel: opts?.gitToplevel ?? process.env.MCODE_GIT_TOPLEVEL,
-    });
-
+  const resolvedPath = resolveDatabasePath(opts);
   const dir = dirname(resolvedPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const nativeBinding = resolveElectronNativeBinding();
   const backupPath = opts?.migrationBackupSpace
     ? createMigrationBackup(resolvedPath, opts.migrationBackupSpace)
@@ -368,6 +303,13 @@ export function openDatabase(opts?: OpenDatabaseOptions): Database.Database {
     throw err;
   }
   return db;
+}
+
+function resolveDatabasePath(opts: OpenDatabaseOptions | undefined): string {
+  return opts?.dbPath ?? process.env.MCODE_DB_PATH ?? resolveDbPath(getMcodeDir(), {
+    branch: opts?.branch ?? process.env.MCODE_GIT_BRANCH,
+    gitToplevel: opts?.gitToplevel ?? process.env.MCODE_GIT_TOPLEVEL,
+  });
 }
 
 /**
