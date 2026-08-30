@@ -114,6 +114,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-eslint-
       - run: bun install --frozen-lockfile
+      - run: bun run lint:fast
       - run: bun run lint
         env:
           DEBUG: eslint:lint-result-cache
