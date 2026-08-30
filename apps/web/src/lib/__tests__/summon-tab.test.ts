@@ -185,6 +185,17 @@ describe("summonTab", () => {
       expect(panel().activeTab).toBe("preview");
     });
 
+    it("summons Terminal against the workspace scope with no thread", () => {
+      summonTab("terminal");
+
+      expect(createTerminalForScope).toHaveBeenCalledWith(WID);
+      expect(panel()).toMatchObject({
+        visible: true,
+        activeTab: "terminal",
+        openTabs: ["terminal"],
+      });
+    });
+
     it("summons Plan once a thread exists", () => {
       useWorkspaceStore.setState({ activeThreadId: TID });
 

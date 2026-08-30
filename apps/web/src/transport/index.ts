@@ -75,6 +75,33 @@ export function isSingleInstanceDev(): boolean {
   return raw === "true" || raw === "1";
 }
 
+function requireRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(message);
+  return value as Record<string, unknown>;
+}
+
+function requireServerPort(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value <= 0 ||
+    value > 65_535
+  ) {
+    throw new Error("Runtime contract has an invalid serverPort");
+  }
+  return value;
+}
+
+function requireNonEmptyString(
+  record: Record<string, unknown>,
+  key: string,
+  message: string,
+): string {
+  const value = record[key];
+  if (typeof value !== "string" || value.length === 0) throw new Error(message);
+  return value;
+}
+
 /**
  * Builds the single-instance WebSocket URL from the worktree runtime contract.
  *
@@ -83,38 +110,25 @@ export function isSingleInstanceDev(): boolean {
  * a WebSocket URL.
  */
 export function buildSingleInstanceServerUrl(contract: unknown): string {
-  if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
-    throw new Error("Runtime contract must be an object");
-  }
-  const record = contract as Record<string, unknown>;
-  const seedLogin = record.seedLogin;
-  const serverPort = record.serverPort;
-  if (
-    typeof serverPort !== "number" ||
-    !Number.isInteger(serverPort) ||
-    serverPort <= 0 ||
-    serverPort > 65_535
-  ) {
-    throw new Error("Runtime contract has an invalid serverPort");
-  }
-  if (typeof record.instanceToken !== "string" || record.instanceToken.length === 0) {
-    throw new Error("Runtime contract is missing instanceToken");
-  }
-  if (typeof record.worktreeIdentity !== "string" || record.worktreeIdentity.length === 0) {
-    throw new Error("Runtime contract is missing worktreeIdentity");
-  }
-  if (!seedLogin || typeof seedLogin !== "object" || Array.isArray(seedLogin)) {
-    throw new Error("Runtime contract is missing seedLogin");
-  }
-  const token = (seedLogin as Record<string, unknown>).token;
-  if (typeof token !== "string" || token.length === 0) {
-    throw new Error("Runtime contract is missing seedLogin.token");
-  }
+  const record = requireRecord(contract, "Runtime contract must be an object");
+  const serverPort = requireServerPort(record.serverPort);
+  const instanceToken = requireNonEmptyString(
+    record,
+    "instanceToken",
+    "Runtime contract is missing instanceToken",
+  );
+  const worktreeIdentity = requireNonEmptyString(
+    record,
+    "worktreeIdentity",
+    "Runtime contract is missing worktreeIdentity",
+  );
+  const seedLogin = requireRecord(record.seedLogin, "Runtime contract is missing seedLogin");
+  const token = requireNonEmptyString(seedLogin, "token", "Runtime contract is missing seedLogin.token");
 
   const url = new URL(`ws://127.0.0.1:${serverPort}`);
   url.searchParams.set("token", token);
-  url.searchParams.set("instanceToken", record.instanceToken);
-  url.searchParams.set("worktree", record.worktreeIdentity);
+  url.searchParams.set("instanceToken", instanceToken);
+  url.searchParams.set("worktree", worktreeIdentity);
   return url.toString();
 }
 
@@ -247,4 +261,9 @@ export function getTransport(): McodeTransport {
     );
   }
   return transport;
+}
+
+/** Returns whether the synchronous transport instance is ready for use. */
+export function hasTransport(): boolean {
+  return transport !== null;
 }

@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef, type ReactNode } from "react";
+import { useMemo, useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { ProviderSection } from "./ProviderSection";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
@@ -64,6 +64,10 @@ const CODEX_REASONING_LABELS: Record<string, string> = {
   ultra: "Ultra",
 };
 
+type ProviderOptions = ComponentProps<typeof SettingsProviderPicker>["options"];
+type ModelPickerOptions = ComponentProps<typeof SearchableGroupedPicker>["options"];
+type ReasoningOptions = ComponentProps<typeof SegControl>["options"];
+
 /**
  * Builds a provider option for the Model / Utility Model pickers. A provider is
  * only rendered as disabled once its availability row has loaded and indicates it
@@ -96,6 +100,40 @@ function buildProviderOption(
     icon: PROVIDER_ICONS[p.id],
     title,
   };
+}
+
+function getProviderCliPath(
+  providerId: string,
+  cliPaths: { cursor: string; copilot: string },
+): string {
+  const cliPathByProvider = {
+    cursor: cliPaths.cursor,
+    copilot: cliPaths.copilot,
+  };
+  return cliPathByProvider[providerId as keyof typeof cliPathByProvider] ?? "";
+}
+
+function isModelStale(
+  modelId: string,
+  modelsLoading: boolean,
+  catalogModels: readonly ModelDefinition[],
+): boolean {
+  return (
+    !modelsLoading &&
+    Boolean(modelId.trim()) &&
+    catalogModels.length > 0 &&
+    !catalogModels.some((model) => model.id === modelId)
+  );
+}
+
+function shouldShowReasoning(provider: string, modelId: string): boolean {
+  return providerSupportsReasoningLevels(provider) && (
+    provider !== "claude" || supportsEffortParameter(modelId)
+  );
+}
+
+function shouldShowThinking(provider: string, modelId: string): boolean {
+  return provider === "claude" && supportsThinkingToggle(modelId);
 }
 
 /**
@@ -168,14 +206,8 @@ export function ModelSection() {
   const modelsLoading = useProviderModelsStore((s) => s.loading[provider] ?? false);
 
   const cliPaths = useSettingsStore((s) => s.settings.provider.cli);
-  const dynamicCliPath =
-    provider === "cursor" ? cliPaths.cursor : provider === "copilot" ? cliPaths.copilot : "";
-  const utilityDynamicCliPath =
-    utilityEffectiveId === "cursor"
-      ? cliPaths.cursor
-      : utilityEffectiveId === "copilot"
-        ? cliPaths.copilot
-        : "";
+  const dynamicCliPath = getProviderCliPath(provider, cliPaths);
+  const utilityDynamicCliPath = getProviderCliPath(utilityEffectiveId, cliPaths);
 
   useEffect(() => {
     void fetchModels(provider, { force: true });
@@ -236,17 +268,8 @@ export function ModelSection() {
     );
   }, [modelsLoading, mergedCatalogModels, modelId, provider]);
 
-  const defaultModelStale =
-    !modelsLoading &&
-    Boolean(modelId.trim()) &&
-    mergedCatalogModels.length > 0 &&
-    !mergedCatalogModels.some((m) => m.id === modelId);
-
-  const fallbackModelStale =
-    !modelsLoading &&
-    Boolean(fallbackId.trim()) &&
-    mergedCatalogModels.length > 0 &&
-    !mergedCatalogModels.some((m) => m.id === fallbackId);
+  const defaultModelStale = isModelStale(modelId, modelsLoading, mergedCatalogModels);
+  const fallbackModelStale = isModelStale(fallbackId, modelsLoading, mergedCatalogModels);
 
   const modelOptions = useMemo(
     () =>
@@ -390,49 +413,258 @@ export function ModelSection() {
   };
 
   return (
-    <div
-      data-testid="model-settings-section"
-      className="mx-auto w-full max-w-[88rem] pb-10"
-    >
+    <ModelSettingsContent
+      provider={provider}
+      modelId={modelId}
+      fallbackId={fallbackId}
+      reasoning={reasoning}
+      contextWindowMode={contextWindowMode}
+      thinking={thinking}
+      codexFastMode={codexFastMode}
+      providerOptions={providerOptions}
+      modelOptions={modelOptions}
+      fallbackOptions={fallbackOptions}
+      modelsLoading={modelsLoading}
+      defaultModelStale={defaultModelStale}
+      fallbackModelStale={fallbackModelStale}
+      showReasoning={shouldShowReasoning(provider, modelId)}
+      reasoningOptions={reasoningOptions}
+      reasoningHint={reasoningHint}
+      showFastMode={provider === "codex"}
+      showContextWindow={provider === "claude"}
+      showThinking={shouldShowThinking(provider, modelId)}
+      utilityProvider={utilityProvider}
+      utilityModelId={utilityModelId}
+      utilityProviderOptions={utilityProviderOptions}
+      utilityModelOptions={utilityModelOptions}
+      utilityModelsLoading={utilityModelsLoading}
+      diffSummaryEnabled={diffSummaryEnabled}
+      onProviderChange={handleProviderChange}
+      onModelChange={handleModelChange}
+      onFallbackChange={(value) => void update({ model: { defaults: { fallbackId: value } } })}
+      onReasoningChange={(value) => update({ model: { defaults: { reasoning: value as ReasoningLevel } } })}
+      onFastModeChange={(value) => void update({ provider: { codex: { fastMode: value } } })}
+      onContextWindowChange={(value) => update({ model: { defaults: { contextWindow: value as ContextWindowMode } } })}
+      onThinkingChange={(value) => update({ model: { defaults: { thinking: value === "on" } } })}
+      onUtilityProviderChange={(value) => void update({ model: { utility: { provider: value as SettingsProviderId | "", id: "" } } })}
+      onUtilityModelChange={(value) => void update({ model: { utility: { id: value } } })}
+      onDiffSummaryChange={(value) => update({ diffSummary: { enabled: value } })}
+    />
+  );
+}
+
+interface ModelSettingsContentProps {
+  provider: string;
+  modelId: string;
+  fallbackId: string;
+  reasoning: string;
+  contextWindowMode: string;
+  thinking: boolean;
+  codexFastMode: boolean;
+  providerOptions: ProviderOptions;
+  modelOptions: ModelPickerOptions;
+  fallbackOptions: ModelPickerOptions;
+  modelsLoading: boolean;
+  defaultModelStale: boolean;
+  fallbackModelStale: boolean;
+  showReasoning: boolean;
+  reasoningOptions: ReasoningOptions;
+  reasoningHint: string;
+  showFastMode: boolean;
+  showContextWindow: boolean;
+  showThinking: boolean;
+  utilityProvider: string;
+  utilityModelId: string;
+  utilityProviderOptions: ProviderOptions;
+  utilityModelOptions: ModelPickerOptions;
+  utilityModelsLoading: boolean;
+  diffSummaryEnabled: boolean;
+  onProviderChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onFallbackChange: (value: string) => void;
+  onReasoningChange: (value: string) => void;
+  onFastModeChange: (value: boolean) => void;
+  onContextWindowChange: (value: string) => void;
+  onThinkingChange: (value: string) => void;
+  onUtilityProviderChange: (value: string) => void;
+  onUtilityModelChange: (value: string) => void;
+  onDiffSummaryChange: (value: boolean) => void;
+}
+
+function ModelSettingsContent({
+  provider,
+  modelId,
+  fallbackId,
+  reasoning,
+  contextWindowMode,
+  thinking,
+  codexFastMode,
+  providerOptions,
+  modelOptions,
+  fallbackOptions,
+  modelsLoading,
+  defaultModelStale,
+  fallbackModelStale,
+  showReasoning,
+  reasoningOptions,
+  reasoningHint,
+  showFastMode,
+  showContextWindow,
+  showThinking,
+  utilityProvider,
+  utilityModelId,
+  utilityProviderOptions,
+  utilityModelOptions,
+  utilityModelsLoading,
+  diffSummaryEnabled,
+  onProviderChange,
+  onModelChange,
+  onFallbackChange,
+  onReasoningChange,
+  onFastModeChange,
+  onContextWindowChange,
+  onThinkingChange,
+  onUtilityProviderChange,
+  onUtilityModelChange,
+  onDiffSummaryChange,
+}: ModelSettingsContentProps) {
+  return (
+    <div data-testid="model-settings-section" className="mx-auto w-full max-w-[88rem] pb-10">
       <header className="mb-8 border-b border-border/45 px-1 pb-6">
         <h1 className="text-2xl leading-7 font-semibold tracking-tight text-foreground">
           Models &amp; providers
         </h1>
         <p className="mt-2 max-w-[65ch] text-sm leading-4 text-muted-foreground">
-          Configure the providers and model defaults used across new threads and
-          utility tasks.
+          Configure the providers and model defaults used across new threads and utility tasks.
         </p>
       </header>
 
       <div className="space-y-8">
         <ProviderSection />
+        <DefaultModelSettings
+          provider={provider}
+          modelId={modelId}
+          fallbackId={fallbackId}
+          reasoning={reasoning}
+          contextWindowMode={contextWindowMode}
+          thinking={thinking}
+          codexFastMode={codexFastMode}
+          providerOptions={providerOptions}
+          modelOptions={modelOptions}
+          fallbackOptions={fallbackOptions}
+          modelsLoading={modelsLoading}
+          defaultModelStale={defaultModelStale}
+          fallbackModelStale={fallbackModelStale}
+          showReasoning={showReasoning}
+          reasoningOptions={reasoningOptions}
+          reasoningHint={reasoningHint}
+          showFastMode={showFastMode}
+          showContextWindow={showContextWindow}
+          showThinking={showThinking}
+          onProviderChange={onProviderChange}
+          onModelChange={onModelChange}
+          onFallbackChange={onFallbackChange}
+          onReasoningChange={onReasoningChange}
+          onFastModeChange={onFastModeChange}
+          onContextWindowChange={onContextWindowChange}
+          onThinkingChange={onThinkingChange}
+        />
+        <UtilityModelSettings
+          utilityProvider={utilityProvider}
+          utilityModelId={utilityModelId}
+          utilityProviderOptions={utilityProviderOptions}
+          utilityModelOptions={utilityModelOptions}
+          utilityModelsLoading={utilityModelsLoading}
+          onUtilityProviderChange={onUtilityProviderChange}
+          onUtilityModelChange={onUtilityModelChange}
+        />
+        <SettingsGroup title="AI features" description="Optional model-powered features.">
+          <SettingRow
+            label="Diff summary"
+            configKey="diffSummary.enabled"
+            hint="Show the Summarize toggle in the All turns diff."
+          >
+            <Switch checked={diffSummaryEnabled} onCheckedChange={onDiffSummaryChange} />
+          </SettingRow>
+        </SettingsGroup>
+      </div>
+    </div>
+  );
+}
 
-        <SettingsGroup
-          title="Model defaults"
-          description="Defaults applied when you start a new thread."
-        >
-      <SettingRow
-        label="Provider"
-        configKey="model.defaults.provider"
-        hint="AI provider for new threads."
-      >
+type DefaultModelSettingsProps = Pick<
+  ModelSettingsContentProps,
+  | "provider"
+  | "modelId"
+  | "fallbackId"
+  | "reasoning"
+  | "contextWindowMode"
+  | "thinking"
+  | "codexFastMode"
+  | "providerOptions"
+  | "modelOptions"
+  | "fallbackOptions"
+  | "modelsLoading"
+  | "defaultModelStale"
+  | "fallbackModelStale"
+  | "showReasoning"
+  | "reasoningOptions"
+  | "reasoningHint"
+  | "showFastMode"
+  | "showContextWindow"
+  | "showThinking"
+  | "onProviderChange"
+  | "onModelChange"
+  | "onFallbackChange"
+  | "onReasoningChange"
+  | "onFastModeChange"
+  | "onContextWindowChange"
+  | "onThinkingChange"
+>;
+
+function DefaultModelSettings({
+  provider,
+  modelId,
+  fallbackId,
+  reasoning,
+  contextWindowMode,
+  thinking,
+  codexFastMode,
+  providerOptions,
+  modelOptions,
+  fallbackOptions,
+  modelsLoading,
+  defaultModelStale,
+  fallbackModelStale,
+  showReasoning,
+  reasoningOptions,
+  reasoningHint,
+  showFastMode,
+  showContextWindow,
+  showThinking,
+  onProviderChange,
+  onModelChange,
+  onFallbackChange,
+  onReasoningChange,
+  onFastModeChange,
+  onContextWindowChange,
+  onThinkingChange,
+}: DefaultModelSettingsProps) {
+  return (
+    <SettingsGroup title="Model defaults" description="Defaults applied when you start a new thread.">
+      <SettingRow label="Provider" configKey="model.defaults.provider" hint="AI provider for new threads.">
         <SettingsProviderPicker
           value={provider}
-          onChange={handleProviderChange}
+          onChange={onProviderChange}
           options={providerOptions}
           data-testid="settings-default-provider-trigger"
         />
       </SettingRow>
-
-      <SettingRow
-        label="Default model"
-        configKey="model.defaults.id"
-        hint="New threads start with this model."
-      >
+      <SettingRow label="Default model" configKey="model.defaults.id" hint="New threads start with this model.">
         <div className="flex flex-col items-end gap-2">
           <SearchableGroupedPicker
             value={modelId}
-            onChange={handleModelChange}
+            onChange={onModelChange}
             options={modelOptions}
             searchPlaceholder="Search models…"
             loading={modelsLoading}
@@ -440,13 +672,11 @@ export function ModelSection() {
           />
           {defaultModelStale && (
             <p className="max-w-xs text-right text-xs text-amber-600 dark:text-amber-500">
-              This model is not in the current catalog. Sending messages may fail until you choose a
-              listed model.
+              This model is not in the current catalog. Sending messages may fail until you choose a listed model.
             </p>
           )}
         </div>
       </SettingRow>
-
       <SettingRow
         label="Fallback model"
         configKey="model.defaults.fallbackId"
@@ -455,7 +685,7 @@ export function ModelSection() {
         <div className="flex flex-col items-end gap-2">
           <SearchableGroupedPicker
             value={fallbackId}
-            onChange={(v) => void update({ model: { defaults: { fallbackId: v } } })}
+            onChange={onFallbackChange}
             options={fallbackOptions}
             emptyTriggerLabel="Off"
             searchPlaceholder="Search models…"
@@ -464,46 +694,26 @@ export function ModelSection() {
           />
           {fallbackModelStale && (
             <p className="max-w-xs text-right text-xs text-amber-600 dark:text-amber-500">
-              This fallback model is not in the current catalog. Consider turning fallback off or
-              picking a listed model.
+              This fallback model is not in the current catalog. Consider turning fallback off or picking a listed model.
             </p>
           )}
         </div>
       </SettingRow>
-
-      {providerSupportsReasoningLevels(provider) &&
-        (provider !== "claude" || supportsEffortParameter(modelId)) && (
-        <SettingRow
-          label="Reasoning effort"
-          configKey="model.defaults.reasoning"
-          hint={reasoningHint}
-        >
-          <SegControl
-            options={reasoningOptions}
-            value={reasoning}
-            onChange={(v) =>
-              update({ model: { defaults: { reasoning: v as ReasoningLevel } } })
-            }
-          />
+      {showReasoning && (
+        <SettingRow label="Reasoning effort" configKey="model.defaults.reasoning" hint={reasoningHint}>
+          <SegControl options={reasoningOptions} value={reasoning} onChange={onReasoningChange} />
         </SettingRow>
       )}
-
-      {provider === "codex" && (
+      {showFastMode && (
         <SettingRow
           label="Fast mode"
           configKey="provider.codex.fastMode"
           hint="Sends OpenAI fast service tier on Codex turns when your CLI and account support it (often lower latency; billing follows OpenAI rules)."
         >
-          <Switch
-            checked={codexFastMode}
-            onCheckedChange={(v) =>
-              void update({ provider: { codex: { fastMode: v } } })
-            }
-          />
+          <Switch checked={codexFastMode} onCheckedChange={onFastModeChange} />
         </SettingRow>
       )}
-
-      {provider === "claude" && (
+      {showContextWindow && (
         <SettingRow
           label="Context window"
           configKey="model.defaults.contextWindow"
@@ -512,17 +722,14 @@ export function ModelSection() {
           <SegControl
             options={[
               { value: "200k", label: "200K" },
-              { value: "1m",   label: "1M",   disabled: !supports1MContextWindow(modelId) },
+              { value: "1m", label: "1M", disabled: !supports1MContextWindow(modelId) },
             ]}
             value={contextWindowMode}
-            onChange={(v) =>
-              update({ model: { defaults: { contextWindow: v as ContextWindowMode } } })
-            }
+            onChange={onContextWindowChange}
           />
         </SettingRow>
       )}
-
-      {provider === "claude" && supportsThinkingToggle(modelId) && (
+      {showThinking && (
         <SettingRow
           label="Thinking"
           configKey="model.defaults.thinking"
@@ -531,80 +738,75 @@ export function ModelSection() {
           <SegControl
             options={[
               { value: "off", label: "Off" },
-              { value: "on",  label: "On"  },
+              { value: "on", label: "On" },
             ]}
             value={thinking ? "on" : "off"}
-            onChange={(v) =>
-              update({ model: { defaults: { thinking: v === "on" } } })
-            }
+            onChange={onThinkingChange}
           />
         </SettingRow>
       )}
-        </SettingsGroup>
+    </SettingsGroup>
+  );
+}
 
-        <SettingsGroup
-          title="Utility model"
-          description="Provider and model for lightweight tasks such as PR drafts and diff summaries."
-        >
-          <SettingRow
-            label="Provider"
-            configKey="model.utility.provider"
-            hint="AI provider for lightweight tasks (PR drafts, diff summaries). Auto inherits from the default provider above."
-          >
-            <SettingsProviderPicker
-              value={utilityProvider}
-              onChange={(v) =>
-                void update({
-                  model: { utility: { provider: v as SettingsProviderId | "", id: "" } },
-                })
-              }
-              options={utilityProviderOptions}
-              data-testid="settings-utility-provider-trigger"
-            />
-          </SettingRow>
-          <SettingRow
-            label="Model"
-            configKey="model.utility.id"
-            hint="Model for utility tasks. Auto selects a provider-appropriate cheap default."
-          >
-            {utilityProvider ? (
-              <SearchableGroupedPicker
-                value={utilityModelId}
-                onChange={(v) => void update({ model: { utility: { id: v } } })}
-                options={utilityModelOptions.map((o) => ({
-                  value: o.value,
-                  label: o.label,
-                  group: o.group,
-                }))}
-                emptyTriggerLabel="Auto"
-                searchPlaceholder="Search utility models…"
-                loading={utilityModelsLoading}
-                data-testid="settings-utility-model-trigger"
-              />
-            ) : (
-              <div className="flex h-8 min-w-[220px] max-w-[280px] items-center rounded-[min(var(--radius-md),12px)] border border-input bg-background px-2.5 text-xs text-muted-foreground select-none">
-                Auto
-              </div>
-            )}
-          </SettingRow>
-        </SettingsGroup>
+type UtilityModelSettingsProps = Pick<
+  ModelSettingsContentProps,
+  | "utilityProvider"
+  | "utilityModelId"
+  | "utilityProviderOptions"
+  | "utilityModelOptions"
+  | "utilityModelsLoading"
+  | "onUtilityProviderChange"
+  | "onUtilityModelChange"
+>;
 
-        <SettingsGroup
-          title="AI features"
-          description="Optional model-powered features."
-        >
-          <SettingRow
-            label="Diff summary"
-            configKey="diffSummary.enabled"
-            hint="Show the Summarize toggle in the All turns diff."
-          >
-            <Switch
-              checked={diffSummaryEnabled}
-              onCheckedChange={(v) => update({ diffSummary: { enabled: v } })}
-            />
-          </SettingRow>
-        </SettingsGroup>
-      </div>
-    </div>
+function UtilityModelSettings({
+  utilityProvider,
+  utilityModelId,
+  utilityProviderOptions,
+  utilityModelOptions,
+  utilityModelsLoading,
+  onUtilityProviderChange,
+  onUtilityModelChange,
+}: UtilityModelSettingsProps) {
+  return (
+    <SettingsGroup
+      title="Utility model"
+      description="Provider and model for lightweight tasks such as PR drafts and diff summaries."
+    >
+      <SettingRow
+        label="Provider"
+        configKey="model.utility.provider"
+        hint="AI provider for lightweight tasks (PR drafts, diff summaries). Auto inherits from the default provider above."
+      >
+        <SettingsProviderPicker
+          value={utilityProvider}
+          onChange={onUtilityProviderChange}
+          options={utilityProviderOptions}
+          data-testid="settings-utility-provider-trigger"
+        />
+      </SettingRow>
+      <SettingRow
+        label="Model"
+        configKey="model.utility.id"
+        hint="Model for utility tasks. Auto selects a provider-appropriate cheap default."
+      >
+        {utilityProvider ? (
+          <SearchableGroupedPicker
+            value={utilityModelId}
+            onChange={onUtilityModelChange}
+            options={utilityModelOptions.map(({ value, label, group }) => ({ value, label, group }))}
+            emptyTriggerLabel="Auto"
+            searchPlaceholder="Search utility models…"
+            loading={utilityModelsLoading}
+            data-testid="settings-utility-model-trigger"
+          />
+        ) : (
+          <div className="flex h-8 min-w-[220px] max-w-[280px] items-center rounded-[min(var(--radius-md),12px)] border border-input bg-background px-2.5 text-xs text-muted-foreground select-none">
+            Auto
+          </div>
+        )}
+      </SettingRow>
+    </SettingsGroup>
   );
 }

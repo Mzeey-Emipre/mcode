@@ -338,7 +338,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
   private emit(event: BrowserSurfaceAdapterEventPayload): void {
     if (this.disposed) return;
     const complete = { ...event, identity: this.identity, generation: this.generation } as BrowserSurfaceAdapterEvent;
-    for (const listener of [...this.listeners]) listener(complete);
+    for (const listener of this.listeners) listener(complete);
   }
 
   private readonly onLoadStarted = (event: Event): void => {

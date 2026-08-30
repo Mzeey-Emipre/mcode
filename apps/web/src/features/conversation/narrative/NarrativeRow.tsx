@@ -29,12 +29,59 @@ function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.every((item, index) => item === right[index]);
 }
 
+function sameValues(values: readonly boolean[]): boolean {
+  return values.every(Boolean);
+}
+
 function sameVisibleSubagentState(
   left: Extract<NarrativeItem, { type: "subagent" }>,
   right: Extract<NarrativeItem, { type: "subagent" }>,
 ): boolean {
-  return left.lifecycle === right.lifecycle
-    && sameItems(left.participants, right.participants);
+  return sameValues([
+    left.lifecycle === right.lifecycle,
+    sameItems(left.participants, right.participants),
+  ]);
+}
+
+function sameNarrativeItems(left: NarrativeItem, right: NarrativeItem): boolean {
+  if (left.type !== right.type) return false;
+
+  switch (right.type) {
+    case "thought": {
+      const leftThought = left as Extract<NarrativeItem, { type: "thought" }>;
+      return sameValues([
+        leftThought.segment === right.segment,
+        leftThought.isActive === right.isActive,
+      ]);
+    }
+    case "tool-group": {
+      const leftGroup = left as Extract<NarrativeItem, { type: "tool-group" }>;
+      return sameValues([
+        leftGroup.hasError === right.hasError,
+        leftGroup.hasCancelled === right.hasCancelled,
+        sameItems(leftGroup.group.calls, right.group.calls),
+      ]);
+    }
+    case "hook": {
+      const leftHook = left as Extract<NarrativeItem, { type: "hook" }>;
+      return sameValues([leftHook.hook === right.hook]);
+    }
+    case "subagent": {
+      const leftSubagent = left as Extract<NarrativeItem, { type: "subagent" }>;
+      return sameValues([
+        sameVisibleSubagentState(leftSubagent, right),
+        leftSubagent.activities === right.activities,
+      ]);
+    }
+    case "active-tool": {
+      const leftActiveTool = left as Extract<NarrativeItem, { type: "active-tool" }>;
+      return sameValues([leftActiveTool.toolCall === right.toolCall]);
+    }
+    case "delta": {
+      const leftDelta = left as Extract<NarrativeItem, { type: "delta" }>;
+      return sameValues([leftDelta.text === right.text]);
+    }
+  }
 }
 
 /** Returns true when two row props produce the same visible row. */
@@ -42,33 +89,12 @@ export function areNarrativeRowPropsEqual(
   left: NarrativeRowProps,
   right: NarrativeRowProps,
 ): boolean {
-  if (left.rowId !== right.rowId || left.item.type !== right.item.type) return false;
+  if (left.rowId !== right.rowId) return false;
+  if (left.item.type !== right.item.type) return false;
   if (left.onSubagentSelect !== right.onSubagentSelect) return false;
   if (left.onOpenSubagents !== right.onOpenSubagents) return false;
   if (left.item === right.item) return true;
-
-  switch (right.item.type) {
-    case "thought":
-      return left.item.type === "thought"
-        && left.item.segment === right.item.segment
-        && left.item.isActive === right.item.isActive;
-    case "tool-group":
-      return left.item.type === "tool-group"
-        && left.item.hasError === right.item.hasError
-        && left.item.hasCancelled === right.item.hasCancelled
-        && sameItems(left.item.group.calls, right.item.group.calls);
-    case "hook":
-      return left.item.type === "hook" && left.item.hook === right.item.hook;
-    case "subagent":
-      return left.item.type === "subagent"
-        && sameVisibleSubagentState(left.item, right.item)
-        && left.item.activities === right.item.activities;
-    case "active-tool":
-      return left.item.type === "active-tool"
-        && left.item.toolCall === right.item.toolCall;
-    case "delta":
-      return left.item.type === "delta" && left.item.text === right.item.text;
-  }
+  return sameNarrativeItems(left.item, right.item);
 }
 
 function renderItem(

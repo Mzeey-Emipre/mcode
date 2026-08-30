@@ -61,17 +61,45 @@ function isVisible(element: HTMLElement, ownerDocument: Document): boolean {
 }
 
 function isNativeControl(element: HTMLElement, ownerDocument: Document): boolean {
-  const tagName = element.localName?.toLowerCase();
-  if (tagName !== "button" && tagName !== "input" && tagName !== "select" && tagName !== "textarea") return false;
   const view = ownerDocument.defaultView;
-  const constructor = tagName === "button"
-    ? view?.HTMLButtonElement
-    : tagName === "input"
-      ? view?.HTMLInputElement
-      : tagName === "select"
-        ? view?.HTMLSelectElement
-        : view?.HTMLTextAreaElement;
-  return typeof constructor === "function" && element instanceof constructor;
+  return [view?.HTMLButtonElement, view?.HTMLInputElement, view?.HTMLSelectElement, view?.HTMLTextAreaElement]
+    .some((constructor) => typeof constructor === "function" && element instanceof constructor);
+}
+
+function cssTarget(ownerDocument: Document, selector: string): HTMLElement | null {
+  if (selector.length > 4_096) return null;
+  const matches = ownerDocument.querySelectorAll<HTMLElement>(selector);
+  return matches.length === 1 ? matches[0] ?? null : null;
+}
+
+function semanticTarget(ownerDocument: Document, semanticId: string): HTMLElement | null {
+  return ownerDocument.getElementById(semanticId) ??
+    ownerDocument.querySelector<HTMLElement>(`[data-automation-id="${escapeSelector(semanticId)}"]`) ??
+    getWebBrowserSemanticRegistry(ownerDocument).resolve(ownerDocument, semanticId);
+}
+
+function roleTarget(ownerDocument: Document, role: string, accessibleNameValue: string): HTMLElement | null {
+  let scanned = 0;
+  const matches: HTMLElement[] = [];
+  for (const candidate of ownerDocument.querySelectorAll<HTMLElement>("button,input,select,textarea,[role]")) {
+    if (++scanned > MAX_TARGET_SCAN) return null;
+    const candidateRole = candidate.getAttribute("role") || candidate.localName?.toLowerCase();
+    if (candidateRole === role && accessibleName(candidate) === accessibleNameValue) matches.push(candidate);
+  }
+  return matches.length === 1 ? matches[0] ?? null : null;
+}
+
+function coordinateTarget(ownerDocument: Document, x: number, y: number): HTMLElement | null {
+  const { clientWidth, clientHeight } = ownerDocument.documentElement;
+  if (x < 0 || y < 0 || x > clientWidth || y > clientHeight) return null;
+  return ownerDocument.elementFromPoint(x, y) as HTMLElement | null;
+}
+
+function resolveTargetElement(ownerDocument: Document, target: BrowserAutomationTarget): HTMLElement | null {
+  if ("cssSelector" in target) return cssTarget(ownerDocument, target.cssSelector);
+  if ("semanticId" in target) return semanticTarget(ownerDocument, target.semanticId);
+  if ("role" in target) return roleTarget(ownerDocument, target.role, target.accessibleName);
+  return coordinateTarget(ownerDocument, target.x, target.y);
 }
 
 function isEnabled(element: HTMLElement, ownerDocument: Document): boolean {
@@ -95,38 +123,7 @@ function accessibleName(element: HTMLElement): string {
 /** Resolve a target using only bounded, explicit DOM targeting mechanics. */
 export function resolveWebTarget(ownerDocument: Document, target: BrowserAutomationTarget): WebTargetResolution {
   try {
-    let element: HTMLElement | null = null;
-    if ("cssSelector" in target) {
-      if (target.cssSelector.length > 4_096) return fail("TARGET_NOT_FOUND", "Browser target selector is invalid");
-      const matches = ownerDocument.querySelectorAll<HTMLElement>(target.cssSelector);
-      if (matches.length !== 1) return fail("TARGET_NOT_FOUND", "Browser target did not resolve uniquely");
-      element = matches[0] ?? null;
-    } else if ("semanticId" in target) {
-      element = ownerDocument.getElementById(target.semanticId);
-      if (!element) element = ownerDocument.querySelector<HTMLElement>(`[data-automation-id="${escapeSelector(target.semanticId)}"]`);
-      if (!element) element = getWebBrowserSemanticRegistry(ownerDocument).resolve(ownerDocument, target.semanticId);
-    } else if ("role" in target) {
-      let scanned = 0;
-      let scanLimitReached = false;
-      const matches: HTMLElement[] = [];
-      for (const candidate of ownerDocument.querySelectorAll<HTMLElement>("button,input,select,textarea,[role]")) {
-        if (++scanned > MAX_TARGET_SCAN) {
-          scanLimitReached = true;
-          break;
-        }
-        const role = candidate.getAttribute("role") || candidate.localName?.toLowerCase();
-        if (role === target.role && accessibleName(candidate) === target.accessibleName) {
-          matches.push(candidate);
-        }
-      }
-      if (scanLimitReached || matches.length !== 1) return fail("TARGET_NOT_FOUND", "Browser target did not resolve uniquely");
-      element = matches[0] ?? null;
-    } else {
-      if (target.x < 0 || target.y < 0 || target.x > ownerDocument.documentElement.clientWidth || target.y > ownerDocument.documentElement.clientHeight) {
-        return fail("TARGET_NOT_FOUND", "Browser coordinate target is outside the visible page");
-      }
-      element = ownerDocument.elementFromPoint(target.x, target.y) as HTMLElement | null;
-    }
+    const element = resolveTargetElement(ownerDocument, target);
     if (!element) return fail("TARGET_NOT_FOUND", "Browser target was not found");
     if (!isVisible(element, ownerDocument) || !isEnabled(element, ownerDocument)) return fail("TARGET_NOT_FOUND", "Browser target is not eligible");
     return { ok: true, element };
@@ -204,6 +201,37 @@ export function redactBrowserText(value: unknown): string {
     .slice(0, MAX_METADATA_CHARS);
 }
 
+function redactSearchParams(url: URL): void {
+  for (const key of url.searchParams.keys()) {
+    if (SECRET_KEY.test(key)) url.searchParams.set(key, "[REDACTED]");
+  }
+}
+
+function decodedFragment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    // Preserve the opaque fragment when it is not valid URL encoding.
+    return value;
+  }
+}
+
+function redactFragment(url: URL): void {
+  if (url.hash.length <= 1) return;
+  const rawFragment = url.hash.slice(1);
+  if (OPAQUE_CREDENTIAL_FRAGMENT.test(decodedFragment(rawFragment).trim())) {
+    url.hash = "[REDACTED]";
+  }
+  const fragment = new URLSearchParams(rawFragment);
+  let changed = false;
+  for (const key of fragment.keys()) {
+    if (!SECRET_KEY.test(key)) continue;
+    fragment.set(key, "[REDACTED]");
+    changed = true;
+  }
+  if (changed) url.hash = fragment.toString();
+}
+
 /** Redact credentials and secret query values from a bounded page location. */
 export function redactBrowserLocation(value: unknown): string {
   const raw = String(value ?? "").slice(0, 8_192);
@@ -212,29 +240,8 @@ export function redactBrowserLocation(value: unknown): string {
     if (url.protocol === "http:" || url.protocol === "https:") {
       url.username = "";
       url.password = "";
-      for (const key of [...url.searchParams.keys()]) {
-        if (SECRET_KEY.test(key)) url.searchParams.set(key, "[REDACTED]");
-      }
-      if (url.hash.length > 1) {
-        const rawFragment = url.hash.slice(1);
-        let decodedFragment = rawFragment;
-        try {
-          decodedFragment = decodeURIComponent(rawFragment);
-        } catch {
-          // Preserve the opaque fragment when it is not valid URL encoding.
-        }
-        if (OPAQUE_CREDENTIAL_FRAGMENT.test(decodedFragment.trim())) {
-          url.hash = "[REDACTED]";
-        }
-        const fragment = new URLSearchParams(rawFragment);
-        let changed = false;
-        for (const key of [...fragment.keys()]) {
-          if (!SECRET_KEY.test(key)) continue;
-          fragment.set(key, "[REDACTED]");
-          changed = true;
-        }
-        if (changed) url.hash = fragment.toString();
-      }
+      redactSearchParams(url);
+      redactFragment(url);
       return url.toString().slice(0, MAX_METADATA_CHARS);
     }
     if (raw === "about:blank") return raw;
@@ -250,40 +257,57 @@ function isNativeSubmitControl(element: HTMLElement, ownerDocument: Document): e
   return !["button", "checkbox", "color", "date", "datetime-local", "file", "hidden", "image", "month", "radio", "range", "reset", "submit", "time", "week"].includes(type);
 }
 
+interface RequestSubmitMonitor {
+  readonly requested: () => boolean;
+  readonly restore: () => void;
+}
+
+function monitorRequestSubmit(element: HTMLElement, ownerDocument: Document): RequestSubmitMonitor {
+  const form = isNativeSubmitControl(element, ownerDocument) ? element.form : null;
+  const originalRequestSubmit = form?.requestSubmit;
+  if (!form || typeof originalRequestSubmit !== "function") {
+    return { requested: () => false, restore: () => undefined };
+  }
+  let requested = false;
+  const wrappedRequestSubmit = function(this: HTMLFormElement, submitter?: HTMLElement): void {
+    requested = true;
+    if (submitter === undefined) originalRequestSubmit.call(this);
+    else originalRequestSubmit.call(this, submitter);
+  };
+  form.requestSubmit = wrappedRequestSubmit;
+  return {
+    requested: () => requested,
+    restore: () => {
+      if (form.requestSubmit === wrappedRequestSubmit) form.requestSubmit = originalRequestSubmit;
+    },
+  };
+}
+
+function dispatchKeyboardEvent(
+  KeyboardEventConstructor: typeof KeyboardEvent,
+  element: HTMLElement,
+  type: "keydown" | "keypress" | "keyup",
+  init: KeyboardEventInit,
+): { allowed: boolean; prevented: boolean } {
+  const event = new KeyboardEventConstructor(type, init);
+  markExecutorEvent(event);
+  return { allowed: element.dispatchEvent(event), prevented: event.defaultPrevented };
+}
+
 function dispatchEnter(ownerDocument: Document, element: HTMLElement): { readonly defaultAllowed: boolean; readonly formSubmitRequested: boolean } {
   const view = ownerDocument.defaultView;
   if (!view || typeof view.KeyboardEvent !== "function") throw new Error("Browser iframe event constructors are unavailable");
   const init = { key: "Enter", code: "Enter", bubbles: true, cancelable: true, composed: true } as const;
-  const form = isNativeSubmitControl(element, ownerDocument) ? (element as HTMLInputElement).form : null;
-  const originalRequestSubmit = form?.requestSubmit;
-  let formSubmitRequested = false;
-  let wrappedRequestSubmit: HTMLFormElement["requestSubmit"] | null = null;
-  if (form && typeof originalRequestSubmit === "function") {
-    wrappedRequestSubmit = function(this: HTMLFormElement, submitter?: HTMLElement): void {
-      formSubmitRequested = true;
-      if (submitter === undefined) originalRequestSubmit.call(this);
-      else originalRequestSubmit.call(this, submitter);
-    };
-    form.requestSubmit = wrappedRequestSubmit;
-  }
+  const monitor = monitorRequestSubmit(element, ownerDocument);
   try {
-    const keydown = new view.KeyboardEvent("keydown", init);
-    markExecutorEvent(keydown);
-    const keydownAllowed = element.dispatchEvent(keydown);
-    let keypressAllowed = true;
-    if (keydownAllowed && !keydown.defaultPrevented) {
-      const keypress = new view.KeyboardEvent("keypress", init);
-      markExecutorEvent(keypress);
-      keypressAllowed = element.dispatchEvent(keypress);
-    }
-    const keyup = new view.KeyboardEvent("keyup", init);
-    markExecutorEvent(keyup);
-    element.dispatchEvent(keyup);
-    return { defaultAllowed: keydownAllowed && !keydown.defaultPrevented && keypressAllowed, formSubmitRequested };
+    const keydown = dispatchKeyboardEvent(view.KeyboardEvent, element, "keydown", init);
+    const keypress = keydown.allowed && !keydown.prevented
+      ? dispatchKeyboardEvent(view.KeyboardEvent, element, "keypress", init)
+      : { allowed: true, prevented: false };
+    dispatchKeyboardEvent(view.KeyboardEvent, element, "keyup", init);
+    return { defaultAllowed: keydown.allowed && !keydown.prevented && keypress.allowed, formSubmitRequested: monitor.requested() };
   } finally {
-    if (form && originalRequestSubmit && form.requestSubmit === wrappedRequestSubmit) {
-      form.requestSubmit = originalRequestSubmit;
-    }
+    monitor.restore();
   }
 }
 
@@ -293,6 +317,125 @@ function errorResponse(dispatch: BrowserAutomationHostDispatch, code: Extract<Br
 
 function markExecutorEvent(event: Event): void {
   executorEvents.add(event);
+}
+
+type WebTypeRequest = Extract<BrowserAutomationHostDispatch["request"], { readonly operation: "type" }>;
+type WebClickRequest = Extract<BrowserAutomationHostDispatch["request"], { readonly operation: "click" }>;
+
+function editableTarget(element: HTMLElement, ownerDocument: Document): boolean {
+  if (element.isContentEditable) return true;
+  const tagName = element.localName?.toLowerCase();
+  return (tagName === "input" || tagName === "textarea") && isNativeControl(element, ownerDocument);
+}
+
+function clearTypedValue(element: HTMLElement): void {
+  if (element.isContentEditable) {
+    element.textContent = "";
+    return;
+  }
+  (element as HTMLInputElement | HTMLTextAreaElement).value = "";
+}
+
+function appendTypedValue(element: HTMLElement, text: string): void {
+  if (element.isContentEditable) {
+    element.textContent = `${element.textContent ?? ""}${text}`;
+    return;
+  }
+  const input = element as HTMLInputElement | HTMLTextAreaElement;
+  const value = `${input.value}${text}`;
+  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value");
+  descriptor?.set?.call(input, value);
+  if (!input.value.endsWith(text)) input.value = value;
+}
+
+function dispatchTextInputEvent(ownerDocument: Document, element: HTMLElement): void {
+  const view = ownerDocument.defaultView;
+  if (!view || typeof view.InputEvent !== "function" || typeof view.KeyboardEvent !== "function") {
+    throw new Error("Browser iframe event constructors are unavailable");
+  }
+  const inputEvent = new view.InputEvent("input", { bubbles: true, composed: true, inputType: "insertText" });
+  markExecutorEvent(inputEvent);
+  element.dispatchEvent(inputEvent);
+}
+
+function requestSubmitAfterEnter(
+  ownerDocument: Document,
+  element: HTMLElement,
+  guard: WebInteractionGuard,
+): void {
+  const enter = dispatchEnter(ownerDocument, element);
+  guardMutation(guard);
+  if (!enter.defaultAllowed || enter.formSubmitRequested || !isNativeSubmitControl(element, ownerDocument)) return;
+  const form = (element as HTMLInputElement).form;
+  if (form && typeof form.requestSubmit === "function") form.requestSubmit();
+}
+
+async function executeTypeInput(
+  ownerDocument: Document,
+  element: HTMLElement,
+  args: WebTypeRequest["args"],
+  guard: WebInteractionGuard,
+): Promise<void> {
+  if (!editableTarget(element, ownerDocument)) throw new Error("Browser type target is not editable");
+  await waitForInteractionFrame(ownerDocument, guard);
+  guardMutation(guard);
+  element.focus();
+  if (args.clear) clearTypedValue(element);
+  guardMutation(guard);
+  appendTypedValue(element, args.text);
+  dispatchTextInputEvent(ownerDocument, element);
+  if (args.submit) {
+    guardMutation(guard);
+    requestSubmitAfterEnter(ownerDocument, element, guard);
+  }
+  guardMutation(guard);
+}
+
+function mouseButton(button: WebClickRequest["args"]["button"]): number {
+  if (button === "right") return 2;
+  return button === "middle" ? 1 : 0;
+}
+
+async function executeClickInput(
+  ownerDocument: Document,
+  element: HTMLElement,
+  args: WebClickRequest["args"],
+  guard: WebInteractionGuard,
+): Promise<void> {
+  await waitForInteractionFrame(ownerDocument, guard);
+  guardMutation(guard);
+  const view = ownerDocument.defaultView;
+  if (!view || typeof view.MouseEvent !== "function") throw new Error("Browser iframe event constructors are unavailable");
+  const button = mouseButton(args.button);
+  for (let clickIndex = 0; clickIndex < args.clickCount; clickIndex += 1) {
+    const init = { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 };
+    const mouseDown = new view.MouseEvent("mousedown", init);
+    const mouseUp = new view.MouseEvent("mouseup", init);
+    const click = new view.MouseEvent("click", init);
+    markExecutorEvent(mouseDown);
+    markExecutorEvent(mouseUp);
+    markExecutorEvent(click);
+    element.dispatchEvent(mouseDown);
+    guardMutation(guard);
+    element.dispatchEvent(mouseUp);
+    guardMutation(guard);
+    element.dispatchEvent(click);
+    guardMutation(guard);
+  }
+}
+
+function executionFailure(dispatch: BrowserAutomationHostDispatch, cause: unknown): BrowserAutomationResponse {
+  const message = cause instanceof Error ? cause.message : "Browser operation failed";
+  const classified = [
+    ["deadline", "DEADLINE_EXCEEDED"],
+    ["generation", "STALE_TARGET_GENERATION"],
+    ["epoch", "STALE_CONTROL_EPOCH"],
+    ["cancelled", "OPERATION_CANCELLED"],
+  ] as const;
+  const match = classified.find(([fragment]) => message.includes(fragment));
+  return match
+    ? errorResponse(dispatch, match[1], message)
+    : errorResponse(dispatch, "TAB_UNAVAILABLE", "Browser target is unavailable");
 }
 
 /** True only for an event emitted by this executor instance. */
@@ -340,74 +483,13 @@ export async function executeWebInteraction(
     if (!resolved.ok) return errorResponse(dispatch, resolved.code, resolved.message);
     const element = resolved.element;
     if (dispatch.request.operation === "type") {
-      const args = dispatch.request.args;
-      const tagName = element.localName?.toLowerCase();
-      const editable = element.isContentEditable ||
-        ((tagName === "input" || tagName === "textarea") && isNativeControl(element, ownerDocument));
-      if (!editable) return errorResponse(dispatch, "TARGET_NOT_FOUND", "Browser type target is not editable");
-      await waitForInteractionFrame(ownerDocument, guard);
-      guardMutation(guard);
-      element.focus();
-      if (args.clear) {
-        if (element.isContentEditable) element.textContent = "";
-        else (element as HTMLInputElement | HTMLTextAreaElement).value = "";
-      }
-      guardMutation(guard);
-      if (element.isContentEditable) element.textContent = `${element.textContent ?? ""}${args.text}`;
-      else {
-        const input = element as HTMLInputElement | HTMLTextAreaElement;
-        const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value");
-        descriptor?.set?.call(input, `${input.value}${args.text}`);
-        if (!input.value.endsWith(args.text)) input.value = `${input.value}${args.text}`;
-      }
-      const view = ownerDocument.defaultView;
-      if (!view || typeof view.InputEvent !== "function" || typeof view.KeyboardEvent !== "function") {
-        throw new Error("Browser iframe event constructors are unavailable");
-      }
-      const inputEvent = new view.InputEvent("input", { bubbles: true, composed: true, inputType: "insertText" });
-      markExecutorEvent(inputEvent);
-      element.dispatchEvent(inputEvent);
-      if (args.submit) {
-        guardMutation(guard);
-        const enterResult = dispatchEnter(ownerDocument, element);
-        guardMutation(guard);
-        if (enterResult.defaultAllowed && !enterResult.formSubmitRequested && isNativeSubmitControl(element, ownerDocument)) {
-          guardMutation(guard);
-          const form = (element as HTMLInputElement).form;
-          if (form && typeof form.requestSubmit === "function") form.requestSubmit();
-        }
-      }
-      guardMutation(guard);
+      await executeTypeInput(ownerDocument, element, dispatch.request.args, guard);
       return response(dispatch, { operation: "type", ...pageMetadata(ownerDocument), controlEpoch: guard.expectedControlEpoch });
     }
-    const args = dispatch.request.args;
-    await waitForInteractionFrame(ownerDocument, guard);
-    guardMutation(guard);
-    const view = ownerDocument.defaultView;
-    if (!view || typeof view.MouseEvent !== "function") {
-      throw new Error("Browser iframe event constructors are unavailable");
-    }
-    const button = args.button === "right" ? 2 : args.button === "middle" ? 1 : 0;
-    for (let clickIndex = 0; clickIndex < args.clickCount; clickIndex += 1) {
-      const mouseDown = new view.MouseEvent("mousedown", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
-      const mouseUp = new view.MouseEvent("mouseup", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
-      const click = new view.MouseEvent("click", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
-      markExecutorEvent(mouseDown); markExecutorEvent(mouseUp); markExecutorEvent(click);
-      element.dispatchEvent(mouseDown);
-      guardMutation(guard);
-      element.dispatchEvent(mouseUp);
-      guardMutation(guard);
-      element.dispatchEvent(click);
-      guardMutation(guard);
-    }
+    await executeClickInput(ownerDocument, element, dispatch.request.args, guard);
     return response(dispatch, { operation: "click", ...pageMetadata(ownerDocument), controlEpoch: guard.expectedControlEpoch });
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "Browser operation failed";
-    if (message.includes("deadline")) return errorResponse(dispatch, "DEADLINE_EXCEEDED", message);
-    if (message.includes("generation")) return errorResponse(dispatch, "STALE_TARGET_GENERATION", message);
-    if (message.includes("epoch")) return errorResponse(dispatch, "STALE_CONTROL_EPOCH", message);
-    if (message.includes("cancelled")) return errorResponse(dispatch, "OPERATION_CANCELLED", message);
-    return errorResponse(dispatch, "TAB_UNAVAILABLE", "Browser target is unavailable");
+    return executionFailure(dispatch, cause);
   }
 }
 

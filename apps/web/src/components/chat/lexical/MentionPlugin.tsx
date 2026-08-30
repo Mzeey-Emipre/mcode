@@ -19,6 +19,22 @@ interface MentionPluginProps {
   readonly isPopupOpen: boolean;
 }
 
+function getMentionTrigger(): { text: string; cursorOffset: number } | null {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+  if (selection.anchor.type !== "text") return null;
+  const node = selection.anchor.getNode();
+  if (!(node instanceof TextNode)) return null;
+  const text = node.getTextContent();
+  const cursorOffset = selection.anchor.offset;
+  const textBeforeCursor = text.slice(0, cursorOffset);
+  const lastAt = textBeforeCursor.lastIndexOf("@");
+  if (lastAt === -1) return null;
+  const characterBefore = lastAt > 0 ? textBeforeCursor[lastAt - 1] : null;
+  if (characterBefore !== null && !/\s/.test(characterBefore)) return null;
+  return { text, cursorOffset };
+}
+
 /**
  * Lexical plugin that detects @-triggers for file mentions.
  * Scans the current text node backward from cursor for @ preceded
@@ -44,41 +60,12 @@ export function MentionPlugin({
   useEffect(() => {
     return editor.registerUpdateListener(({ editorState }) => {
       editorState.read(() => {
-        const selection = $getSelection();
-        if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+        const trigger = getMentionTrigger();
+        if (!trigger) {
           if (isPopupOpenRef.current) onDismissRef.current();
           return;
         }
-
-        const anchor = selection.anchor;
-        if (anchor.type !== "text") {
-          if (isPopupOpenRef.current) onDismissRef.current();
-          return;
-        }
-
-        const node = anchor.getNode();
-        if (!(node instanceof TextNode)) {
-          if (isPopupOpenRef.current) onDismissRef.current();
-          return;
-        }
-
-        const textContent = node.getTextContent();
-        const cursorOffset = anchor.offset;
-        const textBeforeCursor = textContent.slice(0, cursorOffset);
-
-        // Only fire when @ is preceded by whitespace or at the start of text
-        const lastAt = textBeforeCursor.lastIndexOf("@");
-        if (lastAt === -1) {
-          if (isPopupOpenRef.current) onDismissRef.current();
-          return;
-        }
-        const charBefore = lastAt > 0 ? textBeforeCursor[lastAt - 1] : null;
-        if (charBefore !== null && !/\s/.test(charBefore)) {
-          if (isPopupOpenRef.current) onDismissRef.current();
-          return;
-        }
-
-        onTriggerRef.current(textContent, cursorOffset);
+        onTriggerRef.current(trigger.text, trigger.cursorOffset);
       });
     });
   }, [editor]);

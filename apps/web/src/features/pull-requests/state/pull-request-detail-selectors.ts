@@ -1,45 +1,72 @@
 import type { PullRequestDetailStoreState } from "./pullRequestDetailStore";
 
+function detailEntry(state: PullRequestDetailStoreState, key: string) {
+  return state.entries[key];
+}
+
+function detailCore(entry: ReturnType<typeof detailEntry>) {
+  return {
+    exists: Boolean(entry),
+    detail: entry?.detail ?? null,
+    lane: entry?.lanes.detail ?? null,
+  };
+}
+
+function summaryResources(entry: ReturnType<typeof detailEntry>) {
+  if (!entry) {
+    return {
+      checks: EMPTY_ARRAY,
+      checksNextCursor: null,
+      comments: EMPTY_ARRAY,
+      commentsNextCursor: null,
+      checksLane: null,
+      commentsLane: null,
+    };
+  }
+  return {
+    checks: entry.checks,
+    checksNextCursor: entry.checksNextCursor,
+    comments: entry.comments,
+    commentsNextCursor: entry.commentsNextCursor,
+    checksLane: entry.lanes.checks,
+    commentsLane: entry.lanes.comments,
+  };
+}
+
+function timelineResources(entry: ReturnType<typeof detailEntry>) {
+  if (!entry) {
+    return {
+      items: EMPTY_ARRAY,
+      hasMoreOlder: false,
+      hasMoreNewer: false,
+      initialLane: null,
+      olderLane: null,
+      newerLane: null,
+    };
+  }
+  return {
+    items: entry.timeline,
+    hasMoreOlder: entry.hasMoreOlder,
+    hasMoreNewer: entry.hasMoreNewer,
+    initialLane: entry.lanes.timelineInitial,
+    olderLane: entry.lanes.timelineOlder,
+    newerLane: entry.lanes.timelineNewer,
+  };
+}
+
 /** Select only persistent-header state for one pull request detail identity. */
 export function selectPullRequestDetailCore(key: string) {
-  return (state: PullRequestDetailStoreState) => {
-    const entry = state.entries[key];
-    return {
-      exists: Boolean(entry),
-      detail: entry?.detail ?? null,
-      lane: entry?.lanes.detail ?? null,
-    };
-  };
+  return (state: PullRequestDetailStoreState) => detailCore(detailEntry(state, key));
 }
 
 /** Select only Summary resources and lane metadata for one pull request identity. */
 export function selectPullRequestSummaryResources(key: string) {
-  return (state: PullRequestDetailStoreState) => {
-    const entry = state.entries[key];
-    return {
-      checks: entry?.checks ?? EMPTY_ARRAY,
-      checksNextCursor: entry?.checksNextCursor ?? null,
-      comments: entry?.comments ?? EMPTY_ARRAY,
-      commentsNextCursor: entry?.commentsNextCursor ?? null,
-      checksLane: entry?.lanes.checks ?? null,
-      commentsLane: entry?.lanes.comments ?? null,
-    };
-  };
+  return (state: PullRequestDetailStoreState) => summaryResources(detailEntry(state, key));
 }
 
 /** Select only Timeline data and lane metadata for one pull request identity. */
 export function selectPullRequestTimelineResources(key: string) {
-  return (state: PullRequestDetailStoreState) => {
-    const entry = state.entries[key];
-    return {
-      items: entry?.timeline ?? EMPTY_ARRAY,
-      hasMoreOlder: entry?.hasMoreOlder ?? false,
-      hasMoreNewer: entry?.hasMoreNewer ?? false,
-      initialLane: entry?.lanes.timelineInitial ?? null,
-      olderLane: entry?.lanes.timelineOlder ?? null,
-      newerLane: entry?.lanes.timelineNewer ?? null,
-    };
-  };
+  return (state: PullRequestDetailStoreState) => timelineResources(detailEntry(state, key));
 }
 
 const EMPTY_ARRAY: readonly never[] = [];

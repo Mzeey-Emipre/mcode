@@ -494,23 +494,59 @@ function failFilesLane(started: StartedFilesLane, error: PullRequestError): void
   });
 }
 
-function beginPatchLane(file: PullRequestFile): StartedPatchLane | null {
+function activeCodeSnapshot(): { snapshotKey: string; entry: PullRequestCodeEntry } | null {
   const state = usePullRequestCodeStore.getState();
   const snapshotKey = state.activeSnapshotKey;
   const entry = snapshotKey ? state.entries[snapshotKey] : undefined;
-  if (!snapshotKey || !entry) return null;
-  const patchKey = getPullRequestPatchKey(
+  return snapshotKey && entry ? { snapshotKey, entry } : null;
+}
+
+function patchLaneKey(entry: PullRequestCodeEntry, file: PullRequestFile): string {
+  return getPullRequestPatchKey(
     entry.viewerNodeId,
     entry.identity,
     entry.baseOid,
     entry.headOid,
     file.locator,
   );
-  const current = state.patches[patchKey];
-  if (current?.status === "ready" || current?.operationId) return null;
-  const operationId = nextOperationId("patch");
-  const generation = (current?.generation ?? 0) + 1;
-  const lane: PullRequestPatchLaneState = {
+}
+
+type RetainedPatchFields = Pick<
+  PullRequestPatchLaneState,
+  "result" | "rawBytes" | "parsedBytes" | "tokenBytes" | "estimatedBytes"
+>;
+
+const EMPTY_RETAINED_PATCH_FIELDS: RetainedPatchFields = {
+  result: null,
+  rawBytes: 0,
+  parsedBytes: 0,
+  tokenBytes: 0,
+  estimatedBytes: 0,
+};
+
+function retainedPatchFields(
+  current: PullRequestPatchLaneState | undefined,
+): RetainedPatchFields {
+  if (!current) return EMPTY_RETAINED_PATCH_FIELDS;
+  return {
+    result: current.result,
+    rawBytes: current.rawBytes,
+    parsedBytes: current.parsedBytes,
+    tokenBytes: current.tokenBytes,
+    estimatedBytes: current.estimatedBytes,
+  };
+}
+
+function patchLaneState(
+  patchKey: string,
+  snapshotKey: string,
+  file: PullRequestFile,
+  current: PullRequestPatchLaneState | undefined,
+  operationId: string,
+  generation: number,
+): PullRequestPatchLaneState {
+  const retained = retainedPatchFields(current);
+  return {
     patchKey,
     snapshotKey,
     locator: file.locator,
@@ -520,18 +556,33 @@ function beginPatchLane(file: PullRequestFile): StartedPatchLane | null {
     operationId,
     generation,
     error: null,
-    result: current?.result ?? null,
-    rawBytes: current?.rawBytes ?? 0,
-    parsedBytes: current?.parsedBytes ?? 0,
-    tokenBytes: current?.tokenBytes ?? 0,
-    estimatedBytes: current?.estimatedBytes ?? 0,
+    ...retained,
     lastAccessedAt: nextAccess(),
   };
+}
+
+function beginPatchLane(file: PullRequestFile): StartedPatchLane | null {
+  const state = usePullRequestCodeStore.getState();
+  const active = activeCodeSnapshot();
+  if (!active) return null;
+  const { snapshotKey, entry } = active;
+  const patchKey = patchLaneKey(entry, file);
+  const current = state.patches[patchKey];
+  if (current?.status === "ready" || current?.operationId) return null;
+  const operationId = nextOperationId("patch");
+  const generation = (current?.generation ?? 0) + 1;
+  const lane = patchLaneState(patchKey, snapshotKey, file, current, operationId, generation);
   usePullRequestCodeStore.setState({
     patches: { ...state.patches, [patchKey]: lane },
     patchPresentationRevision: state.patchPresentationRevision + 1,
   });
-  return { patchKey, snapshotKey, operationId, generation, file };
+  return {
+    patchKey,
+    snapshotKey,
+    operationId,
+    generation,
+    file,
+  };
 }
 
 function ownedPatchLane(started: StartedPatchLane): PullRequestPatchLaneState | null {
@@ -617,6 +668,284 @@ function patchMatchesFile(
   );
 }
 
+interface SnapshotMutation {
+  entries: Record<string, PullRequestCodeEntry>;
+  patches: Record<string, PullRequestPatchLaneState>;
+  operationIds: string[];
+}
+
+function clearPreviousActiveSnapshot(
+  entries: Record<string, PullRequestCodeEntry>,
+  patches: Record<string, PullRequestPatchLaneState>,
+  activeSnapshotKey: string | null,
+  snapshotKey: string,
+): SnapshotMutation {
+  const active = activeSnapshotKey ? entries[activeSnapshotKey] : undefined;
+  if (!active || active.snapshotKey === snapshotKey) return { entries, patches, operationIds: [] };
+  const operationIds = activeOperationIds(active, patches);
+  const cleared = clearSnapshotOperations(active, patches);
+  return {
+    entries: { ...entries, [active.snapshotKey]: cleared.entry },
+    patches: cleared.patches,
+    operationIds,
+  };
+}
+
+function removeSupersededSnapshots(
+  mutation: SnapshotMutation,
+  viewerNodeId: string,
+  identity: PullRequestIdentity,
+  snapshotKey: string,
+): SnapshotMutation {
+  const entries = { ...mutation.entries };
+  const patches = { ...mutation.patches };
+  const operationIds = [...mutation.operationIds];
+  const nextIdentityKey = identityKey(identity);
+  for (const [key, entry] of Object.entries(entries)) {
+    const sameViewerIdentity = entry.viewerNodeId === viewerNodeId && entry.identityKey === nextIdentityKey;
+    if (!sameViewerIdentity || key === snapshotKey) continue;
+    operationIds.push(...activeOperationIds(entry, patches));
+    delete entries[key];
+    for (const [patchKey, patch] of Object.entries(patches)) {
+      if (patch.snapshotKey === key) delete patches[patchKey];
+    }
+  }
+  return { entries, patches, operationIds };
+}
+
+type PullRequestFilesResponse = Extract<
+  Awaited<ReturnType<PullRequestTransport["files"]>>,
+  { ok: true }
+>;
+
+function requestFiles(
+  started: StartedFilesLane,
+  entry: PullRequestCodeEntry,
+  transport: PullRequestTransport,
+) {
+  return transport.files({
+    operationId: started.operationId,
+    identity: entry.identity,
+    baseOid: entry.baseOid,
+    headOid: entry.headOid,
+    search: started.query.search || undefined,
+    changeTypes: started.query.changeTypes,
+    limit: FILE_PAGE_SIZE,
+    ...(started.append && started.cursor ? { cursor: started.cursor } : {}),
+  });
+}
+
+function filesMatchEntry(
+  result: PullRequestFilesResponse,
+  entry: PullRequestCodeEntry,
+): boolean {
+  return result.baseOid === entry.baseOid && result.headOid === entry.headOid;
+}
+
+function mergedFilePage(
+  entry: PullRequestCodeEntry,
+  result: PullRequestFilesResponse,
+  append: boolean,
+): {
+  files: PullRequestFile[];
+  boundedData: PullRequestBoundedDataMarker | null;
+  nextCursor: string | null;
+} {
+  const filesByLocator = new Map((append ? entry.files : []).map((file) => [file.locator, file]));
+  for (const file of result.items) filesByLocator.set(file.locator, file);
+  const locallyBounded = filesByLocator.size > PULL_REQUEST_FILE_MAX_COUNT;
+  const boundedData = locallyBounded ? { reason: "provider_limit" as const } : result.boundedData;
+  const canContinueCatchUp = boundedData?.reason === "catch_up_limit";
+  return {
+    files: [...filesByLocator.values()].slice(0, PULL_REQUEST_FILE_MAX_COUNT),
+    boundedData,
+    nextCursor: boundedData && !canContinueCatchUp ? null : result.nextCursor,
+  };
+}
+
+function nextExpandedPaths(
+  started: StartedFilesLane,
+  entry: PullRequestCodeEntry,
+  files: readonly PullRequestFile[],
+): Record<string, true> {
+  const shouldSeed = !started.append && entry.files.length === 0 && Object.keys(entry.expandedPaths).length === 0 && files.length > 0;
+  return shouldSeed
+    ? Object.fromEntries(files.slice(0, 1).map((file) => [file.path, true] as const))
+    : entry.expandedPaths;
+}
+
+function commitFilesPage(started: StartedFilesLane, result: PullRequestFilesResponse): void {
+  const latestState = usePullRequestCodeStore.getState();
+  const entry = ownedFilesEntry(started);
+  if (!entry) return;
+  const page = mergedFilePage(entry, result, started.append);
+  usePullRequestCodeStore.setState({
+    entries: {
+      ...latestState.entries,
+      [started.snapshotKey]: {
+        ...entry,
+        files: page.files,
+        activePath: entry.activePath ?? page.files[0]?.path ?? null,
+        expandedPaths: nextExpandedPaths(started, entry, page.files),
+        filesLane: {
+          ...entry.filesLane,
+          status: "ready",
+          operationId: null,
+          error: null,
+          nextCursor: page.nextCursor,
+          fetchedAt: Date.parse(result.fetchedAt),
+          staleAt: Date.parse(result.staleAt),
+          boundedData: page.boundedData,
+          complete: page.nextCursor === null && page.boundedData === null,
+          partialReason: page.boundedData ? "bounded" : null,
+        },
+        lastAccessedAt: nextAccess(),
+      },
+    },
+  });
+}
+
+async function loadFilesLane(
+  started: StartedFilesLane,
+  transport: PullRequestTransport,
+): Promise<void> {
+  try {
+    const before = usePullRequestCodeStore.getState().entries[started.snapshotKey];
+    if (!before) return;
+    const result = await requestFiles(started, before, transport);
+    const current = ownedFilesEntry(started);
+    if (!current) return;
+    if (!result.ok) return failFilesLane(started, result.error);
+    if (!filesMatchEntry(result, current)) {
+      return failFilesLane(started, {
+        code: "conflict",
+        message: "The pull request changed while Code files were loading.",
+      });
+    }
+    commitFilesPage(started, result);
+  } catch (error) {
+    failFilesLane(started, normalizeError(error));
+  }
+}
+
+async function prepareLoadAllFiles(
+  transport: PullRequestTransport | undefined,
+): Promise<string | null> {
+  const state = usePullRequestCodeStore.getState();
+  const snapshotKey = state.activeSnapshotKey;
+  const entry = snapshotKey ? state.entries[snapshotKey] : undefined;
+  if (!snapshotKey || !entry) return null;
+  if (entry.filesLane.fetchedAt === null) await state.loadFiles({ transport });
+  return snapshotKey;
+}
+
+function catchUpCursor(snapshotKey: string): string | null {
+  const state = usePullRequestCodeStore.getState();
+  if (state.activeSnapshotKey !== snapshotKey) return null;
+  const entry = state.entries[snapshotKey];
+  if (!entry || !entry.filesLane.nextCursor) return null;
+  const boundedData = entry.filesLane.boundedData;
+  return boundedData && boundedData.reason !== "catch_up_limit"
+    ? null
+    : entry.filesLane.nextCursor;
+}
+
+function markCursorStalled(snapshotKey: string): void {
+  const state = usePullRequestCodeStore.getState();
+  const entry = state.entries[snapshotKey];
+  if (!entry) return;
+  usePullRequestCodeStore.setState({
+    entries: {
+      ...state.entries,
+      [snapshotKey]: {
+        ...entry,
+        filesLane: { ...entry.filesLane, complete: false, partialReason: "cursor_stalled" },
+      },
+    },
+  });
+}
+
+function existingPatchPromise(file: PullRequestFile): Promise<void> | null {
+  const active = activeCodeSnapshot();
+  if (!active) return Promise.resolve();
+  const patchKey = patchLaneKey(active.entry, file);
+  const existing = usePullRequestCodeStore.getState().patches[patchKey];
+  if (existing?.status === "ready") {
+    usePullRequestCodeStore.getState().touchPatch(patchKey);
+    return Promise.resolve();
+  }
+  return existing?.operationId ? (patchPromises.get(patchKey) ?? Promise.resolve()) : null;
+}
+
+function requestPatch(
+  started: StartedPatchLane,
+  entry: PullRequestCodeEntry,
+  transport: PullRequestTransport,
+) {
+  return transport.patch({
+    operationId: started.operationId,
+    identity: entry.identity,
+    baseOid: entry.baseOid,
+    headOid: entry.headOid,
+    locator: started.file.locator,
+  });
+}
+
+function patchResultBytes(result: PullRequestPatchSuccess): number {
+  return result.status === "available" || result.status === "generated"
+    ? textEncoder.encode(result.patch).byteLength
+    : 0;
+}
+
+function completePatchLane(started: StartedPatchLane, result: PullRequestPatchSuccess): void {
+  const boundedResult = patchWithinWebBounds(result) ? result : tooLargePatchResult(result);
+  const rawBytes = patchResultBytes(boundedResult);
+  const latest = usePullRequestCodeStore.getState();
+  const lane = ownedPatchLane(started);
+  if (!lane) return;
+  const completed: PullRequestPatchLaneState = {
+    ...lane,
+    status: "ready",
+    operationId: null,
+    error: null,
+    result: boundedResult,
+    rawBytes,
+    parsedBytes: 0,
+    tokenBytes: 0,
+    estimatedBytes: rawBytes,
+    lastAccessedAt: nextAccess(),
+  };
+  const patches = evictPatchLru({ ...latest.patches, [started.patchKey]: completed }, started.patchKey);
+  usePullRequestCodeStore.setState({
+    patches,
+    patchPresentationRevision: usePullRequestCodeStore.getState().patchPresentationRevision + 1,
+  });
+}
+
+async function loadPatchLane(
+  started: StartedPatchLane,
+  transport: PullRequestTransport,
+): Promise<void> {
+  try {
+    const before = usePullRequestCodeStore.getState().entries[started.snapshotKey];
+    if (!before) return;
+    const result = await requestPatch(started, before, transport);
+    const lane = ownedPatchLane(started);
+    const entry = usePullRequestCodeStore.getState().entries[started.snapshotKey];
+    if (!lane || !entry) return;
+    if (!result.ok) return failPatchLane(started, result.error);
+    if (!patchMatchesFile(result, entry, started.file)) {
+      return failPatchLane(started, {
+        code: "conflict",
+        message: "The file changed while its patch was loading.",
+      });
+    }
+    completePatchLane(started, result);
+  } catch (error) {
+    failPatchLane(started, normalizeError(error));
+  }
+}
+
 /** Bounded immutable-head store for pull request files and patches. */
 export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
   (set, get) => ({
@@ -634,36 +963,22 @@ export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
       );
       const state = get();
       const nextIdentityKey = identityKey(input.identity);
-      const operationIds: string[] = [];
-      const entries = { ...state.entries };
-      let patches = { ...state.patches };
-
-      const active = state.activeSnapshotKey
-        ? entries[state.activeSnapshotKey]
-        : undefined;
-      if (active && active.snapshotKey !== snapshotKey) {
-        operationIds.push(...activeOperationIds(active, patches));
-        const cleared = clearSnapshotOperations(active, patches);
-        entries[active.snapshotKey] = cleared.entry;
-        patches = cleared.patches;
-      }
-
-      for (const [key, entry] of Object.entries(entries)) {
-        const sameViewerIdentity =
-          entry.viewerNodeId === input.viewerNodeId &&
-          entry.identityKey === nextIdentityKey;
-        if (!sameViewerIdentity || key === snapshotKey) continue;
-        operationIds.push(...activeOperationIds(entry, patches));
-        delete entries[key];
-        for (const [patchKey, patch] of Object.entries(patches)) {
-          if (patch.snapshotKey === key) delete patches[patchKey];
-        }
-      }
-
-      const entry = entries[snapshotKey] ?? createEntry(input);
-      entries[snapshotKey] = { ...entry, lastAccessedAt: nextAccess() };
-      const evicted = evictSnapshots(entries, patches, snapshotKey);
-      operationIds.push(...evicted.operationIds);
+      const cleared = clearPreviousActiveSnapshot(
+        state.entries,
+        state.patches,
+        state.activeSnapshotKey,
+        snapshotKey,
+      );
+      const retained = removeSupersededSnapshots(
+        cleared,
+        input.viewerNodeId,
+        input.identity,
+        snapshotKey,
+      );
+      const entry = retained.entries[snapshotKey] ?? createEntry(input);
+      retained.entries[snapshotKey] = { ...entry, lastAccessedAt: nextAccess() };
+      const evicted = evictSnapshots(retained.entries, retained.patches, snapshotKey);
+      const operationIds = [...retained.operationIds, ...evicted.operationIds];
       set({
         entries: evicted.entries,
         patches: evicted.patches,
@@ -725,91 +1040,7 @@ export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
       const started = beginFilesLane(options.append ?? false);
       if (!started) return Promise.resolve();
       const transport = options.transport ?? getPullRequestTransport();
-      const promise = (async () => {
-        try {
-          const before = usePullRequestCodeStore.getState().entries[started.snapshotKey];
-          if (!before) return;
-          const result = await transport.files({
-            operationId: started.operationId,
-            identity: before.identity,
-            baseOid: before.baseOid,
-            headOid: before.headOid,
-            search: started.query.search || undefined,
-            changeTypes: started.query.changeTypes,
-            limit: FILE_PAGE_SIZE,
-            ...(started.append && started.cursor
-              ? { cursor: started.cursor }
-              : {}),
-          });
-          const current = ownedFilesEntry(started);
-          if (!current) return;
-          if (!result.ok) {
-            failFilesLane(started, result.error);
-            return;
-          }
-          if (
-            result.baseOid !== current.baseOid ||
-            result.headOid !== current.headOid
-          ) {
-            failFilesLane(started, {
-              code: "conflict",
-              message: "The pull request changed while Code files were loading.",
-            });
-            return;
-          }
-
-          const filesByLocator = new Map(
-            (started.append ? current.files : []).map((file) => [file.locator, file]),
-          );
-          for (const file of result.items) filesByLocator.set(file.locator, file);
-          const files = [...filesByLocator.values()].slice(0, PULL_REQUEST_FILE_MAX_COUNT);
-          const locallyBounded = filesByLocator.size > PULL_REQUEST_FILE_MAX_COUNT;
-          const boundedData = locallyBounded
-            ? { reason: "provider_limit" as const }
-            : result.boundedData;
-          const canContinueCatchUp = boundedData?.reason === "catch_up_limit";
-          const nextCursor =
-            boundedData && !canContinueCatchUp ? null : result.nextCursor;
-          const latestState = usePullRequestCodeStore.getState();
-          const latestEntry = ownedFilesEntry(started);
-          if (!latestEntry) return;
-          const shouldSeedExpandedFiles =
-            !started.append &&
-            latestEntry.files.length === 0 &&
-            Object.keys(latestEntry.expandedPaths).length === 0 &&
-            files.length > 0;
-          usePullRequestCodeStore.setState({
-            entries: {
-              ...latestState.entries,
-              [started.snapshotKey]: {
-                ...latestEntry,
-                files,
-                activePath: latestEntry.activePath ?? files[0]?.path ?? null,
-                expandedPaths: shouldSeedExpandedFiles
-                  ? Object.fromEntries(
-                      files.slice(0, 1).map((file) => [file.path, true] as const),
-                    )
-                  : latestEntry.expandedPaths,
-                filesLane: {
-                  ...latestEntry.filesLane,
-                  status: "ready",
-                  operationId: null,
-                  error: null,
-                  nextCursor,
-                  fetchedAt: Date.parse(result.fetchedAt),
-                  staleAt: Date.parse(result.staleAt),
-                  boundedData,
-                  complete: nextCursor === null && boundedData === null,
-                  partialReason: boundedData ? "bounded" : null,
-                },
-                lastAccessedAt: nextAccess(),
-              },
-            },
-          });
-        } catch (error) {
-          failFilesLane(started, normalizeError(error));
-        }
-      })();
+      const promise = loadFilesLane(started, transport);
       filePromises.set(snapshotKey, promise);
       void promise.finally(() => {
         if (filePromises.get(snapshotKey) === promise) filePromises.delete(snapshotKey);
@@ -818,42 +1049,14 @@ export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
     },
 
     loadAllFiles: async (transportOverride) => {
-      const initial = get();
-      const initialKey = initial.activeSnapshotKey;
+      const initialKey = await prepareLoadAllFiles(transportOverride);
       if (!initialKey) return;
-      const first = initial.entries[initialKey];
-      if (!first) return;
-      if (first.filesLane.fetchedAt === null) {
-        await get().loadFiles({ transport: transportOverride });
-      }
       const seenCursors = new Set<string>();
       while (true) {
-        const state = get();
-        if (state.activeSnapshotKey !== initialKey) return;
-        const entry = state.entries[initialKey];
-        const cursor = entry?.filesLane.nextCursor;
-        if (
-          !entry ||
-          !cursor ||
-          (entry.filesLane.boundedData !== null &&
-            entry.filesLane.boundedData.reason !== "catch_up_limit")
-        ) {
-          return;
-        }
+        const cursor = catchUpCursor(initialKey);
+        if (!cursor) return;
         if (seenCursors.has(cursor)) {
-          set({
-            entries: {
-              ...state.entries,
-              [initialKey]: {
-                ...entry,
-                filesLane: {
-                  ...entry.filesLane,
-                  complete: false,
-                  partialReason: "cursor_stalled",
-                },
-              },
-            },
-          });
+          markCursorStalled(initialKey);
           return;
         }
         seenCursors.add(cursor);
@@ -862,91 +1065,15 @@ export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
     },
 
     ensurePatch: (file, transportOverride) => {
-      const state = get();
-      const snapshotKey = state.activeSnapshotKey;
-      const entry = snapshotKey ? state.entries[snapshotKey] : undefined;
-      if (!snapshotKey || !entry) return Promise.resolve();
-      const patchKey = getPullRequestPatchKey(
-        entry.viewerNodeId,
-        entry.identity,
-        entry.baseOid,
-        entry.headOid,
-        file.locator,
-      );
-      const existing = state.patches[patchKey];
-      if (existing?.status === "ready") {
-        get().touchPatch(patchKey);
-        return Promise.resolve();
-      }
-      if (existing?.operationId) {
-        return patchPromises.get(patchKey) ?? Promise.resolve();
-      }
+      const existing = existingPatchPromise(file);
+      if (existing) return existing;
       const started = beginPatchLane(file);
       if (!started) return Promise.resolve();
       const transport = transportOverride ?? getPullRequestTransport();
-      const promise = (async () => {
-        try {
-          const before = usePullRequestCodeStore.getState().entries[started.snapshotKey];
-          if (!before) return;
-          const result = await transport.patch({
-            operationId: started.operationId,
-            identity: before.identity,
-            baseOid: before.baseOid,
-            headOid: before.headOid,
-            locator: file.locator,
-          });
-          const lane = ownedPatchLane(started);
-          const currentEntry = usePullRequestCodeStore.getState().entries[started.snapshotKey];
-          if (!lane || !currentEntry) return;
-          if (!result.ok) {
-            failPatchLane(started, result.error);
-            return;
-          }
-          if (!patchMatchesFile(result, currentEntry, file)) {
-            failPatchLane(started, {
-              code: "conflict",
-              message: "The file changed while its patch was loading.",
-            });
-            return;
-          }
-          const boundedResult = patchWithinWebBounds(result)
-            ? result
-            : tooLargePatchResult(result);
-          const rawBytes =
-            boundedResult.status === "available" || boundedResult.status === "generated"
-              ? textEncoder.encode(boundedResult.patch).byteLength
-              : 0;
-          const latest = usePullRequestCodeStore.getState();
-          const latestLane = ownedPatchLane(started);
-          if (!latestLane) return;
-          const completed: PullRequestPatchLaneState = {
-            ...latestLane,
-            status: "ready",
-            operationId: null,
-            error: null,
-            result: boundedResult,
-            rawBytes,
-            parsedBytes: 0,
-            tokenBytes: 0,
-            estimatedBytes: rawBytes,
-            lastAccessedAt: nextAccess(),
-          };
-          const patches = evictPatchLru(
-            { ...latest.patches, [started.patchKey]: completed },
-            started.patchKey,
-          );
-          usePullRequestCodeStore.setState({
-            patches,
-            patchPresentationRevision:
-              usePullRequestCodeStore.getState().patchPresentationRevision + 1,
-          });
-        } catch (error) {
-          failPatchLane(started, normalizeError(error));
-        }
-      })();
-      patchPromises.set(patchKey, promise);
+      const promise = loadPatchLane(started, transport);
+      patchPromises.set(started.patchKey, promise);
       void promise.finally(() => {
-        if (patchPromises.get(patchKey) === promise) patchPromises.delete(patchKey);
+        if (patchPromises.get(started.patchKey) === promise) patchPromises.delete(started.patchKey);
       });
       return promise;
     },

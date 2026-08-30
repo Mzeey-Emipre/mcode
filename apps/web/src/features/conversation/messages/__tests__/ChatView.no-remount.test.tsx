@@ -16,14 +16,18 @@ describe("ChatView — MessageList container", () => {
   it("does not have key={activeThread.id} on the wrapper div", async () => {
     // Import the source file as a string to verify the key is not present
     // We use import.meta.glob with raw imports to read the file content
-    const module = import.meta.glob<string>("../ChatView.tsx", {
+    const modules = import.meta.glob<string>([
+      "../ChatView.tsx",
+      "../chat-view/ChatViewSurface.tsx",
+    ], {
       query: "?raw",
       import: "default",
     });
-    const files = await module["../ChatView.tsx"]?.();
+    const sources = await Promise.all(Object.values(modules).map((load) => load()));
+    const files = sources.join("\n");
 
-    if (!files) {
-      throw new Error("Unable to load ChatView.tsx for inspection");
+    if (sources.length !== 2) {
+      throw new Error("Unable to load ChatView source for inspection");
     }
 
     // The wrapper should look like:
@@ -33,7 +37,7 @@ describe("ChatView — MessageList container", () => {
 
     // Use [\s\S]* so a future multiline `key={activeThread.id}` wrapper
     // can't slip through this guard.
-    const hasForceRemountKey = /key\s*=\s*\{\s*activeThread\.id\s*\}[\s\S]*className="animate-fade-up-in/.test(
+    const hasForceRemountKey = /key\s*=\s*\{[^}]*\.id[^}]*\}[\s\S]*className="animate-fade-up-in/.test(
       files
     );
 

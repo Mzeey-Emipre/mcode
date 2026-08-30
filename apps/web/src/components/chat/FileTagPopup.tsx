@@ -56,6 +56,25 @@ function splitPath(path: string): { dir: string; name: string } {
   return { dir: path.slice(0, lastSlash + 1), name: path.slice(lastSlash + 1) };
 }
 
+function getSuggestionRowClass(isDark: boolean, selected: boolean): string {
+  const selectionClass = isDark
+    ? selected ? "bg-white/[0.12] text-neutral-100" : "hover:bg-white/[0.06] hover:text-neutral-100"
+    : selected ? "bg-accent text-accent-foreground" : "hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none";
+  return cn("group h-auto w-full justify-start gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-100", isDark && "focus-visible:outline-none", selectionClass);
+}
+
+function SuggestionRowIcon({ item, isFile, isDark }: { item: MentionSuggestion; isFile: boolean; isDark: boolean }) {
+  return <span className={cn("flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset", isDark ? "bg-white/[0.06] text-neutral-400 ring-white/10" : "bg-muted/65 text-muted-foreground ring-border/60")}><EntityIcon kind={item.kind} filePath={isFile ? item.path : undefined} size={14} className="flex items-center justify-center" /></span>;
+}
+
+function AgentSuggestionRowText({ item, name, isDark }: { item: Extract<MentionSuggestion, { kind: "agent" }>; name: string; isDark: boolean }) {
+  return <span className="flex min-w-0 flex-1 items-baseline gap-1"><span className={cn("shrink-0 font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>{item.description ? <span className={cn("min-w-0 truncate", isDark ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300" : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70")}>{item.description}</span> : null}</span>;
+}
+
+function FileSuggestionRowText({ dir, name, isDark }: { dir: string; name: string; isDark: boolean }) {
+  return <span className="min-w-0 flex-1 truncate"><span className={cn(isDark ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300" : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70")}>{dir}</span><span className={cn("font-medium", isDark ? "text-neutral-100" : "")}>{name}</span></span>;
+}
+
 /** Hook for keyboard navigation within the file tag popup. */
 export function useFileTagPopup({
   items,
@@ -158,58 +177,10 @@ const SuggestionRow = memo(function SuggestionRow({
       aria-selected={selected}
       data-file-item
       onClick={() => onSelect(item)}
-      className={cn(
-        "group h-auto w-full justify-start gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-100",
-        isDark
-          ? cn(
-              "focus-visible:outline-none",
-              selected
-                ? "bg-white/[0.12] text-neutral-100"
-                : "hover:bg-white/[0.06] hover:text-neutral-100",
-            )
-          : cn(
-              "hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none",
-              selected && "bg-accent text-accent-foreground",
-            ),
-      )}
+      className={getSuggestionRowClass(isDark, selected)}
     >
-      <span className={cn(
-        "flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset",
-        isDark
-          ? "bg-white/[0.06] text-neutral-400 ring-white/10"
-          : "bg-muted/65 text-muted-foreground ring-border/60",
-      )}>
-        <EntityIcon
-          kind={item.kind}
-          filePath={isFile ? item.path : undefined}
-          size={14}
-          className="flex items-center justify-center"
-        />
-      </span>
-      {item.kind === "agent" ? (
-        <span className="flex min-w-0 flex-1 items-baseline gap-1">
-          <span className={cn("shrink-0 font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>
-          {item.description ? (
-            <span className={cn(
-              "min-w-0 truncate",
-              isDark
-                ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
-                : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
-            )}>
-              {item.description}
-            </span>
-          ) : null}
-        </span>
-      ) : (
-        <span className="min-w-0 flex-1 truncate">
-          <span className={cn(
-            isDark
-              ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
-              : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
-          )}>{dir}</span>
-          <span className={cn("font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>
-        </span>
-      )}
+      <SuggestionRowIcon item={item} isFile={isFile} isDark={isDark} />
+      {item.kind === "agent" ? <AgentSuggestionRowText item={item} name={name} isDark={isDark} /> : <FileSuggestionRowText dir={dir} name={name} isDark={isDark} />}
     </Button>
   );
 });

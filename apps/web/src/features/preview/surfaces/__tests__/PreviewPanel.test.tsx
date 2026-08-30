@@ -19,6 +19,7 @@ const {
   mockUsePreviewTabs,
   mockOnAddElementAnnotation,
   mockCaptureAnnotationSnapshot,
+  mockCaptureSuccess,
   mockGetProviderCatalog,
 } = vi.hoisted(() => ({
   mockUsePreviewBridge: vi.fn(),
@@ -35,6 +36,9 @@ const {
   })),
   mockOnAddElementAnnotation: vi.fn(),
   mockCaptureAnnotationSnapshot: vi.fn(),
+  mockCaptureSuccess: {
+    current: undefined as ((kind: "viewport" | "region" | "element" | "context") => void) | undefined,
+  },
   mockGetProviderCatalog: vi.fn().mockResolvedValue({
     providerId: "claude",
     context: { scope: "user" },
@@ -68,19 +72,24 @@ vi.mock("../../tabs/usePreviewTabs", () => ({
 }));
 
 vi.mock("../../capture/usePreviewCapture", () => ({
-  usePreviewCapture: () => ({
-    captureBusy: false,
-    regionBusy: false,
-    elementPickBusy: false,
-    contextBusy: false,
-    anyCaptureActive: false,
-    onAddPictureReference: vi.fn(),
-    onAddRegionPictureReference: vi.fn(),
-    onAddElementPickPictureReference: vi.fn(),
-    onAddPageContextOnly: vi.fn(),
-    onAddElementAnnotation: mockOnAddElementAnnotation,
-    captureAnnotationSnapshot: mockCaptureAnnotationSnapshot,
-  }),
+  usePreviewCapture: ({ onSuccess }: {
+    readonly onSuccess?: (kind: "viewport" | "region" | "element" | "context") => void;
+  }) => {
+    mockCaptureSuccess.current = onSuccess;
+    return {
+      captureBusy: false,
+      regionBusy: false,
+      elementPickBusy: false,
+      contextBusy: false,
+      anyCaptureActive: false,
+      onAddPictureReference: vi.fn(),
+      onAddRegionPictureReference: vi.fn(),
+      onAddElementPickPictureReference: vi.fn(),
+      onAddPageContextOnly: vi.fn(),
+      onAddElementAnnotation: mockOnAddElementAnnotation,
+      captureAnnotationSnapshot: mockCaptureAnnotationSnapshot,
+    };
+  },
 }));
 
 import {
@@ -677,6 +686,7 @@ describe("PreviewPanel: full panel state", () => {
       },
     };
     mockOnAddElementAnnotation.mockResolvedValue({ ok: true });
+    mockCaptureSuccess.current = undefined;
     mockCaptureAnnotationSnapshot.mockResolvedValue({
       id: "capture-1",
       name: "Preview annotation 1",
@@ -729,6 +739,18 @@ describe("PreviewPanel: full panel state", () => {
   it("renders the full panel when desktopBridge is present", () => {
     render(<PreviewPanel threadId="thread-1" />);
     expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
+  });
+
+  it("shows the capture confirmation after a successful viewport capture", () => {
+    render(<PreviewPanel threadId="thread-1" />);
+
+    act(() => {
+      mockCaptureSuccess.current?.("viewport");
+    });
+
+    const confirmation = screen.getByTestId("preview-capture-confirmation");
+    expect(within(confirmation).getByText("attached")).toBeInTheDocument();
+    expect(within(confirmation).getByText("screenshot")).toBeInTheDocument();
   });
 
   it("uses an amber shadow and edge wash while the agent controls Browser", () => {

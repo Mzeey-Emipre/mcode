@@ -41,6 +41,67 @@ export function titleFromMessageContent(content: string): string {
 /** Union of all preparing-context values for exhaustive switch checks. */
 export type ClientPreparingContext = NonNullable<WorkspaceThread["clientPreparingContext"]>;
 
+type PlaceholderWorkspaceThreadParams = {
+  id: string;
+  workspaceId: string;
+  title: string;
+  queuedMessage: string;
+  transportMode: "direct" | "worktree";
+  branch: string;
+  checkoutState?: Thread["checkout_state"];
+  baseBranch?: string | null;
+  worktreePath?: string | null;
+  worktreeManaged?: boolean;
+  clientPreparingContext: ClientPreparingContext;
+  model?: string | null;
+  provider?: string | null;
+  reasoningLevel?: ReasoningLevel | null;
+  interactionMode?: Thread["interaction_mode"];
+  orchestrationMode?: OrchestrationMode | null;
+  permissionMode?: Thread["permission_mode"];
+  contextWindow?: ContextWindowMode | null;
+  thinking?: boolean | null;
+  codexFastMode?: boolean | null;
+  copilotAgent?: string | null;
+  parentThreadId?: string | null;
+  forkedFromMessageId?: string | null;
+};
+
+function resolveCheckoutFields(params: PlaceholderWorkspaceThreadParams) {
+  const checkoutState =
+    params.checkoutState ?? (params.transportMode === "worktree" ? "branchless" : "named");
+
+  return {
+    worktree_path: params.worktreePath ?? null,
+    checkout_state: checkoutState,
+    base_branch: params.baseBranch ?? (checkoutState === "branchless" ? params.branch : null),
+    worktree_managed: params.worktreeManaged ?? params.transportMode === "worktree",
+  };
+}
+
+function resolveProviderFields(params: PlaceholderWorkspaceThreadParams) {
+  return {
+    model: params.model ?? null,
+    provider: params.provider ?? "claude",
+    reasoning_level: params.reasoningLevel ?? null,
+    interaction_mode: params.interactionMode ?? null,
+    orchestration_mode: params.orchestrationMode ?? null,
+    ...resolveProviderOptionFields(params),
+  };
+}
+
+function resolveProviderOptionFields(params: PlaceholderWorkspaceThreadParams) {
+  return {
+    permission_mode: params.permissionMode ?? null,
+    context_window_mode: params.contextWindow ?? null,
+    thinking: params.thinking ?? null,
+    codex_fast_mode: params.codexFastMode ?? null,
+    copilot_agent: params.copilotAgent ?? null,
+    parent_thread_id: params.parentThreadId ?? null,
+    forked_from_message_id: params.forkedFromMessageId ?? null,
+  };
+}
+
 /**
  * User-visible status line for the preparing shell.
  */
@@ -65,47 +126,18 @@ export function preparingStatusLabel(ctx: ClientPreparingContext): string {
 /**
  * Builds a minimal {@link Thread} shape for an optimistic sidebar row and chat shell.
  */
-export function buildPlaceholderWorkspaceThread(params: {
-  id: string;
-  workspaceId: string;
-  title: string;
-  queuedMessage: string;
-  transportMode: "direct" | "worktree";
-  branch: string;
-  checkoutState?: Thread["checkout_state"];
-  baseBranch?: string | null;
-  worktreePath?: string | null;
-  worktreeManaged?: boolean;
-  clientPreparingContext: ClientPreparingContext;
-  model?: string | null;
-  provider?: string | null;
-  reasoningLevel?: ReasoningLevel | null;
-  interactionMode?: Thread["interaction_mode"];
-  orchestrationMode?: OrchestrationMode | null;
-  permissionMode?: Thread["permission_mode"];
-  contextWindow?: ContextWindowMode | null;
-  thinking?: boolean | null;
-  codexFastMode?: boolean | null;
-  copilotAgent?: string | null;
-  parentThreadId?: string | null;
-  forkedFromMessageId?: string | null;
-}): WorkspaceThread {
+export function buildPlaceholderWorkspaceThread(
+  params: PlaceholderWorkspaceThreadParams,
+): WorkspaceThread {
   const now = new Date().toISOString();
-  const checkoutState =
-    params.checkoutState ?? (params.transportMode === "worktree" ? "branchless" : "named");
-  const baseBranch =
-    params.baseBranch ?? (checkoutState === "branchless" ? params.branch : null);
   return {
     id: params.id,
     workspace_id: params.workspaceId,
     title: params.title,
     status: "active",
     mode: params.transportMode,
-    worktree_path: params.worktreePath ?? null,
     branch: params.branch,
-    checkout_state: checkoutState,
-    base_branch: baseBranch,
-    worktree_managed: params.worktreeManaged ?? (params.transportMode === "worktree"),
+    ...resolveCheckoutFields(params),
     issue_number: null,
     pr_number: null,
     pr_status: null,
@@ -113,8 +145,7 @@ export function buildPlaceholderWorkspaceThread(params: {
     sdk_session_id: null,
     created_at: now,
     updated_at: now,
-    model: params.model ?? null,
-    provider: params.provider ?? "claude",
+    ...resolveProviderFields(params),
     deleted_at: null,
     user_completed_at: null,
     scheduled_deletion_at: null,
@@ -122,16 +153,6 @@ export function buildPlaceholderWorkspaceThread(params: {
     cleanup_reason: null,
     last_context_tokens: null,
     context_window: null,
-    reasoning_level: params.reasoningLevel ?? null,
-    interaction_mode: params.interactionMode ?? null,
-    orchestration_mode: params.orchestrationMode ?? null,
-    permission_mode: params.permissionMode ?? null,
-    context_window_mode: params.contextWindow ?? null,
-    thinking: params.thinking ?? null,
-    codex_fast_mode: params.codexFastMode ?? null,
-    copilot_agent: params.copilotAgent ?? null,
-    parent_thread_id: params.parentThreadId ?? null,
-    forked_from_message_id: params.forkedFromMessageId ?? null,
     last_compact_summary: null,
     default_open_in_app: null,
     clientPreparing: true,

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, type MutableRefObject } from "react";
 import { getTransport } from "@/transport";
 import {
   providerCatalogCacheKey,
@@ -6,6 +6,7 @@ import {
 } from "@/stores/providerCatalogStore";
 import type {
   ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
   ProviderPluginCapability,
   SelectableProviderAgent,
 } from "@mcode/contracts";
@@ -55,9 +56,83 @@ interface UseFileAutocompleteResult {
   dismiss: () => void;
 }
 
+interface MentionTrigger {
+  readonly query: string;
+  readonly start: number;
+}
+
+interface LoadedMentionResources {
+  readonly files: string[] | undefined;
+  readonly catalog: ProviderCatalogSnapshot | undefined;
+}
+
 /** Build a composite cache key from workspace + thread scope. */
 function scopeKey(workspaceId: string, threadId?: string): string {
   return threadId ? `${workspaceId}:${threadId}` : workspaceId;
+}
+
+/** Returns the active @ trigger before the Composer cursor. */
+function findMentionTrigger(text: string, cursorPos: number): MentionTrigger | null {
+  for (let index = cursorPos - 1; index >= 0; index -= 1) {
+    const character = text[index];
+    if (character === "@") {
+      if (index === 0 || /\s/.test(text[index - 1])) {
+        return { start: index, query: text.slice(index + 1, cursorPos).toLowerCase() };
+      }
+      return null;
+    }
+    if (/\s/.test(character)) return null;
+  }
+  return null;
+}
+
+/** Marks a provider catalog scope for one picker-open refresh. */
+function claimCatalogRefresh(
+  request: ProviderCatalogRequest | null,
+  catalogKey: string,
+  refreshedScopeRef: MutableRefObject<string | null>,
+): boolean {
+  if (request === null || refreshedScopeRef.current === catalogKey) return false;
+  refreshedScopeRef.current = catalogKey;
+  return true;
+}
+
+/** Loads missing file and provider catalog data for an open mention picker. */
+async function loadMentionResources({
+  allFiles,
+  loadFiles,
+  shouldRefreshCatalog,
+  catalogRequest,
+}: {
+  allFiles: readonly string[];
+  loadFiles: () => Promise<string[] | undefined>;
+  shouldRefreshCatalog: boolean;
+  catalogRequest: ProviderCatalogRequest | null;
+}): Promise<LoadedMentionResources> {
+  const filesPromise = allFiles.length === 0 ? loadFiles() : Promise.resolve(undefined);
+  const catalogPromise = shouldRefreshCatalog && catalogRequest
+    ? useProviderCatalogStore.getState().load(catalogRequest, true).catch((err) => {
+        console.error("[useFileAutocomplete] Failed to load Codex agents:", err);
+        return undefined;
+      })
+    : Promise.resolve(undefined);
+  const [files, catalog] = await Promise.all([filesPromise, catalogPromise]);
+  return { files, catalog };
+}
+
+/** Converts a catalog snapshot into mentionable agent and plugin suggestions. */
+function catalogMentionSuggestions(
+  snapshot: ProviderCatalogSnapshot | undefined,
+  agents: readonly MentionSuggestion[],
+  plugins: readonly MentionSuggestion[],
+): readonly [readonly MentionSuggestion[], readonly MentionSuggestion[]] {
+  if (!snapshot) return [agents, plugins];
+  return [
+    snapshot.selectableAgents.map(toAgentSuggestion),
+    snapshot.entries
+      .filter((entry): entry is ProviderPluginCapability => entry.kind === "plugin")
+      .map(toPluginSuggestion),
+  ];
 }
 
 /** Cache file list per scope (workspace + thread) to avoid repeated IPC calls. */
@@ -209,63 +284,49 @@ export function useFileAutocomplete({
     return files;
   }, [workspaceId, threadId]);
 
+  const dismiss = useCallback(() => {
+    requestEpochRef.current += 1;
+    refreshedAgentScopeRef.current = null;
+    setIsOpen(false);
+    setSuggestions([]);
+    setQuery("");
+    setTriggerStart(-1);
+  }, []);
+
   const handleInputChange = useCallback(
     async (text: string, cursorPos: number) => {
       const requestEpoch = ++requestEpochRef.current;
       const requestScope = workspaceId ? scopeKey(workspaceId, threadId) : "";
-      // Find the @ trigger: scan backwards from cursor
-      let atPos = -1;
-      for (let i = cursorPos - 1; i >= 0; i--) {
-        const ch = text[i];
-        if (ch === "@") {
-          // Valid trigger: @ at start of string or preceded by whitespace
-          if (i === 0 || /\s/.test(text[i - 1])) {
-            atPos = i;
-          }
-          break;
-        }
-        // Stop scanning if we hit whitespace (no @ trigger here)
-        if (/\s/.test(ch)) break;
-      }
-
-      if (atPos === -1) {
-        refreshedAgentScopeRef.current = null;
-        setIsOpen(false);
-        setSuggestions([]);
-        setQuery("");
-        setTriggerStart(-1);
+      const trigger = findMentionTrigger(text, cursorPos);
+      if (!trigger) {
+        dismiss();
         return;
       }
 
-      const q = text.slice(atPos + 1, cursorPos).toLowerCase();
-      setQuery(q);
-      setTriggerStart(atPos);
+      setQuery(trigger.query);
+      setTriggerStart(trigger.start);
 
       const cachedFiles = fileListCache.get(requestScope) ?? allFiles;
-      setSuggestions(filterMentionSuggestions(cachedFiles, catalogAgents, catalogPlugins, q));
+      setSuggestions(filterMentionSuggestions(cachedFiles, catalogAgents, catalogPlugins, trigger.query));
       setIsOpen(true);
 
-      const shouldRefreshAgents = catalogRequest !== null
-        && refreshedAgentScopeRef.current !== catalogKey;
-      if (shouldRefreshAgents) refreshedAgentScopeRef.current = catalogKey;
-      const [loadedFiles, loadedCatalog] = await Promise.all([
-        allFiles.length === 0 ? loadFiles() : Promise.resolve(undefined),
-        shouldRefreshAgents
-          ? useProviderCatalogStore.getState().load(catalogRequest, true).catch((err) => {
-              console.error("[useFileAutocomplete] Failed to load Codex agents:", err);
-              return undefined;
-            })
-          : Promise.resolve(undefined),
-      ]);
-      const files = loadedFiles ?? cachedFiles;
-      const agents = loadedCatalog
-        ? loadedCatalog.selectableAgents.map(toAgentSuggestion)
-        : catalogAgents;
-      const plugins = loadedCatalog
-        ? loadedCatalog.entries
-          .filter((entry): entry is ProviderPluginCapability => entry.kind === "plugin")
-          .map(toPluginSuggestion)
-        : catalogPlugins;
+      const shouldRefreshCatalog = claimCatalogRefresh(
+        catalogRequest,
+        catalogKey,
+        refreshedAgentScopeRef,
+      );
+      const loaded = await loadMentionResources({
+        allFiles,
+        loadFiles,
+        shouldRefreshCatalog,
+        catalogRequest,
+      });
+      const files = loaded.files ?? cachedFiles;
+      const [agents, plugins] = catalogMentionSuggestions(
+        loaded.catalog,
+        catalogAgents,
+        catalogPlugins,
+      );
 
       if (
         requestEpochRef.current !== requestEpoch ||
@@ -274,10 +335,10 @@ export function useFileAutocomplete({
         return;
       }
 
-      setSuggestions(filterMentionSuggestions(files, agents, plugins, q));
+      setSuggestions(filterMentionSuggestions(files, agents, plugins, trigger.query));
       setIsOpen(true);
     },
-    [allFiles, catalogAgents, catalogKey, catalogPlugins, catalogRequest, loadFiles, threadId, workspaceId],
+    [allFiles, catalogAgents, catalogKey, catalogPlugins, catalogRequest, dismiss, loadFiles, threadId, workspaceId],
   );
 
   useEffect(() => {
@@ -292,15 +353,6 @@ export function useFileAutocomplete({
     setQuery("");
     setTriggerStart(-1);
     return suggestion;
-  }, []);
-
-  const dismiss = useCallback(() => {
-    requestEpochRef.current += 1;
-    refreshedAgentScopeRef.current = null;
-    setIsOpen(false);
-    setSuggestions([]);
-    setQuery("");
-    setTriggerStart(-1);
   }, []);
 
   return {

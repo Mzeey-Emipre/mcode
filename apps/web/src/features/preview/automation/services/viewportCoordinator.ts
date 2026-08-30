@@ -513,191 +513,212 @@ export class ViewportCoordinator {
   }
 
   private async apply(pending: PendingOperation): Promise<void> {
-    let hostResult: ViewportHostResult;
+    const hostResult = await this.applyHostOperation(pending.operation);
+    if (!this.isCurrentResize(pending)) {
+      this.resolveInactiveResize(pending);
+      return;
+    }
+    if (hostResult.status === "stale") {
+      this.applyStaleResize(pending, hostResult);
+      return;
+    }
+    if (hostResult.status === "failed") {
+      this.applyFailedResize(pending, hostResult);
+      return;
+    }
+    this.applyConfirmedResize(pending, hostResult);
+  }
+
+  private async applyHostOperation(operation: ViewportHostOperation): Promise<ViewportHostResult> {
     try {
-      hostResult = await this.applyHost(pending.operation);
+      return await this.applyHost(operation);
     } catch (cause) {
-      hostResult = {
+      return {
         status: "failed",
         applied: this.confirmed,
         error: cause instanceof Error ? cause.message : "Viewport host failed",
       };
     }
+  }
 
-    const current = this.pending === pending && !pending.settled;
-    if (!current || this.interrupted || pending.operation.targetGeneration !== this.targetGeneration) {
-      if (!pending.settled && this.superseded.includes(pending)) return;
-      this.resolvePending(pending, {
-        operationId: pending.operation.operationId,
-        source: pending.source,
-        targetGeneration: pending.operation.targetGeneration,
-        operationGeneration: pending.operation.operationGeneration,
-        requested: pending.requested,
-        applied: { ...this.confirmed },
-        status: this.interrupted ? "stale" : "superseded",
-      });
-      return;
-    }
+  private isCurrentResize(pending: PendingOperation): boolean {
+    return this.pending === pending && !pending.settled && !this.interrupted &&
+      pending.operation.targetGeneration === this.targetGeneration;
+  }
 
+  private resolveInactiveResize(pending: PendingOperation): void {
+    if (pending.settled || this.superseded.includes(pending)) return;
+    this.resolvePending(pending, this.pendingResult(
+      pending,
+      { ...this.confirmed },
+      this.interrupted ? "stale" : "superseded",
+    ));
+  }
+
+  private applyStaleResize(pending: PendingOperation, hostResult: ViewportHostResult): void {
     const applied = clampViewportSize(hostResult.applied);
-    if (hostResult.status === "stale") {
-      this.resolvePending(pending, {
-        operationId: pending.operation.operationId,
-        source: pending.source,
-        targetGeneration: pending.operation.targetGeneration,
-        operationGeneration: pending.operation.operationGeneration,
-        requested: pending.requested,
-        applied: { ...applied },
-        status: "stale",
-        error: hostResult.error,
-      });
-      this.pending = null;
-      this.flushSuperseded("stale");
-      this.notify();
-      return;
-    }
-    if (hostResult.status === "failed") {
-      this.resolvePending(pending, {
-        operationId: pending.operation.operationId,
-        source: pending.source,
-        targetGeneration: pending.operation.targetGeneration,
-        operationGeneration: pending.operation.operationGeneration,
-        requested: pending.requested,
-        applied: { ...applied },
-        status: "failed",
-        error: hostResult.error,
-      });
-      this.pending = null;
-      this.flushSuperseded("superseded");
-      this.notify();
-      return;
-    }
+    this.resolvePending(pending, this.pendingHostResult(pending, { ...applied }, "stale", hostResult.error));
+    this.pending = null;
+    this.flushSuperseded("stale");
+    this.notify();
+  }
 
+  private applyFailedResize(pending: PendingOperation, hostResult: ViewportHostResult): void {
+    const applied = clampViewportSize(hostResult.applied);
+    this.resolvePending(pending, this.pendingHostResult(pending, { ...applied }, "failed", hostResult.error));
+    this.pending = null;
+    this.flushSuperseded("superseded");
+    this.notify();
+  }
+
+  private applyConfirmedResize(pending: PendingOperation, hostResult: ViewportHostResult): void {
+    const applied = clampViewportSize(hostResult.applied);
     this.confirmed = applied;
     if (pending.source === "user") this.userConfirmed = applied;
     this.pending = null;
     this.notify();
-    this.resolvePending(pending, {
-      operationId: pending.operation.operationId,
-      source: pending.source,
-      targetGeneration: pending.operation.targetGeneration,
-      operationGeneration: pending.operation.operationGeneration,
-      requested: pending.requested,
-      applied,
-      status: !sameSize(applied, pending.requested) || pending.inputWasClamped ? "clamped" : "applied",
-      error: hostResult.error,
-    });
+    const status = !sameSize(applied, pending.requested) || pending.inputWasClamped ? "clamped" : "applied";
+    this.resolvePending(pending, this.pendingHostResult(pending, applied, status, hostResult.error));
     this.flushSuperseded("superseded");
   }
 
   private async applyReset(pending: PendingResetOperation): Promise<void> {
-    let hostResult: ViewportHostResetResult;
+    const hostResult = await this.applyResetHostOperation(pending.operation);
+    if (!this.isCurrentReset(pending)) {
+      this.resolveInactiveReset(pending);
+      return;
+    }
+    this.pendingReset = null;
+    if (hostResult.status !== "applied") {
+      this.applyRejectedReset(pending, hostResult);
+      return;
+    }
+    this.applyConfirmedReset(pending, hostResult);
+  }
+
+  private async applyResetHostOperation(
+    operation: ViewportHostResetOperation,
+  ): Promise<ViewportHostResetResult> {
     try {
-      hostResult = await this.resetHost!(pending.operation);
+      return await this.resetHost!(operation);
     } catch (cause) {
-      hostResult = {
+      return {
         status: "failed",
         applied: null,
         error: cause instanceof Error ? cause.message : "Viewport reset host failed",
       };
     }
+  }
 
-    const current = this.pendingReset === pending && !pending.settled;
-    if (!current || this.interrupted || pending.operation.targetGeneration !== this.targetGeneration) {
-      if (pending.settled) return;
-      this.resolveReset(pending, {
-        operationId: pending.operation.operationId,
-        source: pending.operation.source,
-        targetGeneration: pending.operation.targetGeneration,
-        operationGeneration: pending.operation.operationGeneration,
-        requested: pending.operation.requested,
-        applied: { ...this.confirmed },
-        status: this.interrupted ? "stale" : "superseded",
-      });
-      return;
-    }
+  private isCurrentReset(pending: PendingResetOperation): boolean {
+    return this.pendingReset === pending && !pending.settled && !this.interrupted &&
+      pending.operation.targetGeneration === this.targetGeneration;
+  }
 
-    this.pendingReset = null;
-    if (hostResult.status === "stale" || hostResult.status === "failed") {
-      this.resolveReset(pending, {
-        operationId: pending.operation.operationId,
-        source: pending.operation.source,
-        targetGeneration: pending.operation.targetGeneration,
-        operationGeneration: pending.operation.operationGeneration,
-        requested: pending.operation.requested,
-        applied: hostResult.applied ?? { ...this.confirmed },
-        status: hostResult.status,
-        error: hostResult.error,
-      });
-      this.notify();
-      this.flushSuperseded(hostResult.status === "stale" ? "stale" : "superseded");
-      return;
-    }
+  private resolveInactiveReset(pending: PendingResetOperation): void {
+    if (pending.settled) return;
+    this.resolveReset(pending, this.resetResult(
+      pending,
+      { ...this.confirmed },
+      this.interrupted ? "stale" : "superseded",
+    ));
+  }
 
+  private applyRejectedReset(
+    pending: PendingResetOperation,
+    hostResult: ViewportHostResetResult,
+  ): void {
+    this.resolveReset(pending, this.resetHostResult(pending, hostResult));
+    this.notify();
+    this.flushSuperseded(hostResult.status === "stale" ? "stale" : "superseded");
+  }
+
+  private applyConfirmedReset(
+    pending: PendingResetOperation,
+    hostResult: ViewportHostResetResult,
+  ): void {
     this.mode = "regular";
-    this.resolveReset(pending, {
-      operationId: pending.operation.operationId,
-      source: pending.operation.source,
-      targetGeneration: pending.operation.targetGeneration,
-      operationGeneration: pending.operation.operationGeneration,
-      requested: pending.operation.requested,
-      applied: hostResult.applied ?? { ...this.confirmed },
-      status: "applied",
-      error: hostResult.error,
-    });
+    this.resolveReset(pending, this.resetHostResult(pending, hostResult));
     this.notify();
     this.flushSuperseded("superseded");
   }
 
   private async applyPresentation(pending: PendingPresentationOperation): Promise<void> {
-    let hostResult: ViewportPresentationHostResult;
+    const hostResult = await this.applyPresentationHostOperation(pending.operation);
+    if (!this.isCurrentPresentation(pending)) {
+      this.resolveInactivePresentation(pending, hostResult);
+      return;
+    }
+    this.pendingPresentation = null;
+    if (this.presentationAcknowledged(pending, hostResult)) {
+      this.applyConfirmedPresentation(pending, hostResult);
+      return;
+    }
+    this.applyRejectedPresentation(pending, hostResult);
+  }
+
+  private async applyPresentationHostOperation(
+    operation: ViewportPresentationHostOperation,
+  ): Promise<ViewportPresentationHostResult> {
     try {
-      hostResult = await this.applyPresentationHost!(pending.operation);
+      return await this.applyPresentationHost!(operation);
     } catch (cause) {
-      hostResult = {
+      return {
         status: "failed",
         applied: this.presentation,
         appliedViewport: { ...this.confirmed },
         error: cause instanceof Error ? cause.message : "Viewport presentation host failed",
       };
     }
+  }
 
-    const current = this.pendingPresentation === pending && !pending.settled;
-    if (!current || this.interrupted || pending.operation.targetGeneration !== this.targetGeneration) {
-      if (pending.settled) return;
-      this.resolvePresentation(pending, this.presentationResult(
-        pending.operation,
-        this.presentation,
-        hostResult.appliedViewport ?? { ...this.confirmed },
-        this.interrupted ? "stale" : "superseded",
-        hostResult.error,
-      ));
-      return;
-    }
+  private isCurrentPresentation(pending: PendingPresentationOperation): boolean {
+    return this.pendingPresentation === pending && !pending.settled && !this.interrupted &&
+      pending.operation.targetGeneration === this.targetGeneration;
+  }
 
-    this.pendingPresentation = null;
-    if (hostResult.status === "applied" && hostResult.applied === pending.operation.presentation) {
-      this.presentation = hostResult.applied;
-      this.presentationError = null;
-      this.notify();
-      this.resolvePresentation(pending, this.presentationResult(
-        pending.operation,
-        hostResult.applied,
-        hostResult.appliedViewport,
-        "applied",
-      ));
-      return;
-    }
+  private resolveInactivePresentation(
+    pending: PendingPresentationOperation,
+    hostResult: ViewportPresentationHostResult,
+  ): void {
+    if (pending.settled) return;
+    this.resolvePresentation(pending, this.presentationResult(
+      pending.operation,
+      this.presentation,
+      hostResult.appliedViewport ?? { ...this.confirmed },
+      this.interrupted ? "stale" : "superseded",
+      hostResult.error,
+    ));
+  }
 
-    const status = hostResult.status === "stale" ||
-      (hostResult.status === "applied" && hostResult.applied !== pending.operation.presentation)
-      ? "stale"
-      : "failed";
-    const error = hostResult.error ?? (
-      status === "stale"
-        ? "Viewport presentation host acknowledgement is stale"
-        : "Viewport presentation host failed"
-    );
+  private presentationAcknowledged(
+    pending: PendingPresentationOperation,
+    hostResult: ViewportPresentationHostResult,
+  ): hostResult is ViewportPresentationHostResult & { status: "applied" } {
+    return hostResult.status === "applied" && hostResult.applied === pending.operation.presentation;
+  }
+
+  private applyConfirmedPresentation(
+    pending: PendingPresentationOperation,
+    hostResult: ViewportPresentationHostResult & { status: "applied" },
+  ): void {
+    this.presentation = hostResult.applied;
+    this.presentationError = null;
+    this.notify();
+    this.resolvePresentation(pending, this.presentationResult(
+      pending.operation,
+      hostResult.applied,
+      hostResult.appliedViewport,
+      "applied",
+    ));
+  }
+
+  private applyRejectedPresentation(
+    pending: PendingPresentationOperation,
+    hostResult: ViewportPresentationHostResult,
+  ): void {
+    const status = this.presentationFailureStatus(pending, hostResult);
+    const error = hostResult.error ?? this.presentationFailureError(status);
     this.presentationError = error;
     this.notify();
     this.resolvePresentation(pending, this.presentationResult(
@@ -707,6 +728,73 @@ export class ViewportCoordinator {
       status,
       error,
     ));
+  }
+
+  private presentationFailureStatus(
+    pending: PendingPresentationOperation,
+    hostResult: ViewportPresentationHostResult,
+  ): "stale" | "failed" {
+    return hostResult.status === "stale" ||
+      (hostResult.status === "applied" && hostResult.applied !== pending.operation.presentation)
+      ? "stale"
+      : "failed";
+  }
+
+  private presentationFailureError(status: "stale" | "failed"): string {
+    return status === "stale"
+      ? "Viewport presentation host acknowledgement is stale"
+      : "Viewport presentation host failed";
+  }
+
+  private pendingResult(
+    pending: PendingOperation,
+    applied: ViewportSize,
+    status: ViewportApplyResult["status"],
+  ): ViewportApplyResult {
+    return {
+      operationId: pending.operation.operationId,
+      source: pending.source,
+      targetGeneration: pending.operation.targetGeneration,
+      operationGeneration: pending.operation.operationGeneration,
+      requested: pending.requested,
+      applied,
+      status,
+    };
+  }
+
+  private pendingHostResult(
+    pending: PendingOperation,
+    applied: ViewportSize,
+    status: ViewportApplyResult["status"],
+    error: string | undefined,
+  ): ViewportApplyResult {
+    return { ...this.pendingResult(pending, applied, status), error };
+  }
+
+  private resetResult(
+    pending: PendingResetOperation,
+    applied: ViewportSize,
+    status: ViewportApplyResult["status"],
+  ): ViewportApplyResult {
+    return {
+      operationId: pending.operation.operationId,
+      source: pending.operation.source,
+      targetGeneration: pending.operation.targetGeneration,
+      operationGeneration: pending.operation.operationGeneration,
+      requested: pending.operation.requested,
+      applied,
+      status,
+    };
+  }
+
+  private resetHostResult(
+    pending: PendingResetOperation,
+    hostResult: ViewportHostResetResult,
+  ): ViewportApplyResult {
+    return {
+      ...this.resetResult(pending, hostResult.applied ?? { ...this.confirmed }, hostResult.status),
+      error: hostResult.error,
+    };
   }
 
   private settlePending(status: "stale" | "superseded"): void {

@@ -43,6 +43,11 @@ const PROVIDER_LABELS: Record<string, string> = {
   opencode: "OpenCode",
 };
 
+type ThreadControlUserMessage = Extract<
+  ThreadControlProjection["messages"][number],
+  { role: "user" }
+>;
+
 function ProviderIcon({ providerId }: { readonly providerId: string }) {
   const props = { size: 14, className: "shrink-0" };
   switch (providerId) {
@@ -196,6 +201,14 @@ function RelationCard({
   );
 }
 
+function getOriginRowDetails(origin: ThreadControlUserMessage["origin"]): { source: ThreadControlThreadRef | null; sourceUnavailable: boolean; label: string } {
+  if (origin.type === "composer") return { source: null, sourceUnavailable: false, label: "From composer" };
+  if (origin.type !== "thread") return { source: null, sourceUnavailable: false, label: "Legacy origin" };
+  const source = origin.sourceThread;
+  const sourceUnavailable = origin.sourceUnavailable;
+  return { source, sourceUnavailable, label: `From ${origin.sourceWorkspaceName} / ${threadName(source)} (${sourceUnavailable ? "source unavailable" : "thread origin"})` };
+}
+
 function OriginRow({
   message,
 }: {
@@ -203,13 +216,7 @@ function OriginRow({
 }) {
   if (message.role !== "user") return null;
   const origin = message.origin;
-  const source = origin.type === "thread" ? origin.sourceThread : null;
-  const sourceUnavailable = origin.type === "thread" && origin.sourceUnavailable;
-  const label = origin.type === "composer"
-    ? "From composer"
-    : origin.type === "thread"
-      ? `From ${origin.sourceWorkspaceName} / ${threadName(source)} (${sourceUnavailable ? "source unavailable" : "thread origin"})`
-      : "Legacy origin";
+  const { source, sourceUnavailable, label } = getOriginRowDetails(origin);
   return (
     <div className="border-b border-border/40 px-4 py-2.5" data-testid="coordination-message-origin">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -229,6 +236,26 @@ function OriginRow({
       <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-foreground">{message.content}</p>
     </div>
   );
+}
+
+function CoordinationRelationSection({ relation }: { relation: ThreadControlProjection["relation"] }) {
+  if (!relation) return null;
+  return <section aria-labelledby="coordination-relation-heading"><h3 id="coordination-relation-heading" className="px-4 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delegated from</h3><div className="px-4 pb-2">{relation.source ? <Button type="button" variant="outline" size="sm" onClick={() => void navigateToThread(relation.source!)}><ProviderIcon providerId={relation.source.providerId} /><ExternalLink size={13} aria-hidden />{relation.source.title}</Button> : <p className="text-xs text-muted-foreground">Source thread is no longer available.</p>}</div></section>;
+}
+
+function CoordinationChildrenSection({ children, identity, onRefresh }: { children: ThreadControlProjection["children"]; identity: ThreadControlIdentity; onRefresh: () => void }) {
+  if (children.length === 0) return null;
+  return <section aria-labelledby="coordination-children-heading"><h3 id="coordination-children-heading" className="px-4 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delegated threads ({children.length})</h3>{children.map((relation) => <RelationCard key={relation.destination.threadId} relation={relation} sourceIdentity={identity} onRefresh={onRefresh} />)}</section>;
+}
+
+function CoordinationApprovalsSection({ approvals, onRefresh }: { approvals: ThreadControlProjection["approvals"]; onRefresh: () => void }) {
+  if (approvals.length === 0) return null;
+  return <section aria-labelledby="coordination-approvals-heading"><h3 id="coordination-approvals-heading" className="px-4 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Approval requests ({approvals.length})</h3>{approvals.map((approval) => <div key={approval.requestId} className="border-b border-border/40 px-4 py-3" data-testid="coordination-approval"><p className="text-sm font-medium">{approval.title ?? approval.toolName}</p><p className="mt-1 text-xs text-muted-foreground">Owned by {approval.ownerThreadId ?? approval.threadId}</p><div className="mt-2 flex gap-2"><Button type="button" size="sm" onClick={() => void getTransport().respondToPermission(approval.requestId, "allow").then(onRefresh)}><Check size={13} aria-hidden />Allow</Button><Button type="button" variant="ghost" size="sm" onClick={() => void getTransport().respondToPermission(approval.requestId, "deny").then(onRefresh)}><X size={13} aria-hidden />Deny</Button></div></div>)}</section>;
+}
+
+function CoordinationOriginsSection({ messages }: { messages: ThreadControlProjection["messages"] }) {
+  const userMessages = messages.filter((message) => message.role === "user");
+  return <section aria-labelledby="coordination-origins-heading"><h3 id="coordination-origins-heading" className="px-4 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Message origins</h3>{userMessages.length === 0 ? <p className="px-4 py-3 text-sm text-muted-foreground">No user messages yet.</p> : messages.map((message) => <OriginRow key={message.messageId} message={message} />)}</section>;
 }
 
 /** User-facing persisted thread coordination panel. */
@@ -268,67 +295,10 @@ export function CoordinationPanel({ workspaceId, threadId }: { readonly workspac
         </Badge>
       </header>
       <ScrollArea className="min-h-0 flex-1">
-        {projection.relation && (
-          <section aria-labelledby="coordination-relation-heading">
-            <h3 id="coordination-relation-heading" className="px-4 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Delegated from
-            </h3>
-            <div className="px-4 pb-2">
-              {projection.relation.source ? (
-                <Button type="button" variant="outline" size="sm" onClick={() => void navigateToThread(projection.relation!.source!)}>
-                  <ProviderIcon providerId={projection.relation.source.providerId} />
-                  <ExternalLink size={13} aria-hidden />
-                  {projection.relation.source.title}
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">Source thread is no longer available.</p>
-              )}
-            </div>
-          </section>
-        )}
-        {projection.children.length > 0 && (
-          <section aria-labelledby="coordination-children-heading">
-            <h3 id="coordination-children-heading" className="px-4 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Delegated threads ({projection.children.length})
-            </h3>
-            {projection.children.map((relation) => (
-              <RelationCard key={relation.destination.threadId} relation={relation} sourceIdentity={identity} onRefresh={refresh} />
-            ))}
-          </section>
-        )}
-        {projection.approvals.length > 0 && (
-          <section aria-labelledby="coordination-approvals-heading">
-            <h3 id="coordination-approvals-heading" className="px-4 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Approval requests ({projection.approvals.length})
-            </h3>
-            {projection.approvals.map((approval) => (
-              <div key={approval.requestId} className="border-b border-border/40 px-4 py-3" data-testid="coordination-approval">
-                <p className="text-sm font-medium">{approval.title ?? approval.toolName}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Owned by {approval.ownerThreadId ?? approval.threadId}</p>
-                <div className="mt-2 flex gap-2">
-                  <Button type="button" size="sm" onClick={() => void getTransport().respondToPermission(approval.requestId, "allow").then(refresh)}>
-                    <Check size={13} aria-hidden />
-                    Allow
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => void getTransport().respondToPermission(approval.requestId, "deny").then(refresh)}>
-                    <X size={13} aria-hidden />
-                    Deny
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </section>
-        )}
-        <section aria-labelledby="coordination-origins-heading">
-          <h3 id="coordination-origins-heading" className="px-4 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Message origins
-          </h3>
-          {projection.messages.filter((message) => message.role === "user").length === 0 ? (
-            <p className="px-4 py-3 text-sm text-muted-foreground">No user messages yet.</p>
-          ) : projection.messages.map((message) => (
-            <OriginRow key={message.messageId} message={message} />
-          ))}
-        </section>
+        <CoordinationRelationSection relation={projection.relation} />
+        <CoordinationChildrenSection children={projection.children} identity={identity} onRefresh={refresh} />
+        <CoordinationApprovalsSection approvals={projection.approvals} onRefresh={refresh} />
+        <CoordinationOriginsSection messages={projection.messages} />
       </ScrollArea>
     </section>
   );

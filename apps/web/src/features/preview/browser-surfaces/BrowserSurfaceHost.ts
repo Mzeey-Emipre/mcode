@@ -154,6 +154,11 @@ export interface BrowserSurfaceMetadata {
   readonly favicon: string | null;
 }
 
+type RetainedBrowserSurfaceMetadata = Pick<
+  BrowserSurfaceMetadata,
+  "recoveryAddress" | "title" | "favicon"
+>;
+
 /** Listener invoked when a generation's canonical state is published. */
 export type BrowserSurfaceListener = (snapshot: BrowserSurfacePageState) => void;
 
@@ -217,7 +222,7 @@ function initialPageState(
   identity: BrowserSurfaceIdentity,
   generation: number,
   address?: string,
-  metadata?: Pick<BrowserSurfaceMetadata, "recoveryAddress" | "title" | "favicon">,
+  metadata?: RetainedBrowserSurfaceMetadata,
 ): BrowserSurfacePageState {
   const pendingAddress = boundString(address, MAX_ADDRESS);
   return {
@@ -265,15 +270,15 @@ function boundPresentation(presentation: BrowserSurfacePresentation): BrowserSur
   };
 }
 
+function isNavigationState(value: unknown): value is BrowserSurfaceNavigationState {
+  return value !== null && typeof value === "object" &&
+    "canGoBack" in value && "canGoForward" in value;
+}
+
 function sameStateValue(left: unknown, right: unknown): boolean {
   if (left === right) return true;
-  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
-  const leftNavigation = left as BrowserSurfaceNavigationState;
-  const rightNavigation = right as BrowserSurfaceNavigationState;
-  return "canGoBack" in leftNavigation && "canGoForward" in leftNavigation &&
-    "canGoBack" in rightNavigation && "canGoForward" in rightNavigation &&
-    leftNavigation.canGoBack === rightNavigation.canGoBack &&
-    leftNavigation.canGoForward === rightNavigation.canGoForward;
+  if (!isNavigationState(left) || !isNavigationState(right)) return false;
+  return left.canGoBack === right.canGoBack && left.canGoForward === right.canGoForward;
 }
 
 /**
@@ -302,55 +307,117 @@ export class BrowserSurfaceHost {
   }
 
   private readonly adapterFactory: BrowserSurfaceAdapterFactory;
+  private readonly nextStateHandlers: Record<
+    BrowserSurfaceAdapterEvent["type"],
+    (state: BrowserSurfacePageState, event: BrowserSurfaceAdapterEvent) => BrowserSurfacePageState
+  > = {
+    "navigation-started": (state, event) => this.navigationStartedState(state, event as Extract<BrowserSurfaceAdapterEvent, { type: "navigation-started" }>),
+    "navigation-committed": (state, event) => this.navigationCommittedState(state, event as Extract<BrowserSurfaceAdapterEvent, { type: "navigation-committed" }>),
+    "load-started": (state, event) => this.loadStartedState(state, event as Extract<BrowserSurfaceAdapterEvent, { type: "load-started" }>),
+    "load-failed": (state, event) => this.loadFailedState(state, event as Extract<BrowserSurfaceAdapterEvent, { type: "load-failed" }>),
+    "load-stopped": (state, event) => this.loadStoppedState(state, event as Extract<BrowserSurfaceAdapterEvent, { type: "load-stopped" }>),
+    "title-updated": (state, event) => this.mergeState(state, { title: boundString((event as Extract<BrowserSurfaceAdapterEvent, { type: "title-updated" }>).title, MAX_TITLE) ?? "" }),
+    "favicon-updated": (state, event) => this.mergeState(state, { favicon: boundString((event as Extract<BrowserSurfaceAdapterEvent, { type: "favicon-updated" }>).favicon, MAX_FAVICON) }),
+    "navigation-state": (state, event) => this.mergeState(state, { navigation: (event as Extract<BrowserSurfaceAdapterEvent, { type: "navigation-state" }>).navigation }),
+    "document-access": (state, event) => this.mergeState(state, { documentAccess: (event as Extract<BrowserSurfaceAdapterEvent, { type: "document-access" }>).access }),
+    "surface-lost": (state) => state,
+  };
 
-  /** Creates or replaces the adapter for an identity and returns its snapshot. */
-  public create(identity: BrowserSurfaceIdentity, optionsOrGeneration: BrowserSurfaceCreateOptions | number = {}): BrowserSurfacePageState {
-    const options: BrowserSurfaceCreateOptions = typeof optionsOrGeneration === "number"
-      ? { generation: optionsOrGeneration }
-      : optionsOrGeneration;
-    const key = surfaceKey(identity);
-    const prior = this.records.get(key);
-    const address = options.address === undefined
-      ? undefined
-      : this.normalizeAddress(options.address);
-    const generation = options.generation ?? (prior ? prior.generation + 1 : this.nextGeneration++);
-    if (prior && options.generation !== undefined && generation <= prior.generation) {
-      if (prior.state) return prior.state;
-      throw new RangeError("Cannot create a Browser surface from a retired generation");
-    }
-    if (generation >= this.nextGeneration) this.nextGeneration = generation + 1;
-    const retainedMetadata = prior ? this.metadataFor(prior) : undefined;
-    if (prior) this.disposeRecord(key, prior, false);
+  private createOptions(optionsOrGeneration: BrowserSurfaceCreateOptions | number): BrowserSurfaceCreateOptions {
+    return typeof optionsOrGeneration === "number" ? { generation: optionsOrGeneration } : optionsOrGeneration;
+  }
+
+  private createGeneration(options: BrowserSurfaceCreateOptions, prior: SurfaceRecord | undefined): number {
+    return options.generation ?? (prior ? prior.generation + 1 : this.nextGeneration++);
+  }
+
+  private validateCreateGeneration(
+    prior: SurfaceRecord | undefined,
+    options: BrowserSurfaceCreateOptions,
+    generation: number,
+  ): BrowserSurfacePageState | null {
+    if (!prior || options.generation === undefined || generation > prior.generation) return null;
+    if (prior.state) return prior.state;
+    throw new RangeError("Cannot create a Browser surface from a retired generation");
+  }
+
+  private retainedRecordFields(
+    prior: SurfaceRecord | undefined,
+    metadata: RetainedBrowserSurfaceMetadata | undefined,
+  ): Pick<SurfaceRecord, "title" | "favicon" | "listeners" | "publicationPending" | "visible" | "controlled" | "presentation"> {
+    return {
+      title: this.retainedTitle(metadata),
+      favicon: this.retainedFavicon(metadata),
+      listeners: this.priorField(prior, (record) => record.listeners, new Set()),
+      publicationPending: prior !== undefined,
+      visible: this.priorField(prior, (record) => record.visible, false),
+      controlled: this.priorField(prior, (record) => record.controlled, false),
+      presentation: this.priorField(prior, (record) => record.presentation, null),
+    };
+  }
+
+  private priorField<Value>(prior: SurfaceRecord | undefined, select: (record: SurfaceRecord) => Value, fallback: Value): Value {
+    return prior ? select(prior) : fallback;
+  }
+
+  private retainedTitle(metadata: RetainedBrowserSurfaceMetadata | undefined): string {
+    return metadata ? metadata.title : "";
+  }
+
+  private retainedFavicon(metadata: RetainedBrowserSurfaceMetadata | undefined): string | null {
+    return metadata ? metadata.favicon : null;
+  }
+
+  private createRecord(
+    identity: BrowserSurfaceIdentity,
+    generation: number,
+    address: string | undefined,
+    prior: SurfaceRecord | undefined,
+    retainedMetadata: RetainedBrowserSurfaceMetadata | undefined,
+  ): SurfaceRecord & { adapter: BrowserSurfaceAdapter; state: BrowserSurfacePageState } {
     const adapter = this.adapterFactory(identity, generation);
     const state = initialPageState(identity, generation, address, retainedMetadata);
-    const record: SurfaceRecord = {
+    return {
       identity,
       generation,
       adapter,
       state,
       recoveryAddress: state.recoveryAddress,
-      title: retainedMetadata?.title ?? "",
-      favicon: retainedMetadata?.favicon ?? null,
-      listeners: prior?.listeners ?? new Set(),
       stopAdapter: () => undefined,
       frameHandle: null,
-      publicationPending: prior !== undefined,
       disposed: false,
-      visible: prior?.visible ?? false,
-      controlled: prior?.controlled ?? false,
       operationPins: 0,
       capturePins: 0,
-      presentation: prior?.presentation ?? null,
+      ...this.retainedRecordFields(prior, retainedMetadata),
     };
-    this.records.set(key, record);
-    record.stopAdapter = adapter.subscribe((event) => this.handleEvent(event));
-    for (const listener of [...this.materializedListeners]) listener(identity, generation);
-    adapter.create?.();
-    adapter.setControlled?.(record.controlled);
-    if (address !== undefined) void adapter.navigate(address);
-    if (record.visible && record.presentation) adapter.present(record.presentation);
+  }
+
+  private startRecord(record: SurfaceRecord, address: string | undefined): void {
+    record.stopAdapter = record.adapter!.subscribe((event) => this.handleEvent(event));
+    for (const listener of this.materializedListeners) listener(record.identity, record.generation);
+    record.adapter!.create?.();
+    record.adapter!.setControlled?.(record.controlled);
+    if (address !== undefined) void record.adapter!.navigate(address);
+    if (record.visible && record.presentation) record.adapter!.present(record.presentation);
     if (record.publicationPending) this.schedulePublication(record);
-    return state;
+  }
+
+  /** Creates or replaces the adapter for an identity and returns its snapshot. */
+  public create(identity: BrowserSurfaceIdentity, optionsOrGeneration: BrowserSurfaceCreateOptions | number = {}): BrowserSurfacePageState {
+    const options = this.createOptions(optionsOrGeneration);
+    const key = surfaceKey(identity);
+    const prior = this.records.get(key);
+    const address = options.address === undefined ? undefined : this.normalizeAddress(options.address);
+    const generation = this.createGeneration(options, prior);
+    const current = this.validateCreateGeneration(prior, options, generation);
+    if (current) return current;
+    if (generation >= this.nextGeneration) this.nextGeneration = generation + 1;
+    const retainedMetadata = prior ? this.metadataFor(prior) : undefined;
+    if (prior) this.disposeRecord(key, prior, false);
+    const record = this.createRecord(identity, generation, address, prior, retainedMetadata);
+    this.records.set(key, record);
+    this.startRecord(record, address);
+    return record.state;
   }
 
   /** Returns an identity's warm surface, or creates it when it does not exist. */
@@ -551,64 +618,73 @@ export class BrowserSurfaceHost {
 
   private nextState(state: BrowserSurfacePageState, event: BrowserSurfaceAdapterEvent): BrowserSurfacePageState {
     if (!sameIdentity(state.identity, event.identity) || state.generation !== event.generation) return state;
-    switch (event.type) {
-      case "navigation-started":
-        if (!event.mainFrame) return state;
-        return this.mergeState(state, {
-          pendingAddress: boundString(event.address, MAX_ADDRESS),
-          phase: "loading",
-          mainFrameError: null,
-          mainFrameErrorCode: null,
-        });
-      case "navigation-committed":
-        if (!event.mainFrame) return state;
-        return this.mergeState(state, {
-          committedAddress: boundString(event.address, MAX_ADDRESS),
-          recoveryAddress: boundString(event.address, MAX_ADDRESS),
-        });
-      case "load-started":
-        if (!event.mainFrame) return state;
-        return this.mergeState(state, {
-          ...(event.address === undefined ? {} : { pendingAddress: boundString(event.address, MAX_ADDRESS) }),
-          phase: "loading",
-          mainFrameError: null,
-          mainFrameErrorCode: null,
-        });
-      case "load-failed":
-        if (!event.mainFrame || eventIsExpectedAbort(event)) return state;
-        if (
-          event.address !== undefined &&
-          state.committedAddress !== null &&
-          event.address !== state.pendingAddress &&
-          event.address !== state.committedAddress
-        ) return state;
-        return this.mergeState(state, {
-          ...(event.address === undefined ? {} : { pendingAddress: boundString(event.address, MAX_ADDRESS) }),
-          phase: "error",
-          mainFrameError: boundString(event.error ?? (typeof event.errorCode === "number" ? String(event.errorCode) : event.errorCode), 500),
-          mainFrameErrorCode: event.errorCode ?? null,
-        });
-      case "load-stopped":
-        if (!event.mainFrame || state.phase === "error") return state;
-        return this.mergeState(state, {
-          ...(event.address === undefined ? {} : {
-            committedAddress: boundString(event.address, MAX_ADDRESS),
-            recoveryAddress: boundString(event.address, MAX_ADDRESS),
-          }),
-          pendingAddress: null,
-          phase: "loaded",
-        });
-      case "title-updated":
-        return this.mergeState(state, { title: boundString(event.title, MAX_TITLE) ?? "" });
-      case "favicon-updated":
-        return this.mergeState(state, { favicon: boundString(event.favicon, MAX_FAVICON) });
-      case "navigation-state":
-        return this.mergeState(state, { navigation: event.navigation });
-      case "document-access":
-        return this.mergeState(state, { documentAccess: event.access });
-      case "surface-lost":
-        return state;
-    }
+    return this.nextStateHandlers[event.type](state, event);
+  }
+
+  private navigationStartedState(
+    state: BrowserSurfacePageState,
+    event: Extract<BrowserSurfaceAdapterEvent, { type: "navigation-started" }>,
+  ): BrowserSurfacePageState {
+    if (!event.mainFrame) return state;
+    return this.mergeState(state, { pendingAddress: boundString(event.address, MAX_ADDRESS), phase: "loading", mainFrameError: null, mainFrameErrorCode: null });
+  }
+
+  private navigationCommittedState(
+    state: BrowserSurfacePageState,
+    event: Extract<BrowserSurfaceAdapterEvent, { type: "navigation-committed" }>,
+  ): BrowserSurfacePageState {
+    if (!event.mainFrame) return state;
+    const address = boundString(event.address, MAX_ADDRESS);
+    return this.mergeState(state, { committedAddress: address, recoveryAddress: address });
+  }
+
+  private loadStartedState(
+    state: BrowserSurfacePageState,
+    event: Extract<BrowserSurfaceAdapterEvent, { type: "load-started" }>,
+  ): BrowserSurfacePageState {
+    if (!event.mainFrame) return state;
+    return this.mergeState(state, { ...this.pendingAddress(event.address), phase: "loading", mainFrameError: null, mainFrameErrorCode: null });
+  }
+
+  private loadFailedState(
+    state: BrowserSurfacePageState,
+    event: Extract<BrowserSurfaceAdapterEvent, { type: "load-failed" }>,
+  ): BrowserSurfacePageState {
+    if (!event.mainFrame || eventIsExpectedAbort(event)) return state;
+    if (this.failureTargetsAnotherPage(state, event.address)) return state;
+    return this.mergeState(state, {
+      ...this.pendingAddress(event.address),
+      phase: "error",
+      mainFrameError: boundString(event.error ?? this.errorCodeText(event.errorCode), 500),
+      mainFrameErrorCode: event.errorCode ?? null,
+    });
+  }
+
+  private loadStoppedState(
+    state: BrowserSurfacePageState,
+    event: Extract<BrowserSurfaceAdapterEvent, { type: "load-stopped" }>,
+  ): BrowserSurfacePageState {
+    if (!event.mainFrame || state.phase === "error") return state;
+    return this.mergeState(state, { ...this.committedAddress(event.address), pendingAddress: null, phase: "loaded" });
+  }
+
+  private pendingAddress(address: string | undefined): Partial<BrowserSurfacePageState> {
+    return address === undefined ? {} : { pendingAddress: boundString(address, MAX_ADDRESS) };
+  }
+
+  private committedAddress(address: string | undefined): Partial<BrowserSurfacePageState> {
+    if (address === undefined) return {};
+    const bounded = boundString(address, MAX_ADDRESS);
+    return { committedAddress: bounded, recoveryAddress: bounded };
+  }
+
+  private failureTargetsAnotherPage(state: BrowserSurfacePageState, address: string | undefined): boolean {
+    return address !== undefined && state.committedAddress !== null &&
+      address !== state.pendingAddress && address !== state.committedAddress;
+  }
+
+  private errorCodeText(errorCode: string | number | undefined): string | undefined {
+    return typeof errorCode === "number" ? String(errorCode) : errorCode;
   }
 
   private mergeState(
@@ -632,7 +708,7 @@ export class BrowserSurfaceHost {
       if (!record.publicationPending) return;
       record.publicationPending = false;
       if (!record.state) return;
-      for (const listener of [...record.listeners]) listener(record.state);
+      for (const listener of record.listeners) listener(record.state);
     });
   }
 
@@ -644,7 +720,7 @@ export class BrowserSurfaceHost {
     }
   }
 
-  private metadataFor(record: SurfaceRecord): Pick<BrowserSurfaceMetadata, "recoveryAddress" | "title" | "favicon"> {
+  private metadataFor(record: SurfaceRecord): RetainedBrowserSurfaceMetadata {
     return {
       recoveryAddress: record.state?.recoveryAddress ?? record.recoveryAddress,
       title: record.state?.title ?? record.title,

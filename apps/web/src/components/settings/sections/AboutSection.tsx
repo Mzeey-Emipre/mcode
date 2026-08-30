@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { SegControl } from "../SegControl";
 import { Spinner } from "@/components/ui/spinner";
 import type { UpdateStatus } from "@/transport/desktop-bridge";
-import type { UpdateCheckInterval, UpdateReleaseLine } from "@mcode/contracts";
+import type { Settings, UpdateCheckInterval, UpdateReleaseLine } from "@mcode/contracts";
 import { ConfirmChannelDowngradeDialog } from "./ConfirmChannelDowngradeDialog";
 import { semverGt } from "@/lib/semver";
 
@@ -28,6 +28,32 @@ const INTERVAL_OPTIONS = [
 
 /** How long to hold the "Up to date" label after a check resolves with no update (ms). */
 const UP_TO_DATE_HOLD_MS = 4_000;
+
+function getUpdatesHint(checkInterval: UpdateCheckInterval, releaseLine: UpdateReleaseLine): string {
+  if (checkInterval === "never") return "Automatic checks disabled.";
+  if (releaseLine === "nightly") return "Nightly uses prerelease builds. They may be unstable. Switching back to Stable while running a newer nightly will reinstall the latest stable after confirming.";
+  return "Checks for new releases on the configured interval.";
+}
+
+function UpdateStatusControl({ status, statusLabel, canCheck, isBusy, onInstall, onCheck }: { status: UpdateStatus; statusLabel: string; canCheck: boolean; isBusy: boolean; onInstall: () => void; onCheck: () => void }) {
+  return <div className="flex items-center gap-3">{statusLabel && <span className="font-mono text-xs text-muted-foreground transition-opacity duration-300" aria-live="polite">{statusLabel}</span>}{status.state === "downloaded" ? <button onClick={onInstall} className="rounded bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90">Restart to install</button> : <button onClick={onCheck} disabled={!canCheck || isBusy} className="inline-flex items-center gap-1.5 rounded bg-muted px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40" aria-label={isBusy ? "Checking for updates…" : "Check for updates now"}>{isBusy && <Spinner size={11} className="text-current" />}{isBusy ? "Checking…" : "Check now"}</button>}</div>;
+}
+
+function AboutSettingsRows({ version, updatesHint, status, statusLabel, canCheck, isBusy, onInstall, onCheck, releaseLine, onReleaseLineChange, checkInterval, onCheckIntervalChange, autoDownload, onAutoDownloadChange, autoInstallOnQuit, onAutoInstallOnQuitChange }: { version: string | null | undefined; updatesHint: string; status: UpdateStatus; statusLabel: string; canCheck: boolean; isBusy: boolean; onInstall: () => void; onCheck: () => void; releaseLine: UpdateReleaseLine; onReleaseLineChange: (value: UpdateReleaseLine) => void; checkInterval: UpdateCheckInterval; onCheckIntervalChange: (value: UpdateCheckInterval) => void; autoDownload: boolean; onAutoDownloadChange: (value: boolean) => void; autoInstallOnQuit: boolean; onAutoInstallOnQuitChange: (value: boolean) => void }) {
+  return <div><SettingRow label="Version" hint="Currently installed build."><span className="font-mono text-xs text-muted-foreground tabular-nums">{version || "—"}</span></SettingRow><SettingRow label="Updates" hint={updatesHint}><UpdateStatusControl status={status} statusLabel={statusLabel} canCheck={canCheck} isBusy={isBusy} onInstall={onInstall} onCheck={onCheck} /></SettingRow><SettingRow label="Release line" hint="Stable follows tagged releases. Nightly follows automated prerelease builds when the project publishes them."><SegControl options={RELEASE_LINE_OPTIONS} value={releaseLine} onChange={(value) => onReleaseLineChange(value as UpdateReleaseLine)} /></SettingRow><SettingRow label="Check interval" hint="How often to poll for new releases. Takes effect on next launch."><SegControl options={INTERVAL_OPTIONS} value={checkInterval} onChange={(value) => onCheckIntervalChange(value as UpdateCheckInterval)} /></SettingRow><SettingRow label="Auto-download" hint="Download updates in the background as soon as they are available."><Switch checked={autoDownload} onCheckedChange={onAutoDownloadChange} /></SettingRow><SettingRow label="Auto-install on quit" hint="Apply downloaded updates automatically when the app closes."><Switch checked={autoInstallOnQuit} onCheckedChange={onAutoInstallOnQuitChange} /></SettingRow></div>;
+}
+
+function getUpdatePreferences(settings: Settings): { autoDownload: boolean; autoInstallOnQuit: boolean; checkInterval: UpdateCheckInterval; releaseLine: UpdateReleaseLine } {
+  return { autoDownload: settings.updates?.autoDownload ?? true, autoInstallOnQuit: settings.updates?.autoInstallOnQuit ?? true, checkInterval: settings.updates?.checkInterval ?? "4hours", releaseLine: settings.updates?.channel ?? "stable" };
+}
+
+function isUpdateBusy(checking: boolean, status: UpdateStatus): boolean {
+  return checking || status.state === "checking" || status.state === "downloading";
+}
+
+function getUpdateStatusLabel(upToDateLabel: boolean, status: UpdateStatus): string {
+  return upToDateLabel ? "Up to date" : describeStatus(status);
+}
 
 /**
  * About settings section: shows the running app version, the current
@@ -134,10 +160,7 @@ export function AboutSection() {
     }
   };
 
-  const autoDownload = settings.updates?.autoDownload ?? true;
-  const autoInstallOnQuit = settings.updates?.autoInstallOnQuit ?? true;
-  const checkInterval = settings.updates?.checkInterval ?? "4hours";
-  const releaseLine = settings.updates?.channel ?? "stable";
+  const { autoDownload, autoInstallOnQuit, checkInterval, releaseLine } = getUpdatePreferences(settings);
 
   /**
    * Persist the new channel AND tell the main process to switch the running
@@ -182,113 +205,17 @@ export function AboutSection() {
     await applyChannelSwitch(next, false);
   };
 
-  const isBusy = checking || status.state === "checking" || status.state === "downloading";
+  const isBusy = isUpdateBusy(checking, status);
 
-  let updatesHint = "Checks for new releases on the configured interval.";
-  if (checkInterval === "never") {
-    updatesHint = "Automatic checks disabled.";
-  } else if (releaseLine === "nightly") {
-    updatesHint =
-      "Nightly uses prerelease builds. They may be unstable. Switching back to Stable while running a newer nightly will reinstall the latest stable after confirming.";
-  }
+  const updatesHint = getUpdatesHint(checkInterval, releaseLine);
 
   // Derive the inline status label shown beside the button.
-  const statusLabel = upToDateLabel ? "Up to date" : describeStatus(status);
+  const statusLabel = getUpdateStatusLabel(upToDateLabel, status);
 
   return (
     <div>
       <SectionHeading>About</SectionHeading>
-      <div>
-        <SettingRow label="Version" hint="Currently installed build.">
-          <span className="font-mono text-xs text-muted-foreground tabular-nums">
-            {version || "—"}
-          </span>
-        </SettingRow>
-
-        <SettingRow label="Updates" hint={updatesHint}>
-          <div className="flex items-center gap-3">
-            {statusLabel && (
-              <span
-                className="font-mono text-xs text-muted-foreground transition-opacity duration-300"
-                aria-live="polite"
-              >
-                {statusLabel}
-              </span>
-            )}
-
-            {status.state === "downloaded" ? (
-              <button
-                onClick={handleInstall}
-                className="rounded bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                Restart to install
-              </button>
-            ) : (
-              <button
-                onClick={() => void handleCheck()}
-                disabled={!bridge || isBusy}
-                className="inline-flex items-center gap-1.5 rounded bg-muted px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label={isBusy ? "Checking for updates…" : "Check for updates now"}
-              >
-                {isBusy && (
-                  <Spinner size={11} className="text-current" />
-                )}
-                {isBusy ? "Checking…" : "Check now"}
-              </button>
-            )}
-          </div>
-        </SettingRow>
-
-        <SettingRow
-          label="Release line"
-          hint="Stable follows tagged releases. Nightly follows automated prerelease builds when the project publishes them."
-        >
-          <SegControl
-            options={RELEASE_LINE_OPTIONS}
-            value={releaseLine}
-            onChange={(v) => void handleChannelChange(v as UpdateReleaseLine)}
-          />
-        </SettingRow>
-
-        <SettingRow
-          label="Check interval"
-          hint="How often to poll for new releases. Takes effect on next launch."
-        >
-          <SegControl
-            options={INTERVAL_OPTIONS}
-            value={checkInterval}
-            onChange={(v) =>
-              void updateSettings({
-                updates: { checkInterval: v as UpdateCheckInterval },
-              })
-            }
-          />
-        </SettingRow>
-
-        <SettingRow
-          label="Auto-download"
-          hint="Download updates in the background as soon as they are available."
-        >
-          <Switch
-            checked={autoDownload}
-            onCheckedChange={(v) =>
-              void updateSettings({ updates: { autoDownload: v } })
-            }
-          />
-        </SettingRow>
-
-        <SettingRow
-          label="Auto-install on quit"
-          hint="Apply downloaded updates automatically when the app closes."
-        >
-          <Switch
-            checked={autoInstallOnQuit}
-            onCheckedChange={(v) =>
-              void updateSettings({ updates: { autoInstallOnQuit: v } })
-            }
-          />
-        </SettingRow>
-      </div>
+      <AboutSettingsRows version={version} updatesHint={updatesHint} status={status} statusLabel={statusLabel} canCheck={Boolean(bridge)} isBusy={isBusy} onInstall={() => void handleInstall()} onCheck={() => void handleCheck()} releaseLine={releaseLine} onReleaseLineChange={(value) => void handleChannelChange(value)} checkInterval={checkInterval} onCheckIntervalChange={(value) => void updateSettings({ updates: { checkInterval: value } })} autoDownload={autoDownload} onAutoDownloadChange={(value) => void updateSettings({ updates: { autoDownload: value } })} autoInstallOnQuit={autoInstallOnQuit} onAutoInstallOnQuitChange={(value) => void updateSettings({ updates: { autoInstallOnQuit: value } })} />
       {pendingDowngrade && (
         <ConfirmChannelDowngradeDialog
           currentVersion={pendingDowngrade.currentVersion}

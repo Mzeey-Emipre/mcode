@@ -92,6 +92,26 @@ function CollapsedGroup({
   );
 }
 
+function getLiveAgentTriggerClass(isExpandable: boolean): string {
+  return `flex w-full items-center gap-2 pl-3 pr-1 py-1.5 text-xs text-muted-foreground hover:bg-muted/30 transition-colors ${isExpandable ? "cursor-pointer" : "cursor-default"}`;
+}
+
+function getLiveAgentStatusClass(active: boolean): string {
+  return active ? "animate-spin text-ring/80" : "text-ring/60";
+}
+
+function getLiveAgentLabelClass(active: boolean): string {
+  return `truncate font-medium ${active ? "text-foreground font-medium" : "text-foreground/60"}`;
+}
+
+function getLiveAgentDescription(agentCall: ToolCall): string {
+  return typeof agentCall.toolInput.description === "string" ? agentCall.toolInput.description : "Subagent";
+}
+
+function isLiveAgentExpandable(hasChildren: boolean, isActive: boolean, isComplete: boolean): boolean {
+  return hasChildren || isActive || !isComplete;
+}
+
 /** Live subagent container that nests child tool calls under their Agent parent. */
 function LiveAgentGroup({
   agentCall,
@@ -105,21 +125,19 @@ function LiveAgentGroup({
   depth: number;
 }) {
   const [expanded, setExpanded] = useState(true);
-  const rawDesc = agentCall.toolInput.description;
-  const description = typeof rawDesc === "string" ? rawDesc : "Subagent";
+  const description = getLiveAgentDescription(agentCall);
   const hasChildren = children.length > 0;
   const hasActiveChild = children.some((tc) => !tc.isComplete);
+  const active = isActive || hasActiveChild;
   // Only show chevron when children exist or the agent is still running (more children may arrive)
-  const isExpandable = hasChildren || isActive || !agentCall.isComplete;
+  const isExpandable = isLiveAgentExpandable(hasChildren, isActive, agentCall.isComplete);
 
   return (
     <div className="transition-colors rounded-sm hover:bg-muted/20">
       <button
         type="button"
         onClick={() => isExpandable && setExpanded((p) => !p)}
-        className={`flex w-full items-center gap-2 pl-3 pr-1 py-1.5 text-xs text-muted-foreground hover:bg-muted/30 transition-colors ${
-          isExpandable ? "cursor-pointer" : "cursor-default"
-        }`}
+        className={getLiveAgentTriggerClass(isExpandable)}
       >
         {isExpandable && (
           <ChevronRight
@@ -127,19 +145,11 @@ function LiveAgentGroup({
           />
         )}
         <Bot
-          className={`h-3.5 w-3.5 shrink-0 ${
-            isActive || hasActiveChild
-              ? "animate-spin text-ring/80"
-              : "text-ring/60"
-          }`}
-          style={isActive || hasActiveChild ? SLOW_SPIN_STYLE : undefined}
+          className={`h-3.5 w-3.5 shrink-0 ${getLiveAgentStatusClass(active)}`}
+          style={active ? SLOW_SPIN_STYLE : undefined}
         />
         <span
-          className={`truncate font-medium ${
-            isActive || hasActiveChild
-              ? "text-foreground font-medium"
-              : "text-foreground/60"
-          }`}
+          className={getLiveAgentLabelClass(active)}
         >
           {description}
         </span>

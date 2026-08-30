@@ -44,6 +44,26 @@ interface RecordingSession {
   error: string | null;
 }
 
+interface RecordingSessionWithResolver extends RecordingSession {
+  readonly resolveStopped: () => void;
+}
+
+interface PendingRecordingAcquisition {
+  readonly requestKey: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  cancelled: boolean;
+}
+
+type RecordingStartResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly response: BrowserAutomationResponse };
+
+type RecordingMediaSource = Extract<
+  Awaited<ReturnType<PreviewAutomationBridge["getMediaSourceId"]>>,
+  { readonly ok: true }
+>;
+
 function failure(dispatch: BrowserAutomationHostDispatch, message: string): BrowserAutomationResponse {
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -65,55 +85,63 @@ function bytesToBase64(bytes: Uint8Array): string {
 /** Owns bounded MediaRecorder sessions for exact visible Browser targets. */
 export class BrowserAutomationRecorder {
   private readonly sessions = new Map<string, RecordingSession>();
-  private readonly pendingAcquisitions = new Map<string, {
-    requestKey: string;
-    workspaceId: string;
-    threadId: string;
-    cancelled: boolean;
-  }>();
+  private readonly pendingAcquisitions = new Map<string, PendingRecordingAcquisition>();
   private disposed = false;
 
-  /** Start one target-scoped WebM recording from the desktop-issued media source. */
-  async start(
+  private clearPendingAcquisition(key: string, acquisition: PendingRecordingAcquisition): void {
+    if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
+  }
+
+  private acquisitionWasCancelled(acquisition: PendingRecordingAcquisition): boolean {
+    return this.disposed || acquisition.cancelled;
+  }
+
+  private stopStream(stream: MediaStream): void {
+    for (const track of stream.getTracks()) track.stop();
+  }
+
+  private async acquireMediaSource(
     dispatch: BrowserAutomationHostDispatch,
     bridge: PreviewAutomationBridge,
-  ): Promise<BrowserAutomationResponse> {
-    const key = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
-    const requestKey = browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence);
-    if (this.sessions.has(key) || this.pendingAcquisitions.has(key)) {
-      return failure(dispatch, "A recording is already active for this browser tab");
-    }
-    const acquisition = { requestKey, workspaceId: dispatch.scope.workspaceId, threadId: dispatch.target.threadId, cancelled: false };
-    this.pendingAcquisitions.set(key, acquisition);
-    let source: Awaited<ReturnType<PreviewAutomationBridge["getMediaSourceId"]>>;
+    key: string,
+    acquisition: PendingRecordingAcquisition,
+  ): Promise<RecordingStartResult<RecordingMediaSource>> {
     try {
-      const acquiredSource = await acquireBeforeDeadline(bridge.getMediaSourceId({
+      const source = await acquireBeforeDeadline(bridge.getMediaSourceId({
         windowId: dispatch.target.windowId,
         threadId: dispatch.target.threadId,
         tabId: dispatch.target.tabId,
         targetGeneration: dispatch.target.targetGeneration,
       }), dispatch.request.deadline);
-      if (!acquiredSource.ok) {
+      if (!source.ok) {
         acquisition.cancelled = true;
-        if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-        return failure(dispatch, "Browser capture source acquisition exceeded the request deadline");
+        this.clearPendingAcquisition(key, acquisition);
+        return { ok: false, response: failure(dispatch, "Browser capture source acquisition exceeded the request deadline") };
       }
-      source = acquiredSource.value;
+      if (!source.value.ok || source.value.expiresAt <= Date.now()) {
+        this.clearPendingAcquisition(key, acquisition);
+        return { ok: false, response: failure(dispatch, "The browser tab capture source is unavailable or expired") };
+      }
+      if (this.acquisitionWasCancelled(acquisition)) {
+        this.clearPendingAcquisition(key, acquisition);
+        return { ok: false, response: failure(dispatch, "Browser recording was cancelled") };
+      }
+      return { ok: true, value: source.value };
     } catch {
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-      return failure(dispatch, "The browser tab capture source is unavailable");
+      this.clearPendingAcquisition(key, acquisition);
+      return { ok: false, response: failure(dispatch, "The browser tab capture source is unavailable") };
     }
-    if (!source.ok || source.expiresAt <= Date.now()) {
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-      return failure(dispatch, "The browser tab capture source is unavailable or expired");
-    }
-    if (this.disposed || acquisition.cancelled) {
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-      return failure(dispatch, "Browser recording was cancelled");
-    }
-    let stream: MediaStream;
+  }
+
+  private async acquireCaptureStream(
+    dispatch: BrowserAutomationHostDispatch,
+    source: RecordingMediaSource,
+    key: string,
+    acquisition: PendingRecordingAcquisition,
+  ): Promise<RecordingStartResult<MediaStream>> {
+    let streamPromise: Promise<MediaStream>;
     try {
-      const streamPromise = navigator.mediaDevices.getUserMedia({
+      streamPromise = navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
           mandatory: {
@@ -122,47 +150,62 @@ export class BrowserAutomationRecorder {
           },
         } as MediaTrackConstraints,
       });
-      void streamPromise.then((lateStream) => {
-        if (!acquisition.cancelled && !this.disposed) return;
-        for (const track of lateStream.getTracks()) track.stop();
-      }).catch(() => undefined);
-      const acquiredStream = await acquireBeforeDeadline(
+    } catch {
+      this.clearPendingAcquisition(key, acquisition);
+      return { ok: false, response: failure(dispatch, "The browser tab could not be captured") };
+    }
+    void streamPromise.then((lateStream) => {
+      if (!this.acquisitionWasCancelled(acquisition)) return;
+      this.stopStream(lateStream);
+    }).catch(() => undefined);
+    try {
+      const stream = await acquireBeforeDeadline(
         streamPromise,
         Math.min(dispatch.request.deadline, source.expiresAt),
       );
-      if (!acquiredStream.ok) {
+      if (!stream.ok) {
         acquisition.cancelled = true;
-        if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-        return failure(dispatch, "Browser tab capture exceeded the request deadline");
+        this.clearPendingAcquisition(key, acquisition);
+        return { ok: false, response: failure(dispatch, "Browser tab capture exceeded the request deadline") };
       }
-      stream = acquiredStream.value;
+      return { ok: true, value: stream.value };
     } catch {
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-      return failure(dispatch, "The browser tab could not be captured");
+      this.clearPendingAcquisition(key, acquisition);
+      return { ok: false, response: failure(dispatch, "The browser tab could not be captured") };
     }
-    if (this.disposed || acquisition.cancelled) {
-      for (const track of stream.getTracks()) track.stop();
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-      return failure(dispatch, "Browser recording was cancelled");
-    }
-    let recorder: MediaRecorder;
+  }
+
+  private createRecorder(
+    dispatch: BrowserAutomationHostDispatch,
+    stream: MediaStream,
+    key: string,
+    acquisition: PendingRecordingAcquisition,
+  ): RecordingStartResult<MediaRecorder> {
     if (typeof MediaRecorder.isTypeSupported === "function" && !MediaRecorder.isTypeSupported("video/webm")) {
-      for (const track of stream.getTracks()) track.stop();
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-      return failure(dispatch, "The browser recording encoder does not support WebM");
+      this.stopStream(stream);
+      this.clearPendingAcquisition(key, acquisition);
+      return { ok: false, response: failure(dispatch, "The browser recording encoder does not support WebM") };
     }
     try {
-      recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+      return { ok: true, value: new MediaRecorder(stream, { mimeType: "video/webm" }) };
     } catch {
-      for (const track of stream.getTracks()) track.stop();
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-      return failure(dispatch, "The browser recording encoder is unavailable");
+      this.stopStream(stream);
+      this.clearPendingAcquisition(key, acquisition);
+      return { ok: false, response: failure(dispatch, "The browser recording encoder is unavailable") };
     }
+  }
+
+  private createSession(
+    dispatch: BrowserAutomationHostDispatch,
+    key: string,
+    recorder: MediaRecorder,
+    stream: MediaStream,
+  ): RecordingSessionWithResolver {
     let resolveStopped!: () => void;
     const stopped = new Promise<void>((resolve) => {
       resolveStopped = resolve;
     });
-    const session: RecordingSession = {
+    return {
       id: crypto.randomUUID(),
       targetKey: key,
       workspaceId: dispatch.scope.workspaceId,
@@ -176,7 +219,16 @@ export class BrowserAutomationRecorder {
       stopped,
       stopTimer: 0,
       error: null,
+      resolveStopped,
     };
+  }
+
+  private configureRecorder(
+    session: RecordingSessionWithResolver,
+    key: string,
+    acquisition: PendingRecordingAcquisition,
+  ): RecordingSession {
+    const { recorder, stream } = session;
     recorder.ondataavailable = (event) => {
       session.totalBytes += event.data.size;
       if (session.retainedBytes + event.data.size > SAFE_RECORDING_BYTES) {
@@ -188,32 +240,40 @@ export class BrowserAutomationRecorder {
     };
     recorder.onstop = () => {
       window.clearTimeout(session.stopTimer);
-      for (const track of stream.getTracks()) track.stop();
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
-      resolveStopped();
+      this.stopStream(stream);
+      this.clearPendingAcquisition(key, acquisition);
+      session.resolveStopped();
     };
     recorder.onerror = () => {
       session.error = "The browser recording encoder failed";
       window.clearTimeout(session.stopTimer);
       if (recorder.state !== "inactive") recorder.stop();
-      for (const track of stream.getTracks()) track.stop();
-      resolveStopped();
+      this.stopStream(stream);
+      session.resolveStopped();
     };
+    return session;
+  }
+
+  private startRecorder(
+    dispatch: BrowserAutomationHostDispatch,
+    session: RecordingSession,
+    key: string,
+    acquisition: PendingRecordingAcquisition,
+  ): BrowserAutomationResponse | null {
     try {
-      recorder.start(RECORDING_TIMESLICE_MS);
+      session.recorder.start(RECORDING_TIMESLICE_MS);
+      return null;
     } catch {
-      for (const track of stream.getTracks()) track.stop();
-      if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
+      this.stopStream(session.stream);
+      this.clearPendingAcquisition(key, acquisition);
       return failure(dispatch, "The browser recording encoder could not start");
     }
-    const requestedDuration = dispatch.request.operation === "recordingStart"
-      ? dispatch.request.args.maxDurationMs
-      : MAX_RECORDING_DURATION_MS;
-    session.stopTimer = window.setTimeout(() => {
-      if (recorder.state !== "inactive") recorder.stop();
-    }, Math.min(requestedDuration, MAX_RECORDING_DURATION_MS));
-    this.sessions.set(key, session);
-    if (this.pendingAcquisitions.get(key) === acquisition) this.pendingAcquisitions.delete(key);
+  }
+
+  private recordingStartedResponse(
+    dispatch: BrowserAutomationHostDispatch,
+    session: RecordingSession,
+  ): BrowserAutomationResponse {
     return {
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
       requestId: dispatch.request.requestId,
@@ -226,6 +286,48 @@ export class BrowserAutomationRecorder {
         controlEpoch: dispatch.request.expectedControlEpoch,
       },
     };
+  }
+
+  /** Start one target-scoped WebM recording from the desktop-issued media source. */
+  async start(
+    dispatch: BrowserAutomationHostDispatch,
+    bridge: PreviewAutomationBridge,
+  ): Promise<BrowserAutomationResponse> {
+    const key = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
+    const requestKey = browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence);
+    if (this.sessions.has(key) || this.pendingAcquisitions.has(key)) {
+      return failure(dispatch, "A recording is already active for this browser tab");
+    }
+    const acquisition: PendingRecordingAcquisition = {
+      requestKey,
+      workspaceId: dispatch.scope.workspaceId,
+      threadId: dispatch.target.threadId,
+      cancelled: false,
+    };
+    this.pendingAcquisitions.set(key, acquisition);
+    const source = await this.acquireMediaSource(dispatch, bridge, key, acquisition);
+    if (!source.ok) return source.response;
+    const stream = await this.acquireCaptureStream(dispatch, source.value, key, acquisition);
+    if (!stream.ok) return stream.response;
+    if (this.acquisitionWasCancelled(acquisition)) {
+      this.stopStream(stream.value);
+      this.clearPendingAcquisition(key, acquisition);
+      return failure(dispatch, "Browser recording was cancelled");
+    }
+    const recorder = this.createRecorder(dispatch, stream.value, key, acquisition);
+    if (!recorder.ok) return recorder.response;
+    const session = this.configureRecorder(this.createSession(dispatch, key, recorder.value, stream.value), key, acquisition);
+    const startFailure = this.startRecorder(dispatch, session, key, acquisition);
+    if (startFailure) return startFailure;
+    const requestedDuration = dispatch.request.operation === "recordingStart"
+      ? dispatch.request.args.maxDurationMs
+      : MAX_RECORDING_DURATION_MS;
+    session.stopTimer = window.setTimeout(() => {
+      if (session.recorder.state !== "inactive") session.recorder.stop();
+    }, Math.min(requestedDuration, MAX_RECORDING_DURATION_MS));
+    this.sessions.set(key, session);
+    this.clearPendingAcquisition(key, acquisition);
+    return this.recordingStartedResponse(dispatch, session);
   }
 
   /** Report whether a thread owns an active or pending recording lease. */
@@ -304,7 +406,7 @@ export class BrowserAutomationRecorder {
   /** Release every recorder, media track, timer, and pending acquisition. */
   dispose(): void {
     this.disposed = true;
-    for (const session of [...this.sessions.values()]) {
+    for (const session of this.sessions.values()) {
       this.disposeTarget(...(JSON.parse(session.targetKey) as [string, string, string]));
     }
     for (const acquisition of this.pendingAcquisitions.values()) acquisition.cancelled = true;

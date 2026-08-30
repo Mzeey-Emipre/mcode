@@ -420,6 +420,130 @@ interface TerminalViewProps {
   readonly onDisposed?: () => void;
 }
 
+function terminalSessionEnded(sessionState: TerminalSessionState): boolean {
+  return sessionState === "exited" || sessionState === "failed";
+}
+
+function terminalStatusMessage(
+  recoveryNotice: string | null,
+  sessionState: TerminalSessionState,
+  exit: TerminalExitMetadata | undefined,
+): string {
+  if (recoveryNotice !== null) return recoveryNotice;
+  if (sessionState === "failed") return "This terminal failed. Its completed output is retained.";
+  return `This terminal exited with code ${exit?.code ?? 0}. Its completed output is retained.`;
+}
+
+function shouldShowTerminalRetry(
+  recoveryAction: "reload" | null,
+  sessionEnded: boolean,
+  ownerScopeId: string | undefined,
+): boolean {
+  return recoveryAction === "reload" || (sessionEnded && Boolean(ownerScopeId));
+}
+
+interface TerminalStatusProps {
+  readonly recoveryNotice: string | null;
+  readonly recoveryAction: "reload" | null;
+  readonly sessionState: TerminalSessionState;
+  readonly exit: TerminalExitMetadata | undefined;
+  readonly ownerScopeId: string | undefined;
+  readonly diagnosticsAvailable: boolean;
+  readonly onRetry: () => void;
+  readonly onClose: () => void;
+  readonly onCopyDiagnostics: () => void;
+}
+
+function TerminalStatus({
+  recoveryNotice,
+  recoveryAction,
+  sessionState,
+  exit,
+  ownerScopeId,
+  diagnosticsAvailable,
+  onRetry,
+  onClose,
+  onCopyDiagnostics,
+}: TerminalStatusProps) {
+  const sessionEnded = terminalSessionEnded(sessionState);
+  if (!recoveryNotice && !sessionEnded) return null;
+  const showRetry = shouldShowTerminalRetry(recoveryAction, sessionEnded, ownerScopeId);
+
+  return (
+    <div
+      className="mx-3 mt-2 rounded border border-border/70 bg-muted/30 px-2 py-1 text-xs text-muted-foreground"
+      data-testid="terminal-status"
+    >
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {terminalStatusMessage(recoveryNotice, sessionState, exit)}
+      </div>
+      <div className="mt-1 flex items-center gap-2">
+        {showRetry ? (
+          <Button type="button" size="xs" variant="outline" onClick={onRetry}>
+            {sessionEnded ? "Retry terminal" : "Reload available output"}
+          </Button>
+        ) : null}
+        {sessionEnded ? (
+          <Button type="button" size="xs" variant="ghost" onClick={onClose}>
+            Close terminal
+          </Button>
+        ) : null}
+        {diagnosticsAvailable ? (
+          <Button type="button" size="xs" variant="ghost" onClick={onCopyDiagnostics}>
+            Copy diagnostics
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+interface TerminalViewFrameProps {
+  readonly containerRef: React.RefObject<HTMLDivElement | null>;
+  readonly fitHostRef: React.RefObject<HTMLDivElement | null>;
+  readonly hydrated: boolean;
+  readonly shown: boolean;
+  readonly status: TerminalStatusProps;
+  readonly termReady: boolean;
+  readonly search: {
+    readonly ptyId: string;
+    readonly onSearch: (query: string, options: TerminalSearchOptions, direction: TerminalSearchDirection) => TerminalSearchRunResult;
+    readonly onClear: () => void;
+    readonly onRestoreFocus: () => void;
+    readonly addonState: TerminalSearchAddonState;
+    readonly onRetry: () => void;
+  };
+}
+
+function TerminalViewFrame({
+  containerRef,
+  fitHostRef,
+  hydrated,
+  shown,
+  status,
+  termReady,
+  search,
+}: TerminalViewFrameProps) {
+  return (
+    <div
+      ref={containerRef}
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden"
+      data-terminal-hydrated={hydrated}
+      data-testid="terminal-render-content"
+      role="region"
+      aria-label="Terminal output"
+      style={{
+        backgroundColor: TERMINAL_BACKGROUND,
+        visibility: shown && hydrated ? "visible" : "hidden",
+      }}
+    >
+      <TerminalStatus {...status} />
+      <div ref={fitHostRef} className="min-h-0 flex-1 w-full p-3" />
+      {termReady ? <TerminalSearchShelf active={shown} {...search} /> : null}
+    </div>
+  );
+}
+
 /** Renders a single xterm.js terminal backed by a server-side PTY via WS transport. */
 export const TerminalView = memo(function TerminalView({
   ptyId,
@@ -866,7 +990,7 @@ export const TerminalView = memo(function TerminalView({
         clearWebglSlot(ptyId);
         clearActiveRenderer();
         unregisterTerminalScrollHarness(ptyId);
-        const checkpoint = settleWithin(Promise.all([...pendingWrites]).then(() => {
+        const checkpoint = settleWithin(Promise.all(pendingWrites).then(() => {
           // #751: remember where the user was before this view goes away so the
           // next remount can restore it (no-op when they followed the tail).
           captureRemountAnchor(ptyId, term);
@@ -1333,82 +1457,32 @@ export const TerminalView = memo(function TerminalView({
       });
   }, []);
 
-  const statusActionLabel = sessionState === "exited" || sessionState === "failed"
-    ? "Retry terminal"
-    : "Reload available output";
-
   return (
-    <div
-      ref={containerRef}
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden"
-      data-terminal-hydrated={hydrated}
-      data-testid="terminal-render-content"
-      role="region"
-      aria-label="Terminal output"
-      style={{
-        backgroundColor: TERMINAL_BACKGROUND,
-        visibility: shown && hydrated ? "visible" : "hidden",
+    <TerminalViewFrame
+      containerRef={containerRef}
+      fitHostRef={fitHostRef}
+      hydrated={hydrated}
+      shown={shown}
+      status={{
+        recoveryNotice,
+        recoveryAction,
+        sessionState,
+        exit,
+        ownerScopeId,
+        diagnosticsAvailable,
+        onRetry: retryTerminal,
+        onClose: closeRetainedTerminal,
+        onCopyDiagnostics: copyDiagnostics,
       }}
-    >
-      {recoveryNotice || sessionState === "exited" || sessionState === "failed" ? (
-        <div
-          className="mx-3 mt-2 rounded border border-border/70 bg-muted/30 px-2 py-1 text-xs text-muted-foreground"
-          data-testid="terminal-status"
-        >
-          <div role="status" aria-live="polite" aria-atomic="true">
-            {recoveryNotice ?? (
-              sessionState === "failed"
-                ? "This terminal failed. Its completed output is retained."
-                : `This terminal exited with code ${exit?.code ?? 0}. Its completed output is retained.`
-            )}
-          </div>
-          <div className="mt-1 flex items-center gap-2">
-            {(recoveryAction === "reload" ||
-              ((sessionState === "exited" || sessionState === "failed") && ownerScopeId)) ? (
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                onClick={retryTerminal}
-              >
-                {statusActionLabel}
-              </Button>
-            ) : null}
-            {(sessionState === "exited" || sessionState === "failed") ? (
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                onClick={closeRetainedTerminal}
-              >
-                Close terminal
-              </Button>
-            ) : null}
-            {diagnosticsAvailable ? (
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                onClick={copyDiagnostics}
-              >
-                Copy diagnostics
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-      <div ref={fitHostRef} className="min-h-0 flex-1 w-full p-3" />
-      {termReady ? (
-        <TerminalSearchShelf
-          ptyId={ptyId}
-          active={shown}
-          onSearch={runSearch}
-          onClear={clearSearch}
-          onRestoreFocus={restoreFocus}
-          addonState={searchAddonState}
-          onRetry={retrySearchAddon}
-        />
-      ) : null}
-    </div>
+      termReady={termReady}
+      search={{
+        ptyId,
+        onSearch: runSearch,
+        onClear: clearSearch,
+        onRestoreFocus: restoreFocus,
+        addonState: searchAddonState,
+        onRetry: retrySearchAddon,
+      }}
+    />
   );
 });

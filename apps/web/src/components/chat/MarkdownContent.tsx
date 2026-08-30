@@ -240,6 +240,68 @@ interface MarkdownLinkProps {
   workspacePath: string | null;
 }
 
+interface MarkdownLinkAnchorProps {
+  safeHref: string | undefined;
+  isPreviewable: boolean;
+  faviconUrl: string | null;
+  fileIconPath: string | null;
+  label: React.ReactNode;
+}
+
+function handleMarkdownAnchorClick(
+  event: React.MouseEvent<HTMLAnchorElement>,
+  safeHref: string | undefined,
+  isPreviewable: boolean,
+): void {
+  if (!safeHref) return;
+  if (isPreviewable) {
+    handleLinkClick(event, safeHref);
+    return;
+  }
+
+  event.preventDefault();
+  if (window.desktopBridge?.openExternalUrl) {
+    void window.desktopBridge.openExternalUrl(safeHref);
+    return;
+  }
+  window.open(safeHref, "_blank", "noopener,noreferrer");
+}
+
+function MarkdownLinkAnchor({
+  safeHref,
+  isPreviewable,
+  faviconUrl,
+  fileIconPath,
+  label,
+}: MarkdownLinkAnchorProps) {
+  return (
+    <a
+      href={safeHref}
+      className="inline-flex max-w-full items-center gap-1 align-baseline text-primary no-underline transition-colors hover:underline"
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="markdown-link"
+      title={safeHref}
+      onClick={(event) => handleMarkdownAnchorClick(event, safeHref, isPreviewable)}
+    >
+      {fileIconPath ? (
+        <span data-testid="markdown-link-file-icon" className="inline-flex shrink-0">
+          <FileTypeIcon filePath={fileIconPath} size={13} />
+        </span>
+      ) : (
+        <SiteFavicon
+          src={faviconUrl}
+          fallback={<Globe size={12} aria-hidden className="shrink-0 text-muted-foreground" />}
+          frameTestId="markdown-link-favicon-frame"
+          imageTestId="markdown-link-favicon"
+        />
+      )}
+      <span className="min-w-0 truncate">{label}</span>
+      {safeHref ? <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" /> : null}
+    </a>
+  );
+}
+
 function MarkdownLink({
   href,
   children,
@@ -255,45 +317,13 @@ function MarkdownLink({
     !!childText && !!safeHref && (childText === href || childText === safeHref || HTTP_URL_RE.test(childText.trim()));
   const label = isBareUrlText && safeHref ? formatBareUrlLabel(safeHref) : children;
   const anchor = (
-    <a
-      href={safeHref}
-      className="inline-flex max-w-full items-center gap-1 align-baseline text-primary no-underline transition-colors hover:underline"
-      target="_blank"
-      rel="noopener noreferrer"
-      data-testid="markdown-link"
-      title={safeHref}
-      onClick={(e) => {
-        if (!safeHref) return;
-        if (isPreviewable) return handleLinkClick(e, safeHref);
-        e.preventDefault();
-        if (window.desktopBridge?.openExternalUrl) {
-          void window.desktopBridge.openExternalUrl(safeHref);
-        } else {
-          window.open(safeHref, "_blank", "noopener,noreferrer");
-        }
-      }}
-    >
-      {fileIconPath ? (
-        <span data-testid="markdown-link-file-icon" className="inline-flex shrink-0">
-          <FileTypeIcon filePath={fileIconPath} size={13} />
-        </span>
-      ) : (
-        <SiteFavicon
-          src={faviconUrl}
-          fallback={<Globe size={12} aria-hidden className="shrink-0 text-muted-foreground" />}
-          frameTestId="markdown-link-favicon-frame"
-          imageTestId="markdown-link-favicon"
-        />
-      )}
-      <span className="min-w-0 truncate">{label}</span>
-      {safeHref ? (
-        <ExternalLink
-          size={12}
-          aria-hidden
-          className="shrink-0 text-muted-foreground"
-        />
-      ) : null}
-    </a>
+    <MarkdownLinkAnchor
+      safeHref={safeHref}
+      isPreviewable={isPreviewable}
+      faviconUrl={faviconUrl}
+      fileIconPath={fileIconPath}
+      label={label}
+    />
   );
 
   if (!showHint) return anchor;
@@ -356,6 +386,149 @@ function makeStaticComponents(variant: "assistant" | "user", workspacePath: stri
   };
 }
 
+interface MarkdownCodeProps {
+  children?: React.ReactNode;
+  className?: string;
+  isStreaming: boolean;
+  variant: "assistant" | "user";
+  workspacePath: string | null;
+  threadId: string | null;
+  chatHighlighting: boolean;
+}
+
+interface InlineMarkdownCodeProps {
+  children?: React.ReactNode;
+  rawContent: string;
+  isUser: boolean;
+  workspacePath: string | null;
+}
+
+function PreviewHint({ children }: { children: React.ReactElement }) {
+  if (!hasPreview()) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent side="top" className="text-xs">{previewHint}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function InlineUrlCode({ children, text, codeClass }: { children?: React.ReactNode; text: string; codeClass: string }) {
+  const code = (
+    <code
+      role="link"
+      tabIndex={0}
+      className={`${codeClass} text-link underline decoration-dotted hover:opacity-80 cursor-pointer whitespace-nowrap`}
+      onClick={(event) => handleLinkClick(event, text)}
+      onKeyDown={(event) => { if (event.key === "Enter") handleLinkClick(event, text); }}
+    >
+      {children}
+    </code>
+  );
+  return <PreviewHint>{code}</PreviewHint>;
+}
+
+function InlineWorkspaceFileCode({
+  text,
+  previewUrl,
+  isUser,
+}: {
+  text: string;
+  previewUrl: string;
+  isUser: boolean;
+}) {
+  const file = (
+    <EntityToken
+      kind="file"
+      label={text}
+      filePath={text}
+      tone={isUser ? "user" : "assistant"}
+      role="link"
+      tabIndex={0}
+      className="cursor-pointer text-link hover:underline focus-visible:outline-none focus-visible:ring-ring"
+      onClick={(event) => handleLinkClick(event, previewUrl)}
+      onKeyDown={(event) => { if (event.key === "Enter") handleLinkClick(event, previewUrl); }}
+    />
+  );
+  return <PreviewHint>{file}</PreviewHint>;
+}
+
+function InlineMarkdownCode({ children, rawContent, isUser, workspacePath }: InlineMarkdownCodeProps) {
+  const codeClass = isUser
+    ? "bg-foreground/10 rounded px-1.5 py-0.5 text-sm font-mono"
+    : "bg-muted rounded px-1.5 py-0.5 text-sm font-mono";
+  const text = rawContent.trim();
+
+  if (HTTP_URL_RE.test(text)) return <InlineUrlCode codeClass={codeClass} text={text}>{children}</InlineUrlCode>;
+
+  const inlineEntity = resolveInlineEntity(text);
+  if (inlineEntity) {
+    return <EntityToken kind={inlineEntity.kind} label={inlineEntity.label} tone={isUser ? "user" : "assistant"} />;
+  }
+
+  if (workspacePath && looksLikeWorkspaceRelativeFileRef(text)) {
+    return <InlineWorkspaceFileCode text={text} previewUrl={mcodeWorkspacePreviewHref(text)} isUser={isUser} />;
+  }
+
+  if (looksLikeWorkspaceRelativeFileRef(text)) {
+    return <EntityToken kind="file" label={text} filePath={text} tone={isUser ? "user" : "assistant"} />;
+  }
+
+  return <code className={codeClass}>{children}</code>;
+}
+
+function FencedMarkdownCode({
+  children,
+  className,
+  isStreaming,
+  isUser,
+  threadId,
+  chatHighlighting,
+}: Omit<MarkdownCodeProps, "variant" | "workspacePath"> & { isUser: boolean }) {
+  const langMatch = className?.match(/language-(\S+)/);
+  const rawFence = langMatch ? langMatch[1] : "";
+  if (rawFence === "plan-questions" || rawFence === "plan-output") return null;
+
+  const code = String(children).replace(/\n$/, "");
+  if (rawFence === "mermaid") {
+    return (
+      <Suspense fallback={<pre className="bg-muted/30 rounded-lg p-4 overflow-x-auto"><code>{code}</code></pre>}>
+        <LazyMermaidBlock code={code} isStreaming={isStreaming} />
+      </Suspense>
+    );
+  }
+
+  const { language, label } = resolveCodeBlockLanguage(rawFence, code);
+  return (
+    <CodeBlock
+      code={code}
+      language={language}
+      languageLabel={label}
+      isStreaming={isStreaming}
+      disableHighlighting={isUser}
+      threadId={threadId}
+      chatHighlighting={chatHighlighting && !isUser}
+    />
+  );
+}
+
+function MarkdownCode({
+  children,
+  className,
+  isStreaming,
+  variant,
+  workspacePath,
+  threadId,
+  chatHighlighting,
+}: MarkdownCodeProps) {
+  const rawContent = String(children);
+  const isInline = !className && !rawContent.includes("\n");
+  if (isInline) {
+    return <InlineMarkdownCode children={children} rawContent={rawContent} isUser={variant === "user"} workspacePath={workspacePath} />;
+  }
+  return <FencedMarkdownCode children={children} className={className} isStreaming={isStreaming} isUser={variant === "user"} threadId={threadId} chatHighlighting={chatHighlighting} />;
+}
+
 /**
  * Builds the `code` override that depends on `isStreaming`, `variant`, and workspace path.
  * Only recreated when those props change; static overrides are reused.
@@ -368,129 +541,18 @@ function makeComponents(
   chatHighlighting: boolean,
   componentOverrides?: Partial<Components>,
 ) {
-  const isUser = variant === "user";
   const codeRenderer = ({ children, className }: { children?: React.ReactNode; className?: string }) => {
-      // Detect inline vs block code. In react-markdown's HAST, fenced code
-      // blocks are wrapped in a <pre> parent (even without a language tag).
-      // Fenced blocks always have a trailing newline from the code fence.
-      // Check BEFORE stripping the trailing newline so even single-line
-      // fenced blocks without a language are detected.
-      const rawContent = String(children);
-      const isInline = !className && !rawContent.includes("\n");
-
-      if (isInline) {
-        // Inside the user bubble the surface is already `accent`, so `bg-muted`
-        // would vanish against it; a foreground tint stays visible on both themes.
-        const codeClass = isUser
-          ? "bg-foreground/10 rounded px-1.5 py-0.5 text-sm font-mono"
-          : "bg-muted rounded px-1.5 py-0.5 text-sm font-mono";
-
-        // Detect URLs inside inline code and make them clickable
-        const text = rawContent.trim();
-        if (HTTP_URL_RE.test(text)) {
-          const linkClass = "text-link underline decoration-dotted hover:opacity-80 cursor-pointer";
-          const codeEl = (
-            <code
-              role="link"
-              tabIndex={0}
-              className={`${codeClass} ${linkClass} whitespace-nowrap`}
-              onClick={(e) => handleLinkClick(e, text)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleLinkClick(e, text); }}
-            >
-              {children}
-            </code>
-          );
-          if (!hasPreview()) return codeEl;
-          return (
-            <Tooltip>
-              <TooltipTrigger render={codeEl} />
-              <TooltipContent side="top" className="text-xs">{previewHint}</TooltipContent>
-            </Tooltip>
-          );
-        }
-
-        const inlineEntity = resolveInlineEntity(text);
-        if (inlineEntity) {
-          return (
-            <EntityToken
-              kind={inlineEntity.kind}
-              label={inlineEntity.label}
-              tone={isUser ? "user" : "assistant"}
-            />
-          );
-        }
-
-        if (workspacePath && looksLikeWorkspaceRelativeFileRef(text)) {
-          const previewUrl = mcodeWorkspacePreviewHref(text);
-          const entityEl = (
-            <EntityToken
-              kind="file"
-              label={text}
-              filePath={text}
-              tone={isUser ? "user" : "assistant"}
-              role="link"
-              tabIndex={0}
-              className="cursor-pointer text-link hover:underline focus-visible:outline-none focus-visible:ring-ring"
-              onClick={(e) => handleLinkClick(e, previewUrl)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleLinkClick(e, previewUrl); }}
-            />
-          );
-          if (!hasPreview()) return entityEl;
-          return (
-            <Tooltip>
-              <TooltipTrigger render={entityEl} />
-              <TooltipContent side="top" className="text-xs">{previewHint}</TooltipContent>
-            </Tooltip>
-          );
-        }
-
-        if (looksLikeWorkspaceRelativeFileRef(text)) {
-          return (
-            <EntityToken
-              kind="file"
-              label={text}
-              filePath={text}
-              tone={isUser ? "user" : "assistant"}
-            />
-          );
-        }
-
-        return <code className={codeClass}>{children}</code>;
-      }
-
-      const langMatch = className?.match(/language-(\S+)/);
-      const rawFence = langMatch ? langMatch[1] : "";
-
-      // Suppress fenced blocks the model emits for plan mode. The wizard
-      // renders questions from the parsed payload, and plan-output is
-      // displayed in the Plan tab, not as raw markdown.
-      if (rawFence === "plan-questions" || rawFence === "plan-output") return null;
-
-      const code = String(children).replace(/\n$/, "");
-
-      if (rawFence === "mermaid") {
-        return (
-          <Suspense fallback={
-            <pre className="bg-muted/30 rounded-lg p-4 overflow-x-auto"><code>{code}</code></pre>
-          }>
-            <LazyMermaidBlock code={code} isStreaming={isStreaming} />
-          </Suspense>
-        );
-      }
-
-      const { language, label } = resolveCodeBlockLanguage(rawFence, code);
-
-      return (
-        <CodeBlock
-          code={code}
-          language={language}
-          languageLabel={label}
-          isStreaming={isStreaming}
-          disableHighlighting={isUser}
-          threadId={threadId}
-          chatHighlighting={chatHighlighting && !isUser}
-        />
-      );
+    return (
+      <MarkdownCode
+        children={children}
+        className={className}
+        isStreaming={isStreaming}
+        variant={variant}
+        workspacePath={workspacePath}
+        threadId={threadId}
+        chatHighlighting={chatHighlighting}
+      />
+    );
   };
 
   return {

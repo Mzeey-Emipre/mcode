@@ -49,15 +49,15 @@ function canonicalMessage(payload: Record<string, unknown>): Message | undefined
   const message = payload.message;
   if (!message || typeof message !== "object") return undefined;
   const candidate = message as Partial<Message>;
-  if (
-    typeof candidate.id !== "string"
-    || typeof candidate.thread_id !== "string"
-    || (candidate.role !== "user" && candidate.role !== "assistant" && candidate.role !== "system")
-    || typeof candidate.content !== "string"
-    || typeof candidate.timestamp !== "string"
-    || typeof candidate.sequence !== "number"
-  ) return undefined;
+  if (!hasCanonicalMessageFields(candidate)) return undefined;
   return candidate as Message;
+}
+
+function hasCanonicalMessageFields(candidate: Partial<Message>): boolean {
+  const stringFields = [candidate.id, candidate.thread_id, candidate.content, candidate.timestamp];
+  return stringFields.every((field) => typeof field === "string")
+    && ["user", "assistant", "system"].includes(candidate.role ?? "")
+    && typeof candidate.sequence === "number";
 }
 
 function payloadString(payload: Record<string, unknown>, key: string): string | undefined {
@@ -117,19 +117,7 @@ function canonicalTurnSummary(turn: AgentTurn, items: readonly AgentItem[]): Tur
     item.payload.projection === "codexChildToolCall"
     || item.payload.projection === "codexChildToolResult"
     || item.payload.projection === "codexChildReasoning");
-  const starts = activityItems.flatMap((item) => {
-    const value = timestamp(item.createdAt);
-    return value === undefined ? [] : [value];
-  });
-  const ends = activityItems.flatMap((item) => {
-    const value = timestamp(item.updatedAt);
-    return value === undefined ? [] : [value];
-  });
-  const turnStartedAt = timestamp(turn.startedAt ?? turn.createdAt);
-  const turnEndedAt = timestamp(turn.endedAt ?? turn.updatedAt);
-  const answer = [...items].reverse()
-    .map((item) => canonicalMessage(item.payload))
-    .find((message) => message?.role === "assistant");
+  const answer = latestAssistantMessage(items);
   const outcome = messageOutcome(answer) ?? terminalTurnOutcome(turn);
   const outcomeExecutionId = messageOutcomeExecutionId(answer);
   return {
@@ -138,14 +126,119 @@ function canonicalTurnSummary(turn: AgentTurn, items: readonly AgentItem[]): Tur
       thoughts: reasoningItems.length,
       subagents: topLevelTools.filter((item) => payloadString(item.payload, "toolName") === "Agent").length,
     },
-    durationMs: starts.length > 0 && ends.length > 0
-      ? Math.max(0, Math.max(...ends) - Math.min(...starts))
-      : turnStartedAt !== undefined && turnEndedAt !== undefined
-        ? Math.max(0, turnEndedAt - turnStartedAt)
-        : null,
+    durationMs: canonicalTurnDuration(turn, activityItems),
     ...(outcome !== undefined && outcome !== "completed" ? { outcome } : {}),
     ...(outcomeExecutionId !== undefined ? { outcomeExecutionId } : {}),
   };
+}
+
+function datedItemValues(items: readonly AgentItem[], field: "createdAt" | "updatedAt"): number[] {
+  return items.flatMap((item) => {
+    const value = timestamp(item[field]);
+    return value === undefined ? [] : [value];
+  });
+}
+
+function canonicalTurnDuration(turn: AgentTurn, activityItems: readonly AgentItem[]): number | null {
+  const starts = datedItemValues(activityItems, "createdAt");
+  const ends = datedItemValues(activityItems, "updatedAt");
+  if (starts.length > 0 && ends.length > 0) return Math.max(0, Math.max(...ends) - Math.min(...starts));
+  const turnStartedAt = timestamp(turn.startedAt ?? turn.createdAt);
+  const turnEndedAt = timestamp(turn.endedAt ?? turn.updatedAt);
+  return turnStartedAt !== undefined && turnEndedAt !== undefined
+    ? Math.max(0, turnEndedAt - turnStartedAt)
+    : null;
+}
+
+function latestAssistantMessage(items: readonly AgentItem[]): Message | undefined {
+  return [...items].reverse()
+    .map((item) => canonicalMessage(item.payload))
+    .find((message) => message?.role === "assistant");
+}
+
+function projectedMessages(items: readonly AgentItem[], terminal: boolean): Message[] {
+  return items.flatMap((item) => {
+    const message = canonicalMessage(item.payload);
+    return !message || (message.role === "assistant" && !terminal) ? [] : [message];
+  });
+}
+
+function mergedMessages(messages: readonly Message[], projected: readonly Message[]): Message[] {
+  const messagesById = new Map(messages.map((message) => [message.id, message]));
+  for (const message of projected) messagesById.set(message.id, message);
+  return [...messagesById.values()].sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+}
+
+function projectedToolCallStart(item: AgentItem, nativeItemId: string): ToolCall {
+  const startedAt = timestamp(item.createdAt);
+  return {
+    id: nativeItemId, toolName: payloadString(item.payload, "toolName") ?? "Tool", toolInput: toolInput(item.payload), output: null, isError: false, isComplete: false,
+    ...(startedAt === undefined ? {} : { startedAt, lastActivityAt: startedAt }),
+  };
+}
+
+function projectedToolCallTiming(
+  item: AgentItem,
+  existing: ToolCall | undefined,
+): Pick<ToolCall, "startedAt" | "lastActivityAt" | "durationMs"> {
+  const completedAt = timestamp(item.updatedAt) ?? timestamp(item.createdAt);
+  const startedAt = existing?.startedAt ?? timestamp(item.createdAt);
+  return {
+    ...(startedAt === undefined ? {} : { startedAt }), ...(completedAt === undefined ? {} : { lastActivityAt: completedAt }),
+    ...(startedAt === undefined || completedAt === undefined ? {} : { durationMs: Math.max(0, completedAt - startedAt) }),
+  };
+}
+
+function projectedToolCallResult(item: AgentItem, nativeItemId: string, existing: ToolCall | undefined): ToolCall {
+  return {
+    id: nativeItemId,
+    toolName: existing?.toolName ?? "Tool",
+    toolInput: existing?.toolInput ?? {},
+    output: payloadString(item.payload, "output") ?? "",
+    isError: item.payload.isError === true,
+    isComplete: true,
+    ...projectedToolCallTiming(item, existing),
+  };
+}
+
+function projectedToolCall(item: AgentItem, calls: Map<string, ToolCall>): void {
+  const nativeItemId = payloadString(item.payload, "nativeItemId") ?? item.id;
+  if (item.payload.projection === "codexChildToolCall") {
+    calls.set(nativeItemId, projectedToolCallStart(item, nativeItemId));
+    return;
+  }
+  if (item.payload.projection === "codexChildToolResult") {
+    calls.set(nativeItemId, projectedToolCallResult(item, nativeItemId, calls.get(nativeItemId)));
+  }
+}
+
+function projectedToolCalls(items: readonly AgentItem[]): Map<string, ToolCall> {
+  const calls = new Map<string, ToolCall>();
+  for (const item of items) projectedToolCall(item, calls);
+  return calls;
+}
+
+function projectedThoughtSegments(items: readonly AgentItem[], terminal: boolean): ThoughtSegment[] {
+  const thoughts: ThoughtSegment[] = [];
+  for (const item of items.filter((candidate) => candidate.payload.projection === "codexChildReasoning")) {
+    const text = payloadString(item.payload, "content");
+    const startedAt = timestamp(item.createdAt);
+    if (text === undefined || startedAt === undefined) continue;
+    const hasLaterItem = items.some((candidate) => compareItems(candidate, item) > 0);
+    const endedAt = terminal || hasLaterItem ? timestamp(item.updatedAt) ?? startedAt : undefined;
+    thoughts.push({ text, startedAt, ...(endedAt === undefined ? {} : { endedAt }), isExplicitNonFinal: true });
+  }
+  return thoughts;
+}
+
+function turnSummaries(threadTurns: readonly AgentTurn[], threadItems: readonly AgentItem[]): Record<string, TurnFooterSummary> {
+  const summaries: Record<string, TurnFooterSummary> = {};
+  for (const turn of threadTurns.filter(isTerminalTurn)) {
+    const turnItems = threadItems.filter((item) => item.turnId === turn.id).sort(compareItems);
+    const answer = latestAssistantMessage(turnItems);
+    if (answer) summaries[answer.id] = canonicalTurnSummary(turn, turnItems);
+  }
+  return summaries;
 }
 
 /** Project the latest canonical child turn over hydrated conversation history. */
@@ -169,87 +262,16 @@ export function projectCanonicalMessageList({
     .filter((item) => item.turnId === latestTurn.id)
     .sort(compareItems);
 
-  const projectedMessages = items.flatMap((item) => {
-    const message = canonicalMessage(item.payload);
-    if (!message || (message.role === "assistant" && !terminal)) return [];
-    return [message];
-  });
-  const messageById = new Map(messages.map((message) => [message.id, message]));
-  for (const message of projectedMessages) messageById.set(message.id, message);
-  const mergedMessages = [...messageById.values()].sort((left, right) =>
-    left.sequence - right.sequence || left.id.localeCompare(right.id));
-
-  const projectedToolCalls = new Map<string, ToolCall>();
-  for (const item of items) {
-    const projection = item.payload.projection;
-    const nativeItemId = payloadString(item.payload, "nativeItemId") ?? item.id;
-    if (projection === "codexChildToolCall") {
-      const startedAt = timestamp(item.createdAt);
-      projectedToolCalls.set(nativeItemId, {
-        id: nativeItemId,
-        toolName: payloadString(item.payload, "toolName") ?? "Tool",
-        toolInput: toolInput(item.payload),
-        output: null,
-        isError: false,
-        isComplete: false,
-        ...(startedAt === undefined ? {} : { startedAt, lastActivityAt: startedAt }),
-      });
-      continue;
-    }
-    if (projection !== "codexChildToolResult") continue;
-    const completedAt = timestamp(item.updatedAt) ?? timestamp(item.createdAt);
-    const existing = projectedToolCalls.get(nativeItemId);
-    const startedAt = existing?.startedAt ?? timestamp(item.createdAt);
-    projectedToolCalls.set(nativeItemId, {
-      id: nativeItemId,
-      toolName: existing?.toolName ?? "Tool",
-      toolInput: existing?.toolInput ?? {},
-      output: payloadString(item.payload, "output") ?? "",
-      isError: item.payload.isError === true,
-      isComplete: true,
-      ...(startedAt === undefined ? {} : { startedAt }),
-      ...(completedAt === undefined ? {} : { lastActivityAt: completedAt }),
-      ...(startedAt === undefined || completedAt === undefined
-        ? {}
-        : { durationMs: Math.max(0, completedAt - startedAt) }),
-    });
-  }
-
-  const projectedThoughts: ThoughtSegment[] = [];
-  const reasoningItems = items.filter((item) => item.payload.projection === "codexChildReasoning");
-  for (const item of reasoningItems) {
-    const text = payloadString(item.payload, "content");
-    const startedAt = timestamp(item.createdAt);
-    if (text === undefined || startedAt === undefined) continue;
-    const hasLaterItem = items.some((candidate) => compareItems(candidate, item) > 0);
-    const endedAt = terminal || hasLaterItem ? timestamp(item.updatedAt) ?? startedAt : undefined;
-    projectedThoughts.push({
-      text,
-      startedAt,
-      ...(endedAt === undefined ? {} : { endedAt }),
-      isExplicitNonFinal: true,
-    });
-  }
-
+  const projected = projectedMessages(items, terminal);
+  const projectedCalls = projectedToolCalls(items);
+  const projectedThoughts = projectedThoughtSegments(items, terminal);
   const toolCallById = new Map(toolCalls.map((toolCall) => [toolCall.id, toolCall]));
-  for (const toolCall of projectedToolCalls.values()) toolCallById.set(toolCall.id, toolCall);
-  const assistantMessage = [...projectedMessages].reverse().find((message) => message.role === "assistant");
+  for (const toolCall of projectedCalls.values()) toolCallById.set(toolCall.id, toolCall);
+  const assistantMessage = [...projected].reverse().find((message) => message.role === "assistant");
   const responseKey = `canonical-turn-response:${latestTurn.id}`;
-  const turnSummariesByMessageId: Record<string, TurnFooterSummary> = {};
-  for (const turn of threadTurns) {
-    if (!isTerminalTurn(turn)) continue;
-    const turnItems = threadItems
-      .filter((item) => item.turnId === turn.id)
-      .sort(compareItems);
-    const answer = [...turnItems].reverse()
-      .map((item) => canonicalMessage(item.payload))
-      .find((message) => message?.role === "assistant");
-    if (!answer) continue;
-    turnSummariesByMessageId[answer.id] = canonicalTurnSummary(turn, turnItems);
-  }
 
   return {
-    messages: mergedMessages,
+    messages: mergedMessages(messages, projected),
     agentDisplayState,
     agentStartTime: timestamp(latestTurn.startedAt ?? latestTurn.createdAt),
     toolCalls: [...toolCallById.values()],
@@ -257,6 +279,6 @@ export function projectCanonicalMessageList({
     currentTurnMessageId: assistantMessage?.id ?? "",
     currentTurnResponseKey: responseKey,
     assistantResponseKeys: assistantMessage ? { [assistantMessage.id]: responseKey } : {},
-    turnSummariesByMessageId,
+    turnSummariesByMessageId: turnSummaries(threadTurns, threadItems),
   };
 }

@@ -189,6 +189,75 @@ interface DiffCellProps {
   ) => void;
 }
 
+function diffCellLineLabel(cell: PullRequestDiffCell): string {
+  if (cell.lineNumber === null) return "Patch metadata";
+  const side = cell.side === "left" ? "Original" : "Current";
+  return `${side} line ${cell.lineNumber}`;
+}
+
+function diffCellChangePresentation(cell: PullRequestDiffCell): {
+  label: string | null;
+  marker: string;
+} {
+  if (cell.type === "add") return { label: "Added", marker: "+" };
+  if (cell.type === "remove") return { label: "Removed", marker: "−" };
+  return { label: null, marker: "" };
+}
+
+function DiffCellDraftAction({
+  row,
+  cell,
+  active,
+  lineLabel,
+  onCreateDraft,
+}: Pick<DiffCellProps, "row" | "cell" | "active" | "onCreateDraft"> & {
+  lineLabel: string;
+}) {
+  if (cell.lineNumber === null || cell.type === "metadata") return null;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      tabIndex={-1}
+      aria-label={`Draft comment on ${lineLabel.toLowerCase()}`}
+      className={cn(
+        "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground hover:text-background dark:hover:bg-foreground group-hover/cell:pointer-events-auto group-hover/cell:opacity-100 group-focus-within/cell:pointer-events-auto group-focus-within/cell:opacity-100 motion-reduce:transition-none",
+        active && "pointer-events-auto opacity-100",
+      )}
+      onClick={(event) => {
+        event.stopPropagation();
+        onCreateDraft(row, cell);
+      }}
+    >
+      <Plus className="size-4" strokeWidth={2.5} aria-hidden />
+    </Button>
+  );
+}
+
+function DiffCellContent({
+  cell,
+  tokenSpans,
+  trailingText,
+}: Pick<DiffCellProps, "cell"> & {
+  tokenSpans: ReturnType<DiffCellProps["tokens"]>;
+  trailingText: string;
+}) {
+  return (
+    <code className="min-w-0 flex-1 whitespace-pre px-2 py-1 leading-5">
+      {tokenSpans
+        ? tokenSpans.map((token, index) => (
+            <span key={`${token.content}:${index}`} style={{ color: token.color }}>
+              {token.content}
+            </span>
+          ))
+        : cell.content}
+      {trailingText}
+    </code>
+  );
+}
+
 const DiffCell = memo(function DiffCell({
   row,
   cell,
@@ -206,19 +275,13 @@ const DiffCell = memo(function DiffCell({
     tokenSpans?.reduce((length, token) => length + token.content.length, 0) ??
     0;
   const trailingText = truncated ? cell.content.slice(highlightedLength) : "";
-  const lineLabel =
-    cell.lineNumber === null
-      ? "Patch metadata"
-      : `${cell.side === "left" ? "Original" : "Current"} line ${cell.lineNumber}`;
-  const changeLabel =
-    cell.type === "add" ? "Added" : cell.type === "remove" ? "Removed" : null;
-  const changeMarker =
-    cell.type === "add" ? "+" : cell.type === "remove" ? "−" : "";
+  const lineLabel = diffCellLineLabel(cell);
+  const change = diffCellChangePresentation(cell);
 
   return (
     <div
       role={semanticRole}
-      aria-label={`${changeLabel ? `${changeLabel} ` : ""}${lineLabel}: ${cell.content}`}
+      aria-label={`${change.label ? `${change.label} ` : ""}${lineLabel}: ${cell.content}`}
       aria-keyshortcuts="C"
       data-line-key={cell.key}
       data-diff-focus-key={cell.key}
@@ -234,46 +297,26 @@ const DiffCell = memo(function DiffCell({
       onClick={() => onActivate(row, cell)}
       onKeyDown={(event) => onKeyDown(event, row, cell)}
     >
-      {cell.lineNumber !== null && cell.type !== "metadata" && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          tabIndex={-1}
-          aria-label={`Draft comment on ${lineLabel.toLowerCase()}`}
-          className={cn(
-            "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground hover:text-background dark:hover:bg-foreground group-hover/cell:pointer-events-auto group-hover/cell:opacity-100 group-focus-within/cell:pointer-events-auto group-focus-within/cell:opacity-100 motion-reduce:transition-none",
-            active && "pointer-events-auto opacity-100",
-          )}
-          onClick={(event) => {
-            event.stopPropagation();
-            onCreateDraft(row, cell);
-          }}
-        >
-          <Plus className="size-4" strokeWidth={2.5} aria-hidden />
-        </Button>
-      )}
+      <DiffCellDraftAction
+        row={row}
+        cell={cell}
+        active={active}
+        lineLabel={lineLabel}
+        onCreateDraft={onCreateDraft}
+      />
       <span
         aria-hidden
         data-testid="pull-request-diff-gutter"
         className="inline-grid w-10 shrink-0 select-none grid-cols-[0.75rem_1fr] items-center bg-page/35 pr-1.5 tabular-nums text-muted-foreground/70"
       >
-        <span className="text-center text-current">{changeMarker}</span>
+        <span className="text-center text-current">{change.marker}</span>
         <span className="text-right">{cell.lineNumber ?? ""}</span>
       </span>
-      <code className="min-w-0 flex-1 whitespace-pre px-2 py-1 leading-5">
-        {tokenSpans
-          ? tokenSpans.map((token, index) => (
-              <span
-                key={`${token.content}:${index}`}
-                style={{ color: token.color }}
-              >
-                {token.content}
-              </span>
-            ))
-          : cell.content}
-        {trailingText}
-      </code>
+      <DiffCellContent
+        cell={cell}
+        tokenSpans={tokenSpans}
+        trailingText={trailingText}
+      />
     </div>
   );
 });
@@ -286,6 +329,72 @@ function gridCell(children: ReactNode, className?: string): ReactNode {
       {children}
     </div>
   );
+}
+
+function estimateHunkSize(row: Extract<PullRequestDiffRow, { kind: "hunk" }>): number {
+  return row.hiddenLineCount > 0 ? DIFF_ROW_ESTIMATE_PX : 0;
+}
+
+function estimateLineSize(
+  row: PullRequestDiffLineRow,
+  mode: "unified" | "split",
+): number {
+  if (mode !== "unified") return DIFF_ROW_ESTIMATE_PX;
+  return renderedUnifiedCells(row).length * DIFF_ROW_ESTIMATE_PX;
+}
+
+function estimateDiffRowSize(
+  row: PullRequestDiffRow | undefined,
+  mode: "unified" | "split",
+): number {
+  if (!row) return DIFF_ROW_ESTIMATE_PX;
+  switch (row.kind) {
+    case "file":
+      return 40;
+    case "inline":
+      return 160;
+    case "notice":
+      return 44;
+    case "hunk":
+      return estimateHunkSize(row);
+    case "line":
+      return estimateLineSize(row, mode);
+  }
+}
+
+function draftCommentShortcut(
+  event: KeyboardEvent<HTMLDivElement>,
+  row: PullRequestDiffLineRow,
+  cell: PullRequestDiffCell,
+  onCreateDraft: DiffCellProps["onCreateDraft"],
+): boolean {
+  if (event.key.toLowerCase() !== "c") return false;
+  if (event.metaKey || event.ctrlKey || event.altKey) return false;
+  event.preventDefault();
+  onCreateDraft(row, cell);
+  return true;
+}
+
+function verticalFocusDelta(key: string): -1 | 1 | null {
+  if (key === "ArrowDown") return 1;
+  if (key === "ArrowUp") return -1;
+  return null;
+}
+
+function hunkFocusTarget(
+  key: string,
+  currentRowIndex: number,
+  targets: readonly { rowIndex: number; cellKey: string }[],
+): string | null {
+  if (key === "j") {
+    return targets.find((candidate) => candidate.rowIndex > currentRowIndex)?.cellKey ?? null;
+  }
+  if (key === "k") {
+    return [...targets]
+      .reverse()
+      .find((candidate) => candidate.rowIndex < currentRowIndex)?.cellKey ?? null;
+  }
+  return null;
 }
 
 function PullRequestVirtualDiffComponent({
@@ -320,24 +429,7 @@ function PullRequestVirtualDiffComponent({
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: rows.length,
     getScrollElement: () => viewportRef.current,
-    estimateSize: (index) => {
-      const row = rows[index];
-      if (row?.kind === "file") return 40;
-      if (row?.kind === "inline") return 160;
-      if (row?.kind === "notice") return 44;
-      if (row?.kind === "hunk") {
-        return row.hiddenLineCount > 0 ? DIFF_ROW_ESTIMATE_PX : 0;
-      }
-      if (
-        row?.kind === "line" &&
-        effectiveMode === "unified" &&
-        (row.leftType === "remove" || row.leftType === "metadata") &&
-        row.rightType !== "empty"
-      ) {
-        return DIFF_ROW_ESTIMATE_PX * 2;
-      }
-      return DIFF_ROW_ESTIMATE_PX;
-    },
+    estimateSize: (index) => estimateDiffRowSize(rows[index], effectiveMode),
     getItemKey: (index) => rows[index]?.key ?? index,
     overscan: DIFF_ROW_OVERSCAN,
     useFlushSync: false,
@@ -485,35 +577,19 @@ function PullRequestVirtualDiffComponent({
       row: PullRequestDiffLineRow,
       cell: PullRequestDiffCell,
     ) => {
-      if (
-        event.key.toLowerCase() === "c" &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.altKey
-      ) {
+      if (draftCommentShortcut(event, row, cell, onCreateDraft)) return;
+      const delta = verticalFocusDelta(event.key);
+      if (delta !== null) {
         event.preventDefault();
-        onCreateDraft(row, cell);
-        return;
-      }
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const delta = event.key === "ArrowDown" ? 1 : -1;
         moveFocus(cell.key, delta);
         return;
       }
       const key = event.key.toLowerCase();
-      if (key !== "j" && key !== "k") return;
-      event.preventDefault();
       const currentRowIndex = cellRowIndex.get(cell.key) ?? 0;
-      const target =
-        key === "j"
-          ? hunkTargets.find(
-              (candidate) => candidate.rowIndex > currentRowIndex,
-            )
-          : [...hunkTargets]
-              .reverse()
-              .find((candidate) => candidate.rowIndex < currentRowIndex);
-      if (target) focusItem(target.cellKey);
+      const target = hunkFocusTarget(key, currentRowIndex, hunkTargets);
+      if (!target) return;
+      event.preventDefault();
+      focusItem(target);
     },
     [cellRowIndex, focusItem, hunkTargets, moveFocus, onCreateDraft],
   );

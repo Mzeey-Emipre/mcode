@@ -6,6 +6,59 @@ interface TaskPanelHeaderProps {
   tasks: readonly TaskItem[];
 }
 
+function progressLabel(completed: number, cancelled: number, total: number): string {
+  const settled = completed + cancelled;
+  if (settled === total) {
+    return cancelled > 0
+      ? `All tasks settled: ${completed} completed, ${cancelled} cancelled`
+      : "All tasks completed";
+  }
+  return cancelled > 0
+    ? `${completed} completed, ${cancelled} cancelled, ${total - settled} remaining`
+    : `${completed} of ${total} tasks completed`;
+}
+
+function TaskStatusVisualization({
+  tasks,
+  hasActive,
+  percent,
+}: {
+  tasks: readonly TaskItem[];
+  hasActive: boolean;
+  percent: number;
+}) {
+  if (tasks.length > 24) {
+    return (
+      <div className="relative h-[3px] flex-1 rounded-full bg-border/30">
+        <div
+          className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out ${
+            hasActive ? "bg-primary/65" : "bg-[var(--diff-add-strong)]/55"
+          }`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-[3px]">
+      {tasks.map((task, index) => (
+        <span
+          key={index}
+          className={`h-[10px] w-[2px] rounded-[1px] transition-colors duration-300 ${
+            task.status === "completed"
+              ? "bg-[var(--diff-add-strong)]/65"
+              : task.status === "in_progress"
+                ? "bg-primary animate-pulse"
+                : task.status === "cancelled"
+                  ? "bg-muted-foreground/35"
+                  : "bg-muted-foreground/20"
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
+
 /**
  * Compact progress header for the task panel.
  * Shows per-task status dots (completed/active/cancelled/pending) with a fraction counter.
@@ -26,14 +79,7 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
 
   if (total === 0) return null;
 
-  const useDots = total <= 24;
-  const progressLabel = allDone
-    ? cancelled > 0
-      ? `All tasks settled: ${completed} completed, ${cancelled} cancelled`
-      : "All tasks completed"
-    : cancelled > 0
-      ? `${completed} completed, ${cancelled} cancelled, ${total - settled} remaining`
-      : `${completed} of ${total} tasks completed`;
+  const label = progressLabel(completed, cancelled, total);
 
   return (
     <div className="flex-none border-b border-border/20 px-3 py-2.5">
@@ -41,33 +87,7 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
         <span className="shrink-0 text-xs font-medium text-foreground/80">Tasks</span>
         {/* Task status visualization — slim ticks (vertical bars) read as a typographic ledger */}
         <div className="flex min-w-0 flex-1 items-center" aria-hidden>
-          {useDots ? (
-            <div className="flex items-center gap-[3px]">
-              {tasks.map((task, i) => (
-                <span
-                  key={i}
-                  className={`h-[10px] w-[2px] rounded-[1px] transition-colors duration-300 ${
-                    task.status === "completed"
-                      ? "bg-[var(--diff-add-strong)]/65"
-                      : task.status === "in_progress"
-                        ? "bg-primary animate-pulse"
-                        : task.status === "cancelled"
-                          ? "bg-muted-foreground/35"
-                          : "bg-muted-foreground/20"
-                  }`}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="relative h-[3px] flex-1 rounded-full bg-border/30">
-              <div
-                className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out ${
-                  hasActive ? "bg-primary/65" : "bg-[var(--diff-add-strong)]/55"
-                }`}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-          )}
+          <TaskStatusVisualization tasks={tasks} hasActive={hasActive} percent={pct} />
         </div>
 
         {/* Fraction counter — typographic ratio with a soft slash */}
@@ -80,7 +100,7 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
                 : "text-muted-foreground/55"
           }`}
         >
-          <span className="sr-only">{progressLabel}</span>
+          <span className="sr-only">{label}</span>
           <span aria-hidden="true">
             <span className="font-medium">{settled}</span>
             <span className="text-muted-foreground/30">/</span>

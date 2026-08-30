@@ -279,34 +279,45 @@ export function createChatHighlightCoordinator(
     });
   };
 
+  const resolveHighlightedHtml = (
+    response: ChatHighlightResponse | null,
+    generation: number,
+  ): string | null => {
+    if (dependencies.workerGeneration() !== generation || !response || response.error) return null;
+    return response.html || null;
+  };
+
+  const deliverJobResult = (
+    subscribers: Iterable<Subscriber>,
+    html: string | null,
+    timing: unknown,
+  ): void => {
+    for (const subscriber of subscribers) {
+      if (subscriber.active) enqueueDelivery(subscriber, html, timing);
+    }
+  };
+
   const finishJob = (job: InFlightJob, response: ChatHighlightResponse | null): void => {
     if (job.epoch !== epoch) return;
     activeJobs -= 1;
     inFlight.delete(job.key);
-    const isCurrentGeneration = dependencies.workerGeneration() === job.generation;
-    const html = isCurrentGeneration && response && !response.error && response.html
-      ? response.html
-      : null;
+    const html = resolveHighlightedHtml(response, job.generation);
     if (response?.error) console.warn("[shiki-worker]", response.error);
     if (html !== null) cacheResult(job.key, html, job.generation);
-    for (const subscriber of job.subscribers) {
-      if (subscriber.active) enqueueDelivery(subscriber, html, response?.timing);
-    }
+    deliverJobResult(job.subscribers, html, response?.timing);
     job.subscribers.clear();
     pump();
   };
 
-  const startJob = (job: InFlightJob): void => {
-    if (job.started) return;
-    job.started = true;
-    activeJobs += 1;
-    const id = dependencies.nextRequestId("chat-highlight");
-    job.requestId = id;
+  const registerWorkerResponse = (job: InFlightJob, id: string): void => {
     dependencies.pending.set(id, (response) => {
       if (job.epoch !== epoch) return;
       dependencies.pending.delete(id);
       finishJob(job, parseWorkerResponse(response, id));
     });
+  };
+
+  const postHighlightRequest = (job: InFlightJob, id: string): void => {
     try {
       dependencies.getWorker().postMessage({
         id,
@@ -320,6 +331,16 @@ export function createChatHighlightCoordinator(
       dependencies.pending.delete(id);
       finishJob(job, null);
     }
+  };
+
+  const startJob = (job: InFlightJob): void => {
+    if (job.started) return;
+    job.started = true;
+    activeJobs += 1;
+    const id = dependencies.nextRequestId("chat-highlight");
+    job.requestId = id;
+    registerWorkerResponse(job, id);
+    postHighlightRequest(job, id);
   };
 
   function pump(): void {

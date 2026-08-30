@@ -290,51 +290,73 @@ export class BrowserSurfacePresentationCoordinator {
   }
 
   private readonly apply = (record: SurfaceIntents): void => {
+    const target = this.presentationTarget(record);
+    if (!target || !isPresentablePage(target.intent.pageState)) {
+      this.host.hide(record.identity);
+      return;
+    }
+    this.host.present(record.identity, this.presentationFor(target.intent, target.rect, target.automationVisible));
+  };
+
+  private presentationTarget(record: SurfaceIntents): {
+    intent: BrowserSurfacePresentationIntent;
+    rect: BrowserSurfacePresentationRect;
+    automationVisible: boolean;
+  } | null {
     const panel = this.effectiveIntent(record, "panel");
-    const automation = this.effectiveIntent(record, "automation");
     const panelRect = panel?.active ? this.panelRect(panel) : null;
-    const panelVisible = panel?.active === true && hasGeometry(panelRect);
-    const automationRect = automation?.active ? this.automationRect(record.identity) : null;
-    const automationVisible = automation?.active === true && hasGeometry(automationRect);
-    const intent = panelVisible
-      ? panel
-      : automationVisible || automation?.active === true
-        ? automation
-        : null;
-    if (!intent) {
-      this.host.hide(record.identity);
-      return;
+    if (panel?.active && hasGeometry(panelRect)) {
+      return { intent: panel, rect: panelRect, automationVisible: false };
     }
-    const rect = intent.source === "panel"
-      ? panelRect
-      : automationVisible
-        ? automationRect
-        : OFFSCREEN_AUTOMATION_RECT;
-    if (!rect || !isPresentablePage(intent.pageState)) {
-      this.host.hide(record.identity);
-      return;
+    const automation = this.effectiveIntent(record, "automation");
+    if (!automation?.active) return null;
+    const automationRect = this.automationRect(record.identity);
+    if (hasGeometry(automationRect)) {
+      return { intent: automation, rect: automationRect, automationVisible: true };
     }
-    const intrinsicWidth = intent.viewport?.width ?? rect.width;
-    const intrinsicHeight = intent.viewport?.height ?? rect.height;
-    const scale = intent.viewport
-      ? Math.min(rect.width / intrinsicWidth, rect.height / intrinsicHeight)
-      : 1;
+    return { intent: automation, rect: OFFSCREEN_AUTOMATION_RECT, automationVisible: false };
+  }
+
+  private presentationFor(
+    intent: BrowserSurfacePresentationIntent,
+    rect: BrowserSurfacePresentationRect,
+    automationVisible: boolean,
+  ): BrowserSurfacePresentation {
+    const intrinsic = this.intrinsicPresentation(intent, rect);
     const offscreen = intent.source === "automation" && !automationVisible;
-    const presentation: BrowserSurfacePresentation = {
+    return {
       left: rect.left,
       top: rect.top,
-      width: intrinsicWidth,
-      height: intrinsicHeight,
-      scale,
-      zIndex: offscreen ? 29 : 31,
-      coveredLeft: offscreen
-        ? 0
-        : boundedCoveredLeft(intent.coveredLeft ?? this.activityRailOverlap, rect.width, scale),
-      inputEnabled: offscreen ? false : intent.inputEnabled ?? intent.source === "panel",
-      accessible: offscreen ? false : intent.accessible ?? intent.source === "panel",
+      width: intrinsic.width,
+      height: intrinsic.height,
+      scale: intrinsic.scale,
+      ...this.presentationFlags(intent, rect, intrinsic.scale, offscreen),
     };
-    this.host.present(record.identity, presentation);
-  };
+  }
+
+  private intrinsicPresentation(
+    intent: BrowserSurfacePresentationIntent,
+    rect: BrowserSurfacePresentationRect,
+  ): { width: number; height: number; scale: number } {
+    const width = intent.viewport?.width ?? rect.width;
+    const height = intent.viewport?.height ?? rect.height;
+    return { width, height, scale: intent.viewport ? Math.min(rect.width / width, rect.height / height) : 1 };
+  }
+
+  private presentationFlags(
+    intent: BrowserSurfacePresentationIntent,
+    rect: BrowserSurfacePresentationRect,
+    scale: number,
+    offscreen: boolean,
+  ): Pick<BrowserSurfacePresentation, "zIndex" | "coveredLeft" | "inputEnabled" | "accessible"> {
+    const panelInput = intent.source === "panel";
+    return {
+      zIndex: offscreen ? 29 : 31,
+      coveredLeft: offscreen ? 0 : boundedCoveredLeft(intent.coveredLeft ?? this.activityRailOverlap, rect.width, scale),
+      inputEnabled: offscreen ? false : intent.inputEnabled ?? panelInput,
+      accessible: offscreen ? false : intent.accessible ?? panelInput,
+    };
+  }
 
   private panelRect(intent: BrowserSurfacePresentationIntent): BrowserSurfacePresentationRect | null {
     if (!intent.anchor) return null;
@@ -379,6 +401,6 @@ export class BrowserSurfacePresentationCoordinator {
   }
 
   private notify(): void {
-    for (const listener of [...this.listeners]) listener();
+    for (const listener of this.listeners) listener();
   }
 }

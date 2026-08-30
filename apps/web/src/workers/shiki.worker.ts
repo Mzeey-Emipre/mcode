@@ -267,6 +267,313 @@ async function resolveLanguage(
   return lang;
 }
 
+type Highlighter = Awaited<ReturnType<typeof createHighlighterCore>>;
+type PullRequestDiffTokenizeResult = PullRequestDiffTokenizeResponse["results"][number];
+
+type HighlightMeasurement = {
+  measured: boolean;
+  firstMeasuredRequest: boolean;
+  workerRequestStartedAtMs: number | undefined;
+  highlighterCreationStartedAtMs: number | null;
+};
+
+function beginHighlightMeasurement(request: HighlightRequest): HighlightMeasurement {
+  const measured = request.measurePerformance === true;
+  const firstMeasuredRequest = measured && !measuredWorkerRequestSeen;
+  if (measured) {
+    if (firstMeasuredRequest) measuredWorkerRequestSeen = true;
+    measuredLanguages ??= new Set<string>();
+  }
+  return {
+    measured,
+    firstMeasuredRequest,
+    workerRequestStartedAtMs: measured ? performance.now() : undefined,
+    highlighterCreationStartedAtMs: null,
+  };
+}
+
+function getHighlightPhase(
+  measured: boolean,
+  highlighterWasReady: boolean,
+  languageWasReady: boolean,
+  language: string,
+): "warm" | "cold" {
+  if (!measured) return "warm";
+  return (highlighterWasReady && languageWasReady) || measuredLanguages!.has(language)
+    ? "warm"
+    : "cold";
+}
+
+async function resolveMeasuredLanguage(
+  highlighter: Highlighter,
+  language: string,
+  measured: boolean,
+): Promise<{ language: string; wasReady: boolean; loadMs: number }> {
+  const canonicalLanguage = measured ? resolveShikiLanguage(language) : "";
+  const wasReady = measured && highlighter.getLoadedLanguages().includes(canonicalLanguage);
+  const startedAtMs = measured ? performance.now() : 0;
+  const resolvedLanguage = await resolveLanguage(highlighter, language);
+  return {
+    language: resolvedLanguage,
+    wasReady,
+    loadMs: measured ? boundedDuration(performance.now() - startedAtMs) : 0,
+  };
+}
+
+function renderHighlightHtml(
+  highlighter: Highlighter,
+  code: string,
+  language: string,
+  theme: HighlightRequest["theme"],
+): string {
+  try {
+    return highlighter.codeToHtml(code, { lang: language, theme });
+  } catch {
+    const escaped = code
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    return `<pre class="shiki"><code>${escaped}</code></pre>`;
+  }
+}
+
+function createHighlightTiming(
+  measurement: HighlightMeasurement,
+  highlighterCreationMs: number,
+  grammarLoadMs: number,
+  codeToHtmlMs: number,
+  html: string,
+  phase: "warm" | "cold",
+): ShikiWorkerTiming | undefined {
+  if (!measurement.measured) return undefined;
+  return {
+    phase,
+    workerStartupMs: boundedDuration(
+      measurement.firstMeasuredRequest
+        ? measurement.workerRequestStartedAtMs! - workerModuleStartedAtMs!
+        : 0,
+    ),
+    highlighterCreationMs,
+    grammarLoadMs,
+    codeToHtmlMs,
+    responseBytes: responseBytes(html),
+    workerPostedAtEpochMs: Date.now(),
+  };
+}
+
+async function createHighlightResponse(request: HighlightRequest): Promise<HighlightResponse> {
+  const measurement = beginHighlightMeasurement(request);
+  const highlighterWasReady = measurement.measured && highlighterPromise !== null;
+  const highlighter = await getHighlighter((startedAtMs) => {
+    measurement.highlighterCreationStartedAtMs = startedAtMs;
+  });
+  const highlighterCreationMs = measurement.measured
+    ? boundedDuration(
+        measurement.highlighterCreationStartedAtMs === null
+          ? 0
+          : performance.now() - measurement.highlighterCreationStartedAtMs,
+      )
+    : 0;
+  const language = await resolveMeasuredLanguage(highlighter, request.language, measurement.measured);
+  const phase = getHighlightPhase(
+    measurement.measured,
+    highlighterWasReady,
+    language.wasReady,
+    language.language,
+  );
+  if (measurement.measured) measuredLanguages!.add(language.language);
+  const startedAtMs = measurement.measured ? performance.now() : 0;
+  const html = renderHighlightHtml(highlighter, request.code, language.language, request.theme);
+  const codeToHtmlMs = measurement.measured
+    ? boundedDuration(performance.now() - startedAtMs)
+    : 0;
+  const timing = createHighlightTiming(
+    measurement,
+    highlighterCreationMs,
+    language.loadMs,
+    codeToHtmlMs,
+    html,
+    phase,
+  );
+  return {
+    id: request.id,
+    type: "highlight",
+    html,
+    ...(timing ? { timing } : {}),
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
+function tokenSpans(tokens: ReturnType<Highlighter["codeToTokens"]>["tokens"]): TokenSpan[][] {
+  return tokens.map((lineTokens) =>
+    lineTokens.map((token) => ({
+      content: token.content,
+      color: token.color ?? "inherit",
+    })),
+  );
+}
+
+async function tokenizeBlock(
+  highlighter: Highlighter,
+  block: TokenizeRequest["blocks"][number],
+): Promise<TokenizeResponse["results"][number]> {
+  try {
+    const language = await resolveLanguage(highlighter, block.language);
+    const { tokens } = highlighter.codeToTokens(block.code, { lang: language, theme: block.theme });
+    return { blockId: block.blockId, lines: tokenSpans(tokens) };
+  } catch (error) {
+    return { blockId: block.blockId, lines: [], error: errorMessage(error) };
+  }
+}
+
+async function handleHighlightRequest(request: HighlightRequest): Promise<void> {
+  try {
+    self.postMessage(await createHighlightResponse(request));
+  } catch (error) {
+    self.postMessage({
+      id: request.id,
+      type: "highlight",
+      html: "",
+      error: errorMessage(error),
+    } satisfies HighlightResponse);
+  }
+}
+
+async function handleTokenizeRequest(request: TokenizeRequest): Promise<void> {
+  try {
+    const highlighter = await getHighlighter();
+    const results: TokenizeResponse["results"] = [];
+    for (const block of request.blocks) results.push(await tokenizeBlock(highlighter, block));
+    self.postMessage({ id: request.id, type: "tokenize", results } satisfies TokenizeResponse);
+  } catch (error) {
+    self.postMessage({
+      id: request.id,
+      type: "tokenize",
+      results: [],
+      error: errorMessage(error),
+    } as TokenizeResponse & { error: string });
+  }
+}
+
+function hasDiffWindowLineCapacity(request: PullRequestDiffTokenizeRequest): boolean {
+  return request.blocks.reduce((count, block) => count + block.lines.length, 0) <= PULL_REQUEST_DIFF_WORKER_MAX_LINES;
+}
+
+function boundDiffBlockLines(block: PullRequestDiffTokenizeBlock): {
+  lines: string[];
+  truncatedLineKeys: string[];
+} {
+  const truncatedLineKeys: string[] = [];
+  const lines = block.lines.map((line, index) => {
+    const bounded = truncatePullRequestDiffLine(line);
+    if (bounded.truncated) truncatedLineKeys.push(block.lineKeys[index]);
+    return bounded.value;
+  });
+  return { lines, truncatedLineKeys };
+}
+
+function diffBlockError(
+  block: PullRequestDiffTokenizeBlock,
+  message: string,
+): PullRequestDiffTokenizeResult {
+  return {
+    blockId: block.blockId,
+    lineKeys: [],
+    lines: [],
+    truncatedLineKeys: [],
+    tokenBytes: 0,
+    error: message,
+  };
+}
+
+async function tokenizeDiffWindowBlock(
+  highlighter: Highlighter,
+  block: PullRequestDiffTokenizeBlock,
+  requestId: string,
+): Promise<PullRequestDiffTokenizeResult | undefined> {
+  await yieldToWorkerQueue();
+  if (cancelledRequestIds.has(requestId)) return undefined;
+  if (block.lineKeys.length !== block.lines.length) {
+    return diffBlockError(block, "Pull request highlight line keys do not match source lines");
+  }
+  const bounded = boundDiffBlockLines(block);
+  try {
+    const language = await resolveLanguage(highlighter, block.language);
+    if (cancelledRequestIds.has(requestId)) return undefined;
+    const { tokens } = highlighter.codeToTokens(bounded.lines.join("\n"), {
+      lang: language,
+      theme: block.theme,
+    });
+    const lines = tokenSpans(tokens);
+    return {
+      blockId: block.blockId,
+      lineKeys: block.lineKeys,
+      lines,
+      truncatedLineKeys: bounded.truncatedLineKeys,
+      tokenBytes: tokenSpanBytes(lines),
+    };
+  } catch (error) {
+    return {
+      blockId: block.blockId,
+      lineKeys: block.lineKeys,
+      lines: [],
+      truncatedLineKeys: bounded.truncatedLineKeys,
+      tokenBytes: 0,
+      error: errorMessage(error),
+    };
+  }
+}
+
+async function handleDiffWindowTokenizeRequest(
+  request: PullRequestDiffTokenizeRequest,
+): Promise<void> {
+  activeRequestIds.add(request.id);
+  try {
+    if (!hasDiffWindowLineCapacity(request)) {
+      self.postMessage({
+        id: request.id,
+        type: "tokenize-diff-window",
+        results: [],
+        tokenBytes: 0,
+        error: "Pull request highlight window exceeds the worker line limit",
+      } satisfies PullRequestDiffTokenizeResponse);
+      return;
+    }
+    const highlighter = await getHighlighter();
+    const results: PullRequestDiffTokenizeResponse["results"] = [];
+    let tokenBytes = 0;
+    for (const block of request.blocks) {
+      const result = await tokenizeDiffWindowBlock(highlighter, block, request.id);
+      if (!result) return;
+      results.push(result);
+      tokenBytes += result.tokenBytes;
+    }
+    if (cancelledRequestIds.has(request.id)) return;
+    self.postMessage({
+      id: request.id,
+      type: "tokenize-diff-window",
+      results,
+      tokenBytes,
+    } satisfies PullRequestDiffTokenizeResponse);
+  } catch (error) {
+    if (!cancelledRequestIds.has(request.id)) {
+      self.postMessage({
+        id: request.id,
+        type: "tokenize-diff-window",
+        results: [],
+        tokenBytes: 0,
+        error: errorMessage(error),
+      } satisfies PullRequestDiffTokenizeResponse);
+    }
+  } finally {
+    activeRequestIds.delete(request.id);
+    cancelledRequestIds.delete(request.id);
+  }
+}
+
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const req = e.data;
 
@@ -276,228 +583,16 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   }
 
   if (req.type === "highlight") {
-    const { id, code, language, theme } = req;
-    const measured = req.measurePerformance === true;
-    const firstMeasuredRequest = measured && !measuredWorkerRequestSeen;
-    const workerRequestStartedAtMs = measured ? performance.now() : undefined;
-    if (measured) {
-      if (firstMeasuredRequest) measuredWorkerRequestSeen = true;
-      measuredLanguages ??= new Set<string>();
-    }
-    try {
-      const highlighterWasReady = measured && highlighterPromise !== null;
-      let highlighterCreationStartedAtMs: number | null = null;
-      const highlighter = await getHighlighter(
-        measured
-          ? (startedAtMs) => {
-              highlighterCreationStartedAtMs = startedAtMs;
-            }
-          : undefined,
-      );
-      const highlighterCreationMs = measured
-        ? boundedDuration(
-            highlighterCreationStartedAtMs === null
-              ? 0
-              : performance.now() - highlighterCreationStartedAtMs,
-          )
-        : 0;
-      const canonicalLanguage = measured ? resolveShikiLanguage(language) : "";
-      const languageWasReady = measured && highlighter.getLoadedLanguages().includes(canonicalLanguage);
-      const grammarLoadStartedAtMs = measured ? performance.now() : 0;
-      const lang = await resolveLanguage(highlighter, language);
-      const grammarLoadMs = measured ? boundedDuration(performance.now() - grammarLoadStartedAtMs) : 0;
-      const phase = measured
-        ? (highlighterWasReady && languageWasReady) || measuredLanguages!.has(lang)
-          ? "warm"
-          : "cold"
-        : "warm";
-      if (measured) measuredLanguages!.add(lang);
-
-      let html: string;
-      const codeToHtmlStartedAtMs = measured ? performance.now() : 0;
-      try {
-        html = highlighter.codeToHtml(code, { lang, theme });
-      } catch {
-        const escaped = code
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
-        html = `<pre class="shiki"><code>${escaped}</code></pre>`;
-      }
-      const codeToHtmlMs = measured ? boundedDuration(performance.now() - codeToHtmlStartedAtMs) : 0;
-
-      const timing: ShikiWorkerTiming | undefined = measured
-        ? {
-            phase,
-            workerStartupMs: boundedDuration(
-              firstMeasuredRequest
-                ? workerRequestStartedAtMs! - workerModuleStartedAtMs!
-                : 0,
-            ),
-            highlighterCreationMs,
-            grammarLoadMs,
-            codeToHtmlMs,
-            responseBytes: responseBytes(html),
-            workerPostedAtEpochMs: Date.now(),
-          }
-        : undefined;
-
-      self.postMessage({
-        id,
-        type: "highlight",
-        html,
-        ...(timing ? { timing } : {}),
-      } satisfies HighlightResponse);
-    } catch (err) {
-      self.postMessage({
-        id,
-        type: "highlight",
-        html: "",
-        error: err instanceof Error ? err.message : "Unknown error",
-      } satisfies HighlightResponse);
-    }
+    await handleHighlightRequest(req);
     return;
   }
 
   if (req.type === "tokenize") {
-    const { id, blocks } = req;
-    try {
-      const highlighter = await getHighlighter();
-      const results: TokenizeResponse["results"] = [];
-
-      for (const block of blocks) {
-        try {
-          const lang = await resolveLanguage(highlighter, block.language);
-          const { tokens } = highlighter.codeToTokens(block.code, {
-            lang,
-            theme: block.theme,
-          });
-          // Map ThemedToken[][] → TokenSpan[][]
-          const lines: TokenSpan[][] = tokens.map((lineTokens) =>
-            lineTokens.map((t) => ({
-              content: t.content,
-              // Fall back to inherit so the diff text color applies
-              color: t.color ?? "inherit",
-            })),
-          );
-          results.push({ blockId: block.blockId, lines });
-        } catch (err) {
-          results.push({
-            blockId: block.blockId,
-            lines: [],
-            error: err instanceof Error ? err.message : "Unknown error",
-          });
-        }
-      }
-
-      self.postMessage({ id, type: "tokenize", results } satisfies TokenizeResponse);
-    } catch (err) {
-      self.postMessage({
-        id,
-        type: "tokenize",
-        results: [],
-        error: err instanceof Error ? err.message : "Unknown error",
-      } as TokenizeResponse & { error: string });
-    }
+    await handleTokenizeRequest(req);
     return;
   }
 
   if (req.type === "tokenize-diff-window") {
-    const { id } = req;
-    activeRequestIds.add(id);
-    try {
-      const totalLines = req.blocks.reduce(
-        (count, block) => count + block.lines.length,
-        0,
-      );
-      if (totalLines > PULL_REQUEST_DIFF_WORKER_MAX_LINES) {
-        self.postMessage({
-          id,
-          type: "tokenize-diff-window",
-          results: [],
-          tokenBytes: 0,
-          error: "Pull request highlight window exceeds the worker line limit",
-        } satisfies PullRequestDiffTokenizeResponse);
-        return;
-      }
-
-      const highlighter = await getHighlighter();
-      const results: PullRequestDiffTokenizeResponse["results"] = [];
-      let tokenBytes = 0;
-      for (const block of req.blocks) {
-        await yieldToWorkerQueue();
-        if (cancelledRequestIds.has(id)) return;
-        if (block.lineKeys.length !== block.lines.length) {
-          results.push({
-            blockId: block.blockId,
-            lineKeys: [],
-            lines: [],
-            truncatedLineKeys: [],
-            tokenBytes: 0,
-            error: "Pull request highlight line keys do not match source lines",
-          });
-          continue;
-        }
-
-        const truncatedLineKeys: string[] = [];
-        const boundedLines = block.lines.map((line, index) => {
-          const bounded = truncatePullRequestDiffLine(line);
-          if (bounded.truncated) truncatedLineKeys.push(block.lineKeys[index]);
-          return bounded.value;
-        });
-        try {
-          const lang = await resolveLanguage(highlighter, block.language);
-          if (cancelledRequestIds.has(id)) return;
-          const { tokens } = highlighter.codeToTokens(boundedLines.join("\n"), {
-            lang,
-            theme: block.theme,
-          });
-          const lines = tokens.map((lineTokens) =>
-            lineTokens.map((token) => ({
-              content: token.content,
-              color: token.color ?? "inherit",
-            })),
-          );
-          const blockTokenBytes = tokenSpanBytes(lines);
-          tokenBytes += blockTokenBytes;
-          results.push({
-            blockId: block.blockId,
-            lineKeys: block.lineKeys,
-            lines,
-            truncatedLineKeys,
-            tokenBytes: blockTokenBytes,
-          });
-        } catch (error) {
-          results.push({
-            blockId: block.blockId,
-            lineKeys: block.lineKeys,
-            lines: [],
-            truncatedLineKeys,
-            tokenBytes: 0,
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
-        }
-      }
-      if (cancelledRequestIds.has(id)) return;
-      self.postMessage({
-        id,
-        type: "tokenize-diff-window",
-        results,
-        tokenBytes,
-      } satisfies PullRequestDiffTokenizeResponse);
-    } catch (error) {
-      if (!cancelledRequestIds.has(id)) {
-        self.postMessage({
-          id,
-          type: "tokenize-diff-window",
-          results: [],
-          tokenBytes: 0,
-          error: error instanceof Error ? error.message : "Unknown error",
-        } satisfies PullRequestDiffTokenizeResponse);
-      }
-    } finally {
-      activeRequestIds.delete(id);
-      cancelledRequestIds.delete(id);
-    }
+    await handleDiffWindowTokenizeRequest(req);
   }
 };

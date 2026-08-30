@@ -160,22 +160,14 @@ function SearchMatchStatus({
   searchError,
   addonState,
 }: SearchMatchStatusProps) {
-  let text = "";
-  if (query && addonState === "loading") {
-    text = "Loading search…";
-  } else if (query && addonState === "failed") {
-    text = "Search unavailable";
-  } else if (query && invalidRegex) {
-    text = "Invalid regular expression";
-  } else if (query && searchError) {
-    text = searchError;
-  } else if (query && resultCount === 0) {
-    text = "No matches";
-  } else if (query && resultIndex >= 0) {
-    text = `${resultIndex + 1} / ${resultCount}`;
-  } else if (query && resultCount > 0) {
-    text = `${resultCount} matches`;
-  }
+  const text = getSearchMatchStatus({
+    query,
+    resultIndex,
+    resultCount,
+    invalidRegex,
+    searchError,
+    addonState,
+  });
 
   return (
     <output
@@ -187,6 +179,22 @@ function SearchMatchStatus({
       {text}
     </output>
   );
+}
+
+function getSearchMatchStatus({
+  query,
+  resultIndex,
+  resultCount,
+  invalidRegex,
+  searchError,
+  addonState,
+}: SearchMatchStatusProps): string {
+  if (!query) return "";
+  if (addonState !== "ready") return addonState === "loading" ? "Loading search…" : "Search unavailable";
+  if (invalidRegex) return "Invalid regular expression";
+  if (searchError) return searchError;
+  if (resultCount === 0) return "No matches";
+  return resultIndex >= 0 ? `${resultIndex + 1} / ${resultCount}` : `${resultCount} matches`;
 }
 
 interface TerminalSearchControlsProps {

@@ -16,6 +16,24 @@ export type ThreadStateMarkerModel =
   | { kind: "interrupted"; label: "Interrupted" }
   | { kind: "time"; label: string };
 
+function getThreadStatusMarker(thread: Pick<Thread, "status" | "updated_at">): ThreadStateMarkerModel {
+  switch (thread.status) {
+    case "completed":
+      return { kind: "completed", label: "Completed" };
+    case "errored":
+      return { kind: "errored", label: "Errored" };
+    case "interrupted":
+      return { kind: "interrupted", label: "Interrupted" };
+    default:
+      return { kind: "time", label: relativeTime(thread.updated_at) };
+  }
+}
+
+function getCiMarker(checks: ChecksStatus | undefined): ThreadStateMarkerModel | null {
+  if (checks?.aggregate !== "failing" && checks?.aggregate !== "pending") return null;
+  return { kind: "ci", label: getCiOverviewSummaryLabel(checks), aggregate: checks.aggregate };
+}
+
 /**
  * Resolves the same compact state treatment used by a project-tree thread row.
  */
@@ -35,23 +53,27 @@ export function getThreadStateMarker({
   if (hasPendingPermission) return { kind: "action", label: "Action required" };
   if (isSetupRunning) return { kind: "setup", label: "Setup running" };
   if (isRunning) return { kind: "running", label: "Running" };
-  if (checks?.aggregate === "failing" || checks?.aggregate === "pending") {
-    return {
-      kind: "ci",
-      label: getCiOverviewSummaryLabel(checks),
-      aggregate: checks.aggregate,
-    };
-  }
-  switch (thread.status) {
-    case "completed":
-      return { kind: "completed", label: "Completed" };
-    case "errored":
-      return { kind: "errored", label: "Errored" };
-    case "interrupted":
-      return { kind: "interrupted", label: "Interrupted" };
-    default:
-      return { kind: "time", label: relativeTime(thread.updated_at) };
-  }
+  return getCiMarker(checks) ?? getThreadStatusMarker(thread);
+}
+
+function ThreadStateSpinner({ marker, dim }: { marker: Extract<ThreadStateMarkerModel, { kind: "setup" | "running" }>; dim: boolean }) {
+  return <Spinner aria-label={marker.label} className={cn(marker.kind === "setup" ? "text-white" : "text-primary", dim && "opacity-[0.72]")} />;
+}
+
+function CiStateMarker({ marker, dim }: { marker: Extract<ThreadStateMarkerModel, { kind: "ci" }>; dim: boolean }) {
+  const { icon: Icon, color } = getCiVisual(marker.aggregate);
+  if (marker.aggregate === "pending") return <Spinner size={13} aria-label={marker.label} className={cn(color, dim && "opacity-[0.72]")} />;
+  return <Icon size={13} strokeWidth={CI_ICON_STROKE} aria-label={marker.label} className={cn("shrink-0", color, dim && "opacity-[0.72]")} />;
+}
+
+function ThreadStatusDot({ marker, dim }: { marker: Exclude<ThreadStateMarkerModel, { kind: "time" | "setup" | "running" | "ci" }>; dim: boolean }) {
+  const markerClasses = {
+    action: "ring-2 ring-inset ring-amber-500 bg-transparent status-pulse",
+    completed: "bg-[var(--diff-add-strong)]/80",
+    errored: "bg-[var(--diff-remove-strong)]/85",
+    interrupted: "bg-amber-500/85 status-pulse",
+  };
+  return <span aria-label={marker.label} className={cn("shrink-0 rounded-full", marker.kind === "action" ? "h-2 w-2" : "h-1.5 w-1.5", markerClasses[marker.kind], dim && "opacity-[0.72]")} />;
 }
 
 /** Renders a compact thread state marker without competing with its title. */
@@ -69,42 +91,7 @@ export function ThreadStateMarker({
       </span>
     );
   }
-
-  if (marker.kind === "setup" || marker.kind === "running") {
-    return (
-      <Spinner
-        aria-label={marker.label}
-        className={cn(marker.kind === "setup" ? "text-white" : "text-primary", dim && "opacity-[0.72]")}
-      />
-    );
-  }
-
-  if (marker.kind === "ci") {
-    const { icon: Icon, color } = getCiVisual(marker.aggregate);
-    if (marker.aggregate === "pending") {
-      return <Spinner size={13} aria-label={marker.label} className={cn(color, dim && "opacity-[0.72]")} />;
-    }
-    return <Icon size={13} strokeWidth={CI_ICON_STROKE} aria-label={marker.label} className={cn("shrink-0", color, dim && "opacity-[0.72]")} />;
-  }
-
-  const markerClass =
-    marker.kind === "action"
-      ? "ring-2 ring-inset ring-amber-500 bg-transparent status-pulse"
-      : marker.kind === "completed"
-        ? "bg-[var(--diff-add-strong)]/80"
-        : marker.kind === "errored"
-          ? "bg-[var(--diff-remove-strong)]/85"
-          : "bg-amber-500/85 status-pulse";
-
-  return (
-    <span
-      aria-label={marker.label}
-      className={cn(
-        "shrink-0 rounded-full",
-        marker.kind === "action" ? "h-2 w-2" : "h-1.5 w-1.5",
-        markerClass,
-        dim && "opacity-[0.72]",
-      )}
-    />
-  );
+  if (marker.kind === "setup" || marker.kind === "running") return <ThreadStateSpinner marker={marker} dim={dim} />;
+  if (marker.kind === "ci") return <CiStateMarker marker={marker} dim={dim} />;
+  return <ThreadStatusDot marker={marker} dim={dim} />;
 }

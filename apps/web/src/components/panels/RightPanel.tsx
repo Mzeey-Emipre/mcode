@@ -1,5 +1,6 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useShallow } from "zustand/shallow";
+import type { BrowserTabSet } from "@mcode/contracts";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
@@ -30,6 +31,10 @@ import {
   usePreviewTabSet,
   usePreviewTabsStore,
   browserSurfacePresentationCoordinator,
+  type BrowserAutomationActiveRequest,
+  type BrowserAutomationLiveTarget,
+  type BrowserAutomationPendingAgentOpen,
+  type BrowserSessionLifecycleTab,
 } from "@/features/preview";
 import {
   MAX_TERMINALS_PER_SCOPE,
@@ -88,6 +93,329 @@ import { useProjectActionStore } from "@/features/projects/environment/state/pro
 
 const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
 const EMPTY_PROJECT_ACTION_RUNS: Readonly<Record<string, import("@mcode/contracts").WorkspaceEnvironmentActionRun>> = {};
+
+interface AgentPageSelectorState {
+  readonly activeRequests: ReadonlyMap<string, BrowserAutomationActiveRequest>;
+  readonly lifecycleTabs: ReadonlyMap<string, BrowserSessionLifecycleTab>;
+  readonly liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>;
+  readonly pendingAgentOpens: ReadonlyMap<string, BrowserAutomationPendingAgentOpen>;
+}
+
+function latestPendingAgentPageId(
+  pendingAgentOpens: ReadonlyMap<string, BrowserAutomationPendingAgentOpen>,
+  workspaceId: string | null,
+  scopeId: string | null,
+): string | null {
+  let latest: BrowserAutomationPendingAgentOpen | null = null;
+  for (const pending of pendingAgentOpens.values()) {
+    if (pending.workspaceId !== workspaceId || pending.threadId !== scopeId) continue;
+    if (!latest || pending.startedAt > latest.startedAt) latest = pending;
+  }
+  return latest?.tabId ?? null;
+}
+
+function latestActiveAgentPageId(
+  activeRequests: ReadonlyMap<string, BrowserAutomationActiveRequest>,
+  workspaceId: string | null,
+  scopeId: string | null,
+): string | null {
+  let latest: BrowserAutomationActiveRequest | null = null;
+  for (const request of activeRequests.values()) {
+    if (
+      request.dispatch.request.workspaceId !== workspaceId ||
+      request.dispatch.target.threadId !== scopeId
+    ) continue;
+    if (!latest || request.startedAt > latest.startedAt) latest = request;
+  }
+  return latest?.dispatch.target.tabId ?? null;
+}
+
+function latestOwnedAgentPageId(
+  lifecycleTabs: ReadonlyMap<string, BrowserSessionLifecycleTab>,
+  liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>,
+  workspaceId: string | null,
+  scopeId: string | null,
+): string | null {
+  let tabId: string | null = null;
+  let lastUsedAt = 0;
+  for (const lifecycle of lifecycleTabs.values()) {
+    if (!isOwnedAgentLifecycle(lifecycle, workspaceId, scopeId)) continue;
+    const targetLastUsedAt = getTargetLastUsedAt(liveTargets, workspaceId!, scopeId!, lifecycle.tabId);
+    if (tabId === null || targetLastUsedAt > lastUsedAt) {
+      tabId = lifecycle.tabId;
+      lastUsedAt = targetLastUsedAt;
+    }
+  }
+  return tabId;
+}
+
+function isOwnedAgentLifecycle(
+  lifecycle: BrowserSessionLifecycleTab,
+  workspaceId: string | null,
+  scopeId: string | null,
+): boolean {
+  return lifecycle.workspaceId === workspaceId &&
+    lifecycle.threadId === scopeId &&
+    lifecycle.provenance === "agent-created" &&
+    lifecycle.ownership === "owned";
+}
+
+function getTargetLastUsedAt(
+  liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>,
+  workspaceId: string,
+  scopeId: string,
+  tabId: string,
+): number {
+  return liveTargets.get(browserAutomationTargetKey(workspaceId, scopeId, tabId))?.lastUsedAt ?? 0;
+}
+
+function selectAgentPageIds(
+  state: AgentPageSelectorState,
+  workspaceId: string | null,
+  scopeId: string | null,
+): readonly [string | null, string | null, string | null] {
+  return [
+    latestPendingAgentPageId(state.pendingAgentOpens, workspaceId, scopeId),
+    latestActiveAgentPageId(state.activeRequests, workspaceId, scopeId),
+    latestOwnedAgentPageId(state.lifecycleTabs, state.liveTargets, workspaceId, scopeId),
+  ];
+}
+
+interface AgentBrowserPage {
+  readonly tabId: string;
+  readonly presenting: boolean;
+}
+
+interface ExistingPreviewReveal {
+  readonly activeThreadId: string | null;
+  readonly activeWorkspaceId: string | null;
+  readonly agentBrowserPage: AgentBrowserPage | null;
+  readonly browserTabSet: BrowserTabSet | null;
+  readonly panelScopeId: string | null;
+  readonly revealExistingPreview: boolean;
+  readonly requestedAgentPageActivationRef: RefObject<string | null>;
+}
+
+function canRevealExistingPreview(
+  hasNonPreviewTab: boolean,
+  currentVisible: boolean,
+  agentBrowserPage: AgentBrowserPage | null,
+): boolean {
+  return currentVisible && (!hasNonPreviewTab || agentBrowserPage?.presenting === true);
+}
+
+function requestExistingPreviewPageActivation({
+  activeWorkspaceId,
+  agentBrowserPage,
+  browserTabSet,
+  panelScopeId,
+  requestedAgentPageActivationRef,
+}: Omit<ExistingPreviewReveal, "activeThreadId" | "revealExistingPreview">): void {
+  const existingPageId = getExistingPreviewPageId(agentBrowserPage, browserTabSet);
+  if (!panelScopeId || !existingPageId) return;
+  const activationKey = `${panelScopeId}:${existingPageId}`;
+  if (!shouldActivateExistingPreview(browserTabSet, activationKey, existingPageId, requestedAgentPageActivationRef)) return;
+  requestedAgentPageActivationRef.current = activationKey;
+  void usePreviewTabsStore.getState().activatePage(activeWorkspaceId!, panelScopeId, existingPageId);
+}
+
+function getExistingPreviewPageId(
+  agentBrowserPage: AgentBrowserPage | null,
+  browserTabSet: BrowserTabSet | null,
+): string | null | undefined {
+  return agentBrowserPage?.tabId ?? browserTabSet?.activeTabId ?? browserTabSet?.tabs[0]?.id;
+}
+
+function shouldActivateExistingPreview(
+  browserTabSet: BrowserTabSet | null,
+  activationKey: string,
+  existingPageId: string,
+  requestedAgentPageActivationRef: RefObject<string | null>,
+): boolean {
+  return browserTabSet?.activeTabId !== existingPageId &&
+    requestedAgentPageActivationRef.current !== activationKey;
+}
+
+function synchronizeExistingPreview({
+  activeThreadId,
+  activeWorkspaceId,
+  agentBrowserPage,
+  browserTabSet,
+  panelScopeId,
+  revealExistingPreview: shouldRevealExistingPreview,
+  requestedAgentPageActivationRef,
+}: ExistingPreviewReveal): void {
+  if (!shouldRevealExistingPreview || !activeWorkspaceId) return;
+  const current = useDiffStore.getState().getRightPanel(activeWorkspaceId, activeThreadId);
+  const hasNonPreviewTab = current.tabInstances.some((instance) => instance.type !== "preview");
+  if (!canRevealExistingPreview(hasNonPreviewTab, current.visible, agentBrowserPage)) return;
+  if (current.activeTab !== "preview") {
+    useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "preview");
+  }
+  requestExistingPreviewPageActivation({
+    activeWorkspaceId,
+    agentBrowserPage,
+    browserTabSet,
+    panelScopeId,
+    requestedAgentPageActivationRef,
+  });
+}
+
+interface PreviewPresentation {
+  readonly agentBrowserPage: AgentBrowserPage | null;
+  readonly browserTabSet: BrowserTabSet | null;
+  readonly renderedActiveTab: string | null;
+  readonly renderedActiveTabId: string | null;
+  readonly renderedOpenTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"];
+  readonly renderedTabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"];
+}
+
+function usePreviewPresentation({
+  activeAgentRequestPageId,
+  activeTab,
+  activeTabId,
+  activeThreadId,
+  activeWorkspaceId,
+  openTabs,
+  ownedAgentPageId,
+  panelScopeId,
+  panelVisible,
+  pendingAgentPageId,
+  tabInstances,
+}: {
+  readonly activeAgentRequestPageId: string | null;
+  readonly activeTab: string | null;
+  readonly activeTabId: string | null;
+  readonly activeThreadId: string | null;
+  readonly activeWorkspaceId: string | null;
+  readonly openTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"];
+  readonly ownedAgentPageId: string | null;
+  readonly panelScopeId: string | null;
+  readonly panelVisible: boolean;
+  readonly pendingAgentPageId: string | null;
+  readonly tabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"];
+}): PreviewPresentation {
+  const browserTabSet = usePreviewTabSet(panelScopeId, activeWorkspaceId);
+  const requestedAgentPageActivationRef = useRef<string | null>(null);
+  const agentBrowserPage = useMemo(
+    () => getAgentBrowserPage(
+      activeWorkspaceId,
+      panelScopeId,
+      browserTabSet,
+      pendingAgentPageId,
+      activeAgentRequestPageId,
+      ownedAgentPageId,
+    ),
+    [
+      activeAgentRequestPageId,
+      activeWorkspaceId,
+      browserTabSet,
+      ownedAgentPageId,
+      panelScopeId,
+      pendingAgentPageId,
+    ],
+  );
+  const revealExistingPreview = isExistingPreviewVisible(
+    activeTab,
+    agentBrowserPage,
+    browserTabSet,
+    openTabs,
+    panelVisible,
+    tabInstances,
+  );
+
+  useLayoutEffect(() => {
+    synchronizeExistingPreview({
+      activeThreadId,
+      activeWorkspaceId,
+      agentBrowserPage,
+      browserTabSet,
+      panelScopeId,
+      revealExistingPreview,
+      requestedAgentPageActivationRef,
+    });
+  }, [
+    activeThreadId,
+    agentBrowserPage,
+    activeWorkspaceId,
+    browserTabSet,
+    panelScopeId,
+    revealExistingPreview,
+  ]);
+
+  const renderedTabInstances = addProjectedPreviewTab(tabInstances, openTabs, revealExistingPreview);
+  return {
+    agentBrowserPage,
+    browserTabSet,
+    renderedActiveTab: revealExistingPreview ? "preview" : activeTab,
+    renderedActiveTabId: revealExistingPreview ? "singleton:preview" : activeTabId,
+    renderedOpenTabs: renderedTabInstances.map((instance) => instance.type),
+    renderedTabInstances,
+  };
+}
+
+function getAgentBrowserPage(
+  activeWorkspaceId: string | null,
+  panelScopeId: string | null,
+  browserTabSet: BrowserTabSet | null,
+  pendingAgentPageId: string | null,
+  activeAgentRequestPageId: string | null,
+  ownedAgentPageId: string | null,
+): AgentBrowserPage | null {
+  if (!activeWorkspaceId || !panelScopeId || !browserTabSet) return null;
+  if (hasBrowserPage(browserTabSet, pendingAgentPageId)) {
+    return { tabId: pendingAgentPageId!, presenting: true };
+  }
+  if (hasBrowserPage(browserTabSet, activeAgentRequestPageId)) {
+    return { tabId: activeAgentRequestPageId!, presenting: true };
+  }
+  return hasBrowserPage(browserTabSet, ownedAgentPageId)
+    ? { tabId: ownedAgentPageId!, presenting: false }
+    : null;
+}
+
+function hasBrowserPage(browserTabSet: BrowserTabSet, tabId: string | null): boolean {
+  return tabId !== null && browserTabSet.tabs.some((tab) => tab.id === tabId);
+}
+
+function isExistingPreviewVisible(
+  activeTab: string | null,
+  agentBrowserPage: AgentBrowserPage | null,
+  browserTabSet: BrowserTabSet | null,
+  openTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"],
+  panelVisible: boolean,
+  tabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"],
+): boolean {
+  const shouldRevealAgentPage = shouldRevealActiveAgentPage(agentBrowserPage, openTabs, panelVisible);
+  const shouldRestorePreviewTab = isPreviewOnlyTab(tabInstances) && activeTab !== "preview";
+  return panelVisible &&
+    (shouldRevealAgentPage || shouldRestorePreviewTab) &&
+    (browserTabSet?.tabs.length ?? 0) > 0;
+}
+
+function shouldRevealActiveAgentPage(
+  agentBrowserPage: AgentBrowserPage | null,
+  openTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"],
+  panelVisible: boolean,
+): boolean {
+  return agentBrowserPage !== null &&
+    (openTabs.length === 0 || (panelVisible && agentBrowserPage.presenting));
+}
+
+function isPreviewOnlyTab(
+  tabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"],
+): boolean {
+  return tabInstances.length === 1 && tabInstances[0]?.type === "preview";
+}
+
+function addProjectedPreviewTab(
+  tabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"],
+  openTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"],
+  revealExistingPreview: boolean,
+): ReturnType<typeof projectRightPanelForScope>["tabInstances"] {
+  if (!revealExistingPreview || openTabs.includes("preview")) return tabInstances;
+  return [...tabInstances, { id: "singleton:preview", type: "preview" }];
+}
 
 interface WarmPreviewSurfaceProps {
   readonly scope: WarmPreviewScope;
@@ -184,6 +512,478 @@ function useChangesFreshness(
   return fresh;
 }
 
+function RightPanelFrame({
+  children,
+  getMaxPanelWidth,
+  handlePanelWidthChange,
+  maximized,
+  panelVisible,
+  panelWidth,
+}: {
+  readonly children: React.ReactNode;
+  readonly getMaxPanelWidth: (panel: HTMLDivElement | null) => number;
+  readonly handlePanelWidthChange: (width: number, source: "preserve" | "user") => void;
+  readonly maximized: boolean;
+  readonly panelVisible: boolean;
+  readonly panelWidth: number;
+}) {
+  return (
+    <ResizableRightPanel
+      testId="right-panel"
+      width={panelWidth}
+      minWidth={PANEL_MIN_WIDTH}
+      maxWidth={`calc(100% - ${COMPOSER_MIN_WIDTH}px - ${PANEL_SPLIT_GAP_PX}px)`}
+      getMaxWidth={getMaxPanelWidth}
+      defaultWidth={getDefaultPanelWidthPx()}
+      wideWidth={PANEL_WIDE_WIDTH}
+      separatorLabel="Resize panel"
+      resizeEnabled={panelVisible && !maximized}
+      onWidthChange={handlePanelWidthChange}
+      style={getRightPanelVisibilityStyle(panelVisible)}
+      className={getRightPanelClassName(panelVisible, maximized)}
+      data-right-panel-root=""
+      inert={!panelVisible ? true : undefined}
+    >
+      {children}
+    </ResizableRightPanel>
+  );
+}
+
+function getRightPanelVisibilityStyle(panelVisible: boolean): React.CSSProperties | undefined {
+  if (panelVisible) return undefined;
+  return { width: 0, minWidth: 0, maxWidth: 0 };
+}
+
+function getRightPanelClassName(panelVisible: boolean, maximized: boolean): string {
+  return cn(
+    "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background focus:outline-none",
+    "transition-[width,min-width,max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+    !panelVisible && "pointer-events-none translate-x-2 opacity-0",
+    panelVisible && "translate-x-0 opacity-100",
+    panelVisible && maximized && "flex-1",
+  );
+}
+
+function RightPanelContent({
+  actionTerminalActive,
+  activeActionId,
+  activeThreadId,
+  activeWorkspaceId,
+  activityRailExpanded,
+  changesActive,
+  panelScope,
+  panelScopeId,
+  previewActive,
+  renderedActiveTab,
+  renderedOpenTabs,
+  renderedTabInstances,
+  terminalActive,
+  warmPreviewScopes,
+  onCreateTab,
+}: {
+  readonly actionTerminalActive: boolean;
+  readonly activeActionId: string | null;
+  readonly activeThreadId: string | null;
+  readonly activeWorkspaceId: string;
+  readonly activityRailExpanded: boolean;
+  readonly changesActive: boolean;
+  readonly panelScope: PanelScope;
+  readonly panelScopeId: string | null;
+  readonly previewActive: boolean;
+  readonly renderedActiveTab: string | null;
+  readonly renderedOpenTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"];
+  readonly renderedTabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"];
+  readonly terminalActive: boolean;
+  readonly warmPreviewScopes: readonly WarmPreviewScope[];
+  readonly onCreateTab: (id: Parameters<ReturnType<typeof useDiffStore.getState>["setRightPanelTab"]>[2]) => void;
+}) {
+  return (
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <PanelEmptyContent
+        panelScope={panelScope}
+        renderedOpenTabs={renderedOpenTabs}
+        onCreateTab={onCreateTab}
+      />
+      <PlanPanelContent activeTab={renderedActiveTab} openTabs={renderedOpenTabs} threadId={activeThreadId} />
+      <SubagentsPanelContent activeTab={renderedActiveTab} openTabs={renderedTabInstances} threadId={activeThreadId} />
+      <CoordinationPanelContent
+        activeTab={renderedActiveTab}
+        openTabs={renderedOpenTabs}
+        threadId={activeThreadId}
+        workspaceId={activeWorkspaceId}
+      />
+      <EnvironmentPanelContent
+        activeTab={renderedActiveTab}
+        openTabs={renderedOpenTabs}
+        threadId={activeThreadId}
+        workspaceId={activeWorkspaceId}
+      />
+      <ActionTerminalContent
+        active={actionTerminalActive}
+        actionId={activeActionId}
+        threadId={activeThreadId}
+      />
+      <ChangesPanelContent active={changesActive} />
+      <WarmPreviewSurfaces
+        activeWorkspaceId={activeWorkspaceId}
+        activityRailExpanded={activityRailExpanded}
+        panelScopeId={panelScopeId}
+        previewActive={previewActive}
+        scopes={warmPreviewScopes}
+      />
+      <TerminalPanelContent active={terminalActive} />
+    </div>
+  );
+}
+
+function PanelEmptyContent({
+  panelScope,
+  renderedOpenTabs,
+  onCreateTab,
+}: {
+  readonly panelScope: PanelScope;
+  readonly renderedOpenTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"];
+  readonly onCreateTab: (id: Parameters<ReturnType<typeof useDiffStore.getState>["setRightPanelTab"]>[2]) => void;
+}) {
+  if (renderedOpenTabs.length > 0) return null;
+  return <PanelEmptyState scope={panelScope} openTabs={renderedOpenTabs} onOpen={onCreateTab} />;
+}
+
+function PlanPanelContent({
+  activeTab,
+  openTabs,
+  threadId,
+}: {
+  readonly activeTab: string | null;
+  readonly openTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"];
+  readonly threadId: string | null;
+}) {
+  if (activeTab !== "tasks" || !openTabs.includes("tasks") || !threadId) return null;
+  return <PlanPanel threadId={threadId} />;
+}
+
+function SubagentsPanelContent({
+  activeTab,
+  openTabs,
+  threadId,
+}: {
+  readonly activeTab: string | null;
+  readonly openTabs: ReturnType<typeof projectRightPanelForScope>["tabInstances"];
+  readonly threadId: string | null;
+}) {
+  if (activeTab !== "subagents" || !openTabs.some((instance) => instance.type === "subagents") || !threadId) {
+    return null;
+  }
+  return <SubagentsPanel key={threadId} threadId={threadId} />;
+}
+
+function CoordinationPanelContent({
+  activeTab,
+  openTabs,
+  threadId,
+  workspaceId,
+}: {
+  readonly activeTab: string | null;
+  readonly openTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"];
+  readonly threadId: string | null;
+  readonly workspaceId: string;
+}) {
+  if (activeTab !== "coordination" || !openTabs.includes("coordination") || !threadId) return null;
+  return <CoordinationPanel key={threadId} workspaceId={workspaceId} threadId={threadId} />;
+}
+
+function EnvironmentPanelContent({
+  activeTab,
+  openTabs,
+  threadId,
+  workspaceId,
+}: {
+  readonly activeTab: string | null;
+  readonly openTabs: ReturnType<typeof projectRightPanelForScope>["openTabs"];
+  readonly threadId: string | null;
+  readonly workspaceId: string;
+}) {
+  if (activeTab !== "environment" || !openTabs.includes("environment")) return null;
+  return (
+    <ProjectEnvironmentPanel
+      key={`${workspaceId}:${threadId ?? "base"}`}
+      workspaceId={workspaceId}
+      threadId={threadId ?? undefined}
+      active
+    />
+  );
+}
+
+function ActionTerminalContent({
+  active,
+  actionId,
+  threadId,
+}: {
+  readonly active: boolean;
+  readonly actionId: string | null;
+  readonly threadId: string | null;
+}) {
+  if (!active || !threadId || !actionId) return null;
+  return <ProjectActionTerminalView key={`${threadId}:${actionId}`} threadId={threadId} actionId={actionId} />;
+}
+
+function ChangesPanelContent({ active }: { readonly active: boolean }) {
+  return (
+    <div className={active ? "flex flex-1 flex-col min-h-0" : "hidden"}>
+      <DiffPanel />
+    </div>
+  );
+}
+
+function WarmPreviewSurfaces({
+  activeWorkspaceId,
+  activityRailExpanded,
+  panelScopeId,
+  previewActive,
+  scopes,
+}: {
+  readonly activeWorkspaceId: string;
+  readonly activityRailExpanded: boolean;
+  readonly panelScopeId: string | null;
+  readonly previewActive: boolean;
+  readonly scopes: readonly WarmPreviewScope[];
+}) {
+  return scopes.map((scope) => {
+    const visible = previewActive && scope.scopeId === panelScopeId && scope.workspaceId === activeWorkspaceId;
+    return (
+      <WarmPreviewSurface
+        key={warmPreviewScopeKey(scope)}
+        scope={scope}
+        visible={visible}
+        coveredLeft={visible && activityRailExpanded ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX : 0}
+      />
+    );
+  });
+}
+
+function TerminalPanelContent({ active }: { readonly active: boolean }) {
+  return (
+    <div
+      className={cn(
+        "absolute inset-0 z-0 flex min-h-0 flex-row overflow-hidden",
+        !active && "pointer-events-none opacity-0",
+      )}
+      inert={!active ? true : undefined}
+    >
+      <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden" />
+    </div>
+  );
+}
+
+function RightPanelActivityRail({
+  activeThreadId,
+  activeWorkspaceId,
+  browserTabSet,
+  changesCount,
+  changesFresh,
+  closeRightPanelTab,
+  closeRightPanelTabInstance,
+  maximized,
+  onCreateTab,
+  onTogglePanel,
+  panelScope,
+  panelScopeId,
+  railTerminalLabels,
+  renderedActiveTabId,
+  renderedTabInstances,
+  reorderRightPanelTab,
+  scope,
+  scopeTerminals,
+  setActivityRailExpanded,
+  setRightPanelTabInstance,
+  toggleMaximized,
+}: {
+  readonly activeThreadId: string | null;
+  readonly activeWorkspaceId: string;
+  readonly browserTabSet: BrowserTabSet | null;
+  readonly changesCount: number;
+  readonly changesFresh: boolean;
+  readonly closeRightPanelTab: ReturnType<typeof useDiffStore.getState>["closeRightPanelTab"];
+  readonly closeRightPanelTabInstance: ReturnType<typeof useDiffStore.getState>["closeRightPanelTabInstance"];
+  readonly maximized: boolean;
+  readonly onCreateTab: (id: Parameters<ReturnType<typeof useDiffStore.getState>["setRightPanelTab"]>[2]) => void;
+  readonly onTogglePanel: () => void;
+  readonly panelScope: PanelScope;
+  readonly panelScopeId: string | null;
+  readonly railTerminalLabels: Record<string, string>;
+  readonly renderedActiveTabId: string | null;
+  readonly renderedTabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"];
+  readonly reorderRightPanelTab: ReturnType<typeof useDiffStore.getState>["reorderRightPanelTab"];
+  readonly scope: ScopeProgress;
+  readonly scopeTerminals: readonly TerminalInstance[];
+  readonly setActivityRailExpanded: (expanded: boolean) => void;
+  readonly setRightPanelTabInstance: ReturnType<typeof useDiffStore.getState>["setRightPanelTabInstance"];
+  readonly toggleMaximized: () => void;
+}) {
+  return (
+    <ActivityRail
+      workspaceId={activeWorkspaceId}
+      tabInstances={renderedTabInstances}
+      activeTabId={renderedActiveTabId}
+      scope={panelScope}
+      scopeProgress={scope}
+      changesCount={changesCount}
+      changesFresh={changesFresh}
+      browserTabSet={browserTabSet}
+      maximized={maximized}
+      onTogglePanel={onTogglePanel}
+      onToggleMaximized={toggleMaximized}
+      onSelect={(instanceId) => {
+        setRightPanelTabInstance(activeWorkspaceId, activeThreadId, instanceId);
+        setActiveTerminalForTab(renderedTabInstances, instanceId, panelScopeId);
+      }}
+      onClose={(instanceId) => closePanelTab({
+        activeThreadId,
+        activeWorkspaceId,
+        closeRightPanelTabInstance,
+        instanceId,
+        renderedTabInstances,
+      })}
+      onReorder={(instanceId, direction) =>
+        reorderRightPanelTab(activeWorkspaceId, activeThreadId, instanceId, direction)}
+      terminalCapReached={scopeTerminals.length >= MAX_TERMINALS_PER_SCOPE}
+      terminalLabels={railTerminalLabels}
+      onCreate={onCreateTab}
+      onSelectBrowserPage={(instanceId, pageId) => {
+        setRightPanelTabInstance(activeWorkspaceId, activeThreadId, instanceId);
+        activateBrowserPage(activeWorkspaceId, panelScopeId, pageId);
+      }}
+      onCloseBrowserPage={(pageId) => closeBrowserPage(
+        activeThreadId,
+        activeWorkspaceId,
+        closeRightPanelTab,
+        panelScopeId,
+        pageId,
+      )}
+      onExpandedChange={(expanded) => {
+        setActivityRailExpanded(expanded);
+        browserSurfacePresentationCoordinator.setActivityRailOverlap(
+          expanded ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX : 0,
+        );
+      }}
+    />
+  );
+}
+
+function setActiveTerminalForTab(
+  tabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"],
+  instanceId: string,
+  panelScopeId: string | null,
+): void {
+  const terminal = tabInstances.find((instance) => instance.id === instanceId);
+  if (terminal?.type !== "terminal" || !panelScopeId) return;
+  useTerminalStore.getState().setActiveTerminal(panelScopeId, instanceId.slice("terminal:".length));
+}
+
+function closePanelTab({
+  activeThreadId,
+  activeWorkspaceId,
+  closeRightPanelTabInstance,
+  instanceId,
+  renderedTabInstances,
+}: {
+  readonly activeThreadId: string | null;
+  readonly activeWorkspaceId: string;
+  readonly closeRightPanelTabInstance: ReturnType<typeof useDiffStore.getState>["closeRightPanelTabInstance"];
+  readonly instanceId: string;
+  readonly renderedTabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"];
+}): void {
+  const terminal = renderedTabInstances.find((instance) => instance.id === instanceId);
+  if (terminal?.type !== "terminal") {
+    closeRightPanelTabInstance(activeWorkspaceId, activeThreadId, instanceId);
+    return;
+  }
+  const ptyId = instanceId.slice("terminal:".length);
+  void getTransport().terminalKill(ptyId).then(() => {
+    useTerminalStore.getState().removeTerminal(ptyId);
+    closeRightPanelTabInstance(activeWorkspaceId, activeThreadId, instanceId);
+  });
+}
+
+function activateBrowserPage(workspaceId: string, panelScopeId: string | null, pageId: string): void {
+  if (!panelScopeId) return;
+  void usePreviewTabsStore.getState().activatePage(workspaceId, panelScopeId, pageId);
+}
+
+function closeBrowserPage(
+  activeThreadId: string | null,
+  activeWorkspaceId: string,
+  closeRightPanelTab: ReturnType<typeof useDiffStore.getState>["closeRightPanelTab"],
+  panelScopeId: string | null,
+  pageId: string,
+): void {
+  if (!panelScopeId) return;
+  void usePreviewTabsStore.getState().closePage(activeWorkspaceId, panelScopeId, pageId, {
+    onLastClose: () => closeRightPanelTab(activeWorkspaceId, activeThreadId, "preview"),
+  });
+}
+
+type RightPanelTabType = ReturnType<typeof projectRightPanelForScope>["tabInstances"][number]["type"];
+
+function useRenderedTabState({
+  actionRunsByActionId,
+  renderedActiveTab,
+  renderedActiveTabId,
+  renderedTabInstances,
+  terminalLabels,
+}: {
+  readonly actionRunsByActionId: Readonly<Record<string, import("@mcode/contracts").WorkspaceEnvironmentActionRun>>;
+  readonly renderedActiveTab: string | null;
+  readonly renderedActiveTabId: string | null;
+  readonly renderedTabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"];
+  readonly terminalLabels: Record<string, string>;
+}) {
+  return {
+    actionTerminalActive: isActiveRightPanelTab(renderedActiveTab, renderedTabInstances, "action-terminal"),
+    activeActionId: getActiveActionId(renderedActiveTabId, renderedActiveTab, renderedTabInstances),
+    changesActive: isActiveRightPanelTab(renderedActiveTab, renderedTabInstances, "changes"),
+    previewActive: isActiveRightPanelTab(renderedActiveTab, renderedTabInstances, "preview"),
+    railTerminalLabels: useRailTerminalLabels(actionRunsByActionId, renderedTabInstances, terminalLabels),
+    terminalActive: isActiveRightPanelTab(renderedActiveTab, renderedTabInstances, "terminal"),
+  };
+}
+
+function isActiveRightPanelTab(
+  activeTab: string | null,
+  tabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"],
+  tabType: RightPanelTabType,
+): boolean {
+  return activeTab === tabType && tabInstances.some((instance) => instance.type === tabType);
+}
+
+function getActiveActionId(
+  activeTabId: string | null,
+  activeTab: string | null,
+  tabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"],
+): string | null {
+  if (!isActiveRightPanelTab(activeTab, tabInstances, "action-terminal")) return null;
+  if (!activeTabId?.startsWith("action-terminal:")) return null;
+  return activeTabId.slice("action-terminal:".length);
+}
+
+function useRailTerminalLabels(
+  actionRunsByActionId: Readonly<Record<string, import("@mcode/contracts").WorkspaceEnvironmentActionRun>>,
+  tabInstances: ReturnType<typeof projectRightPanelForScope>["tabInstances"],
+  terminalLabels: Record<string, string>,
+): Record<string, string> {
+  return useMemo(() => ({
+    ...terminalLabels,
+    ...Object.fromEntries(
+      tabInstances
+        .filter((instance) => instance.type === "action-terminal")
+        .map((instance) => [
+          instance.id,
+          actionRunsByActionId[instance.id.slice("action-terminal:".length)]?.actionName ?? "Project Action",
+        ]),
+    ),
+  }), [actionRunsByActionId, tabInstances, terminalLabels]);
+}
+
 /** Right-side panel: a vertical activity rail navigating open singleton tabs. */
 export function RightPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -248,49 +1048,7 @@ export function RightPanel() {
   );
   const [pendingAgentPageId, activeAgentRequestPageId, ownedAgentPageId] =
     useBrowserAutomationStore(
-      useShallow((state) => {
-        let pendingPage: { readonly tabId: string; readonly startedAt: number } | null = null;
-        for (const pending of state.pendingAgentOpens.values()) {
-          if (
-            pending.workspaceId !== activeWorkspaceId ||
-            pending.threadId !== panelScopeId
-          ) continue;
-          if (!pendingPage || pending.startedAt > pendingPage.startedAt) {
-            pendingPage = { tabId: pending.tabId, startedAt: pending.startedAt };
-          }
-        }
-
-        let activePage: { readonly tabId: string; readonly startedAt: number } | null = null;
-        for (const { dispatch, startedAt } of state.activeRequests.values()) {
-          if (dispatch.request.workspaceId !== activeWorkspaceId || dispatch.target.threadId !== panelScopeId) continue;
-          if (!activePage || startedAt > activePage.startedAt) {
-            activePage = { tabId: dispatch.target.tabId, startedAt };
-          }
-        }
-
-        let ownedPage: { readonly tabId: string; readonly lastUsedAt: number } | null = null;
-        for (const lifecycle of state.lifecycleTabs.values()) {
-          if (
-            lifecycle.workspaceId !== activeWorkspaceId ||
-            lifecycle.threadId !== panelScopeId ||
-            lifecycle.provenance !== "agent-created" ||
-            lifecycle.ownership !== "owned"
-          ) continue;
-          const liveTarget = panelScopeId
-             ? state.liveTargets.get(browserAutomationTargetKey(activeWorkspaceId, panelScopeId, lifecycle.tabId))
-            : undefined;
-          const lastUsedAt = liveTarget?.lastUsedAt ?? 0;
-          if (!ownedPage || lastUsedAt > ownedPage.lastUsedAt) {
-            ownedPage = { tabId: lifecycle.tabId, lastUsedAt };
-          }
-        }
-
-        return [
-          pendingPage?.tabId ?? null,
-          activePage?.tabId ?? null,
-          ownedPage?.tabId ?? null,
-        ] as const;
-      }),
+      useShallow((state) => selectAgentPageIds(state, activeWorkspaceId, panelScopeId)),
     );
   const busyPreviewScopeIdList = useBrowserAutomationStore(
     useShallow((state) => [
@@ -328,89 +1086,25 @@ export function RightPanel() {
     activeThreadId ? state.runsByThread[activeThreadId] ?? EMPTY_PROJECT_ACTION_RUNS : EMPTY_PROJECT_ACTION_RUNS,
   );
 
-  // The Browser tab's open pages drive the rail's page switcher. The store is
-  // seeded by the mounted PreviewPanel; reading it here lets the rail render
-  // page entries (and the active-page favicon glyph) even while another tab is
-  // active. Null in web builds with no bridge, where the rail keeps the single
-  // Browser glyph.
-  const browserTabSet = usePreviewTabSet(panelScopeId, activeWorkspaceId);
-  const requestedAgentPageActivationRef = useRef<string | null>(null);
-  const agentBrowserPage = useMemo(() => {
-    if (!activeWorkspaceId || !panelScopeId || !browserTabSet) return null;
-    const hasPage = (tabId: string | null) =>
-      tabId !== null && browserTabSet.tabs.some((tab) => tab.id === tabId);
-    if (pendingAgentPageId && hasPage(pendingAgentPageId)) {
-      return { tabId: pendingAgentPageId, presenting: true };
-    }
-    if (activeAgentRequestPageId && hasPage(activeAgentRequestPageId)) {
-      return { tabId: activeAgentRequestPageId, presenting: true };
-    }
-    return ownedAgentPageId && hasPage(ownedAgentPageId)
-      ? { tabId: ownedAgentPageId, presenting: false }
-      : null;
-  }, [
-    activeAgentRequestPageId,
-    activeWorkspaceId,
+  const {
     browserTabSet,
+    renderedActiveTab,
+    renderedActiveTabId,
+    renderedOpenTabs,
+    renderedTabInstances,
+  } = usePreviewPresentation({
+    activeAgentRequestPageId,
+    activeTab,
+    activeTabId,
+    activeThreadId,
+    activeWorkspaceId,
+    openTabs,
     ownedAgentPageId,
     panelScopeId,
+    panelVisible,
     pendingAgentPageId,
-  ]);
-
-  // Keep idle Browser pages background-only when the panel has no retained
-  // tab. An explicit retained Preview tab is restored, while an empty panel
-  // projects the latest agent-owned page. A live agent request takes over an
-  // already-visible panel without discarding its other retained tools.
-  const activeAgentBrowserPageId = agentBrowserPage?.tabId ?? null;
-  const previewIsOnlyOpenTab =
-    tabInstances.length === 1 && tabInstances[0]?.type === "preview";
-  const shouldRevealAgentPage =
-    activeAgentBrowserPageId !== null &&
-    (openTabs.length === 0 || (panelVisible && agentBrowserPage?.presenting === true));
-  const shouldRestorePreviewTab = previewIsOnlyOpenTab && activeTab !== "preview";
-  const revealExistingPreview =
-    panelVisible &&
-    (shouldRevealAgentPage || shouldRestorePreviewTab) &&
-    (browserTabSet?.tabs.length ?? 0) > 0;
-  const renderedTabInstances = revealExistingPreview && !openTabs.includes("preview")
-    ? [...tabInstances, { id: "singleton:preview", type: "preview" as const }]
-    : tabInstances;
-  const renderedOpenTabs = renderedTabInstances.map((instance) => instance.type);
-  const renderedActiveTabId = revealExistingPreview ? "singleton:preview" : activeTabId;
-  const renderedActiveTab = revealExistingPreview ? "preview" : activeTab;
-
-  useLayoutEffect(() => {
-    if (!revealExistingPreview || !activeWorkspaceId) return;
-    const current = useDiffStore.getState().getRightPanel(activeWorkspaceId, activeThreadId);
-    const hasNonPreviewTab = current.tabInstances.some((instance) => instance.type !== "preview");
-    if (!current.visible || (hasNonPreviewTab && agentBrowserPage?.presenting !== true)) return;
-    if (current.activeTab !== "preview") {
-      useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "preview");
-    }
-    const existingPageId = agentBrowserPage?.tabId ??
-      browserTabSet?.activeTabId ??
-      browserTabSet?.tabs[0]?.id;
-    const activationKey = panelScopeId && existingPageId
-      ? `${panelScopeId}:${existingPageId}`
-      : null;
-    if (
-      panelScopeId &&
-      existingPageId &&
-      activationKey &&
-      browserTabSet?.activeTabId !== existingPageId &&
-      requestedAgentPageActivationRef.current !== activationKey
-    ) {
-      requestedAgentPageActivationRef.current = activationKey;
-      void usePreviewTabsStore.getState().activatePage(activeWorkspaceId!, panelScopeId, existingPageId);
-    }
-  }, [
-    activeThreadId,
-    agentBrowserPage,
-    activeWorkspaceId,
-    browserTabSet,
-    panelScopeId,
-    revealExistingPreview,
-  ]);
+    tabInstances,
+  });
 
   // Zustand action refs are stable (same identity for the store's lifetime),
   // so destructuring from getState() at render time is safe and avoids
@@ -474,33 +1168,20 @@ export function RightPanel() {
     return files.size;
   }, [snapshots]);
 
-  // A tab's content renders only when it is both the active tab and actually
-  // open. Guards against a persisted/default activeTab leaking content behind
-  // the card-grid empty state when its type is not in the open set.
-  const changesActive = renderedActiveTab === "changes" && renderedTabInstances.some((instance) => instance.type === "changes");
-  const previewActive = renderedActiveTab === "preview" && renderedTabInstances.some((instance) => instance.type === "preview");
-  const terminalActive =
-    renderedActiveTab === "terminal" && renderedTabInstances.some((instance) => instance.type === "terminal");
-  const actionTerminalActive =
-    renderedActiveTab === "action-terminal" &&
-    renderedTabInstances.some((instance) => instance.type === "action-terminal");
-  const activeActionId = actionTerminalActive && renderedActiveTabId?.startsWith("action-terminal:")
-    ? renderedActiveTabId.slice("action-terminal:".length)
-    : null;
-  const railTerminalLabels = useMemo(() => ({
-    ...terminalLabels,
-    ...Object.fromEntries(
-      renderedTabInstances
-        .filter((instance) => instance.type === "action-terminal")
-        .map((instance) => [
-          instance.id,
-          actionRunsByActionId[instance.id.slice("action-terminal:".length)]?.actionName ?? "Project Action",
-        ]),
-    ),
-  }), [actionRunsByActionId, renderedTabInstances, terminalLabels]);
-  const subagentsActive =
-    renderedActiveTab === "subagents" && renderedTabInstances.some((instance) => instance.type === "subagents");
-
+  const {
+    actionTerminalActive,
+    activeActionId,
+    changesActive,
+    previewActive,
+    railTerminalLabels,
+    terminalActive,
+  } = useRenderedTabState({
+    actionRunsByActionId,
+    renderedActiveTab,
+    renderedActiveTabId,
+    renderedTabInstances,
+    terminalLabels,
+  });
   const activePreviewScopeKey = previewActive && panelScopeId && activeWorkspaceId
     ? `${activeWorkspaceId}\u0000${panelScopeId}`
     : null;
@@ -569,6 +1250,17 @@ export function RightPanel() {
     [],
   );
 
+  const handleCreateTab = useCallback(
+    (id: Parameters<typeof setRightPanelTab>[2]) => {
+      if (id === "terminal" && panelScopeId) {
+        createTerminalForScope(panelScopeId);
+        return;
+      }
+      if (activeWorkspaceId) setRightPanelTab(activeWorkspaceId, activeThreadId, id);
+    },
+    [activeThreadId, activeWorkspaceId, panelScopeId, setRightPanelTab],
+  );
+
   // Keep the panel (and terminal pool) mounted when hidden so xterm instances
   // and scroll anchors survive thread switches; a hidden panel collapses to zero
   // width rather than unmounting. The panel still renders with no thread (the
@@ -577,206 +1269,55 @@ export function RightPanel() {
   if (!activeWorkspaceId) return null;
 
   return (
-    <ResizableRightPanel
-      testId="right-panel"
-      width={panelWidth}
-      minWidth={PANEL_MIN_WIDTH}
-      maxWidth={`calc(100% - ${COMPOSER_MIN_WIDTH}px - ${PANEL_SPLIT_GAP_PX}px)`}
-      getMaxWidth={getMaxPanelWidth}
-      defaultWidth={getDefaultPanelWidthPx()}
-      wideWidth={PANEL_WIDE_WIDTH}
-      separatorLabel="Resize panel"
-      resizeEnabled={panelVisible && !maximized}
-      onWidthChange={handlePanelWidthChange}
-      style={
-        !panelVisible
-          ? {
-              width: 0,
-              minWidth: 0,
-              maxWidth: 0,
-            }
-          : undefined
-      }
-      className={cn(
-        "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background focus:outline-none",
-        "transition-[width,min-width,max-width,opacity,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        !panelVisible && "pointer-events-none translate-x-2 opacity-0",
-        panelVisible && "translate-x-0 opacity-100",
-        // Maximized fills the content area (App hides the chat pane); inline
-        // mode is sized by the stored width above.
-        panelVisible && maximized && "flex-1",
-      )}
-      data-right-panel-root=""
-      inert={!panelVisible ? true : undefined}
+    <RightPanelFrame
+      getMaxPanelWidth={getMaxPanelWidth}
+      handlePanelWidthChange={handlePanelWidthChange}
+      maximized={maximized}
+      panelVisible={panelVisible}
+      panelWidth={panelWidth}
     >
-      {/* Rail + content. The activity rail carries close and maximize actions and,
-          once tabs are open, tab navigation and the add control. With no tabs it
-          keeps those panel actions beside the empty-state create list. */}
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
-        <ActivityRail
-          workspaceId={activeWorkspaceId!}
-          tabInstances={renderedTabInstances}
-          activeTabId={renderedActiveTabId}
-          scope={panelScope}
-          scopeProgress={scope}
+        <RightPanelActivityRail
+          activeThreadId={activeThreadId}
+          activeWorkspaceId={activeWorkspaceId}
+          browserTabSet={browserTabSet}
           changesCount={changesCount}
           changesFresh={changesFresh}
-          browserTabSet={browserTabSet}
+          closeRightPanelTab={closeRightPanelTab}
+          closeRightPanelTabInstance={closeRightPanelTabInstance}
           maximized={maximized}
+          onCreateTab={handleCreateTab}
           onTogglePanel={handleTogglePanel}
-          onToggleMaximized={toggleMaximized}
-          onSelect={(instanceId) => {
-            setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
-            const terminal = renderedTabInstances.find((instance) => instance.id === instanceId);
-            if (terminal?.type === "terminal" && panelScopeId) {
-              useTerminalStore
-                .getState()
-                .setActiveTerminal(panelScopeId, instanceId.slice("terminal:".length));
-            }
-          }}
-          onClose={(instanceId) =>
-            {
-              const terminal = renderedTabInstances.find((instance) => instance.id === instanceId);
-              if (terminal?.type === "terminal") {
-                const ptyId = instanceId.slice("terminal:".length);
-                void getTransport().terminalKill(ptyId).then(() => {
-                  useTerminalStore.getState().removeTerminal(ptyId);
-                  closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
-                });
-              } else {
-                closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
-              }
-            }
-          }
-          onReorder={(instanceId, direction) =>
-            reorderRightPanelTab(
-              activeWorkspaceId!,
-              activeThreadId,
-              instanceId,
-              direction,
-            )
-          }
-          terminalCapReached={scopeTerminals.length >= MAX_TERMINALS_PER_SCOPE}
-          terminalLabels={railTerminalLabels}
-          onCreate={(id) => {
-            if (id === "terminal" && panelScopeId) {
-              createTerminalForScope(panelScopeId);
-              return;
-            }
-            setRightPanelTab(activeWorkspaceId!, activeThreadId, id);
-          }}
-          onSelectBrowserPage={(instanceId, pageId) => {
-            // Focus the Browser tab and switch the guest to that page.
-            setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
-            if (panelScopeId) {
-              void usePreviewTabsStore
-                .getState()
-                .activatePage(activeWorkspaceId!, panelScopeId, pageId);
-            }
-          }}
-          onCloseBrowserPage={(pageId) => {
-            if (!panelScopeId) return;
-            // Closing the last page closes the Browser tab entirely (the rail is
-            // the page switcher, so an empty browser has nothing to show).
-            void usePreviewTabsStore
-              .getState()
-              .closePage(activeWorkspaceId!, panelScopeId, pageId, {
-                onLastClose: () =>
-                  closeRightPanelTab(
-                    activeWorkspaceId!,
-                    activeThreadId,
-                    "preview",
-                  ),
-              });
-          }}
-          onExpandedChange={(expanded) => {
-            setActivityRailExpanded(expanded);
-            browserSurfacePresentationCoordinator.setActivityRailOverlap(
-              expanded ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX : 0,
-            );
-          }}
+          panelScope={panelScope}
+          panelScopeId={panelScopeId}
+          railTerminalLabels={railTerminalLabels}
+          renderedActiveTabId={renderedActiveTabId}
+          renderedTabInstances={renderedTabInstances}
+          reorderRightPanelTab={reorderRightPanelTab}
+          scope={scope}
+          scopeTerminals={scopeTerminals}
+          setActivityRailExpanded={setActivityRailExpanded}
+          setRightPanelTabInstance={setRightPanelTabInstance}
+          toggleMaximized={toggleMaximized}
         />
-
-        {/* Tab content — DiffPanel and terminal pool stay mounted (stacked) so
-            turn expand state, loaded diffs, and xterm scroll anchors survive tab
-            and workspace thread switches. With no tab open the panel shows the
-            card-grid empty state, which is itself the create surface. */}
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {renderedOpenTabs.length === 0 && (
-            <PanelEmptyState
-              scope={panelScope}
-              openTabs={renderedOpenTabs}
-              onOpen={(id) =>
-                id === "terminal" && panelScopeId
-                  ? createTerminalForScope(panelScopeId)
-                  : setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
-              }
-            />
-          )}
-          {renderedActiveTab === "tasks" &&
-            renderedOpenTabs.includes("tasks") &&
-            activeThreadId && <PlanPanel threadId={activeThreadId} />}
-          {subagentsActive && activeThreadId && (
-            <SubagentsPanel key={activeThreadId} threadId={activeThreadId} />
-          )}
-          {renderedActiveTab === "coordination" &&
-            renderedOpenTabs.includes("coordination") &&
-            activeThreadId &&
-            activeWorkspaceId && (
-              <CoordinationPanel
-                key={activeThreadId}
-                workspaceId={activeWorkspaceId}
-                threadId={activeThreadId}
-              />
-            )}
-          {renderedActiveTab === "environment" &&
-            renderedOpenTabs.includes("environment") &&
-            activeWorkspaceId && (
-              <ProjectEnvironmentPanel
-                key={`${activeWorkspaceId}:${activeThreadId ?? "base"}`}
-                workspaceId={activeWorkspaceId}
-                threadId={activeThreadId ?? undefined}
-                active
-              />
-            )}
-          {actionTerminalActive && activeThreadId && activeActionId && (
-            <ProjectActionTerminalView
-              key={`${activeThreadId}:${activeActionId}`}
-              threadId={activeThreadId}
-              actionId={activeActionId}
-            />
-          )}
-          <div
-            className={
-              changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"
-            }
-          >
-            <DiffPanel />
-          </div>
-          {warmPreviewScopes.map((scope) => {
-            const visible = previewActive &&
-              scope.scopeId === panelScopeId &&
-              scope.workspaceId === activeWorkspaceId;
-            return (
-              <WarmPreviewSurface
-                key={warmPreviewScopeKey(scope)}
-                scope={scope}
-                visible={visible}
-                coveredLeft={visible && activityRailExpanded ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX : 0}
-              />
-            );
-          })}
-          <div
-            className={cn(
-              "absolute inset-0 z-0 flex min-h-0 flex-row overflow-hidden",
-              !terminalActive && "pointer-events-none opacity-0",
-            )}
-            inert={!terminalActive ? true : undefined}
-          >
-            <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden" />
-          </div>
-        </div>
+        <RightPanelContent
+          actionTerminalActive={actionTerminalActive}
+          activeActionId={activeActionId}
+          activeThreadId={activeThreadId}
+          activeWorkspaceId={activeWorkspaceId}
+          activityRailExpanded={activityRailExpanded}
+          changesActive={changesActive}
+          panelScope={panelScope}
+          panelScopeId={panelScopeId}
+          previewActive={previewActive}
+          renderedActiveTab={renderedActiveTab}
+          renderedOpenTabs={renderedOpenTabs}
+          renderedTabInstances={renderedTabInstances}
+          terminalActive={terminalActive}
+          warmPreviewScopes={warmPreviewScopes}
+          onCreateTab={handleCreateTab}
+        />
       </div>
-    </ResizableRightPanel>
+    </RightPanelFrame>
   );
 }

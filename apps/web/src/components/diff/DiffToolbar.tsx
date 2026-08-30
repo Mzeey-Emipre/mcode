@@ -21,6 +21,25 @@ import { ReviewActions } from "./ReviewActions";
 import { DiffStat } from "./DiffStat";
 
 type CommitAvailability = "loading" | "available" | "empty";
+type BranchAvailability = "loading" | "available" | "empty";
+type DiffStoreState = ReturnType<typeof useDiffStore.getState>;
+type WorkspaceThread = ReturnType<typeof useWorkspaceStore.getState>["threads"][number];
+type ReviewViewMode = ReturnType<typeof visibleReviewViews>[number];
+
+interface ReviewViewSynchronizationInput {
+  readonly activeThreadId: string | null;
+  readonly branchAvailability: BranchAvailability;
+  readonly commitAvailability: CommitAvailability;
+  readonly getReviewView: DiffStoreState["getReviewView"];
+  readonly hasTurnChanges: boolean;
+  readonly pinnedReviewView: DiffStoreState["reviewViewByThread"][string] | undefined;
+  readonly reviewViewManuallySelected: boolean;
+  readonly scope: PanelScope;
+  readonly setViewMode: DiffStoreState["setViewMode"];
+  readonly viewMode: DiffStoreState["viewMode"];
+  readonly viewModes: readonly ReviewViewMode[];
+  readonly workingTreeDirty: boolean;
+}
 
 /** Props for the Dev Review toolbar. */
 export interface DiffToolbarProps {
@@ -101,199 +120,483 @@ export function DiffToolbar({ filesVisible, onToggleFiles }: DiffToolbarProps) {
     diffScopeRevision,
   });
 
-  // A thread follows the per-thread resolver (live default until pinned);
-  // threadless keeps the scope-recovery fallback. See ADR-0011.
-  useEffect(() => {
-    if (viewModes.length === 0) return;
-    if (activeThreadId) {
-      const want = getReviewView(activeThreadId, { hasTurnChanges, isDirty: workingTreeDirty });
-      const blockedCommit = want === "commit" && commitAvailability === "empty";
-      const target =
-        viewModes.some((m) => m.id === want) && !blockedCommit ? want : viewModes[0].id;
-      if (viewMode !== target) setViewMode(target);
-      return;
-    }
-    if (
-      !viewModes.some((m) => m.id === viewMode) ||
-      (viewMode === "commit" && commitAvailability === "empty") ||
-      (viewMode === "branch" && branchAvailability === "empty")
-    ) {
-      const fallback = defaultReviewView(scope);
-      setViewMode(viewModes.some((m) => m.id === fallback) ? fallback : viewModes[0].id);
-    }
-  }, [
+  useReviewViewSynchronization({
     activeThreadId,
-    getReviewView,
-    reviewViewManuallySelected,
-    pinnedReviewView,
-    hasTurnChanges,
-    workingTreeDirty,
     branchAvailability,
     commitAvailability,
-    viewMode,
-    viewModes,
+    getReviewView,
+    hasTurnChanges,
+    pinnedReviewView,
+    reviewViewManuallySelected,
     scope,
     setViewMode,
-  ]);
+    viewMode,
+    viewModes,
+    workingTreeDirty,
+  });
 
   const activeView = useMemo(
     () => viewModes.find((m) => m.id === viewMode),
     [viewModes, viewMode],
   );
 
-  // The branch picker is wide, so it wraps to its own full-width row below.
-  const branchOnSecondRow = activeView?.operand === "branch" && !!activeWorkspaceId;
-  // Files present but no totalled stat yet → the stat is still loading.
-  const diffStatLoading =
-    reviewDiffStat == null && reviewFileCount != null && reviewFileCount > 0;
+  return (
+    <DiffToolbarContent
+      activeThread={activeThread}
+      activeThreadId={activeThreadId}
+      activeView={activeView}
+      activeWorkspaceId={activeWorkspaceId}
+      branchAvailability={branchAvailability}
+      commitAvailability={commitAvailability}
+      diffScopeRevision={diffScopeRevision}
+      filesVisible={filesVisible}
+      onToggleFiles={onToggleFiles}
+      onViewMenuOpenChange={(open) => {
+        setViewMenuOpen(open);
+        if (open) {
+          setCommitProbeNonce((nonce) => nonce + 1);
+          setBranchProbeNonce((nonce) => nonce + 1);
+        }
+      }}
+      reviewDiffStat={reviewDiffStat}
+      reviewFileCount={reviewFileCount}
+      setReviewViewForThread={setReviewViewForThread}
+      setViewMode={setViewMode}
+      viewMenuOpen={viewMenuOpen}
+      viewMode={viewMode}
+      viewModes={viewModes}
+    />
+  );
+}
 
+function useReviewViewSynchronization(input: ReviewViewSynchronizationInput): void {
+  useEffect(() => {
+    synchronizeReviewView(input);
+  }, [
+    input.activeThreadId,
+    input.branchAvailability,
+    input.commitAvailability,
+    input.getReviewView,
+    input.hasTurnChanges,
+    input.pinnedReviewView,
+    input.reviewViewManuallySelected,
+    input.scope,
+    input.setViewMode,
+    input.viewMode,
+    input.viewModes,
+    input.workingTreeDirty,
+  ]);
+}
+
+function synchronizeReviewView(input: ReviewViewSynchronizationInput): void {
+  if (input.viewModes.length === 0) return;
+  if (input.activeThreadId) {
+    synchronizeThreadReviewView(input);
+    return;
+  }
+  synchronizeThreadlessReviewView(input);
+}
+
+function synchronizeThreadReviewView(input: ReviewViewSynchronizationInput): void {
+  const wantedView = input.getReviewView(input.activeThreadId!, {
+    hasTurnChanges: input.hasTurnChanges,
+    isDirty: input.workingTreeDirty,
+  });
+  const target = isAvailableThreadReviewView(wantedView, input)
+    ? wantedView
+    : input.viewModes[0].id;
+  if (input.viewMode !== target) input.setViewMode(target);
+}
+
+function isAvailableThreadReviewView(
+  wantedView: DiffStoreState["viewMode"],
+  input: ReviewViewSynchronizationInput,
+): boolean {
+  return input.viewModes.some((mode) => mode.id === wantedView) &&
+    !(wantedView === "commit" && input.commitAvailability === "empty");
+}
+
+function synchronizeThreadlessReviewView(input: ReviewViewSynchronizationInput): void {
+  if (!isInvalidThreadlessReviewView(input)) return;
+  const fallback = defaultReviewView(input.scope);
+  const target = input.viewModes.some((mode) => mode.id === fallback)
+    ? fallback
+    : input.viewModes[0].id;
+  input.setViewMode(target);
+}
+
+function isInvalidThreadlessReviewView(input: ReviewViewSynchronizationInput): boolean {
+  return !input.viewModes.some((mode) => mode.id === input.viewMode) ||
+    (input.viewMode === "commit" && input.commitAvailability === "empty") ||
+    (input.viewMode === "branch" && input.branchAvailability === "empty");
+}
+
+function DiffToolbarContent({
+  activeThread,
+  activeThreadId,
+  activeView,
+  activeWorkspaceId,
+  branchAvailability,
+  commitAvailability,
+  diffScopeRevision,
+  filesVisible,
+  onToggleFiles,
+  onViewMenuOpenChange,
+  reviewDiffStat,
+  reviewFileCount,
+  setReviewViewForThread,
+  setViewMode,
+  viewMenuOpen,
+  viewMode,
+  viewModes,
+}: {
+  readonly activeThread: WorkspaceThread | null;
+  readonly activeThreadId: string | null;
+  readonly activeView: ReviewViewMode | undefined;
+  readonly activeWorkspaceId: string | null;
+  readonly branchAvailability: BranchAvailability;
+  readonly commitAvailability: CommitAvailability;
+  readonly diffScopeRevision: number;
+  readonly filesVisible: boolean;
+  readonly onToggleFiles: () => void;
+  readonly onViewMenuOpenChange: (open: boolean) => void;
+  readonly reviewDiffStat: DiffStoreState["reviewDiffStat"];
+  readonly reviewFileCount: number | null;
+  readonly setReviewViewForThread: DiffStoreState["setReviewViewForThread"];
+  readonly setViewMode: DiffStoreState["setViewMode"];
+  readonly viewMenuOpen: boolean;
+  readonly viewMode: DiffStoreState["viewMode"];
+  readonly viewModes: readonly ReviewViewMode[];
+}) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-y-1.5 px-3 py-2 border-b border-border/30">
-      {/* View selector + changed-file badge + total +/- stat. The wide branch
-          picker wraps to its own full-width row below; commit stays inline. */}
-      <div className="flex min-w-0 items-center gap-2">
-        <DropdownMenu
-          open={viewMenuOpen}
-          onOpenChange={(open) => {
-            setViewMenuOpen(open);
-            if (open) {
-              setCommitProbeNonce((nonce) => nonce + 1);
-              setBranchProbeNonce((nonce) => nonce + 1);
-            }
-          }}
-        >
-          <DropdownMenuTrigger
-            data-testid="review-view-switcher"
-            disabled={viewModes.length === 0}
-            aria-label="Select review view"
-            className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium tracking-tight text-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
-          >
-            {activeView?.label ?? "-"}
-            {reviewFileCount != null && reviewFileCount > 0 && (
-              <span
-                className="ml-1 rounded-full bg-muted-foreground/15 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground"
-                data-testid="review-file-count"
-              >
-                {reviewFileCount}
-              </span>
-            )}
-            <ChevronDown size={11} className="text-muted-foreground/60" />
-          </DropdownMenuTrigger>
+      <ReviewToolbarStart
+        activeThreadId={activeThreadId}
+        activeView={activeView}
+        branchAvailability={branchAvailability}
+        commitAvailability={commitAvailability}
+        onViewMenuOpenChange={onViewMenuOpenChange}
+        reviewDiffStat={reviewDiffStat}
+        reviewFileCount={reviewFileCount}
+        setReviewViewForThread={setReviewViewForThread}
+        setViewMode={setViewMode}
+        viewMenuOpen={viewMenuOpen}
+        viewMode={viewMode}
+        viewModes={viewModes}
+      />
+      <ReviewToolbarActions
+        activeThread={activeThread}
+        filesVisible={filesVisible}
+        onToggleFiles={onToggleFiles}
+      />
+      <BranchOperand
+        activeThreadId={activeThreadId}
+        activeView={activeView}
+        activeWorkspaceId={activeWorkspaceId}
+        diffScopeRevision={diffScopeRevision}
+      />
+    </div>
+  );
+}
 
-          <DropdownMenuContent align="start" sideOffset={4} className="min-w-[150px]">
-            {viewModes.map((mode) => {
-              const active = viewMode === mode.id;
-              const disabled =
-                (mode.id === "commit" && commitAvailability === "empty") ||
-                (mode.id === "branch" && branchAvailability === "empty");
-              return (
-                <DropdownMenuItem
-                  key={mode.id}
-                  disabled={disabled}
-                  onClick={() => {
-                    if (disabled) return;
-                    // A pick in a thread sets the sticky per-thread override.
-                    if (activeThreadId) setReviewViewForThread(activeThreadId, mode.id);
-                    else setViewMode(mode.id);
-                  }}
-                  data-testid={`review-view-${mode.id}`}
-                  data-active={active ? "true" : undefined}
-                  aria-disabled={disabled ? "true" : undefined}
-                  // base-ui menuitems have no checked state; aria-current exposes
-                  // the active view to assistive tech (the Check is visual-only).
-                  aria-current={active ? "true" : undefined}
-                  className={cn(
-                    "flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs",
-                    disabled
-                      ? "cursor-not-allowed text-muted-foreground/45"
-                      : active
-                        ? "text-foreground"
-                        : "text-popover-foreground",
-                  )}
-                >
-                  <span className="flex-1 text-left">{mode.label}</span>
-                  {active && <Check size={11} className="text-muted-foreground" />}
-                </DropdownMenuItem>
-              );
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
+function ReviewToolbarStart({
+  activeThreadId,
+  activeView,
+  branchAvailability,
+  commitAvailability,
+  onViewMenuOpenChange,
+  reviewDiffStat,
+  reviewFileCount,
+  setReviewViewForThread,
+  setViewMode,
+  viewMenuOpen,
+  viewMode,
+  viewModes,
+}: {
+  readonly activeThreadId: string | null;
+  readonly activeView: ReviewViewMode | undefined;
+  readonly branchAvailability: BranchAvailability;
+  readonly commitAvailability: CommitAvailability;
+  readonly onViewMenuOpenChange: (open: boolean) => void;
+  readonly reviewDiffStat: DiffStoreState["reviewDiffStat"];
+  readonly reviewFileCount: number | null;
+  readonly setReviewViewForThread: DiffStoreState["setReviewViewForThread"];
+  readonly setViewMode: DiffStoreState["setViewMode"];
+  readonly viewMenuOpen: boolean;
+  readonly viewMode: DiffStoreState["viewMode"];
+  readonly viewModes: readonly ReviewViewMode[];
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <ReviewViewMenu
+        activeThreadId={activeThreadId}
+        activeView={activeView}
+        branchAvailability={branchAvailability}
+        commitAvailability={commitAvailability}
+        onOpenChange={onViewMenuOpenChange}
+        reviewFileCount={reviewFileCount}
+        setReviewViewForThread={setReviewViewForThread}
+        setViewMode={setViewMode}
+        viewMenuOpen={viewMenuOpen}
+        viewMode={viewMode}
+        viewModes={viewModes}
+      />
+      <ReviewDiffStat reviewDiffStat={reviewDiffStat} reviewFileCount={reviewFileCount} />
+      <CommitOperand activeView={activeView} />
+    </div>
+  );
+}
 
-        {/* Total +/- for the active view; spinner while the stat loads. */}
-        {diffStatLoading ? (
-          <Spinner
-            size={12}
-            className="text-muted-foreground/50"
-            aria-label="Loading diff stats"
-            data-testid="review-diff-stat-loading"
+function ReviewViewMenu({
+  activeThreadId,
+  activeView,
+  branchAvailability,
+  commitAvailability,
+  onOpenChange,
+  reviewFileCount,
+  setReviewViewForThread,
+  setViewMode,
+  viewMenuOpen,
+  viewMode,
+  viewModes,
+}: {
+  readonly activeThreadId: string | null;
+  readonly activeView: ReviewViewMode | undefined;
+  readonly branchAvailability: BranchAvailability;
+  readonly commitAvailability: CommitAvailability;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly reviewFileCount: number | null;
+  readonly setReviewViewForThread: DiffStoreState["setReviewViewForThread"];
+  readonly setViewMode: DiffStoreState["setViewMode"];
+  readonly viewMenuOpen: boolean;
+  readonly viewMode: DiffStoreState["viewMode"];
+  readonly viewModes: readonly ReviewViewMode[];
+}) {
+  return (
+    <DropdownMenu open={viewMenuOpen} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger
+        data-testid="review-view-switcher"
+        disabled={viewModes.length === 0}
+        aria-label="Select review view"
+        className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium tracking-tight text-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+      >
+        {activeView?.label ?? "-"}
+        <ReviewFileCount fileCount={reviewFileCount} />
+        <ChevronDown size={11} className="text-muted-foreground/60" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" sideOffset={4} className="min-w-[150px]">
+        {viewModes.map((mode) => (
+          <ReviewViewMenuItem
+            key={mode.id}
+            activeThreadId={activeThreadId}
+            branchAvailability={branchAvailability}
+            commitAvailability={commitAvailability}
+            mode={mode}
+            setReviewViewForThread={setReviewViewForThread}
+            setViewMode={setViewMode}
+            viewMode={viewMode}
           />
-        ) : (
-          reviewDiffStat != null &&
-          (reviewDiffStat.additions > 0 || reviewDiffStat.deletions > 0) && (
-            <DiffStat
-              additions={reviewDiffStat.additions}
-              deletions={reviewDiffStat.deletions}
-              className="shrink-0"
-            />
-          )
-        )}
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
-        {/* Commit operand stays inline; the wider branch picker is on row 2. */}
-        {activeView?.operand === "commit" && (
-          <div
-            className="ml-1 flex min-w-0 items-center border-l border-border/25 pl-2"
-            data-testid="review-operand-slot"
-            data-operand="commit"
-          >
-            <CommitPicker />
-          </div>
-        )}
-      </div>
+function ReviewFileCount({ fileCount }: { readonly fileCount: number | null }) {
+  if (fileCount === null || fileCount <= 0) return null;
+  return (
+    <span
+      className="ml-1 rounded-full bg-muted-foreground/15 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground"
+      data-testid="review-file-count"
+    >
+      {fileCount}
+    </span>
+  );
+}
 
-      {/* Commit-or-push + Create-PR (worktree threads only). Wrap / split / jump
-          now live on the file-list bar below. */}
-      <div className="flex items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={filesVisible ? "Hide files" : "Show files"}
-                aria-pressed={filesVisible}
-                className={cn(
-                  "rounded-md text-muted-foreground",
-                  filesVisible && "bg-muted/60 text-foreground",
-                )}
-                onClick={onToggleFiles}
-              >
-                <Files size={13} aria-hidden />
-              </Button>
-            }
-          />
-          <TooltipContent side="bottom" className="text-xs">
-            {filesVisible ? "Hide files" : "Show files"}
-          </TooltipContent>
-        </Tooltip>
-        {activeThread && <ReviewActions thread={activeThread} />}
-      </div>
-
-      {/* Branch comparison wraps to its own full-width row; the picker is too
-          wide to sit inline next to the selector. */}
-      {branchOnSecondRow && activeWorkspaceId && (
-        <div
-          className="flex w-full min-w-0 basis-full items-center"
-          data-testid="review-operand-slot"
-          data-operand="branch"
-        >
-          <BranchRefPicker
-            workspaceId={activeWorkspaceId}
-            threadId={activeThreadId ?? undefined}
-            diffScopeRevision={diffScopeRevision}
-          />
-        </div>
+function ReviewViewMenuItem({
+  activeThreadId,
+  branchAvailability,
+  commitAvailability,
+  mode,
+  setReviewViewForThread,
+  setViewMode,
+  viewMode,
+}: {
+  readonly activeThreadId: string | null;
+  readonly branchAvailability: BranchAvailability;
+  readonly commitAvailability: CommitAvailability;
+  readonly mode: ReviewViewMode;
+  readonly setReviewViewForThread: DiffStoreState["setReviewViewForThread"];
+  readonly setViewMode: DiffStoreState["setViewMode"];
+  readonly viewMode: DiffStoreState["viewMode"];
+}) {
+  const active = viewMode === mode.id;
+  const disabled = isReviewViewUnavailable(mode, commitAvailability, branchAvailability);
+  return (
+    <DropdownMenuItem
+      disabled={disabled}
+      onClick={() => selectReviewView({
+        activeThreadId,
+        disabled,
+        mode,
+        setReviewViewForThread,
+        setViewMode,
+      })}
+      data-testid={`review-view-${mode.id}`}
+      data-active={active ? "true" : undefined}
+      aria-disabled={disabled ? "true" : undefined}
+      aria-current={active ? "true" : undefined}
+      className={cn(
+        "flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs",
+        disabled
+          ? "cursor-not-allowed text-muted-foreground/45"
+          : active
+            ? "text-foreground"
+            : "text-popover-foreground",
       )}
+    >
+      <span className="flex-1 text-left">{mode.label}</span>
+      {active ? <Check size={11} className="text-muted-foreground" /> : null}
+    </DropdownMenuItem>
+  );
+}
+
+function isReviewViewUnavailable(
+  mode: ReviewViewMode,
+  commitAvailability: CommitAvailability,
+  branchAvailability: BranchAvailability,
+): boolean {
+  return (mode.id === "commit" && commitAvailability === "empty") ||
+    (mode.id === "branch" && branchAvailability === "empty");
+}
+
+function selectReviewView({
+  activeThreadId,
+  disabled,
+  mode,
+  setReviewViewForThread,
+  setViewMode,
+}: {
+  readonly activeThreadId: string | null;
+  readonly disabled: boolean;
+  readonly mode: ReviewViewMode;
+  readonly setReviewViewForThread: DiffStoreState["setReviewViewForThread"];
+  readonly setViewMode: DiffStoreState["setViewMode"];
+}): void {
+  if (disabled) return;
+  if (activeThreadId) {
+    setReviewViewForThread(activeThreadId, mode.id);
+    return;
+  }
+  setViewMode(mode.id);
+}
+
+function ReviewDiffStat({
+  reviewDiffStat,
+  reviewFileCount,
+}: {
+  readonly reviewDiffStat: DiffStoreState["reviewDiffStat"];
+  readonly reviewFileCount: number | null;
+}) {
+  if (reviewDiffStat === null && reviewFileCount !== null && reviewFileCount > 0) {
+    return (
+      <Spinner
+        size={12}
+        className="text-muted-foreground/50"
+        aria-label="Loading diff stats"
+        data-testid="review-diff-stat-loading"
+      />
+    );
+  }
+  if (reviewDiffStat === null || (reviewDiffStat.additions === 0 && reviewDiffStat.deletions === 0)) {
+    return null;
+  }
+  return (
+    <DiffStat
+      additions={reviewDiffStat.additions}
+      deletions={reviewDiffStat.deletions}
+      className="shrink-0"
+    />
+  );
+}
+
+function CommitOperand({ activeView }: { readonly activeView: ReviewViewMode | undefined }) {
+  if (activeView?.operand !== "commit") return null;
+  return (
+    <div
+      className="ml-1 flex min-w-0 items-center border-l border-border/25 pl-2"
+      data-testid="review-operand-slot"
+      data-operand="commit"
+    >
+      <CommitPicker />
+    </div>
+  );
+}
+
+function ReviewToolbarActions({
+  activeThread,
+  filesVisible,
+  onToggleFiles,
+}: {
+  readonly activeThread: WorkspaceThread | null;
+  readonly filesVisible: boolean;
+  readonly onToggleFiles: () => void;
+}) {
+  const filesLabel = filesVisible ? "Hide files" : "Show files";
+  return (
+    <div className="flex items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={filesLabel}
+              aria-pressed={filesVisible}
+              className={cn(
+                "rounded-md text-muted-foreground",
+                filesVisible && "bg-muted/60 text-foreground",
+              )}
+              onClick={onToggleFiles}
+            >
+              <Files size={13} aria-hidden />
+            </Button>
+          }
+        />
+        <TooltipContent side="bottom" className="text-xs">
+          {filesLabel}
+        </TooltipContent>
+      </Tooltip>
+      {activeThread ? <ReviewActions thread={activeThread} /> : null}
+    </div>
+  );
+}
+
+function BranchOperand({
+  activeThreadId,
+  activeView,
+  activeWorkspaceId,
+  diffScopeRevision,
+}: {
+  readonly activeThreadId: string | null;
+  readonly activeView: ReviewViewMode | undefined;
+  readonly activeWorkspaceId: string | null;
+  readonly diffScopeRevision: number;
+}) {
+  if (activeView?.operand !== "branch" || !activeWorkspaceId) return null;
+  return (
+    <div
+      className="flex w-full min-w-0 basis-full items-center"
+      data-testid="review-operand-slot"
+      data-operand="branch"
+    >
+      <BranchRefPicker
+        workspaceId={activeWorkspaceId}
+        threadId={activeThreadId ?? undefined}
+        diffScopeRevision={diffScopeRevision}
+      />
     </div>
   );
 }
@@ -358,8 +661,6 @@ function useCommitAvailability({
 
   return availability;
 }
-
-type BranchAvailability = "loading" | "available" | "empty";
 
 /** Probe whether the Branch view has a resolvable comparison for the active scope. */
 function useBranchAvailability({

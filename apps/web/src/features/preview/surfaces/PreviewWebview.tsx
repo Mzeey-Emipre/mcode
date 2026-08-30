@@ -68,6 +68,28 @@ export interface PreviewWebviewHandle {
   setZoom(factor: number): Promise<number>;
 }
 
+interface ResolvedPreviewWebviewProps extends Omit<
+  PreviewWebviewProps,
+  "active" | "workspaceId" | "allowHiddenPresentation" | "presentationActive" | "presentationSource"
+> {
+  readonly active: boolean;
+  readonly workspaceId: string;
+  readonly allowHiddenPresentation: boolean;
+  readonly presentationActive: boolean;
+  readonly presentationSource: BrowserSurfacePresentationSource;
+}
+
+function resolvePreviewWebviewProps(props: PreviewWebviewProps): ResolvedPreviewWebviewProps {
+  return {
+    ...props,
+    active: props.active ?? true,
+    workspaceId: props.workspaceId ?? props.threadId,
+    allowHiddenPresentation: props.allowHiddenPresentation ?? false,
+    presentationActive: props.presentationActive ?? true,
+    presentationSource: props.presentationSource ?? "panel",
+  };
+}
+
 function visibleAddress(state: BrowserSurfacePageState): string | null {
   const address = state.committedAddress ?? state.pendingAddress;
   return !address || address.startsWith("about:") || address.startsWith("chrome-error:")
@@ -103,23 +125,24 @@ function supportedInitialAddress(address: string): string | undefined {
 /** Placement controller for a surface owned by the renderer-window BrowserSurfaceHost. */
 export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewProps>(
   function PreviewWebview(
-    {
-      active = true,
+    props,
+    forwardedRef,
+  ) {
+    const {
+      active,
       threadId,
-      workspaceId = threadId,
+      workspaceId,
       tabId,
       src,
       className,
-      allowHiddenPresentation = false,
-      presentationActive = true,
-      presentationSource = "panel",
+      allowHiddenPresentation,
+      presentationActive,
+      presentationSource,
       coveredLeft,
       viewport,
       onPageStatus,
       onNavigationStateChange,
-    },
-    forwardedRef,
-  ) {
+    } = resolvePreviewWebviewProps(props);
     const placementRef = useRef<HTMLDivElement | null>(null);
     const presentationRegistrationRef = useRef<BrowserSurfacePresentationRegistration | null>(null);
     const presentationIntentRef = useRef({

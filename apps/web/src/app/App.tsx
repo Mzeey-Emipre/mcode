@@ -5,6 +5,7 @@ import {
   useRef,
   lazy,
   Suspense,
+  type RefObject,
 } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/features/conversation";
@@ -43,6 +44,7 @@ import { TerminalPoolHost, TerminalPoolSlotProvider } from "@/features/terminal"
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
 import {
   useNavigationHistoryStore,
+  type NavigationHistoryState,
   type NavigationLocation,
   type PullRequestHistoryTab,
 } from "@/stores/navigationHistoryStore";
@@ -70,6 +72,259 @@ const LazyPullRequestSurface = lazy(async () => {
   const m = await import("@/features/pull-requests");
   return { default: m.PullRequestSurface };
 });
+
+type AppLayoutProps = {
+  isDesktop: boolean;
+  navigationHistory: NavigationHistoryState;
+  isValidLocation: (location: NavigationLocation) => boolean;
+  navigateHistory: (direction: "back" | "forward") => void;
+  outerRowRef: RefObject<HTMLDivElement | null>;
+  contentRowRef: RefObject<HTMLDivElement | null>;
+  floatingBackdropRef: RefObject<HTMLButtonElement | null>;
+  floatingSidebarRef: RefObject<HTMLDivElement | null>;
+  sidebarFloating: boolean;
+  dockedSidebarVisible: boolean;
+  floatingSidebarRendered: boolean;
+  floatingSidebarExiting: boolean;
+  rightPanelMaximized: boolean;
+  showNewThreadCanvas: boolean;
+  showProjectlessCanvas: boolean;
+  showPullRequests: boolean;
+  settingsOpen: boolean;
+  settingsSection: SettingsSection;
+  pullRequestTab: PullRequestHistoryTab;
+  setSettingsOpen: (open: boolean) => void;
+  setSettingsSection: (section: SettingsSection) => void;
+  setPullRequestTab: (tab: PullRequestHistoryTab) => void;
+  closeSettings: () => void;
+};
+
+function DockedSidebar({
+  visible,
+  settingsOpen,
+  settingsSection,
+  setSettingsOpen,
+  setSettingsSection,
+  closeSettings,
+}: {
+  visible: boolean;
+  settingsOpen: boolean;
+  settingsSection: SettingsSection;
+  setSettingsOpen: (open: boolean) => void;
+  setSettingsSection: (section: SettingsSection) => void;
+  closeSettings: () => void;
+}) {
+  return (
+    <div
+      data-testid="sidebar-docked"
+      aria-hidden={!visible}
+      inert={!visible}
+      className={`grid shrink-0 overflow-hidden bg-page transition-[grid-template-columns] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+        visible
+          ? "grid-cols-[1fr] duration-250"
+          : "pointer-events-none grid-cols-[0fr] duration-200"
+      }`}
+    >
+      <div
+        className={`min-w-0 overflow-hidden transition-[opacity,transform] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+          visible
+            ? "translate-x-0 border-r border-border/45 opacity-100 duration-250"
+            : "-translate-x-2 opacity-0 duration-200"
+        }`}
+      >
+        <Sidebar
+          settingsOpen={settingsOpen}
+          settingsSection={settingsSection}
+          onSettingsSection={setSettingsSection}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onCloseSettings={closeSettings}
+        />
+      </div>
+    </div>
+  );
+}
+
+function FloatingSidebar({
+  backdropRef,
+  sidebarRef,
+  exiting,
+  settingsSection,
+  setSettingsOpen,
+  setSettingsSection,
+  closeSettings,
+}: {
+  backdropRef: RefObject<HTMLButtonElement | null>;
+  sidebarRef: RefObject<HTMLDivElement | null>;
+  exiting: boolean;
+  settingsSection: SettingsSection;
+  setSettingsOpen: (open: boolean) => void;
+  setSettingsSection: (section: SettingsSection) => void;
+  closeSettings: () => void;
+}) {
+  return (
+    <>
+      <button
+        ref={backdropRef}
+        type="button"
+        aria-label="Close project tree"
+        aria-hidden={exiting}
+        inert={exiting}
+        className={`app-viewport-fixed fixed z-40 bg-black/20 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
+          exiting ? "pointer-events-none animate-out fade-out-0" : "animate-in fade-in-0"
+        }`}
+        onClick={() => useUiStore.getState().closeFloatingSidebar()}
+      />
+      <div
+        ref={sidebarRef}
+        data-testid="sidebar-floating"
+        aria-hidden={exiting}
+        inert={exiting}
+        className={`app-panel-top-inset fixed bottom-1.5 left-1.5 z-50 flex w-72 overflow-hidden rounded-lg bg-page shadow-xl ring-1 ring-border/40 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
+          exiting
+            ? "pointer-events-none animate-out fade-out-0 slide-out-to-left-4 duration-200"
+            : "animate-in fade-in-0 slide-in-from-left-4 duration-250"
+        }`}
+      >
+        <Sidebar
+          className="w-full max-w-none"
+          settingsOpen={false}
+          settingsSection={settingsSection}
+          onSettingsSection={setSettingsSection}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onCloseSettings={closeSettings}
+        />
+      </div>
+    </>
+  );
+}
+
+function PullRequestMainSurface({
+  isDesktop,
+  pullRequestTab,
+  setPullRequestTab,
+  isValidLocation,
+  navigateHistory,
+}: Pick<
+  AppLayoutProps,
+  "isDesktop" | "pullRequestTab" | "setPullRequestTab" | "isValidLocation" | "navigateHistory"
+>) {
+  const handleHistoryBack = () => {
+    if (useNavigationHistoryStore.getState().canGoBack(isValidLocation)) {
+      navigateHistory("back");
+      return;
+    }
+    usePullRequestDetailStore.getState().close();
+  };
+
+  return (
+    <Suspense fallback={null}>
+      <LazyPullRequestSurface
+        activeTab={isDesktop ? pullRequestTab : undefined}
+        onActiveTabChange={isDesktop ? setPullRequestTab : undefined}
+        onHistoryBack={isDesktop ? handleHistoryBack : undefined}
+      />
+    </Suspense>
+  );
+}
+
+function AppPrimarySurface(props: Pick<
+  AppLayoutProps,
+  "settingsOpen" | "settingsSection" | "showPullRequests" | "isDesktop" | "pullRequestTab" | "setPullRequestTab" | "isValidLocation" | "navigateHistory"
+>) {
+  if (props.settingsOpen) {
+    return (
+      <Suspense fallback={null}>
+        <LazySettingsView section={props.settingsSection} />
+      </Suspense>
+    );
+  }
+  if (props.showPullRequests) return <PullRequestMainSurface {...props} />;
+  return <ChatView onSubagentSelect={openSubagentDetail} onOpenSubagents={openSubagentsRoster} />;
+}
+
+function AppMainSurface(props: Pick<
+  AppLayoutProps,
+  "rightPanelMaximized" | "showPullRequests" | "showNewThreadCanvas" | "settingsOpen" | "settingsSection" | "isDesktop" | "pullRequestTab" | "setPullRequestTab" | "isValidLocation" | "navigateHistory"
+>) {
+  if (props.rightPanelMaximized && !props.showPullRequests) return null;
+  const useFlexibleWidth = props.showNewThreadCanvas || props.settingsOpen || props.showPullRequests;
+  return (
+    <main
+      className="flex-1 overflow-hidden bg-background"
+      style={{ minWidth: useFlexibleWidth ? 0 : `min(100%, ${COMPOSER_MIN_WIDTH}px)` }}
+    >
+      <AppPrimarySurface {...props} />
+    </main>
+  );
+}
+
+function RightPanelSlot({
+  settingsOpen,
+  showProjectlessCanvas,
+  showPullRequests,
+}: Pick<AppLayoutProps, "settingsOpen" | "showProjectlessCanvas" | "showPullRequests">) {
+  if (settingsOpen || showProjectlessCanvas || showPullRequests) return null;
+  return (
+    <Suspense fallback={null}>
+      <LazyRightPanel />
+    </Suspense>
+  );
+}
+
+function AppLayout(props: AppLayoutProps) {
+  return (
+    <TerminalPoolSlotProvider>
+      <TooltipProvider delay={400}>
+        <div className="flex h-screen flex-col overflow-hidden bg-page text-foreground">
+          {props.isDesktop ? (
+            <DesktopTitleBar
+              canGoBack={props.navigationHistory.canGoBack(props.isValidLocation)}
+              canGoForward={props.navigationHistory.canGoForward(props.isValidLocation)}
+              onBack={() => props.navigateHistory("back")}
+              onForward={() => props.navigateHistory("forward")}
+            />
+          ) : null}
+          <ConnectionBanner />
+          <div ref={props.outerRowRef} className="flex flex-1 overflow-hidden">
+            {!props.sidebarFloating && (
+              <DockedSidebar
+                visible={props.dockedSidebarVisible}
+                settingsOpen={props.settingsOpen}
+                settingsSection={props.settingsSection}
+                setSettingsOpen={props.setSettingsOpen}
+                setSettingsSection={props.setSettingsSection}
+                closeSettings={props.closeSettings}
+              />
+            )}
+            {props.floatingSidebarRendered && (
+              <FloatingSidebar
+                backdropRef={props.floatingBackdropRef}
+                sidebarRef={props.floatingSidebarRef}
+                exiting={props.floatingSidebarExiting}
+                settingsSection={props.settingsSection}
+                setSettingsOpen={props.setSettingsOpen}
+                setSettingsSection={props.setSettingsSection}
+                closeSettings={props.closeSettings}
+              />
+            )}
+            <div ref={props.contentRowRef} data-testid="content-row" className="flex min-w-0 flex-1 overflow-hidden">
+              <AppMainSurface {...props} />
+              <RightPanelSlot {...props} />
+            </div>
+          </div>
+        </div>
+        <TerminalPoolHost />
+        <BrowserSurfaceHostRoot />
+        <BrowserAutomationHost />
+        <Suspense fallback={null}>
+          <LazyCommandPalette />
+        </Suspense>
+        <ShortcutHelpDialog />
+        <ToastContainer />
+      </TooltipProvider>
+    </TerminalPoolSlotProvider>
+  );
+}
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
@@ -595,155 +850,30 @@ export function App() {
   }, [theme]);
 
   return (
-    <TerminalPoolSlotProvider>
-      <TooltipProvider delay={400}>
-        <div className="flex h-screen flex-col overflow-hidden bg-page text-foreground">
-          {isDesktop ? (
-            <DesktopTitleBar
-              canGoBack={navigationHistory.canGoBack(isValidLocation)}
-              canGoForward={navigationHistory.canGoForward(isValidLocation)}
-              onBack={() => navigateHistory("back")}
-              onForward={() => navigateHistory("forward")}
-            />
-          ) : null}
-          <ConnectionBanner />
-          <div ref={outerRowRef} className="flex flex-1 overflow-hidden">
-            {/* Retain the docked shell while collapsed so its grid track can
-              animate. Settings force-shows it on web; cramped layouts float it. */}
-            {!sidebarFloating && (
-              <div
-                data-testid="sidebar-docked"
-                aria-hidden={!dockedSidebarVisible}
-                inert={!dockedSidebarVisible}
-                className={`grid shrink-0 overflow-hidden bg-page transition-[grid-template-columns] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
-                  dockedSidebarVisible
-                    ? "grid-cols-[1fr] duration-250"
-                    : "pointer-events-none grid-cols-[0fr] duration-200"
-                }`}
-              >
-                <div
-                  className={`min-w-0 overflow-hidden transition-[opacity,transform] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
-                    dockedSidebarVisible
-                      ? "translate-x-0 border-r border-border/45 opacity-100 duration-250"
-                      : "-translate-x-2 opacity-0 duration-200"
-                  }`}
-                >
-                  <Sidebar
-                    settingsOpen={settingsOpen}
-                    settingsSection={settingsSection}
-                    onSettingsSection={setSettingsSection}
-                    onOpenSettings={() => setSettingsOpen(true)}
-                    onCloseSettings={closeSettings}
-                  />
-                </div>
-              </div>
-            )}
-            {floatingSidebarRendered && (
-              <>
-                <button
-                  ref={floatingBackdropRef}
-                  type="button"
-                  aria-label="Close project tree"
-                  aria-hidden={floatingSidebarExiting}
-                  inert={floatingSidebarExiting}
-                  className={`app-viewport-fixed fixed z-40 bg-black/20 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
-                    floatingSidebarExiting
-                      ? "pointer-events-none animate-out fade-out-0"
-                      : "animate-in fade-in-0"
-                  }`}
-                  onClick={() => useUiStore.getState().closeFloatingSidebar()}
-                />
-                <div
-                  ref={floatingSidebarRef}
-                  data-testid="sidebar-floating"
-                  aria-hidden={floatingSidebarExiting}
-                  inert={floatingSidebarExiting}
-                  className={`app-panel-top-inset fixed bottom-1.5 left-1.5 z-50 flex w-72 overflow-hidden rounded-lg bg-page shadow-xl ring-1 ring-border/40 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
-                    floatingSidebarExiting
-                      ? "pointer-events-none animate-out fade-out-0 slide-out-to-left-4 duration-200"
-                      : "animate-in fade-in-0 slide-in-from-left-4 duration-250"
-                  }`}
-                >
-                  <Sidebar
-                    className="w-full max-w-none"
-                    settingsOpen={false}
-                    settingsSection={settingsSection}
-                    onSettingsSection={setSettingsSection}
-                    onOpenSettings={() => setSettingsOpen(true)}
-                    onCloseSettings={closeSettings}
-                  />
-                </div>
-              </>
-            )}
-            <div
-              ref={contentRowRef}
-              data-testid="content-row"
-              className="flex min-w-0 flex-1 overflow-hidden"
-            >
-              {/* Chat / settings: hidden when the right panel is maximized. */}
-              {(!rightPanelMaximized || showPullRequests) && (
-                <main
-                  className="flex-1 overflow-hidden bg-background"
-                  style={{
-                    minWidth:
-                      showNewThreadCanvas || settingsOpen || showPullRequests
-                        ? 0
-                        : `min(100%, ${COMPOSER_MIN_WIDTH}px)`,
-                  }}
-                >
-                  {settingsOpen ? (
-                    <Suspense fallback={null}>
-                      <LazySettingsView section={settingsSection} />
-                    </Suspense>
-                  ) : showPullRequests ? (
-                    <Suspense fallback={null}>
-                      <LazyPullRequestSurface
-                        activeTab={isDesktop ? pullRequestTab : undefined}
-                        onActiveTabChange={
-                          isDesktop ? setPullRequestTab : undefined
-                        }
-                        onHistoryBack={
-                          isDesktop
-                            ? () => {
-                                if (
-                                  useNavigationHistoryStore
-                                    .getState()
-                                    .canGoBack(isValidLocation)
-                                ) {
-                                  navigateHistory("back");
-                                } else {
-                                  usePullRequestDetailStore.getState().close();
-                                }
-                              }
-                            : undefined
-                        }
-                      />
-                    </Suspense>
-                  ) : (
-                    <ChatView
-                      onSubagentSelect={openSubagentDetail}
-                      onOpenSubagents={openSubagentsRoster}
-                    />
-                  )}
-                </main>
-              )}
-              {!settingsOpen && !showProjectlessCanvas && !showPullRequests && (
-                <Suspense fallback={null}>
-                  <LazyRightPanel />
-                </Suspense>
-              )}
-            </div>
-          </div>
-        </div>
-        <TerminalPoolHost />
-        <BrowserSurfaceHostRoot />
-        <BrowserAutomationHost />
-        <Suspense fallback={null}>
-          <LazyCommandPalette />
-        </Suspense>
-        <ShortcutHelpDialog />
-        <ToastContainer />
-      </TooltipProvider>
-    </TerminalPoolSlotProvider>
+    <AppLayout
+      isDesktop={isDesktop}
+      navigationHistory={navigationHistory}
+      isValidLocation={isValidLocation}
+      navigateHistory={navigateHistory}
+      outerRowRef={outerRowRef}
+      contentRowRef={contentRowRef}
+      floatingBackdropRef={floatingBackdropRef}
+      floatingSidebarRef={floatingSidebarRef}
+      sidebarFloating={sidebarFloating}
+      dockedSidebarVisible={dockedSidebarVisible}
+      floatingSidebarRendered={floatingSidebarRendered}
+      floatingSidebarExiting={floatingSidebarExiting}
+      rightPanelMaximized={rightPanelMaximized}
+      showNewThreadCanvas={showNewThreadCanvas}
+      showProjectlessCanvas={showProjectlessCanvas}
+      showPullRequests={showPullRequests}
+      settingsOpen={settingsOpen}
+      settingsSection={settingsSection}
+      pullRequestTab={pullRequestTab}
+      setSettingsOpen={setSettingsOpen}
+      setSettingsSection={setSettingsSection}
+      setPullRequestTab={setPullRequestTab}
+      closeSettings={closeSettings}
+    />
   );
 }

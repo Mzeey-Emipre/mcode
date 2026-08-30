@@ -50,6 +50,66 @@ function deferTerminalSummon(
   deferredTerminalSummons.set(pendingKey, cleanup);
 }
 
+type PanelAction = "open" | "select" | "hide";
+
+function shouldDeferTerminalSummon(
+  tab: RightPanelTab,
+  threadId: string | null,
+  threads: ReturnType<typeof useWorkspaceStore.getState>["threads"],
+): boolean {
+  if (tab !== "terminal" || !threadId) return false;
+  return threads.find((thread) => thread.id === threadId)?.clientPreparing === true;
+}
+
+function resolvePanelAction(
+  primarySurface: ReturnType<typeof useUiStore.getState>["primarySurface"],
+  panelVisible: boolean,
+  panel: ReturnType<ReturnType<typeof useDiffStore.getState>["getRightPanel"]>,
+  tab: RightPanelTab,
+): PanelAction {
+  if (primarySurface !== "chat" || !panelVisible) return "open";
+  if (!panel.openTabs.includes(tab) || panel.activeTab !== tab) return "select";
+  return "hide";
+}
+
+function selectPanelTab(
+  workspaceId: string,
+  threadId: string | null,
+  tab: RightPanelTab,
+): void {
+  const { setRightPanelTab, setRightPanelTabInstance } = useDiffStore.getState();
+  if (tab !== "terminal") {
+    setRightPanelTab(workspaceId, threadId, tab);
+    return;
+  }
+
+  const scopeId = threadId ?? workspaceId;
+  const latestTerminal = useTerminalStore.getState().terminals[scopeId]?.at(-1);
+  if (latestTerminal) {
+    setRightPanelTabInstance(workspaceId, threadId, `terminal:${latestTerminal.id}`);
+    useTerminalStore.getState().setActiveTerminal(scopeId, latestTerminal.id);
+    return;
+  }
+  setRightPanelTab(workspaceId, threadId, "terminal");
+  createTerminalForScope(scopeId);
+}
+
+function runPanelAction(
+  action: PanelAction,
+  workspaceId: string,
+  threadId: string | null,
+  tab: RightPanelTab,
+  primarySurface: ReturnType<typeof useUiStore.getState>["primarySurface"],
+): void {
+  if (action === "hide") {
+    hideRightPanelAdaptive(workspaceId, threadId);
+    return;
+  }
+  if (primarySurface !== "chat") useUiStore.getState().setPrimarySurface("chat");
+  if (action === "open") showRightPanelAdaptive(workspaceId, threadId);
+  selectPanelTab(workspaceId, threadId, tab);
+}
+
 /**
  * Summon a right-panel tab from a keyboard shortcut: create-or-focus the tab
  * (opening the panel if it is closed), refocus it if it is open but inactive,
@@ -74,44 +134,15 @@ export function summonTab(tab: RightPanelTab, onFocus?: () => void): void {
   } = useWorkspaceStore.getState();
   if (!wid) return;
   if (tabNeedsThread(tab) && !tid) return;
-  const activeThread = tid ? threads.find((thread) => thread.id === tid) : undefined;
-  if (tab === "terminal" && tid && activeThread?.clientPreparing) {
+  if (tid && shouldDeferTerminalSummon(tab, tid, threads)) {
     deferTerminalSummon(wid, tid, onFocus);
     return;
   }
 
-  const { getRightPanel, getRightPanelVisible, setRightPanelTab, setRightPanelTabInstance } = useDiffStore.getState();
+  const { getRightPanel, getRightPanelVisible } = useDiffStore.getState();
   const ui = useUiStore.getState();
   const panel = getRightPanel(wid, tid);
-
-  const scopeId = tid ?? wid;
-  const latestTerminal = useTerminalStore.getState().terminals[scopeId]?.at(-1);
-  const focusTerminal = () => {
-    if (latestTerminal) {
-      setRightPanelTabInstance(wid, tid, `terminal:${latestTerminal.id}`);
-      useTerminalStore.getState().setActiveTerminal(scopeId, latestTerminal.id);
-      return;
-    }
-    setRightPanelTab(wid, tid, "terminal");
-    createTerminalForScope(scopeId);
-  };
-
-  if (ui.primarySurface !== "chat") {
-    ui.setPrimarySurface("chat");
-    showRightPanelAdaptive(wid, tid);
-    if (tab === "terminal") focusTerminal(); else setRightPanelTab(wid, tid, tab);
-    onFocus?.();
-    return;
-  }
-
-  if (!getRightPanelVisible(wid, tid)) {
-    showRightPanelAdaptive(wid, tid);
-    if (tab === "terminal") focusTerminal(); else setRightPanelTab(wid, tid, tab);
-    onFocus?.();
-  } else if (!panel.openTabs.includes(tab) || panel.activeTab !== tab) {
-    if (tab === "terminal") focusTerminal(); else setRightPanelTab(wid, tid, tab);
-    onFocus?.();
-  } else {
-    hideRightPanelAdaptive(wid, tid);
-  }
+  const action = resolvePanelAction(ui.primarySurface, getRightPanelVisible(wid, tid), panel, tab);
+  runPanelAction(action, wid, tid, tab, ui.primarySurface);
+  if (action !== "hide") onFocus?.();
 }

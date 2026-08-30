@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MutableRefObject,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { CircleCheck, CircleSlash, CircleStop, CircleX, MoreHorizontal, Pencil, Play, RotateCcw } from "lucide-react";
 import type { WorkspaceEnvironmentAction, WorkspaceEnvironmentActionRun, WorkspaceEnvironmentCommandApproval } from "@mcode/contracts";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +58,12 @@ interface ProjectActionPointerActivation extends ProjectActionActivation {
   released: boolean;
 }
 
+interface ProjectActionMenuRow {
+  readonly actionId: string;
+  readonly actionName: string;
+  readonly configured: boolean;
+}
+
 const EMPTY_ACTION_RUNS: Readonly<Record<string, WorkspaceEnvironmentActionRun>> = {};
 
 interface LoadedSetupAvailability {
@@ -65,7 +81,7 @@ export function ProjectActionMenu({ actions, runsByActionId, onStart, onApprove,
   const pointerActivation = useRef<ProjectActionPointerActivation | null>(null);
   const keyboardActivation = useRef<ProjectActionActivation | null>(null);
   const configuredActionIds = useMemo(() => new Set(actions.map((action) => action.id)), [actions]);
-  const rows = useMemo(() => [
+  const rows = useMemo<readonly ProjectActionMenuRow[]>(() => [
     ...actions.map((action) => ({ actionId: action.id, actionName: action.name, configured: true })),
     ...[...runsByActionId.values()]
       .filter((run) => !configuredActionIds.has(run.actionId) && run.status !== "awaiting-approval")
@@ -83,7 +99,66 @@ export function ProjectActionMenu({ actions, runsByActionId, onStart, onApprove,
   const hasActionGroup = rows.length > 0 || Boolean(loadError) || Boolean(startError);
   const hasSetup = setupMenuItem !== null && setupMenuItem !== undefined;
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <>
+      <ProjectActionMenuDropdown
+        open={open}
+        onOpenChange={setOpen}
+        onEdit={onEdit}
+        rows={rows}
+        runsByActionId={runsByActionId}
+        onStart={startAction}
+        onFocus={onFocus}
+        pointerActivation={pointerActivation}
+        keyboardActivation={keyboardActivation}
+        hasActionGroup={hasActionGroup}
+        hasSetup={hasSetup}
+        loadError={loadError}
+        startError={startError}
+        setupMenuItem={setupMenuItem}
+      />
+      <ProjectActionApprovalDialog
+        approvalRun={approvalRun}
+        onApprove={onApprove}
+        onApprovalResolved={setApprovalRun}
+        onError={setStartError}
+      />
+    </>
+  );
+}
+
+function ProjectActionMenuDropdown({
+  open,
+  onOpenChange,
+  onEdit,
+  rows,
+  runsByActionId,
+  onStart,
+  onFocus,
+  pointerActivation,
+  keyboardActivation,
+  hasActionGroup,
+  hasSetup,
+  loadError,
+  startError,
+  setupMenuItem,
+}: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onEdit: () => void;
+  readonly rows: readonly ProjectActionMenuRow[];
+  readonly runsByActionId: ReadonlyMap<string, WorkspaceEnvironmentActionRun>;
+  readonly onStart: (actionId: string) => void;
+  readonly onFocus: (actionId: string) => void;
+  readonly pointerActivation: MutableRefObject<ProjectActionPointerActivation | null>;
+  readonly keyboardActivation: MutableRefObject<ProjectActionActivation | null>;
+  readonly hasActionGroup: boolean;
+  readonly hasSetup: boolean;
+  readonly loadError: string | null;
+  readonly startError: string | null;
+  readonly setupMenuItem: ReactNode;
+}) {
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
         render={
           <Button
@@ -105,119 +180,176 @@ export function ProjectActionMenu({ actions, runsByActionId, onStart, onApprove,
         {hasActionGroup || hasSetup ? <DropdownMenuSeparator /> : null}
         {loadError ? <p role="status" className="px-2 py-1.5 text-xs text-destructive">{loadError}</p> : null}
         {startError ? <p role="status" className="px-2 py-1.5 text-xs text-destructive">{startError}</p> : null}
-        {rows.map((row) => {
-          const run = runsByActionId.get(row.actionId) ?? null;
-          const focusAction = run?.status === "running" || !row.configured;
-          return (
-            <DropdownMenuItem
-              key={row.actionId}
-              data-testid={`project-action-${row.actionId}`}
-              // A fast Running update can reach this controlled menu before its
-              // originating pointer gesture settles. Keep the menu current.
-              closeOnClick={false}
-              onPointerDown={(event) => {
-                if (event.button !== 0) return;
-                keyboardActivation.current = null;
-                pointerActivation.current = {
-                  actionId: row.actionId,
-                  focus: focusAction,
-                  handled: false,
-                  pointerId: event.pointerId,
-                  released: false,
-                };
-              }}
-              onPointerUp={(event) => {
-                if (event.button !== 0) return;
-                keyboardActivation.current = null;
-                const activation = pointerActivation.current;
-                if (
-                  !activation ||
-                  activation.actionId !== row.actionId ||
-                  activation.pointerId !== event.pointerId
-                ) {
-                  pointerActivation.current = {
-                    actionId: row.actionId,
-                    focus: focusAction,
-                    handled: false,
-                    pointerId: event.pointerId,
-                    released: true,
-                  };
-                  return;
-                }
-                activation.released = true;
-              }}
-              onPointerCancel={(event) => {
-                const activation = pointerActivation.current;
-                if (activation?.pointerId === event.pointerId) pointerActivation.current = null;
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                pointerActivation.current = null;
-                keyboardActivation.current = { actionId: row.actionId, focus: focusAction, handled: false };
-              }}
-              onClick={() => {
-                const keyboard = keyboardActivation.current;
-                if (run?.status === "awaiting-approval") {
-                  startAction(row.actionId);
-                  return;
-                }
-                if (keyboard?.actionId === row.actionId) {
-                  if (keyboard.handled) return;
-                  keyboard.handled = true;
-                  if (keyboard.focus) {
-                    onFocus(row.actionId);
-                    return;
-                  }
-                  startAction(row.actionId);
-                  return;
-                }
-                const pointer = pointerActivation.current;
-                if (pointer?.actionId === row.actionId && pointer.released) {
-                  if (pointer.handled) return;
-                  pointer.handled = true;
-                  if (pointer.focus) {
-                    onFocus(row.actionId);
-                    return;
-                  }
-                  startAction(row.actionId);
-                  return;
-                }
-                if (focusAction) {
-                  onFocus(row.actionId);
-                  return;
-                }
-                startAction(row.actionId);
-              }}
-            >
-              <span className="min-w-0 flex-1 truncate">{row.actionName}</span>
-              <ActionStatus status={run?.status ?? null} finishedAt={run?.finishedAt ?? null} />
-            </DropdownMenuItem>
-          );
-        })}
+        {rows.map((row) => (
+          <ProjectActionMenuItem
+            key={row.actionId}
+            row={row}
+            run={runsByActionId.get(row.actionId) ?? null}
+            onStart={onStart}
+            onFocus={onFocus}
+            pointerActivation={pointerActivation}
+            keyboardActivation={keyboardActivation}
+          />
+        ))}
         {hasActionGroup && hasSetup ? <DropdownMenuSeparator /> : null}
         {setupMenuItem}
       </DropdownMenuContent>
-      {approvalRun ? (
-        <ProjectCommandApprovalDialog
-          approval={approvalRun.snapshot.approval ?? null}
-          script={approvalRun.snapshot.script}
-          onApprove={async () => {
-            try {
-              const approval = approvalRun.snapshot.approval;
-              if (!approval || !onApprove) return false;
-              const run = await onApprove(approvalRun.actionId, approval);
-              setApprovalRun(run?.status === "awaiting-approval" ? run : null);
-              return run?.status !== "awaiting-approval";
-            } catch (error) {
-              setApprovalRun(null);
-              setStartError("Project Action could not start.");
-              throw error;
-            }
-          }}
-          onCancel={() => setApprovalRun(null)}
-        />
-      ) : null}
     </DropdownMenu>
+  );
+}
+
+function ProjectActionMenuItem({
+  row,
+  run,
+  onStart,
+  onFocus,
+  pointerActivation,
+  keyboardActivation,
+}: {
+  readonly row: ProjectActionMenuRow;
+  readonly run: WorkspaceEnvironmentActionRun | null;
+  readonly onStart: (actionId: string) => void;
+  readonly onFocus: (actionId: string) => void;
+  readonly pointerActivation: MutableRefObject<ProjectActionPointerActivation | null>;
+  readonly keyboardActivation: MutableRefObject<ProjectActionActivation | null>;
+}) {
+  const focusAction = run?.status === "running" || !row.configured;
+  return (
+    <DropdownMenuItem
+      data-testid={`project-action-${row.actionId}`}
+      closeOnClick={false}
+      onPointerDown={(event) => recordProjectActionPointerDown(event, row, focusAction, pointerActivation, keyboardActivation)}
+      onPointerUp={(event) => recordProjectActionPointerUp(event, row, focusAction, pointerActivation, keyboardActivation)}
+      onPointerCancel={(event) => cancelProjectActionPointer(event, pointerActivation)}
+      onKeyDown={(event) => recordProjectActionKeyboard(event, row, focusAction, pointerActivation, keyboardActivation)}
+      onClick={() => activateProjectAction(row, run, focusAction, onStart, onFocus, pointerActivation, keyboardActivation)}
+    >
+      <span className="min-w-0 flex-1 truncate">{row.actionName}</span>
+      <ActionStatus status={run?.status ?? null} finishedAt={run?.finishedAt ?? null} />
+    </DropdownMenuItem>
+  );
+}
+
+function recordProjectActionPointerDown(
+  event: ReactPointerEvent,
+  row: ProjectActionMenuRow,
+  focus: boolean,
+  pointerActivation: MutableRefObject<ProjectActionPointerActivation | null>,
+  keyboardActivation: MutableRefObject<ProjectActionActivation | null>,
+): void {
+  if (event.button !== 0) return;
+  keyboardActivation.current = null;
+  pointerActivation.current = { actionId: row.actionId, focus, handled: false, pointerId: event.pointerId, released: false };
+}
+
+function recordProjectActionPointerUp(
+  event: ReactPointerEvent,
+  row: ProjectActionMenuRow,
+  focus: boolean,
+  pointerActivation: MutableRefObject<ProjectActionPointerActivation | null>,
+  keyboardActivation: MutableRefObject<ProjectActionActivation | null>,
+): void {
+  if (event.button !== 0) return;
+  keyboardActivation.current = null;
+  const activation = pointerActivation.current;
+  if (isCurrentProjectActionPointer(activation, row.actionId, event.pointerId)) {
+    activation.released = true;
+    return;
+  }
+  pointerActivation.current = { actionId: row.actionId, focus, handled: false, pointerId: event.pointerId, released: true };
+}
+
+function cancelProjectActionPointer(
+  event: ReactPointerEvent,
+  pointerActivation: MutableRefObject<ProjectActionPointerActivation | null>,
+): void {
+  if (pointerActivation.current?.pointerId === event.pointerId) pointerActivation.current = null;
+}
+
+function recordProjectActionKeyboard(
+  event: ReactKeyboardEvent,
+  row: ProjectActionMenuRow,
+  focus: boolean,
+  pointerActivation: MutableRefObject<ProjectActionPointerActivation | null>,
+  keyboardActivation: MutableRefObject<ProjectActionActivation | null>,
+): void {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  pointerActivation.current = null;
+  keyboardActivation.current = { actionId: row.actionId, focus, handled: false };
+}
+
+function activateProjectAction(
+  row: ProjectActionMenuRow,
+  run: WorkspaceEnvironmentActionRun | null,
+  focusAction: boolean,
+  onStart: (actionId: string) => void,
+  onFocus: (actionId: string) => void,
+  pointerActivation: MutableRefObject<ProjectActionPointerActivation | null>,
+  keyboardActivation: MutableRefObject<ProjectActionActivation | null>,
+): void {
+  if (run?.status === "awaiting-approval") {
+    onStart(row.actionId);
+    return;
+  }
+  if (consumeProjectActionActivation(keyboardActivation.current, row.actionId, onStart, onFocus)) return;
+  const pointer = pointerActivation.current;
+  if (pointer?.released && consumeProjectActionActivation(pointer, row.actionId, onStart, onFocus)) return;
+  if (focusAction) onFocus(row.actionId);
+  else onStart(row.actionId);
+}
+
+function consumeProjectActionActivation(
+  activation: ProjectActionActivation | null,
+  actionId: string,
+  onStart: (actionId: string) => void,
+  onFocus: (actionId: string) => void,
+): boolean {
+  if (!activation || activation.actionId !== actionId || activation.handled) return false;
+  activation.handled = true;
+  if (activation.focus) onFocus(actionId);
+  else onStart(actionId);
+  return true;
+}
+
+function isCurrentProjectActionPointer(
+  activation: ProjectActionPointerActivation | null,
+  actionId: string,
+  pointerId: number,
+): activation is ProjectActionPointerActivation {
+  return activation?.actionId === actionId && activation.pointerId === pointerId;
+}
+
+function ProjectActionApprovalDialog({
+  approvalRun,
+  onApprove,
+  onApprovalResolved,
+  onError,
+}: {
+  readonly approvalRun: WorkspaceEnvironmentActionRun | null;
+  readonly onApprove: ProjectActionMenuProps["onApprove"];
+  readonly onApprovalResolved: (run: WorkspaceEnvironmentActionRun | null) => void;
+  readonly onError: (error: string) => void;
+}) {
+  if (!approvalRun) return null;
+  return (
+    <ProjectCommandApprovalDialog
+      approval={approvalRun.snapshot.approval ?? null}
+      script={approvalRun.snapshot.script}
+      onApprove={async () => {
+        try {
+          const approval = approvalRun.snapshot.approval;
+          if (!approval || !onApprove) return false;
+          const run = await onApprove(approvalRun.actionId, approval);
+          onApprovalResolved(run?.status === "awaiting-approval" ? run : null);
+          return run?.status !== "awaiting-approval";
+        } catch (error) {
+          onApprovalResolved(null);
+          onError("Project Action could not start.");
+          throw error;
+        }
+      }}
+      onCancel={() => onApprovalResolved(null)}
+    />
   );
 }
 
@@ -466,18 +598,32 @@ function parseAnsiTranscript(transcript: string): readonly AnsiTranscriptSegment
 function ansiColor(sequence: string): string | undefined {
   let color: string | undefined;
   for (const code of sequence.split(";").map((value) => Number(value || "0"))) {
-    if (code === 0 || code === 39) color = undefined;
-    if (code === 30 || code === 90) color = "text-foreground";
-    if (code === 31 || code === 91) color = "text-red-500";
-    if (code === 32 || code === 92) color = "text-emerald-500";
-    if (code === 33 || code === 93) color = "text-amber-500";
-    if (code === 34 || code === 94) color = "text-blue-500";
-    if (code === 35 || code === 95) color = "text-fuchsia-500";
-    if (code === 36 || code === 96) color = "text-cyan-500";
-    if (code === 37 || code === 97) color = "text-foreground";
+    const nextColor = ANSI_COLORS[code];
+    if (nextColor !== undefined) color = nextColor ?? undefined;
   }
   return color;
 }
+
+const ANSI_COLORS: Readonly<Record<number, string | null>> = {
+  0: null,
+  30: "text-foreground",
+  31: "text-red-500",
+  32: "text-emerald-500",
+  33: "text-amber-500",
+  34: "text-blue-500",
+  35: "text-fuchsia-500",
+  36: "text-cyan-500",
+  37: "text-foreground",
+  39: null,
+  90: "text-foreground",
+  91: "text-red-500",
+  92: "text-emerald-500",
+  93: "text-amber-500",
+  94: "text-blue-500",
+  95: "text-fuchsia-500",
+  96: "text-cyan-500",
+  97: "text-foreground",
+};
 
 function ActionStatus({
   status,
@@ -496,25 +642,44 @@ function ActionStatus({
     const timer = window.setTimeout(() => setShowRecentResult(false), remaining);
     return () => window.clearTimeout(timer);
   }, [finishedAt, status]);
-  if (status === "running") {
-    return <span role="status" aria-label="Running" className="ml-2 flex shrink-0 text-amber-600 dark:text-amber-400"><Spinner size={12} aria-hidden className="motion-reduce:animate-none" /></span>;
-  }
-  if (status === "awaiting-approval") {
-    return <Badge role="status" aria-label="Approval required" variant="secondary" size="sm" className="ml-2 shrink-0">Approval</Badge>;
-  }
-  if (status === "completed" && showRecentResult) {
-    return <span role="status" aria-label="Completed" className="ml-2 flex shrink-0"><CircleCheck className="size-3.5 text-[var(--diff-add-strong)]" aria-hidden /></span>;
-  }
-  if (status === "failed" && showRecentResult) {
-    return <span role="status" aria-label="Failed" className="ml-2 flex shrink-0"><CircleX className="size-3.5 text-[var(--diff-remove)]" aria-hidden /></span>;
-  }
-  if (status === "interrupted") {
-    return <span role="status" aria-label="Interrupted" className="ml-2 flex shrink-0 text-muted-foreground"><CircleStop className="size-3.5" aria-hidden /></span>;
-  }
-  if (status === "unavailable") {
-    return <span role="status" aria-label="Unavailable" className="ml-2 flex shrink-0 text-muted-foreground"><CircleSlash className="size-3.5" aria-hidden /></span>;
-  }
-  return showIdlePlay ? <Play className="ml-2 size-3.5 shrink-0 text-muted-foreground" aria-label="Play" /> : null;
+  return <ActionStatusIcon status={status} showRecentResult={showRecentResult} showIdlePlay={showIdlePlay} />;
+}
+
+function ActionStatusIcon({
+  status,
+  showRecentResult,
+  showIdlePlay,
+}: {
+  readonly status: WorkspaceEnvironmentActionRun["status"] | null;
+  readonly showRecentResult: boolean;
+  readonly showIdlePlay: boolean;
+}) {
+  const statusNode = actionStatusNode(status, showRecentResult);
+  return statusNode ?? (showIdlePlay ? <Play className="ml-2 size-3.5 shrink-0 text-muted-foreground" aria-label="Play" /> : null);
+}
+
+const ACTION_STATUS_NODES: Readonly<Partial<Record<NonNullable<WorkspaceEnvironmentActionRun["status"]>, ReactNode>>> = {
+  running: <span role="status" aria-label="Running" className="ml-2 flex shrink-0 text-amber-600 dark:text-amber-400"><Spinner size={12} aria-hidden className="motion-reduce:animate-none" /></span>,
+  "awaiting-approval": <Badge role="status" aria-label="Approval required" variant="secondary" size="sm" className="ml-2 shrink-0">Approval</Badge>,
+  completed: <span role="status" aria-label="Completed" className="ml-2 flex shrink-0"><CircleCheck className="size-3.5 text-[var(--diff-add-strong)]" aria-hidden /></span>,
+  failed: <span role="status" aria-label="Failed" className="ml-2 flex shrink-0"><CircleX className="size-3.5 text-[var(--diff-remove)]" aria-hidden /></span>,
+  interrupted: <span role="status" aria-label="Interrupted" className="ml-2 flex shrink-0 text-muted-foreground"><CircleStop className="size-3.5" aria-hidden /></span>,
+  unavailable: <span role="status" aria-label="Unavailable" className="ml-2 flex shrink-0 text-muted-foreground"><CircleSlash className="size-3.5" aria-hidden /></span>,
+};
+
+function actionStatusNode(
+  status: WorkspaceEnvironmentActionRun["status"] | null,
+  showRecentResult: boolean,
+): ReactNode | null {
+  if (isExpiredActionResult(status, showRecentResult)) return null;
+  return status ? ACTION_STATUS_NODES[status] ?? null : null;
+}
+
+function isExpiredActionResult(
+  status: WorkspaceEnvironmentActionRun["status"] | null,
+  showRecentResult: boolean,
+): boolean {
+  return (status === "completed" || status === "failed") && !showRecentResult;
 }
 
 function isRecentResult(status: WorkspaceEnvironmentActionRun["status"] | null, finishedAt: string | null): boolean {

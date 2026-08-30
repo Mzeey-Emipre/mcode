@@ -519,6 +519,33 @@ describe("usePreviewCapture", () => {
         },
       });
     });
+
+    it("rejects v1 captures so annotation drafts retain v2 context only", async () => {
+      const onSuccess = vi.fn();
+      mockPreview.capturePictureReferenceElementPick.mockResolvedValue(
+        makeCapturePngResult({
+          capture: {
+            schemaVersion: 1,
+            pageUrl: "https://example.com/products",
+            pageTitle: "Products",
+            capturedAt: "2026-07-01T00:00:00.000Z",
+            captureKind: "element",
+            bounds: { x: 10, y: 20, width: 120, height: 40 },
+          },
+        }),
+      );
+
+      const { result } = renderHook(() => usePreviewCapture({ ...defaultOptions(), onSuccess }));
+      let outcome: { ok: boolean } | undefined;
+
+      await act(async () => {
+        outcome = await result.current.onAddElementAnnotation();
+      });
+
+      expect(outcome).toEqual({ ok: false });
+      expect(usePreviewAnnotationStore.getState().drafts[THREAD_ID]).toBeUndefined();
+      expect(onSuccess).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------

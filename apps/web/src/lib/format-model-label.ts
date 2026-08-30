@@ -33,6 +33,31 @@ function titleCaseWord(word: string): string {
   return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
 }
 
+function formatClaudeLabel(id: string): string | undefined {
+  const match = id.match(CLAUDE_PATTERN);
+  if (!match) return undefined;
+  const [, tier, major, minor] = match;
+  return `Claude ${titleCaseWord(tier)} ${major}.${minor}`;
+}
+
+function formatComposerLabel(id: string): string | undefined {
+  const match = id.match(COMPOSER_PATTERN);
+  if (!match) return undefined;
+  const [, version, tier] = match;
+  return tier ? `Composer ${version} ${titleCaseWord(tier)}` : `Composer ${version}`;
+}
+
+function formatSegmentLabel(id: string): string {
+  const segments = id.split(/[-_]/).filter(Boolean);
+  if (segments.length > 1) return segments.map(titleCaseWord).join(" ");
+  return segments[0] ? titleCaseWord(segments[0]) : id;
+}
+
+function formatKnownModelLabel(id: string): string | undefined {
+  if (id === "auto") return "Auto";
+  return formatClaudeLabel(id) ?? formatComposerLabel(id);
+}
+
 /**
  * Resolves a human-readable model label using catalog, static registry, then heuristics.
  *
@@ -71,23 +96,8 @@ export function formatModelLabel(modelId: string): string {
   const registryHit = findModelById(id);
   if (registryHit) return normalizeProviderModelName(registryHit.label);
 
-  if (id === "auto") return "Auto";
-
-  const claudeMatch = id.match(CLAUDE_PATTERN);
-  if (claudeMatch) {
-    const [, tier, major, minor] = claudeMatch;
-    const titled = tier.charAt(0).toUpperCase() + tier.slice(1);
-    return `Claude ${titled} ${major}.${minor}`;
-  }
-
-  const composerMatch = id.match(COMPOSER_PATTERN);
-  if (composerMatch) {
-    const [, version, tier] = composerMatch;
-    if (tier) {
-      return `Composer ${version} ${titleCaseWord(tier)}`;
-    }
-    return `Composer ${version}`;
-  }
+  const knownLabel = formatKnownModelLabel(id);
+  if (knownLabel) return knownLabel;
 
   // OpenAI-style ids (gpt-5.9-future) avoid truncating to "Gpt" via first-segment logic.
   if (/^gpt[-_]/i.test(id)) {
@@ -95,17 +105,5 @@ export function formatModelLabel(modelId: string): string {
   }
 
   if (id === "cursor-agent") return "Cursor";
-
-  // Multi-segment ids: title-case each segment so retired catalog entries stay readable.
-  const segments = id.split(/[-_]/).filter(Boolean);
-  if (segments.length > 1) {
-    return segments.map(titleCaseWord).join(" ");
-  }
-
-  const firstSeg = segments[0] ?? id;
-  if (firstSeg.length > 0) {
-    return titleCaseWord(firstSeg);
-  }
-
-  return id;
+  return formatSegmentLabel(id);
 }

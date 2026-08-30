@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // vi.hoisted ensures these refs are available inside the vi.mock factory below.
@@ -81,7 +81,7 @@ function renderWithModel(provider: string, modelId: string, reasoning = "high") 
   mockSettingsSelector.mockImplementation((selector: (s: unknown) => unknown) =>
     selector(state),
   );
-  return render(<ModelSection />);
+  return { state, ...render(<ModelSection />) };
 }
 
 /**
@@ -191,6 +191,16 @@ describe("ModelSection reasoning options", () => {
     renderWithModel("claude", "claude-sonnet-4-6");
 
     expect(screen.getByText("Reasoning effort")).toBeInTheDocument();
+  });
+
+  it("persists the selected reasoning level", () => {
+    const { state } = renderWithModel("claude", "claude-opus-4-7");
+
+    fireEvent.click(within(getReasoningRow()).getByRole("radio", { name: "Low" }));
+
+    expect(state.update).toHaveBeenCalledWith({
+      model: { defaults: { reasoning: "low" } },
+    });
   });
 
 });

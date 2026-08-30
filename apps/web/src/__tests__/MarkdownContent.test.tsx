@@ -358,7 +358,7 @@ describe("MarkdownContent workspace preview navigation", () => {
     expect(link).toBeTruthy();
     await act(async () => {
       fireEvent.click(link!, { ctrlKey: true });
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(setPreviewUrlForThread).toHaveBeenCalledWith(
       "thread-prev",

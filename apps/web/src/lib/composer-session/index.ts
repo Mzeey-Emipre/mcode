@@ -73,6 +73,129 @@ export function snapshotComposerDraft(draft: ComposerDraft): ComposerDraft {
   };
 }
 
+function buildDefaultComposerSession(
+  defaults: ResolveComposerSessionInput["globalDefaults"],
+): ComposerSession {
+  const modelId = getDefaultModelId();
+  return {
+    input: "",
+    mentions: [],
+    selectedTextComments: [],
+    attachments: [],
+    modelId,
+    provider: getDefaultProviderId(),
+    reasoning: normalizeReasoningLevelForModel(modelId, getDefaultReasoningLevel()),
+    interactionMode:
+      defaults.interactionMode === INTERACTION_MODES.PLAN
+        ? INTERACTION_MODES.PLAN
+        : INTERACTION_MODES.BUILD,
+    permissionMode: defaults.permissionMode,
+    copilotAgent: null,
+    contextWindow: null,
+    thinking: null,
+    codexFastMode: null,
+  };
+}
+
+function buildSavedComposerSession(
+  saved: ComposerDraft,
+  threadSettings: ResolveComposerSessionInput["threadSettings"],
+): ComposerSession {
+  return {
+    input: saved.input,
+    mentions: saved.mentions ?? [],
+    selectedTextComments: saved.selectedTextComments?.map((comment) => ({
+      ...comment,
+      source: { ...comment.source },
+      mentions: comment.mentions.map((mention) => ({
+        ...mention,
+        range: { ...mention.range },
+      })),
+    })) ?? [],
+    attachments: saved.attachments.map((attachment) => ({ ...attachment })),
+    modelId: saved.modelId,
+    provider: saved.provider ?? getDefaultProviderId(),
+    reasoning: normalizeReasoningLevelForModel(saved.modelId, saved.reasoning),
+    interactionMode: threadSettings.interactionMode,
+    permissionMode: threadSettings.permissionMode,
+    copilotAgent: threadSettings.copilotAgent,
+    contextWindow: threadSettings.contextWindow,
+    thinking: threadSettings.thinking,
+    codexFastMode: resolveSavedCodexFastMode(saved.codexFastMode, threadSettings.codexFastMode),
+  };
+}
+
+function resolveSavedCodexFastMode(
+  savedValue: boolean | null | undefined,
+  threadValue: boolean | null,
+): boolean | null {
+  return savedValue === undefined ? threadValue : savedValue;
+}
+
+function resolveInteractionMode(
+  interactionMode: WorkspaceThread["interaction_mode"] | undefined,
+  defaults: ResolveComposerSessionInput["globalDefaults"],
+): InteractionMode {
+  if (interactionMode === "plan") return INTERACTION_MODES.PLAN;
+  if (interactionMode === "build") return INTERACTION_MODES.BUILD;
+  return defaults.interactionMode === INTERACTION_MODES.PLAN
+    ? INTERACTION_MODES.PLAN
+    : INTERACTION_MODES.BUILD;
+}
+
+function buildThreadModelSession(
+  threadRow: WorkspaceThread | undefined,
+): Pick<ComposerSession, "modelId" | "provider" | "reasoning"> {
+  const modelId = resolveThreadModelId(threadRow?.model, getDefaultModelId());
+  const reasoning = threadRow?.reasoning_level
+    ? (threadRow.reasoning_level as ReasoningLevel)
+    : getDefaultReasoningLevel();
+
+  return {
+    modelId,
+    provider: (threadRow?.provider as string | undefined) ?? getDefaultProviderId(),
+    reasoning: normalizeReasoningLevelForModel(modelId, reasoning),
+  };
+}
+
+function buildThreadOptionSession(
+  threadRow: WorkspaceThread | undefined,
+  globalDefaults: ResolveComposerSessionInput["globalDefaults"],
+): Pick<ComposerSession, "interactionMode" | "permissionMode"> {
+  return {
+    interactionMode: resolveInteractionMode(threadRow?.interaction_mode, globalDefaults),
+    permissionMode:
+      (threadRow?.permission_mode as PermissionMode | null | undefined) ??
+      globalDefaults.permissionMode,
+  };
+}
+
+function buildThreadFlags(
+  threadRow: WorkspaceThread | undefined,
+): Pick<ComposerSession, "copilotAgent" | "contextWindow" | "thinking" | "codexFastMode"> {
+  return {
+    copilotAgent: threadRow?.copilot_agent ?? null,
+    contextWindow: (threadRow?.context_window_mode as ContextWindowMode | null | undefined) ?? null,
+    thinking: threadRow?.thinking ?? null,
+    codexFastMode: threadRow?.codex_fast_mode ?? null,
+  };
+}
+
+function buildThreadComposerSession(
+  threadRow: WorkspaceThread | undefined,
+  globalDefaults: ResolveComposerSessionInput["globalDefaults"],
+): ComposerSession {
+  return {
+    input: "",
+    mentions: [],
+    selectedTextComments: [],
+    attachments: [],
+    ...buildThreadModelSession(threadRow),
+    ...buildThreadOptionSession(threadRow, globalDefaults),
+    ...buildThreadFlags(threadRow),
+  };
+}
+
 /**
  * Resolve the composer session to install when entering a thread (or new-thread mode).
  * Pure function: no DOM, no store writes.
@@ -80,85 +203,10 @@ export function snapshotComposerDraft(draft: ComposerDraft): ComposerDraft {
 export function resolveComposerSession(input: ResolveComposerSessionInput): ComposerSession {
   const { threadId, getDraft, threadRow, threadSettings, globalDefaults } = input;
 
-  if (!threadId) {
-    const modelId = getDefaultModelId();
-    return {
-      input: "",
-      mentions: [],
-      selectedTextComments: [],
-      attachments: [],
-      modelId,
-      provider: getDefaultProviderId(),
-      reasoning: normalizeReasoningLevelForModel(modelId, getDefaultReasoningLevel()),
-      interactionMode:
-        globalDefaults.interactionMode === INTERACTION_MODES.PLAN
-          ? INTERACTION_MODES.PLAN
-          : INTERACTION_MODES.BUILD,
-      permissionMode: globalDefaults.permissionMode,
-      copilotAgent: null,
-      contextWindow: null,
-      thinking: null,
-      codexFastMode: null,
-    };
-  }
+  if (!threadId) return buildDefaultComposerSession(globalDefaults);
 
   const saved = getDraft(threadId);
-  if (saved) {
-    return {
-      input: saved.input,
-      mentions: saved.mentions ?? [],
-      selectedTextComments: saved.selectedTextComments?.map((comment) => ({
-        ...comment,
-        source: { ...comment.source },
-        mentions: comment.mentions.map((mention) => ({
-          ...mention,
-          range: { ...mention.range },
-        })),
-      })) ?? [],
-      attachments: saved.attachments.map((attachment) => ({ ...attachment })),
-      modelId: saved.modelId,
-      provider: saved.provider ?? getDefaultProviderId(),
-      reasoning: normalizeReasoningLevelForModel(saved.modelId, saved.reasoning),
-      interactionMode: threadSettings.interactionMode,
-      permissionMode: threadSettings.permissionMode,
-      copilotAgent: threadSettings.copilotAgent,
-      contextWindow: threadSettings.contextWindow,
-      thinking: threadSettings.thinking,
-      codexFastMode:
-        saved.codexFastMode !== undefined
-          ? saved.codexFastMode
-          : threadSettings.codexFastMode,
-    };
-  }
+  if (saved) return buildSavedComposerSession(saved, threadSettings);
 
-  const resolvedModelId = resolveThreadModelId(threadRow?.model, getDefaultModelId());
-  return {
-    input: "",
-    mentions: [],
-    selectedTextComments: [],
-    attachments: [],
-    modelId: resolvedModelId,
-    provider: (threadRow?.provider as string | undefined) ?? getDefaultProviderId(),
-    reasoning: normalizeReasoningLevelForModel(
-      resolvedModelId,
-      threadRow?.reasoning_level
-        ? (threadRow.reasoning_level as ReasoningLevel)
-        : getDefaultReasoningLevel(),
-    ),
-    interactionMode:
-      threadRow?.interaction_mode === "plan"
-        ? INTERACTION_MODES.PLAN
-        : threadRow?.interaction_mode === "build"
-          ? INTERACTION_MODES.BUILD
-          : globalDefaults.interactionMode === INTERACTION_MODES.PLAN
-            ? INTERACTION_MODES.PLAN
-            : INTERACTION_MODES.BUILD,
-    permissionMode:
-      (threadRow?.permission_mode as PermissionMode | null | undefined) ??
-      globalDefaults.permissionMode,
-    copilotAgent: threadRow?.copilot_agent ?? null,
-    contextWindow: (threadRow?.context_window_mode as ContextWindowMode | null | undefined) ?? null,
-    thinking: threadRow?.thinking ?? null,
-    codexFastMode: threadRow?.codex_fast_mode ?? null,
-  };
+  return buildThreadComposerSession(threadRow, globalDefaults);
 }

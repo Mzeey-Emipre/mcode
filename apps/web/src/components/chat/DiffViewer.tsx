@@ -13,6 +13,32 @@ interface DiffViewerProps {
   changeType?: "created" | "deleted" | "renamed" | "modified" | "binary";
 }
 
+function DiffViewerHeader({ expanded, loading, filePath, changeLabel, onToggle }: { expanded: boolean; loading: boolean; filePath: string; changeLabel: string; onToggle: () => void }) {
+  return <button type="button" onClick={onToggle} className="flex w-full items-center gap-2 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/40 transition-colors">
+    <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
+    <FileText className="h-3 w-3 shrink-0" />
+    <span className="truncate font-mono">{filePath}</span>
+    <span className="ml-auto text-xs opacity-60">{changeLabel}</span>
+    {loading && <span className="text-xs">Loading...</span>}
+  </button>;
+}
+
+function DiffLines({ lines, visibleLines, truncated, onShowAll }: { lines: ReturnType<typeof parseDiffLines>; visibleLines: ReturnType<typeof parseDiffLines>; truncated: boolean; onShowAll: () => void }) {
+  return <div className="max-h-[500px] overflow-auto text-xs font-mono leading-relaxed">
+    {visibleLines.map((line, index) => <div key={index} className={line.type === "add" ? "bg-primary/10 text-primary/70" : line.type === "remove" ? "bg-destructive/10 text-destructive/70" : line.type === "header" ? "bg-muted/30 text-muted-foreground/70" : "text-muted-foreground"}>
+      <span className="inline-block w-5 select-none text-right pr-2 opacity-40">{line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}</span>
+      {line.content}
+    </div>)}
+    {truncated && <button type="button" onClick={onShowAll} className="w-full py-1.5 text-center text-xs text-muted-foreground/70 hover:text-foreground bg-muted/20">Show full diff ({lines.length - MAX_LINES} more lines)</button>}
+  </div>;
+}
+
+function DiffViewerContent({ expanded, diff, changeType, lines, visibleLines, truncated, onShowAll }: { expanded: boolean; diff: string | null; changeType: NonNullable<DiffViewerProps["changeType"]>; lines: ReturnType<typeof parseDiffLines>; visibleLines: ReturnType<typeof parseDiffLines>; truncated: boolean; onShowAll: () => void }) {
+  if (!expanded) return null;
+  if (changeType === "binary") return <div className="px-3 py-2 text-xs text-muted-foreground/70">Binary file changed. No diff available.</div>;
+  return diff === null ? null : <DiffLines lines={lines} visibleLines={visibleLines} truncated={truncated} onShowAll={onShowAll} />;
+}
+
 /** Inline unified diff renderer. Lazy-loads diff content on expand. */
 export function DiffViewer({ snapshotId, filePath, changeType = "modified" }: DiffViewerProps) {
   const [expanded, setExpanded] = useState(false);
@@ -60,56 +86,8 @@ export function DiffViewer({ snapshotId, filePath, changeType = "modified" }: Di
 
   return (
     <div className="rounded-md border border-border/30 overflow-hidden">
-      <button
-        type="button"
-        onClick={handleToggle}
-        className="flex w-full items-center gap-2 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/40 transition-colors"
-      >
-        <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
-        <FileText className="h-3 w-3 shrink-0" />
-        <span className="truncate font-mono">{filePath}</span>
-        <span className="ml-auto text-xs opacity-60">{changeLabel}</span>
-        {loading && <span className="text-xs">Loading...</span>}
-      </button>
-
-      {expanded && diff !== null && changeType !== "binary" && (
-        <div className="max-h-[500px] overflow-auto text-xs font-mono leading-relaxed">
-          {visibleLines.map((line, i) => (
-            <div
-              key={i}
-              className={
-                line.type === "add"
-                  ? "bg-primary/10 text-primary/70"
-                  : line.type === "remove"
-                    ? "bg-destructive/10 text-destructive/70"
-                    : line.type === "header"
-                      ? "bg-muted/30 text-muted-foreground/70"
-                      : "text-muted-foreground"
-              }
-            >
-              <span className="inline-block w-5 select-none text-right pr-2 opacity-40">
-                {line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}
-              </span>
-              {line.content}
-            </div>
-          ))}
-          {truncated && (
-            <button
-              type="button"
-              onClick={handleShowAll}
-              className="w-full py-1.5 text-center text-xs text-muted-foreground/70 hover:text-foreground bg-muted/20"
-            >
-              Show full diff ({lines.length - MAX_LINES} more lines)
-            </button>
-          )}
-        </div>
-      )}
-
-      {expanded && changeType === "binary" && (
-        <div className="px-3 py-2 text-xs text-muted-foreground/70">
-          Binary file changed. No diff available.
-        </div>
-      )}
+      <DiffViewerHeader expanded={expanded} loading={loading} filePath={filePath} changeLabel={changeLabel} onToggle={handleToggle} />
+      <DiffViewerContent expanded={expanded} diff={diff} changeType={changeType} lines={lines} visibleLines={visibleLines} truncated={truncated} onShowAll={handleShowAll} />
     </div>
   );
 }

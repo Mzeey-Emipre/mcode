@@ -90,6 +90,63 @@ function chooseSettledFileEffectSummary(
   return resident.revision >= cached.revision ? resident : cached;
 }
 
+interface FetchCommitOptions {
+  skipPrepare?: boolean;
+  fetchLimit?: number;
+  prefetchEarlierHistory?: boolean;
+}
+
+interface FetchCommitContext {
+  epoch: number;
+  invalidationGeneration: number;
+  conversationRevision: number;
+}
+
+interface LoadedActiveConversation {
+  page: ConversationPage;
+  usedTail: boolean;
+  snapshots: Promise<Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>>;
+  goalLookup: Promise<GoalLookupResult | null>;
+}
+
+function cachedConversationIsNewer(
+  resident: ConversationCacheState,
+  cached: ConversationCacheState,
+): boolean {
+  const residentSequence = resident.messages.at(-1)?.sequence;
+  const cachedSequence = cached.messages.at(-1)?.sequence;
+  return residentSequence == null || (cachedSequence != null && cachedSequence > residentSequence);
+}
+
+function mergedConversationMessages(
+  cached: ConversationCacheState,
+  resident: ConversationCacheState,
+  preferResidentAtEqualSequence: boolean,
+): ConversationCacheState["messages"] {
+  const messagesById = new Map(cached.messages.map((message) => [message.id, message]));
+  for (const message of resident.messages) {
+    if (preferResidentAtEqualSequence || !messagesById.has(message.id)) messagesById.set(message.id, message);
+  }
+  return [...messagesById.values()].sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+}
+
+function mergedConversationMetadata(
+  cached: ConversationCacheState,
+  resident: ConversationCacheState,
+  messageIds: Set<string>,
+): Pick<ConversationCacheState, "persistedToolCallCounts" | "persistedFilesChanged" | "serverMessageIds" | "narrativeByMessage" | "answeredPlanMessageIds" | "assistantResponseKeys" | "settledFileEffectSummary"> {
+  const persistedFilesChanged = mergeMessageMetadata(cached.persistedFilesChanged, resident.persistedFilesChanged, messageIds);
+  return {
+    persistedToolCallCounts: mergeMessageMetadata(cached.persistedToolCallCounts, resident.persistedToolCallCounts, messageIds),
+    persistedFilesChanged,
+    serverMessageIds: mergeMessageMetadata(cached.serverMessageIds, resident.serverMessageIds, messageIds),
+    narrativeByMessage: mergeMessageMetadata(cached.narrativeByMessage, resident.narrativeByMessage, messageIds),
+    answeredPlanMessageIds: new Set([...cached.answeredPlanMessageIds, ...resident.answeredPlanMessageIds].filter((messageId) => messageIds.has(messageId))),
+    assistantResponseKeys: mergeMessageMetadata(cached.assistantResponseKeys, resident.assistantResponseKeys, messageIds),
+    settledFileEffectSummary: chooseSettledFileEffectSummary(resident.settledFileEffectSummary, cached.settledFileEffectSummary),
+  };
+}
+
 /** Prefer an equally recent resident update while retaining disjoint cached history. */
 function mergeResidentConversationCacheState(
   resident: ThreadRecord,
@@ -97,30 +154,10 @@ function mergeResidentConversationCacheState(
   preferResidentAtEqualSequence = true,
 ): ConversationCacheState {
   const residentCacheState = projectConversationCacheState(resident);
-  const residentSequence = residentCacheState.messages.at(-1)?.sequence;
-  const cachedSequence = cached.messages.at(-1)?.sequence;
-  if (
-    residentSequence == null
-    || (cachedSequence != null
-      && cachedSequence > residentSequence)
-  ) {
-    return cached;
-  }
-  const messagesById = new Map(cached.messages.map((message) => [message.id, message]));
-  for (const message of residentCacheState.messages) {
-    if (preferResidentAtEqualSequence || !messagesById.has(message.id)) {
-      messagesById.set(message.id, message);
-    }
-  }
-  const messages = [...messagesById.values()].sort((left, right) =>
-    left.sequence - right.sequence || left.id.localeCompare(right.id),
-  );
+  if (cachedConversationIsNewer(residentCacheState, cached)) return cached;
+  const messages = mergedConversationMessages(cached, residentCacheState, preferResidentAtEqualSequence);
   const retainedMessageIds = new Set(messages.map((message) => message.id));
-  const persistedFilesChanged = mergeMessageMetadata(
-    cached.persistedFilesChanged,
-    residentCacheState.persistedFilesChanged,
-    retainedMessageIds,
-  );
+  const metadata = mergedConversationMetadata(cached, residentCacheState, retainedMessageIds);
 
   return {
     ...cached,
@@ -130,36 +167,8 @@ function mergeResidentConversationCacheState(
     newestLoadedSequence: messages.at(-1)?.sequence ?? residentCacheState.newestLoadedSequence,
     hasMoreMessages: cached.hasMoreMessages || residentCacheState.hasMoreMessages,
     hasNewerMessages: cached.hasNewerMessages || residentCacheState.hasNewerMessages,
-    persistedToolCallCounts: mergeMessageMetadata(
-      cached.persistedToolCallCounts,
-      residentCacheState.persistedToolCallCounts,
-      retainedMessageIds,
-    ),
-    persistedFilesChanged,
-    latestTurnWithChanges: findLatestTurnWithChanges(messages, persistedFilesChanged),
-    serverMessageIds: mergeMessageMetadata(
-      cached.serverMessageIds,
-      residentCacheState.serverMessageIds,
-      retainedMessageIds,
-    ),
-    narrativeByMessage: mergeMessageMetadata(
-      cached.narrativeByMessage,
-      residentCacheState.narrativeByMessage,
-      retainedMessageIds,
-    ),
-    answeredPlanMessageIds: new Set(
-      [...cached.answeredPlanMessageIds, ...residentCacheState.answeredPlanMessageIds]
-        .filter((messageId) => retainedMessageIds.has(messageId)),
-    ),
-    assistantResponseKeys: mergeMessageMetadata(
-      cached.assistantResponseKeys,
-      residentCacheState.assistantResponseKeys,
-      retainedMessageIds,
-    ),
-    settledFileEffectSummary: chooseSettledFileEffectSummary(
-      residentCacheState.settledFileEffectSummary,
-      cached.settledFileEffectSummary,
-    ),
+    ...metadata,
+    latestTurnWithChanges: findLatestTurnWithChanges(messages, metadata.persistedFilesChanged),
   };
 }
 
@@ -186,6 +195,16 @@ function normalizeTailMessages(tail: ConversationTail): ConversationPage["messag
     tool_calls: null,
     files_changed: null,
   }));
+}
+
+function residentActiveFetchOptions(hasResidentContent: boolean): {
+  skipPrepare: true;
+  fetchLimit: number;
+  prefetchEarlierHistory: true;
+} | undefined {
+  return hasResidentContent
+    ? { skipPrepare: true, fetchLimit: MESSAGE_FETCH_SIZE, prefetchEarlierHistory: true }
+    : undefined;
 }
 
 /** Latest messages fetched before the selected thread first paints. */
@@ -255,35 +274,39 @@ export class ThreadHydrator {
   /** Hydrate a leased transcript without changing selected workspace state. */
   async hydrateResident(threadId: string, opts: DisplayHydrationOptions): Promise<void> {
     if (!opts.isCurrent()) return;
+    if (await this.awaitResidentHydration(threadId, opts)) return;
+    if (this.restoreResidentContent(threadId, opts)) return;
+    await this.startResidentHydration(threadId, opts);
+  }
+
+  private async awaitResidentHydration(threadId: string, opts: DisplayHydrationOptions): Promise<boolean> {
     const existing = this.residentHydrates.get(threadId);
-    if (existing) {
-      await existing;
-      if (this.residentHydrateGenerations.get(threadId) !== opts.generation && opts.isCurrent()) {
-        await this.hydrateResident(threadId, opts);
-      }
-      return;
+    if (!existing) return false;
+    await existing;
+    if (this.residentHydrateGenerations.get(threadId) !== opts.generation && opts.isCurrent()) {
+      await this.hydrateResident(threadId, opts);
     }
+    return true;
+  }
+
+  private restoreResidentContent(threadId: string, opts: DisplayHydrationOptions): boolean {
     const resident = this.deps.getState().records.get(threadId);
     if (resident && hasResidentContent(resident) && !opts.force) {
       this.synchronizeConversation(threadId);
-      return;
+      return true;
     }
     const cached = getCachedRecord(threadId);
-    // An empty cache can be a snapshot of a released in-flight display load.
-    if (
-      cached
-      && (cached.messages.length > 0 || cached.lastHydratedAt !== undefined)
-      && !opts.force
-    ) {
-      if (!opts.isCurrent()) return;
-      this.restoreFromCache(threadId, this.compactCachedRecordForRestore(threadId, cached), {
-        bumpLoadEpoch: true,
-        select: false,
-      });
-      this.synchronizeConversation(threadId);
-      return;
-    }
+    if (!cached || opts.force || (cached.messages.length === 0 && cached.lastHydratedAt === undefined)) return false;
+    if (!opts.isCurrent()) return true;
+    this.restoreFromCache(threadId, this.compactCachedRecordForRestore(threadId, cached), {
+      bumpLoadEpoch: true,
+      select: false,
+    });
+    this.synchronizeConversation(threadId);
+    return true;
+  }
 
+  private async startResidentHydration(threadId: string, opts: DisplayHydrationOptions): Promise<void> {
     const hydration = this.fetchResidentAndCommit(threadId, opts).finally(() => {
       if (this.residentHydrates.get(threadId) === hydration) {
         this.residentHydrates.delete(threadId);
@@ -641,6 +664,19 @@ export class ThreadHydrator {
 
   /** Active-thread load invoked from ChatView and workspaceStore. */
   private async hydrateActive(threadId: string, opts?: ThreadHydratorOptions): Promise<void> {
+    const residentContent = this.prepareActiveThreadSelection(threadId);
+    const inFlight = this.activeHydrates.get(threadId);
+    if (inFlight) {
+      await this.joinActiveHydration(threadId, opts, residentContent, inFlight);
+      return;
+    }
+    if (this.restoreActiveCache(threadId, opts)) return;
+    if (this.refreshRunningResident(threadId, opts, residentContent)) return;
+    if (this.deps.getState().runningThreadIds.has(threadId)) recordRunningFetchRequired(threadId);
+    await this.startActiveHydration(threadId, opts, residentContent);
+  }
+
+  private prepareActiveThreadSelection(threadId: string): boolean {
     const outgoingThreadId = this.deps.getState().currentThreadId;
     if (outgoingThreadId && outgoingThreadId !== threadId) {
       this.cancelDeferredForThread(outgoingThreadId);
@@ -669,49 +705,49 @@ export class ThreadHydrator {
     if (residentContent && this.deps.getState().runningThreadIds.has(threadId)) {
       recordRunningResidentHit(threadId);
     }
+    return residentContent;
+  }
 
-    const inFlight = this.activeHydrates.get(threadId);
-    if (inFlight) {
-      this.selectInFlightLayer(threadId, residentContent);
-      await inFlight;
-      const state = this.deps.getState();
-      const current = getThreadRecord(state.records, threadId);
-      if (state.currentThreadId === threadId && current.loading && !hasCachedRecord(threadId)) {
-        await this.hydrateActive(threadId, opts);
-      }
-      return;
+  private async joinActiveHydration(
+    threadId: string,
+    opts: ThreadHydratorOptions | undefined,
+    residentContent: boolean,
+    inFlight: Promise<void>,
+  ): Promise<void> {
+    this.selectInFlightLayer(threadId, residentContent);
+    await inFlight;
+    const state = this.deps.getState();
+    const current = getThreadRecord(state.records, threadId);
+    if (state.currentThreadId === threadId && current.loading && !hasCachedRecord(threadId)) {
+      await this.hydrateActive(threadId, opts);
     }
+  }
 
+  private restoreActiveCache(threadId: string, opts: ThreadHydratorOptions | undefined): boolean {
     const cached = getCachedRecord(threadId);
-    if (cached && !opts?.force) {
-      this.restoreCachedActive(
-        threadId,
-        resident ? mergeResidentConversationCacheState(resident, cached) : cached,
-        opts,
-      );
-      return;
-    }
+    if (!cached || opts?.force) return false;
+    const resident = this.deps.getState().records.get(threadId);
+    this.restoreCachedActive(threadId, resident ? mergeResidentConversationCacheState(resident, cached) : cached, opts);
+    return true;
+  }
 
-    if (residentContent) {
-      this.activateResidentLayer(threadId);
-      if (this.deps.getState().runningThreadIds.has(threadId) && !opts?.force) {
-        const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
-        this.synchronizeConversation(threadId);
-        void this.refreshThreadGoal(threadId, expectedEpoch);
-        this.scheduleAuxiliaryHydration(threadId, expectedEpoch, {
-          freshnessTtlMs: HYDRATION_TTL_MS,
-          force: opts?.force ?? false,
-          commitFileChangesToStore: true,
-          expectedLoadEpoch: expectedEpoch,
-        });
-        return;
-      }
-    }
+  private refreshRunningResident(threadId: string, opts: ThreadHydratorOptions | undefined, residentContent: boolean): boolean {
+    if (!residentContent) return false;
+    this.activateResidentLayer(threadId);
+    if (!this.deps.getState().runningThreadIds.has(threadId) || opts?.force) return false;
+    const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
+    this.synchronizeConversation(threadId);
+    void this.refreshThreadGoal(threadId, expectedEpoch);
+    this.scheduleAuxiliaryHydration(threadId, expectedEpoch, {
+      freshnessTtlMs: HYDRATION_TTL_MS,
+      force: opts?.force ?? false,
+      commitFileChangesToStore: true,
+      expectedLoadEpoch: expectedEpoch,
+    });
+    return true;
+  }
 
-    if (this.deps.getState().runningThreadIds.has(threadId)) {
-      recordRunningFetchRequired(threadId);
-    }
-
+  private async startActiveHydration(threadId: string, opts: ThreadHydratorOptions | undefined, residentContent: boolean): Promise<void> {
     const hydrate = this.fetchActiveReusingBackground(threadId, opts, residentContent).finally(() => {
       if (this.activeHydrates.get(threadId) === hydrate) {
         this.activeHydrates.delete(threadId);
@@ -788,45 +824,27 @@ export class ThreadHydrator {
     opts?: ThreadHydratorOptions,
     hasResidentContent = false,
   ): Promise<void> {
-    const residentFetchOptions = hasResidentContent
-      ? {
-          skipPrepare: true,
-          fetchLimit: MESSAGE_FETCH_SIZE,
-          prefetchEarlierHistory: true,
-        }
-      : undefined;
-    const backgroundFetchOptions = residentFetchOptions ?? { skipPrepare: true };
+    const residentFetchOptions = residentActiveFetchOptions(hasResidentContent);
     const background = this.backgroundHydrates.get(threadId);
-    if (background) {
-      if (!hasResidentContent) {
-        this.selectInFlightLayer(threadId, false);
-      }
-      await background;
-
-      if (this.deps.getState().currentThreadId !== threadId) return;
-
-      if (opts?.force) {
-        await this.fetchAndCommit(threadId, opts, backgroundFetchOptions);
-        return;
-      }
-
-      const cached = getCachedRecord(threadId);
-      if (cached) {
-        const resident = this.deps.getState().records.get(threadId);
-        this.restoreCachedActive(
-          threadId,
-          resident ? mergeResidentConversationCacheState(resident, cached) : cached,
-          opts,
-          { bumpLoadEpoch: false },
-        );
-        return;
-      }
-
-      await this.fetchAndCommit(threadId, opts, { skipPrepare: true });
-      return;
-    }
-
+    if (background) return this.reuseBackgroundHydration(threadId, opts, hasResidentContent, residentFetchOptions, background);
     await this.fetchAndCommit(threadId, opts, residentFetchOptions);
+  }
+
+  private async reuseBackgroundHydration(
+    threadId: string,
+    opts: ThreadHydratorOptions | undefined,
+    hasResidentContent: boolean,
+    residentFetchOptions: { skipPrepare: true; fetchLimit: number; prefetchEarlierHistory: true } | undefined,
+    background: Promise<void>,
+  ): Promise<void> {
+    if (!hasResidentContent) this.selectInFlightLayer(threadId, false);
+    await background;
+    if (this.deps.getState().currentThreadId !== threadId) return;
+    if (opts?.force) return this.fetchAndCommit(threadId, opts, residentFetchOptions ?? { skipPrepare: true });
+    const cached = getCachedRecord(threadId);
+    if (!cached) return this.fetchAndCommit(threadId, opts, { skipPrepare: true });
+    const resident = this.deps.getState().records.get(threadId);
+    this.restoreCachedActive(threadId, resident ? mergeResidentConversationCacheState(resident, cached) : cached, opts, { bumpLoadEpoch: false });
   }
 
   /** Makes an already-loading thread current without invalidating its request epoch. */
@@ -1128,232 +1146,178 @@ export class ThreadHydrator {
   private async fetchAndCommit(
     threadId: string,
     opts?: ThreadHydratorOptions,
-    commitOpts?: {
-      skipPrepare?: boolean;
-      fetchLimit?: number;
-      prefetchEarlierHistory?: boolean;
-    },
+    commitOpts?: FetchCommitOptions,
   ): Promise<void> {
-    const { getState, setState } = this.deps;
-
-    if (!commitOpts?.skipPrepare) {
-      this.prepareActiveLoad(threadId);
-    }
-    const expectedEpoch = getThreadRecord(getState().records, threadId).loadEpoch;
-    const expectedInvalidationGeneration = this.invalidationGenerations.get(threadId) ?? 0;
-    const expectedConversationRevision = conversationRevision(
-      getThreadRecord(getState().records, threadId),
-    );
-
+    const context = this.startFetchCommit(threadId, commitOpts);
     try {
-      const workspaceThread = this.deps.getWorkspaceThread(threadId);
-      const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
-
-      const goalLookupPromise = this.transport().getThreadGoal(threadId).catch(() => null);
-      const snapshotsPromise = shouldFetchSnapshots
-        ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
-        : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>);
-      const requestedLimit = commitOpts?.fetchLimit ?? MESSAGE_FETCH_SIZE;
-      const tailLoader = this.transport().loadConversationTail;
-      const usedTail = tailLoader != null && requestedLimit <= MESSAGE_FETCH_SIZE;
-      let pageResult: ConversationPage;
-      if (usedTail && tailLoader) {
-        const tail = await tailLoader(threadId, Math.min(requestedLimit, MESSAGE_FETCH_SIZE));
-        pageResult = {
-          messages: normalizeTailMessages(tail),
-          hasMore: tail.hasMore,
-          narrativeByMessage: {},
-        };
-      } else {
-        pageResult = await this.transport().loadConversationPage(threadId, requestedLimit);
-      }
-
-      const stateAtCommit = getState();
-      const recordAtCommit = getThreadRecord(stateAtCommit.records, threadId);
-      if (
-        stateAtCommit.currentThreadId !== threadId
-        || recordAtCommit.loadEpoch !== expectedEpoch
-        || (this.invalidationGenerations.get(threadId) ?? 0) !== expectedInvalidationGeneration
-      ) {
-        if (
-          stateAtCommit.currentThreadId === threadId
-          && recordAtCommit.loadEpoch === expectedEpoch
-        ) {
-          setState((state: ThreadHydratorWriteState) => {
-            const current = getThreadRecord(state.records, threadId);
-            if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return {};
-            return {
-              records: patchThreadRecord(state.records, threadId, {
-                loading: false,
-                isLoadingMore: false,
-                isLoadingNewer: false,
-              }),
-            };
-          });
-        }
-        return;
-      }
-      if (conversationRevision(recordAtCommit) !== expectedConversationRevision) {
-        setState((state: ThreadHydratorWriteState) => {
-          const current = getThreadRecord(state.records, threadId);
-          if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return {};
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              loading: false,
-              isLoadingMore: false,
-              isLoadingNewer: false,
-            }),
-          };
-        });
-        return;
-      }
-
-      const patch = snapshotBuilder.build({
-        messages: pageResult.messages,
-        hasMore: pageResult.hasMore,
-        answeredPlanMessageIds: pageResult.answeredPlanMessageIds,
-      });
-
-      setState((state: ThreadHydratorWriteState) => {
-        const current = getThreadRecord(state.records, threadId);
-        const fetchedConversation = projectConversationCacheState({
-          ...createEmptyThreadRecord(),
-          ...patch,
-          narrativeByMessage: pageResult.narrativeByMessage,
-        });
-        const conversation = hasResidentContent(current)
-          ? mergeResidentConversationCacheState(current, fetchedConversation, false)
-          : fetchedConversation;
-        const ownsLiveFileEffects = current.fileEffectTurnId.length > 0
-          || state.runningThreadIds.has(threadId);
-        const { settledFileEffectSummary, ...conversationFields } = conversation;
-        return {
-          records: patchThreadRecord(state.records, threadId, {
-            ...conversationFields,
-            ...(!ownsLiveFileEffects && settledFileEffectSummary
-              ? { fileEffectSummary: settledFileEffectSummary }
-              : ownsLiveFileEffects
-                ? { fileEffectSummary: current.fileEffectSummary }
-                : {}),
-            loading: false,
-            isLoadingMore: false,
-            isLoadingNewer: false,
-            // Reserve the auxiliary freshness window with the conversation commit.
-            // The fanout itself is deferred so the first paint is not blocked.
-            lastHydratedAt: Date.now(),
-            settings: this.deps.getWorkspaceThreadSettings(threadId),
-          }),
-        };
-      });
+      const loaded = await this.loadActiveConversation(threadId, commitOpts);
+      if (!this.fetchCommitContextMatches(threadId, context)) return this.settleDiscardedFetch(threadId, context);
+      this.commitFetchedConversation(threadId, loaded.page);
       recordThreadCommit(threadId, "network-fetch");
-
-      this.scheduleAuxiliaryHydration(threadId, expectedEpoch, {
-        freshnessTtlMs: HYDRATION_TTL_MS,
-        force: opts?.force ?? true,
-        commitFileChangesToStore: true,
-        expectedLoadEpoch: expectedEpoch,
-        skipFileChangeSnapshots: true,
-      });
-
-      let tailFollowupInvalidated = false;
-      if (usedTail) {
-        const postTailState = getState();
-        if (
-          postTailState.currentThreadId !== threadId
-          || getThreadRecord(postTailState.records, threadId).loadEpoch !== expectedEpoch
-          || (this.invalidationGenerations.get(threadId) ?? 0) !== expectedInvalidationGeneration
-        ) return;
-        const tailRevision = conversationRevision(getThreadRecord(postTailState.records, threadId));
-        const tailGeneration = this.invalidationGenerations.get(threadId) ?? 0;
-        try {
-          const narrativePage = await this.transport().loadConversationPage(
-            threadId,
-            MESSAGE_FETCH_SIZE,
-          );
-          const stateAtTailFollowup = getState();
-          const recordAtTailFollowup = getThreadRecord(stateAtTailFollowup.records, threadId);
-          if (
-            stateAtTailFollowup.currentThreadId !== threadId
-            || recordAtTailFollowup.loadEpoch !== expectedEpoch
-            || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
-            || conversationRevision(recordAtTailFollowup) !== tailRevision
-          ) {
-            tailFollowupInvalidated = true;
-          }
-          setState((state: ThreadHydratorWriteState) => {
-            const current = getThreadRecord(state.records, threadId);
-            if (
-              tailFollowupInvalidated
-              || state.currentThreadId !== threadId
-              || current.loadEpoch !== expectedEpoch
-              || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
-              || conversationRevision(current) !== tailRevision
-            ) return {};
-            const retained = new Set(current.messages.map((message) => message.id));
-            return {
-              records: patchThreadRecord(state.records, threadId, {
-                narrativeByMessage: Object.fromEntries(
-                  Object.entries(narrativePage.narrativeByMessage).filter(([id]) => retained.has(id)),
-                ),
-                answeredPlanMessageIds: new Set(
-                  (narrativePage.answeredPlanMessageIds ?? []).filter((id) => retained.has(id)),
-                ),
-              }),
-            };
-          });
-        } catch {
-          const stateAtTailFailure = getState();
-          const recordAtTailFailure = getThreadRecord(stateAtTailFailure.records, threadId);
-          tailFollowupInvalidated =
-            stateAtTailFailure.currentThreadId !== threadId
-            || recordAtTailFailure.loadEpoch !== expectedEpoch
-            || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
-            || conversationRevision(recordAtTailFailure) !== tailRevision;
-          // First-paint tail remains usable when the narrative follow-up fails.
-        }
-      }
-
-      const committed = getThreadRecord(getState().records, threadId);
-      if (committed.planQuestionsStatus !== "pending") {
-        const pendingQuestions = this.deps.extractPendingPlanQuestions(
-          committed.messages,
-          committed.answeredPlanMessageIds,
-        );
-        if (pendingQuestions) {
-          this.deps.setPlanQuestions(threadId, pendingQuestions);
-        }
-      }
-
-      const stateBeforeCache = getState();
-      const recordBeforeCache = getThreadRecord(stateBeforeCache.records, threadId);
-      if (
-        !tailFollowupInvalidated
-        && stateBeforeCache.currentThreadId === threadId
-        && recordBeforeCache.loadEpoch === expectedEpoch
-        && (this.invalidationGenerations.get(threadId) ?? 0) === expectedInvalidationGeneration
-      ) {
-        cacheRecord(threadId, projectConversationCacheState(recordBeforeCache));
-      }
-      void snapshotsPromise.then((snapshots) => {
-        this.applySnapshots(threadId, snapshots, expectedEpoch);
-      });
-      void goalLookupPromise.then((goalLookup) => {
-        if (goalLookup) this.applyGoalLookup(threadId, goalLookup, expectedEpoch);
-      });
-      if (commitOpts?.prefetchEarlierHistory !== false) {
-        this.scheduleEarlierHistoryPrefetch(threadId, pageResult);
-      }
+      this.scheduleFetchedConversationAuxiliaries(threadId, opts, context.epoch);
+      const tailFollowupInvalidated = loaded.usedTail && await this.hydrateTailNarrative(threadId, context);
+      this.publishPendingPlanQuestions(threadId);
+      this.cacheFetchedConversation(threadId, context, tailFollowupInvalidated);
+      this.applyDeferredFetchResults(threadId, context.epoch, loaded, commitOpts);
     } catch (e) {
-      if (getState().currentThreadId === threadId) {
-        setState((state: ThreadHydratorWriteState) => ({
-          records: patchThreadRecord(state.records, threadId, {
-            error: String(e),
-            loading: false,
-          }),
-        }));
-      }
-      evictCachedRecord(threadId);
+      this.failFetchCommit(threadId, e);
     }
+  }
+
+  private startFetchCommit(threadId: string, options: FetchCommitOptions | undefined): FetchCommitContext {
+    if (!options?.skipPrepare) this.prepareActiveLoad(threadId);
+    const record = getThreadRecord(this.deps.getState().records, threadId);
+    return {
+      epoch: record.loadEpoch,
+      invalidationGeneration: this.invalidationGenerations.get(threadId) ?? 0,
+      conversationRevision: conversationRevision(record),
+    };
+  }
+
+  private async loadActiveConversation(threadId: string, options: FetchCommitOptions | undefined): Promise<LoadedActiveConversation> {
+    const shouldFetchSnapshots = this.deps.getWorkspaceThread(threadId)?.has_file_changes !== false;
+    const snapshots = shouldFetchSnapshots
+      ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
+      : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>);
+    const goalLookup = this.transport().getThreadGoal(threadId).catch(() => null);
+    const requestedLimit = options?.fetchLimit ?? MESSAGE_FETCH_SIZE;
+    const tailLoader = this.transport().loadConversationTail;
+    const usedTail = tailLoader != null && requestedLimit <= MESSAGE_FETCH_SIZE;
+    const page = usedTail && tailLoader
+      ? await this.loadConversationTail(threadId, requestedLimit, tailLoader)
+      : await this.transport().loadConversationPage(threadId, requestedLimit);
+    return { page, usedTail, snapshots, goalLookup };
+  }
+
+  private async loadConversationTail(
+    threadId: string,
+    requestedLimit: number,
+    loadTail: NonNullable<ThreadHydratorTransport["loadConversationTail"]>,
+  ): Promise<ConversationPage> {
+    const tail = await loadTail(threadId, Math.min(requestedLimit, MESSAGE_FETCH_SIZE));
+    return { messages: normalizeTailMessages(tail), hasMore: tail.hasMore, narrativeByMessage: {} };
+  }
+
+  private fetchCommitContextMatches(threadId: string, context: FetchCommitContext): boolean {
+    const state = this.deps.getState();
+    const record = getThreadRecord(state.records, threadId);
+    return state.currentThreadId === threadId
+      && record.loadEpoch === context.epoch
+      && (this.invalidationGenerations.get(threadId) ?? 0) === context.invalidationGeneration
+      && conversationRevision(record) === context.conversationRevision;
+  }
+
+  private settleDiscardedFetch(threadId: string, context: FetchCommitContext): void {
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      const current = getThreadRecord(state.records, threadId);
+      if (state.currentThreadId !== threadId || current.loadEpoch !== context.epoch) return {};
+      return { records: patchThreadRecord(state.records, threadId, { loading: false, isLoadingMore: false, isLoadingNewer: false }) };
+    });
+  }
+
+  private commitFetchedConversation(threadId: string, page: ConversationPage): void {
+    const patch = snapshotBuilder.build({ messages: page.messages, hasMore: page.hasMore, answeredPlanMessageIds: page.answeredPlanMessageIds });
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      const current = getThreadRecord(state.records, threadId);
+      const fetchedConversation = projectConversationCacheState({ ...createEmptyThreadRecord(), ...patch, narrativeByMessage: page.narrativeByMessage });
+      const conversation = hasResidentContent(current) ? mergeResidentConversationCacheState(current, fetchedConversation, false) : fetchedConversation;
+      const { settledFileEffectSummary, ...conversationFields } = conversation;
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          ...conversationFields,
+          ...this.committedFileEffectSummary(current, state, threadId, settledFileEffectSummary),
+          loading: false,
+          isLoadingMore: false,
+          isLoadingNewer: false,
+          lastHydratedAt: Date.now(),
+          settings: this.deps.getWorkspaceThreadSettings(threadId),
+        }),
+      };
+    });
+  }
+
+  private committedFileEffectSummary(
+    current: ThreadRecord,
+    state: ThreadHydratorWriteState,
+    threadId: string,
+    settledSummary: ConversationCacheState["settledFileEffectSummary"],
+  ): Partial<ThreadRecord> {
+    const ownsLiveEffects = current.fileEffectTurnId.length > 0 || state.runningThreadIds.has(threadId);
+    if (ownsLiveEffects) return { fileEffectSummary: current.fileEffectSummary };
+    return settledSummary ? { fileEffectSummary: settledSummary } : {};
+  }
+
+  private scheduleFetchedConversationAuxiliaries(threadId: string, opts: ThreadHydratorOptions | undefined, epoch: number): void {
+    this.scheduleAuxiliaryHydration(threadId, epoch, {
+      freshnessTtlMs: HYDRATION_TTL_MS,
+      force: opts?.force ?? true,
+      commitFileChangesToStore: true,
+      expectedLoadEpoch: epoch,
+      skipFileChangeSnapshots: true,
+    });
+  }
+
+  private currentFetchCommitContext(threadId: string): FetchCommitContext {
+    const record = getThreadRecord(this.deps.getState().records, threadId);
+    return { epoch: record.loadEpoch, invalidationGeneration: this.invalidationGenerations.get(threadId) ?? 0, conversationRevision: conversationRevision(record) };
+  }
+
+  private async hydrateTailNarrative(threadId: string, context: FetchCommitContext): Promise<boolean> {
+    const tailContext = this.currentFetchCommitContext(threadId);
+    if (tailContext.epoch !== context.epoch || tailContext.invalidationGeneration !== context.invalidationGeneration) return true;
+    try {
+      const narrativePage = await this.transport().loadConversationPage(threadId, MESSAGE_FETCH_SIZE);
+      if (!this.fetchCommitContextMatches(threadId, tailContext)) return true;
+      this.commitTailNarrative(threadId, tailContext, narrativePage);
+      return false;
+    } catch {
+      return !this.fetchCommitContextMatches(threadId, tailContext);
+    }
+  }
+
+  private commitTailNarrative(threadId: string, context: FetchCommitContext, page: ConversationPage): void {
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      const current = getThreadRecord(state.records, threadId);
+      if (!this.fetchCommitContextMatches(threadId, context)) return {};
+      const retained = new Set(current.messages.map((message) => message.id));
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          narrativeByMessage: Object.fromEntries(Object.entries(page.narrativeByMessage).filter(([id]) => retained.has(id))),
+          answeredPlanMessageIds: new Set((page.answeredPlanMessageIds ?? []).filter((id) => retained.has(id))),
+        }),
+      };
+    });
+  }
+
+  private publishPendingPlanQuestions(threadId: string): void {
+    const committed = getThreadRecord(this.deps.getState().records, threadId);
+    if (committed.planQuestionsStatus === "pending") return;
+    const pendingQuestions = this.deps.extractPendingPlanQuestions(committed.messages, committed.answeredPlanMessageIds);
+    if (pendingQuestions) this.deps.setPlanQuestions(threadId, pendingQuestions);
+  }
+
+  private cacheFetchedConversation(threadId: string, context: FetchCommitContext, tailFollowupInvalidated: boolean): void {
+    const state = this.deps.getState();
+    const record = getThreadRecord(state.records, threadId);
+    if (tailFollowupInvalidated || state.currentThreadId !== threadId || record.loadEpoch !== context.epoch || (this.invalidationGenerations.get(threadId) ?? 0) !== context.invalidationGeneration) return;
+    cacheRecord(threadId, projectConversationCacheState(record));
+  }
+
+  private applyDeferredFetchResults(threadId: string, epoch: number, loaded: LoadedActiveConversation, options: FetchCommitOptions | undefined): void {
+    void loaded.snapshots.then((snapshots) => this.applySnapshots(threadId, snapshots, epoch));
+    void loaded.goalLookup.then((goalLookup) => {
+      if (goalLookup) this.applyGoalLookup(threadId, goalLookup, epoch);
+    });
+    if (options?.prefetchEarlierHistory !== false) this.scheduleEarlierHistoryPrefetch(threadId, loaded.page);
+  }
+
+  private failFetchCommit(threadId: string, error: unknown): void {
+    if (this.deps.getState().currentThreadId === threadId) {
+      this.deps.setState((state: ThreadHydratorWriteState) => ({
+        records: patchThreadRecord(state.records, threadId, { error: String(error), loading: false }),
+      }));
+    }
+    evictCachedRecord(threadId);
   }
 
   /** Defers older history until the browser has had a chance to paint the tail. */

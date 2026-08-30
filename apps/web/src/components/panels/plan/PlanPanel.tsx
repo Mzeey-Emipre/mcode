@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { usePlanStore } from "@/stores/planStore";
 import { PlanChrome } from "./PlanChrome";
 import { PlanDocument, type PlanComment } from "./PlanDocument";
@@ -12,6 +12,21 @@ const EMPTY_PLANS: readonly PlanRecord[] = [];
 
 interface PlanPanelProps {
   threadId: string;
+}
+
+function PlanVersionBanner({ plan, latestVersion, threadId, onShowLatest }: { plan: PlanRecord; latestVersion: number; threadId: string; onShowLatest: (threadId: string, version: null) => void }) {
+  return <div className="flex min-w-0 flex-shrink-0 items-center gap-2 border-b border-border bg-primary/5 px-3 py-1.5 font-mono text-[10px] tracking-[0.14em] text-muted-foreground">
+    <span className="min-w-0 truncate">Viewing v{plan.version} of {latestVersion} · read-only</span>
+    <span className="min-w-0 flex-1" aria-hidden />
+    <Button type="button" variant="link" size="xs" onClick={() => onShowLatest(threadId, null)} className="h-auto shrink-0 p-0 font-mono text-[10px] tracking-[0.14em]">Back to latest</Button>
+  </div>;
+}
+
+function PlanFeedbackBar({ commentCount, feedbackBarRef, onSendFeedback }: { commentCount: number; feedbackBarRef: RefObject<HTMLDivElement | null>; onSendFeedback: () => void }) {
+  const hasComments = commentCount > 0;
+  return <div ref={feedbackBarRef} className="flex min-w-0 flex-shrink-0 items-center gap-2 border-t border-border bg-background px-3 py-2">
+    {hasComments ? <><span className="font-mono text-[10px] tabular-nums tracking-[0.14em] text-muted-foreground/70">{commentCount} {commentCount === 1 ? "note" : "notes"} saved</span><span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/45">·</span><span className="min-w-0 truncate font-mono text-[10px] tracking-[0.14em] text-muted-foreground/60">Send feedback to request a revised plan</span><span className="min-w-0 flex-1" aria-hidden /><Button type="button" variant="outline" size="xs" onClick={onSendFeedback} className="font-mono text-[10px] uppercase tracking-[0.16em]">Send feedback</Button></> : <><span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/45">Saved notes appear here</span><span className="min-w-0 flex-1" aria-hidden /><Button type="button" variant="outline" size="xs" disabled className="font-mono text-[10px] uppercase tracking-[0.16em]">Send feedback</Button></>}
+  </div>;
 }
 
 /**
@@ -150,23 +165,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
 
   return (
     <div className="flex min-h-0 flex-1 basis-0 flex-col overflow-hidden">
-      {viewingOld && activePlan && (
-        <div className="flex min-w-0 flex-shrink-0 items-center gap-2 border-b border-border bg-primary/5 px-3 py-1.5 font-mono text-[10px] tracking-[0.14em] text-muted-foreground">
-          <span className="min-w-0 truncate">
-            Viewing v{activePlan.version} of {latestVersion} · read-only
-          </span>
-          <span className="min-w-0 flex-1" aria-hidden />
-          <Button
-            type="button"
-            variant="link"
-            size="xs"
-            onClick={() => setActiveVersion(threadId, null)}
-            className="h-auto shrink-0 p-0 font-mono text-[10px] tracking-[0.14em]"
-          >
-            Back to latest
-          </Button>
-        </div>
-      )}
+      {viewingOld && <PlanVersionBanner plan={activePlan} latestVersion={latestVersion} threadId={threadId} onShowLatest={setActiveVersion} />}
 
       <PlanChrome
         plan={activePlan}
@@ -202,50 +201,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
         />
       </div>
 
-      <div
-        ref={feedbackBarRef}
-        className="flex min-w-0 flex-shrink-0 items-center gap-2 border-t border-border bg-background px-3 py-2"
-      >
-        {nonEmptyComments.length > 0 ? (
-          <>
-            <span className="font-mono text-[10px] tabular-nums tracking-[0.14em] text-muted-foreground/70">
-              {nonEmptyComments.length} {nonEmptyComments.length === 1 ? "note" : "notes"} saved
-            </span>
-            <span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/45">
-              ·
-            </span>
-            <span className="min-w-0 truncate font-mono text-[10px] tracking-[0.14em] text-muted-foreground/60">
-              Send feedback to request a revised plan
-            </span>
-            <span className="min-w-0 flex-1" aria-hidden />
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              onClick={handleSendFeedback}
-              className="font-mono text-[10px] uppercase tracking-[0.16em]"
-            >
-              Send feedback
-            </Button>
-          </>
-        ) : (
-          <>
-            <span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/45">
-              Saved notes appear here
-            </span>
-            <span className="min-w-0 flex-1" aria-hidden />
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              disabled
-              className="font-mono text-[10px] uppercase tracking-[0.16em]"
-            >
-              Send feedback
-            </Button>
-          </>
-        )}
-      </div>
+      <PlanFeedbackBar commentCount={nonEmptyComments.length} feedbackBarRef={feedbackBarRef} onSendFeedback={handleSendFeedback} />
     </div>
   );
 }

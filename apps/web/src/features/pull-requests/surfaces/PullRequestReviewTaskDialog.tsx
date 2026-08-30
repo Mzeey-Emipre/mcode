@@ -63,6 +63,54 @@ function defaultIntent(): string {
   return "Review this change stack.";
 }
 
+function reviewTaskError(caught: unknown, fallback: string): PullRequestError {
+  return {
+    code: "remote_unavailable",
+    message: caught instanceof Error ? caught.message.slice(0, 512) : fallback,
+  };
+}
+
+function prepareReviewTaskRequest(
+  transport: PullRequestReviewTaskTransport,
+  identity: PullRequestIdentity,
+  workspaceId?: string,
+) {
+  return transport.createReviewTask({
+    action: "prepare",
+    operationId: createOperationId("prepare"),
+    identity,
+    ...(workspaceId ? { workspaceId } : {}),
+  });
+}
+
+function createReviewTaskRequest(
+  prepared: PreparedReviewTask,
+  identity: PullRequestIdentity,
+  worktreeName: string,
+  intent: string,
+) {
+  if (prepared.status === "confirmation_required") {
+    return {
+      action: "create_new" as const,
+      operationId: createOperationId("create"),
+      identity,
+      workspaceId: prepared.workspace.id,
+      expectedHeadOid: prepared.source.expectedHeadOid,
+      worktreeName,
+      intent,
+    };
+  }
+  return {
+    action: "reuse_existing" as const,
+    operationId: createOperationId("reuse"),
+    identity,
+    workspaceId: prepared.workspace.id,
+    expectedHeadOid: prepared.source.expectedHeadOid,
+    candidateId: prepared.worktree.candidateId,
+    intent,
+  };
+}
+
 function isValidWorktreeName(value: string): boolean {
   return (
     value.length >= 1 &&
@@ -208,6 +256,220 @@ function ExistingWorktreeReadout({
   );
 }
 
+interface ReviewTaskDialogBodyProps {
+  phase: DialogPhase;
+  busy: boolean;
+  error: PullRequestError | null;
+  prepared: PreparedReviewTask | null;
+  candidates: PullRequestWorkspaceCandidate[];
+  selectedWorkspaceId: string | null;
+  selectedWorkspace: PullRequestWorkspaceCandidate | undefined;
+  worktreeName: string;
+  intent: string;
+  worktreeNameInvalid: boolean;
+  intentInvalid: boolean;
+  nameInputRef: RefObject<HTMLInputElement | null>;
+  intentInputRef: RefObject<HTMLTextAreaElement | null>;
+  setSelectedWorkspaceId: (workspaceId: string | null) => void;
+  setWorktreeName: (worktreeName: string) => void;
+  setIntent: (intent: string) => void;
+  onPrepare: (workspaceId?: string) => Promise<void>;
+  onSubmit: () => Promise<void>;
+  onClose: (open: boolean) => void;
+}
+
+function ReviewTaskDialogBody(props: ReviewTaskDialogBodyProps) {
+  if (props.phase === "preparing" || props.phase === "navigating") {
+    return <ReviewTaskPreparing phase={props.phase} />;
+  }
+  if (props.error && !props.prepared) {
+    return <ReviewTaskPreparationError {...props} error={props.error} />;
+  }
+  return props.prepared ? <ReviewTaskPreparedContent {...props} prepared={props.prepared} /> : null;
+}
+
+function ReviewTaskPreparing({ phase }: { phase: DialogPhase }) {
+  return (
+    <div className="flex min-h-52 items-center justify-center gap-2 px-6 text-xs text-muted-foreground">
+      <Spinner size="xs" aria-hidden />
+      <span>{phase === "navigating" ? "Opening Review task" : "Checking local projects"}</span>
+    </div>
+  );
+}
+
+function ReviewTaskPreparationError({
+  error,
+  candidates,
+  selectedWorkspaceId,
+  selectedWorkspace,
+  setSelectedWorkspaceId,
+  onPrepare,
+  onClose,
+}: ReviewTaskDialogBodyProps & { error: PullRequestError }) {
+  const ambiguous = error.code === "workspace_mapping_ambiguous" && candidates.length > 0;
+  const missingProject = error.code === "workspace_mapping_missing";
+  return (
+    <div className="space-y-4 px-5 py-5">
+      <div role="alert" className="flex items-start gap-2 bg-destructive/8 px-3 py-2.5 text-xs">
+        <AlertCircle size={14} aria-hidden className="mt-0.5 shrink-0 text-destructive" />
+        <p className="text-foreground/85">{errorCopy(error)}</p>
+      </div>
+      {ambiguous ? (
+        <div className="space-y-1.5">
+          <label className="text-xs text-muted-foreground" htmlFor="review-task-workspace">Project</label>
+          <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
+            <SelectTrigger id="review-task-workspace" className="w-full">
+              <SelectValue>{selectedWorkspace ? selectedWorkspace.name : "Choose a project"}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {candidates.map((candidate) => (
+                <SelectItem key={candidate.id} value={candidate.id}>
+                  <span className="min-w-0">
+                    <span className="block truncate">{candidate.name}</span>
+                    <span className="block truncate font-mono text-xs text-muted-foreground">{candidate.path}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
+      <DialogFooter className="m-0 -mx-5 -mb-5 flex-row justify-end rounded-none bg-transparent px-5 py-3.5">
+        <Button variant="ghost" onClick={() => onClose(false)}>Cancel</Button>
+        {missingProject ? (
+          <Button onClick={() => openProjectPicker(onClose)}>Add project</Button>
+        ) : ambiguous ? (
+          <Button disabled={!selectedWorkspaceId} onClick={() => void onPrepare(selectedWorkspaceId ?? undefined)}>
+            Use project
+          </Button>
+        ) : (
+          <Button onClick={() => void onPrepare()}>Retry</Button>
+        )}
+      </DialogFooter>
+    </div>
+  );
+}
+
+function openProjectPicker(onClose: (open: boolean) => void): void {
+  onClose(false);
+  requestAnimationFrame(() => {
+    useCommandPaletteStore.getState().open({ intent: "addProject" });
+  });
+}
+
+function ReviewTaskPreparedContent({
+  phase,
+  busy,
+  error,
+  prepared,
+  worktreeName,
+  intent,
+  worktreeNameInvalid,
+  intentInvalid,
+  nameInputRef,
+  intentInputRef,
+  setWorktreeName,
+  setIntent,
+  onPrepare,
+  onSubmit,
+  onClose,
+}: ReviewTaskDialogBodyProps & { prepared: PreparedReviewTask }) {
+  const confirmationRequired = prepared.status === "confirmation_required";
+  const submitDisabled = busy || intentInvalid || worktreeNameInvalid;
+  return (
+    <>
+      <SourceReadout source={prepared.source} />
+      <div className="space-y-4 px-5 py-4">
+        {error ? <ReviewTaskErrorNotice error={error} onRefresh={() => void onPrepare(prepared.workspace.id)} /> : null}
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <MapPin size={13} aria-hidden />
+          <span>Project</span>
+          <span className="ml-auto truncate text-foreground/85">{prepared.workspace.name}</span>
+        </div>
+        {confirmationRequired ? (
+          <ReviewTaskNewWorktreeFields
+            prepared={prepared}
+            worktreeName={worktreeName}
+            invalid={worktreeNameInvalid}
+            disabled={busy}
+            inputRef={nameInputRef}
+            onChange={setWorktreeName}
+          />
+        ) : (
+          <ExistingWorktreeReadout worktree={prepared.worktree} />
+        )}
+        <IntentField value={intent} onChange={setIntent} disabled={busy} inputRef={intentInputRef} invalid={intentInvalid} />
+        <p className="text-xs leading-5 text-muted-foreground">
+          This changes local worktree and task state. Remote pull request actions stay explicit.
+        </p>
+      </div>
+      <DialogFooter className="m-0 flex-row justify-end rounded-none bg-page/65 px-5 py-3.5">
+        <Button variant="ghost" disabled={busy} onClick={() => onClose(false)}>Cancel</Button>
+        <Button disabled={submitDisabled} onClick={() => void onSubmit()}>
+          <ReviewTaskSubmitLabel phase={phase} confirmationRequired={confirmationRequired} />
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+function ReviewTaskErrorNotice({ error, onRefresh }: { error: PullRequestError; onRefresh: () => void }) {
+  return (
+    <div role="alert" className="flex items-start gap-2 bg-destructive/8 px-3 py-2.5 text-xs">
+      <AlertCircle size={14} aria-hidden className="mt-0.5 shrink-0 text-destructive" />
+      <p className="min-w-0 flex-1 text-foreground/85">{errorCopy(error)}</p>
+      <Button variant="ghost" size="xs" onClick={onRefresh}>Refresh</Button>
+    </div>
+  );
+}
+
+function ReviewTaskNewWorktreeFields({
+  prepared,
+  worktreeName,
+  invalid,
+  disabled,
+  inputRef,
+  onChange,
+}: {
+  prepared: Extract<PreparedReviewTask, { status: "confirmation_required" }>;
+  worktreeName: string;
+  invalid: boolean;
+  disabled: boolean;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onChange: (worktreeName: string) => void;
+}) {
+  return (
+    <>
+      <div className="space-y-1.5">
+        <label htmlFor="pull-request-worktree-name" className="text-xs text-muted-foreground">Worktree name</label>
+        <Input
+          ref={inputRef}
+          id="pull-request-worktree-name"
+          value={worktreeName}
+          maxLength={PULL_REQUEST_REVIEW_WORKTREE_NAME_MAX_LENGTH}
+          disabled={disabled}
+          aria-invalid={invalid || undefined}
+          onChange={(event) => onChange(event.target.value)}
+          className="font-mono"
+        />
+      </div>
+      <div>
+        <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">Destination</p>
+        <p className="mt-1 break-all font-mono text-sm leading-5 text-foreground">
+          {displayDestinationPath(prepared.destinationPath, prepared.suggestedWorktreeName, worktreeName)}
+        </p>
+      </div>
+    </>
+  );
+}
+
+function ReviewTaskSubmitLabel({ phase, confirmationRequired }: { phase: DialogPhase; confirmationRequired: boolean }) {
+  if (phase === "submitting") {
+    return <><Spinner size="xs" aria-hidden />Creating task</>;
+  }
+  return confirmationRequired ? "Create Review task" : "Use existing worktree";
+}
+
 /** Props for the local Review-task preparation and confirmation dialog. */
 export interface PullRequestReviewTaskDialogProps {
   open: boolean;
@@ -290,12 +552,11 @@ export function PullRequestReviewTaskDialog({
       setPrepared(null);
       setError(null);
       try {
-        const result = await resolveTransport().createReviewTask({
-          action: "prepare",
-          operationId: createOperationId("prepare"),
+        const result = await prepareReviewTaskRequest(
+          resolveTransport(),
           identity,
-          ...(workspaceId ? { workspaceId } : {}),
-        });
+          workspaceId,
+        );
         if (generationRef.current !== generation) return;
         if (!result.ok) {
           setError(result.error);
@@ -315,13 +576,7 @@ export function PullRequestReviewTaskDialog({
         setPhase("ready");
       } catch (caught) {
         if (generationRef.current !== generation) return;
-        setError({
-          code: "remote_unavailable",
-          message:
-            caught instanceof Error
-              ? caught.message.slice(0, 512)
-              : "Review task preparation failed.",
-        });
+        setError(reviewTaskError(caught, "Review task preparation failed."));
         setPhase("ready");
       }
     },
@@ -349,6 +604,30 @@ export function PullRequestReviewTaskDialog({
     void prepare(prepared.workspace.id);
   }, [currentHeadOid, onOpenChange, open, prepare, prepared]);
 
+  const handleCreationResult = useCallback(
+    async (
+      result: PullRequestCreateReviewTaskResult,
+      generation: number,
+    ): Promise<void> => {
+      if (generationRef.current !== generation) return;
+      if (!result.ok) {
+        setError(result.error);
+        setPhase("ready");
+        return;
+      }
+      if (result.status === "ready") {
+        await finishReady(result, generation);
+        return;
+      }
+      setPrepared(result);
+      if (result.status === "confirmation_required") {
+        setWorktreeName(result.suggestedWorktreeName);
+      }
+      setPhase("ready");
+    },
+    [finishReady],
+  );
+
   const submit = useCallback(async () => {
     if (!prepared || busy) return;
     const trimmedIntent = intent.trim();
@@ -366,51 +645,15 @@ export function PullRequestReviewTaskDialog({
     setError(null);
     try {
       const result = await resolveTransport().createReviewTask(
-        prepared.status === "confirmation_required"
-          ? {
-              action: "create_new",
-              operationId: createOperationId("create"),
-              identity,
-              workspaceId: prepared.workspace.id,
-              expectedHeadOid: prepared.source.expectedHeadOid,
-              worktreeName,
-              intent: trimmedIntent,
-            }
-          : {
-              action: "reuse_existing",
-              operationId: createOperationId("reuse"),
-              identity,
-              workspaceId: prepared.workspace.id,
-              expectedHeadOid: prepared.source.expectedHeadOid,
-              candidateId: prepared.worktree.candidateId,
-              intent: trimmedIntent,
-            },
+        createReviewTaskRequest(prepared, identity, worktreeName, trimmedIntent),
       );
-      if (generationRef.current !== generation) return;
-      if (!result.ok) {
-        setError(result.error);
-        setPhase("ready");
-        return;
-      }
-      if (result.status === "ready") {
-        await finishReady(result, generation);
-        return;
-      }
-      setPrepared(result);
-      if (result.status === "confirmation_required") {
-        setWorktreeName(result.suggestedWorktreeName);
-      }
-      setPhase("ready");
+      await handleCreationResult(result, generation);
     } catch (caught) {
       if (generationRef.current !== generation) return;
-      setError({
-        code: "remote_unavailable",
-        message:
-          caught instanceof Error ? caught.message.slice(0, 512) : "Review task creation failed.",
-      });
+      setError(reviewTaskError(caught, "Review task creation failed."));
       setPhase("ready");
     }
-  }, [busy, finishReady, identity, intent, prepared, resolveTransport, worktreeName]);
+  }, [busy, handleCreationResult, identity, intent, prepared, resolveTransport, worktreeName]);
 
   const close = useCallback(
     (nextOpen: boolean) => {
@@ -442,166 +685,27 @@ export function PullRequestReviewTaskDialog({
             </DialogDescription>
           </div>
         </header>
-
-        {phase === "preparing" || phase === "navigating" ? (
-          <div className="flex min-h-52 items-center justify-center gap-2 px-6 text-xs text-muted-foreground">
-            <Spinner size="xs" aria-hidden />
-            <span>{phase === "navigating" ? "Opening Review task" : "Checking local projects"}</span>
-          </div>
-        ) : error && !prepared ? (
-          <div className="space-y-4 px-5 py-5">
-            <div role="alert" className="flex items-start gap-2 bg-destructive/8 px-3 py-2.5 text-xs">
-              <AlertCircle size={14} aria-hidden className="mt-0.5 shrink-0 text-destructive" />
-              <p className="text-foreground/85">{errorCopy(error)}</p>
-            </div>
-
-            {error.code === "workspace_mapping_ambiguous" && candidates.length > 0 ? (
-              <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground" htmlFor="review-task-workspace">
-                  Project
-                </label>
-                <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-                  <SelectTrigger id="review-task-workspace" className="w-full">
-                    <SelectValue>
-                      {selectedWorkspace ? selectedWorkspace.name : "Choose a project"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {candidates.map((candidate: PullRequestWorkspaceCandidate) => (
-                      <SelectItem key={candidate.id} value={candidate.id}>
-                        <span className="min-w-0">
-                          <span className="block truncate">{candidate.name}</span>
-                          <span className="block truncate font-mono text-xs text-muted-foreground">
-                            {candidate.path}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-
-            <DialogFooter className="m-0 -mx-5 -mb-5 flex-row justify-end rounded-none bg-transparent px-5 py-3.5">
-              <Button variant="ghost" onClick={() => close(false)}>
-                Cancel
-              </Button>
-              {error.code === "workspace_mapping_missing" ? (
-                <Button
-                  onClick={() => {
-                    close(false);
-                    requestAnimationFrame(() => {
-                      useCommandPaletteStore.getState().open({ intent: "addProject" });
-                    });
-                  }}
-                >
-                  Add project
-                </Button>
-              ) : error.code === "workspace_mapping_ambiguous" && candidates.length > 0 ? (
-                <Button
-                  disabled={!selectedWorkspaceId}
-                  onClick={() => void prepare(selectedWorkspaceId ?? undefined)}
-                >
-                  Use project
-                </Button>
-              ) : (
-                <Button onClick={() => void prepare()}>Retry</Button>
-              )}
-            </DialogFooter>
-          </div>
-        ) : prepared ? (
-          <>
-            <SourceReadout source={prepared.source} />
-            <div className="space-y-4 px-5 py-4">
-              {error ? (
-                <div role="alert" className="flex items-start gap-2 bg-destructive/8 px-3 py-2.5 text-xs">
-                  <AlertCircle size={14} aria-hidden className="mt-0.5 shrink-0 text-destructive" />
-                  <p className="min-w-0 flex-1 text-foreground/85">{errorCopy(error)}</p>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => void prepare(prepared.workspace.id)}
-                  >
-                    Refresh
-                  </Button>
-                </div>
-              ) : null}
-
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <MapPin size={13} aria-hidden />
-                <span>Project</span>
-                <span className="ml-auto truncate text-foreground/85">
-                  {prepared.workspace.name}
-                </span>
-              </div>
-
-              {prepared.status === "confirmation_required" ? (
-                <>
-                  <div className="space-y-1.5">
-                    <label htmlFor="pull-request-worktree-name" className="text-xs text-muted-foreground">
-                      Worktree name
-                    </label>
-                    <Input
-                      ref={nameInputRef}
-                      id="pull-request-worktree-name"
-                      value={worktreeName}
-                      maxLength={PULL_REQUEST_REVIEW_WORKTREE_NAME_MAX_LENGTH}
-                      disabled={busy}
-                      aria-invalid={worktreeNameInvalid || undefined}
-                      onChange={(event) => setWorktreeName(event.target.value)}
-                      className="font-mono"
-                    />
-                  </div>
-                  <div>
-                    <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
-                      Destination
-                    </p>
-                    <p className="mt-1 break-all font-mono text-sm leading-5 text-foreground">
-                      {displayDestinationPath(
-                        prepared.destinationPath,
-                        prepared.suggestedWorktreeName,
-                        worktreeName,
-                      )}
-                    </p>
-                  </div>
-                </>
-              ) : (
-                <ExistingWorktreeReadout worktree={prepared.worktree} />
-              )}
-
-              <IntentField
-                value={intent}
-                onChange={setIntent}
-                disabled={busy}
-                inputRef={intentInputRef}
-                invalid={intentInvalid}
-              />
-              <p className="text-xs leading-5 text-muted-foreground">
-                This changes local worktree and task state. Remote pull request actions stay explicit.
-              </p>
-            </div>
-            <DialogFooter className="m-0 flex-row justify-end rounded-none bg-page/65 px-5 py-3.5">
-              <Button variant="ghost" disabled={busy} onClick={() => close(false)}>
-                Cancel
-              </Button>
-              <Button
-                disabled={busy || intentInvalid || Boolean(worktreeNameInvalid)}
-                onClick={() => void submit()}
-              >
-                {phase === "submitting" ? (
-                  <>
-                    <Spinner size="xs" aria-hidden />
-                    Creating task
-                  </>
-                ) : prepared.status === "existing_worktree" ? (
-                  "Use existing worktree"
-                ) : (
-                  "Create Review task"
-                )}
-              </Button>
-            </DialogFooter>
-          </>
-        ) : null}
+        <ReviewTaskDialogBody
+          phase={phase}
+          busy={busy}
+          error={error}
+          prepared={prepared}
+          candidates={candidates}
+          selectedWorkspaceId={selectedWorkspaceId}
+          selectedWorkspace={selectedWorkspace}
+          worktreeName={worktreeName}
+          intent={intent}
+          worktreeNameInvalid={Boolean(worktreeNameInvalid)}
+          intentInvalid={intentInvalid}
+          nameInputRef={nameInputRef}
+          intentInputRef={intentInputRef}
+          setSelectedWorkspaceId={setSelectedWorkspaceId}
+          setWorktreeName={setWorktreeName}
+          setIntent={setIntent}
+          onPrepare={prepare}
+          onSubmit={submit}
+          onClose={close}
+        />
       </DialogContent>
     </Dialog>
   );

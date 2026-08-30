@@ -90,11 +90,8 @@ function compactDirectory(
   };
 }
 
-/** Build a deterministic directory tree from bounded provider file paths. */
-export function buildPullRequestFileTree(
-  filePaths: readonly string[],
-): PullRequestFileTreeNode[] {
-  const root: MutableDirectory = {
+function createRootDirectory(): MutableDirectory {
+  return {
     id: directoryId(""),
     kind: "directory",
     name: "",
@@ -102,47 +99,55 @@ export function buildPullRequestFileTree(
     parentId: null,
     children: new Map(),
   };
-  const seenPaths = new Set<string>();
+}
 
-  for (const filePath of filePaths) {
-    if (seenPaths.has(filePath)) continue;
-    seenPaths.add(filePath);
-    const segments = filePath.split("/").filter(Boolean);
-    if (segments.length === 0) continue;
-
-    let parent = root;
-    for (let index = 0; index < segments.length - 1; index += 1) {
-      const name = segments[index];
-      if (!name) continue;
-      const path = segments.slice(0, index + 1).join("/");
-      const id = directoryId(path);
-      const existing = parent.children.get(id);
-      if (existing?.kind === "directory") {
-        parent = existing;
-        continue;
-      }
-      const directory: MutableDirectory = {
-        id,
-        kind: "directory",
-        name,
-        path,
-        parentId: parent === root ? null : parent.id,
-        children: new Map(),
-      };
-      parent.children.set(id, directory);
-      parent = directory;
+function directoryForSegments(
+  root: MutableDirectory,
+  segments: readonly string[],
+): MutableDirectory {
+  let parent = root;
+  for (const [index, name] of segments.slice(0, -1).entries()) {
+    const path = segments.slice(0, index + 1).join("/");
+    const id = directoryId(path);
+    const existing = parent.children.get(id);
+    if (existing?.kind === "directory") {
+      parent = existing;
+      continue;
     }
-
-    const name = segments.at(-1);
-    if (!name) continue;
-    parent.children.set(fileId(filePath), {
-      id: fileId(filePath),
-      kind: "file",
+    const directory: MutableDirectory = {
+      id,
+      kind: "directory",
       name,
-      path: filePath,
+      path,
       parentId: parent === root ? null : parent.id,
-    });
+      children: new Map(),
+    };
+    parent.children.set(id, directory);
+    parent = directory;
   }
+  return parent;
+}
+
+function insertFilePath(root: MutableDirectory, filePath: string): void {
+  const segments = filePath.split("/").filter(Boolean);
+  if (segments.length === 0) return;
+  const parent = directoryForSegments(root, segments);
+  const name = segments[segments.length - 1]!;
+  parent.children.set(fileId(filePath), {
+    id: fileId(filePath),
+    kind: "file",
+    name,
+    path: filePath,
+    parentId: parent === root ? null : parent.id,
+  });
+}
+
+/** Build a deterministic directory tree from bounded provider file paths. */
+export function buildPullRequestFileTree(
+  filePaths: readonly string[],
+): PullRequestFileTreeNode[] {
+  const root = createRootDirectory();
+  for (const filePath of new Set(filePaths)) insertFilePath(root, filePath);
 
   return [...root.children.values()]
     .sort(compareNodes)

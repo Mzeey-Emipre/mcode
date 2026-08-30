@@ -33,6 +33,40 @@ function createMockCreateAndSendResult(
   };
 }
 
+function expectPreparedCodexThread(
+  thread: ReturnType<typeof useWorkspaceStore.getState>["threads"][number] | undefined,
+) {
+  expect(thread?.clientPreparing).toBe(true);
+  expect(thread?.clientQueuedMessage).toBe("Hello world");
+  expect(thread?.model).toBe("gpt-5.5");
+  expect(thread?.provider).toBe("codex");
+  expect(thread?.reasoning_level).toBe("high");
+  expect(thread?.interaction_mode).toBe("plan");
+  expect(thread?.permission_mode).toBe("full");
+  expect(thread?.codex_fast_mode).toBe(true);
+}
+
+function expectPreparedBranchThread(
+  thread: ReturnType<typeof useWorkspaceStore.getState>["threads"][number] | undefined,
+  parentId: string,
+) {
+  expect(thread?.clientPreparing).toBe(true);
+  expect(thread?.parent_thread_id).toBe(parentId);
+  expect(thread?.model).toBe("claude-opus-4-7");
+  expect(thread?.provider).toBe("claude");
+  expect(thread?.reasoning_level).toBe("max");
+  expect(thread?.context_window_mode).toBe("1m");
+  expect(thread?.thinking).toBe(true);
+}
+
+function expectPersistedBranchSettings(
+  thread: ReturnType<typeof useWorkspaceStore.getState>["threads"][number] | undefined,
+) {
+  expect(thread?.model).toBe("claude-opus-4-7");
+  expect(thread?.reasoning_level).toBe("max");
+  expect(thread?.context_window_mode).toBe("1m");
+}
+
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
   getTransport: () => mockTransport,
@@ -939,14 +973,7 @@ describe("Workspace Behavior", () => {
 
       const mid = useWorkspaceStore.getState();
       expect(mid.activeThreadId).not.toBeNull();
-      expect(mid.threads[0]?.clientPreparing).toBe(true);
-      expect(mid.threads[0]?.clientQueuedMessage).toBe("Hello world");
-      expect(mid.threads[0]?.model).toBe("gpt-5.5");
-      expect(mid.threads[0]?.provider).toBe("codex");
-      expect(mid.threads[0]?.reasoning_level).toBe("high");
-      expect(mid.threads[0]?.interaction_mode).toBe("plan");
-      expect(mid.threads[0]?.permission_mode).toBe("full");
-      expect(mid.threads[0]?.codex_fast_mode).toBe(true);
+      expectPreparedCodexThread(mid.threads[0]);
 
       const created = createMockThread({
         id: "server-thread-1",
@@ -1120,13 +1147,7 @@ describe("Workspace Behavior", () => {
       await Promise.resolve();
 
       const mid = useWorkspaceStore.getState();
-      expect(mid.threads[0]?.clientPreparing).toBe(true);
-      expect(mid.threads[0]?.parent_thread_id).toBe(parent.id);
-      expect(mid.threads[0]?.model).toBe("claude-opus-4-7");
-      expect(mid.threads[0]?.provider).toBe("claude");
-      expect(mid.threads[0]?.reasoning_level).toBe("max");
-      expect(mid.threads[0]?.context_window_mode).toBe("1m");
-      expect(mid.threads[0]?.thinking).toBe(true);
+      expectPreparedBranchThread(mid.threads[0], parent.id);
 
       resolveRpc(createMockCreateAndSendResult({
         id: "child-branch",
@@ -1139,9 +1160,7 @@ describe("Workspace Behavior", () => {
 
       const fin = useWorkspaceStore.getState();
       expect(fin.activeThreadId).toBe("child-branch");
-      expect(fin.threads[0]?.model).toBe("claude-opus-4-7");
-      expect(fin.threads[0]?.reasoning_level).toBe("max");
-      expect(fin.threads[0]?.context_window_mode).toBe("1m");
+      expectPersistedBranchSettings(fin.threads[0]);
     });
 
     it("branchThread normalizes existing worktree paths before detached metadata lookup", async () => {

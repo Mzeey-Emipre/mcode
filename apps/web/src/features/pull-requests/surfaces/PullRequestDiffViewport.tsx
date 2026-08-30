@@ -114,6 +114,90 @@ function sameIdentity(
   );
 }
 
+interface ParsedPatchReconciliationInput {
+  lane: PullRequestPatchLaneState | null;
+  patchKey: string | null;
+  parsedBytes: number;
+  deferred: boolean;
+  rejected: boolean;
+}
+
+function readyPatchLane(
+  patchKey: string | null,
+  lane: PullRequestPatchLaneState | null,
+): { patchKey: string; lane: PullRequestPatchLaneState } | null {
+  if (!patchKey) return null;
+  if (!lane) return null;
+  if (lane.status !== "ready") return null;
+  return { patchKey, lane };
+}
+
+function reconcileParsedPatchBytes({
+  lane,
+  patchKey,
+  parsedBytes,
+  deferred,
+  rejected,
+}: ParsedPatchReconciliationInput): boolean {
+  const readyPatch = readyPatchLane(patchKey, lane);
+  if (!readyPatch) return false;
+  const { patchKey: readyPatchKey, lane: readyLane } = readyPatch;
+  const store = usePullRequestCodeStore.getState();
+  if (deferred) {
+    releasePullRequestPatchRows(readyLane.result);
+    if (parsedBytes > 0 && readyLane.parsedBytes !== parsedBytes) {
+      store.reportPatchDerivedBytes(readyPatchKey, { parsedBytes });
+    }
+    return false;
+  }
+  if (rejected) {
+    releasePullRequestPatchRows(readyLane.result);
+    store.clearPatchDerivedBytes(readyPatchKey);
+    return false;
+  }
+  if (parsedBytes === 0 || readyLane.parsedBytes === parsedBytes) return false;
+  if (store.reportPatchDerivedBytes(readyPatchKey, { parsedBytes })) return false;
+  releasePullRequestPatchRows(readyLane.result);
+  store.clearPatchDerivedBytes(readyPatchKey);
+  return true;
+}
+
+function synchronizeParsedPatchRejections({
+  files,
+  patchKeys,
+  patchLanes,
+  rowModel,
+  parsedRejectedPaths,
+}: {
+  files: readonly PullRequestFile[];
+  patchKeys: readonly (string | null)[];
+  patchLanes: readonly (PullRequestPatchLaneState | null)[];
+  rowModel: ReturnType<typeof buildPullRequestDiffRowModel>;
+  parsedRejectedPaths: ReadonlySet<string>;
+}): ReadonlySet<string> {
+  const rejected = new Set(parsedRejectedPaths);
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const rejectedByModel = rowModel.rejectedPatchLocators.has(file.locator);
+    if (rejectedByModel) rejected.add(file.path);
+    const exceededBudget = reconcileParsedPatchBytes({
+      lane: patchLanes[index],
+      patchKey: patchKeys[index],
+      parsedBytes: rowModel.parsedBytesByLocator.get(file.locator) ?? 0,
+      deferred: rowModel.deferredPatchLocators.has(file.locator),
+      rejected: rejected.has(file.path),
+    });
+    if (exceededBudget) rejected.add(file.path);
+  }
+  if (
+    rejected.size === parsedRejectedPaths.size &&
+    [...rejected].every((path) => parsedRejectedPaths.has(path))
+  ) {
+    return parsedRejectedPaths;
+  }
+  return rejected;
+}
+
 /** Store-backed pull request patch viewport with bounded rows, tokens, and local drafts. */
 export function PullRequestDiffViewport({
   identity,
@@ -344,47 +428,16 @@ export function PullRequestDiffViewport({
   ]);
 
   useEffect(() => {
-    const rejected = new Set(parsedRejectedPaths);
-    let changed = false;
-    for (let index = 0; index < files.length; index += 1) {
-      const patchKey = patchKeys[index];
-      const lane = patchLanes[index];
-      const parsedBytes =
-        rowModel.parsedBytesByLocator.get(files[index].locator) ?? 0;
-      if (!patchKey || !lane || lane.status !== "ready") continue;
-      if (rowModel.deferredPatchLocators.has(files[index].locator)) {
-        releasePullRequestPatchRows(lane.result);
-        if (parsedBytes > 0 && lane.parsedBytes !== parsedBytes) {
-          usePullRequestCodeStore
-            .getState()
-            .reportPatchDerivedBytes(patchKey, { parsedBytes });
-        }
-        continue;
-      }
-      if (rowModel.rejectedPatchLocators.has(files[index].locator)) {
-        releasePullRequestPatchRows(lane.result);
-        usePullRequestCodeStore.getState().clearPatchDerivedBytes(patchKey);
-        if (!rejected.has(files[index].path)) {
-          rejected.add(files[index].path);
-          changed = true;
-        }
-        continue;
-      }
-      if (parsedBytes === 0) continue;
-      if (lane.parsedBytes === parsedBytes || rejected.has(files[index].path))
-        continue;
-      const accepted = usePullRequestCodeStore
-        .getState()
-        .reportPatchDerivedBytes(patchKey, { parsedBytes });
-      if (!accepted) {
-        releasePullRequestPatchRows(lane.result);
-        usePullRequestCodeStore.getState().clearPatchDerivedBytes(patchKey);
-        rejected.add(files[index].path);
-        changed = true;
-      }
-    }
-    if (changed) setParsedRejectedPaths(rejected);
-  }, [files, parsedRejectedPaths, patchKeys, patchLanes, rowModel]);
+    setParsedRejectedPaths((current) =>
+      synchronizeParsedPatchRejections({
+        files,
+        patchKeys,
+        patchLanes,
+        rowModel,
+        parsedRejectedPaths: current,
+      }),
+    );
+  }, [files, patchKeys, patchLanes, rowModel]);
 
   useEffect(
     () => () => {

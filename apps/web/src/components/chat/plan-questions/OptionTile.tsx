@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import type { PlanQuestionOption } from "@mcode/contracts";
 
 interface OptionTileProps {
@@ -22,6 +22,76 @@ interface OptionTileProps {
   index?: number;
   /** When true, play the accept-all flash exactly once. */
   flashing?: boolean;
+}
+
+function OptionTileHeading({
+  option,
+  selected,
+  recommended,
+  flashing,
+  index,
+}: {
+  option: PlanQuestionOption;
+  selected: boolean;
+  recommended: boolean | undefined;
+  flashing: boolean;
+  index: number;
+}) {
+  return (
+    <div className="flex items-baseline gap-2 flex-wrap">
+      <span
+        className={cn(
+          "text-sm leading-snug",
+          flashing && "animate-wizard-accept-flash",
+          selected ? "font-medium text-foreground" : "text-foreground/80",
+        )}
+        style={flashing ? { ["--tile-index" as string]: index } : undefined}
+      >
+        {option.title}
+      </span>
+      {recommended && <span className="text-xs font-mono uppercase tracking-wider text-primary/65 leading-none">· recommended</span>}
+    </div>
+  );
+}
+
+function OptionTileDetails({
+  option,
+  selected,
+  isOtherTile,
+  otherText,
+  onOtherTextChange,
+  textareaRef,
+}: {
+  option: PlanQuestionOption;
+  selected: boolean;
+  isOtherTile: boolean | undefined;
+  otherText: string;
+  onOtherTextChange: ((text: string) => void) | undefined;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
+}) {
+  if (isOtherTile && selected) {
+    return (
+      <Textarea
+        ref={textareaRef}
+        value={otherText}
+        onChange={(event) => onOtherTextChange?.(event.target.value)}
+        onClick={(event) => event.stopPropagation()}
+        placeholder="Describe your preference..."
+        rows={2}
+        className={cn(
+          "mt-2 min-h-0 rounded-none border-0 border-b border-border/40 bg-transparent px-0 py-1.5 text-xs",
+          "shadow-none focus-visible:ring-0 focus-visible:border-primary/50",
+          "resize-none",
+        )}
+      />
+    );
+  }
+  if (isOtherTile || !option.description) return null;
+  return (
+    <p className={cn("text-xs mt-1 leading-relaxed", selected ? "text-muted-foreground/80" : "text-muted-foreground/45")}>
+      {option.description}
+    </p>
+  );
 }
 
 /**
@@ -84,54 +154,21 @@ export function OptionTile({
         </span>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span
-              className={cn(
-                "text-sm leading-snug",
-                flashing && "animate-wizard-accept-flash",
-                selected ? "font-medium text-foreground" : "text-foreground/80",
-              )}
-              style={flashing ? { ["--tile-index" as string]: index } : undefined}
-            >
-              {option.title}
-            </span>
-            {isRecommended && (
-              <span className="text-xs font-mono uppercase tracking-wider text-primary/65 leading-none">
-                · recommended
-              </span>
-            )}
-          </div>
-
-          {isOtherTile && selected ? (
-            <Textarea
-              ref={textareaRef}
-              value={otherText}
-              onChange={(e) => onOtherTextChange?.(e.target.value)}
-              onClick={(e) => e.stopPropagation()}
-              placeholder="Describe your preference..."
-              rows={2}
-              // Override the shadcn Textarea's boxed chrome to match the
-              // wizard's quiet borderless aesthetic — only a bottom hairline
-              // marks the editable region, focus colors the rule.
-              className={cn(
-                "mt-2 min-h-0 rounded-none border-0 border-b border-border/40 bg-transparent px-0 py-1.5 text-xs",
-                "shadow-none focus-visible:ring-0 focus-visible:border-primary/50",
-                "resize-none",
-              )}
-            />
-          ) : (
-            option.description &&
-            !isOtherTile && (
-              <p
-                className={cn(
-                  "text-xs mt-1 leading-relaxed",
-                  selected ? "text-muted-foreground/80" : "text-muted-foreground/45",
-                )}
-              >
-                {option.description}
-              </p>
-            )
-          )}
+          <OptionTileHeading
+            option={option}
+            selected={selected}
+            recommended={isRecommended}
+            flashing={flashing}
+            index={index}
+          />
+          <OptionTileDetails
+            option={option}
+            selected={selected}
+            isOtherTile={isOtherTile}
+            otherText={otherText}
+            onOtherTextChange={onOtherTextChange}
+            textareaRef={textareaRef}
+          />
         </div>
       </div>
     </button>

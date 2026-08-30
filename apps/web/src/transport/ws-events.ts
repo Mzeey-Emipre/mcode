@@ -34,12 +34,97 @@ const _legacyEncoder = new TextEncoder();
 /** Maximum PTY payload size accepted by the client (4 MB). */
 const MAX_PTY_PAYLOAD_BYTES = 4 * 1024 * 1024;
 
+type PtyDataDetail = { ptyId: string; payload: Uint8Array; seq: number };
+
 /**
  * Estimates decoded byte length from a base64 string without allocating.
  */
 function approxBase64DecodedBytes(encoded: string): number {
   const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
   return Math.floor((encoded.length * 3) / 4) - padding;
+}
+
+function logOversizedPtyPayload(ptyId: string, byteLength: number, approximate = false): void {
+  const measured = approximate ? `~${byteLength}` : byteLength;
+  console.warn(
+    `[ws-events] dropped oversized terminal.data payload (${measured} bytes) for PTY ${ptyId}`,
+  );
+}
+
+function decodeBase64Payload(encoded: string): Uint8Array | null {
+  try {
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  } catch {
+    console.warn("[ws-events] dropped terminal.data frame: invalid base64 payload");
+    return null;
+  }
+}
+
+function acceptPtyPayload(
+  ptyId: string,
+  payload: Uint8Array,
+  approximate = false,
+): Uint8Array | null {
+  if (payload.byteLength <= MAX_PTY_PAYLOAD_BYTES) return payload;
+  logOversizedPtyPayload(ptyId, payload.byteLength, approximate);
+  return null;
+}
+
+function decodeBase64PtyPayload(ptyId: string, payload: string): Uint8Array | null {
+  const approximateBytes = approxBase64DecodedBytes(payload);
+  if (approximateBytes > MAX_PTY_PAYLOAD_BYTES) {
+    logOversizedPtyPayload(ptyId, approximateBytes, true);
+    return null;
+  }
+  const decoded = decodeBase64Payload(payload);
+  return decoded ? acceptPtyPayload(ptyId, decoded) : null;
+}
+
+function decodeArrayPtyPayload(ptyId: string, payload: number[]): Uint8Array | null {
+  if (payload.length > MAX_PTY_PAYLOAD_BYTES) {
+    logOversizedPtyPayload(ptyId, payload.length);
+    return null;
+  }
+  return new Uint8Array(payload);
+}
+
+function decodeIndexedPtyPayload(
+  ptyId: string,
+  payload: Record<string, number>,
+): Uint8Array | null {
+  return decodeArrayPtyPayload(ptyId, Object.values(payload));
+}
+
+function decodePtyPayload(data: Record<string, unknown>, ptyId: string): Uint8Array | null {
+  const payload = data["payload"];
+  if (payload instanceof Uint8Array) return acceptPtyPayload(ptyId, payload);
+  if (typeof payload === "string" && data["encoding"] === "base64") {
+    return decodeBase64PtyPayload(ptyId, payload);
+  }
+  if (Array.isArray(payload)) return decodeArrayPtyPayload(ptyId, payload as number[]);
+  if (payload && typeof payload === "object") return decodeIndexedPtyPayload(ptyId, payload as Record<string, number>);
+  return typeof data["data"] === "string" ? _legacyEncoder.encode(data["data"]) : null;
+}
+
+function handleTerminalData(data: unknown): void {
+  const record = data as Record<string, unknown>;
+  if (typeof record["ptyId"] !== "string") return;
+  const ptyId = record["ptyId"];
+  const sequence = typeof record["seq"] === "number" ? record["seq"] : 0;
+  const payload = decodePtyPayload(record, ptyId);
+  if (!payload) return;
+  if (payload.byteLength > MAX_PTY_PAYLOAD_BYTES) {
+    console.warn(
+      `[ws-events] dropping oversized terminal.data payload (${payload.byteLength} bytes) for PTY ${ptyId}`,
+    );
+    return;
+  }
+  emitPtyData({ ptyId, payload, seq: sequence } satisfies PtyDataDetail);
 }
 
 /**
@@ -111,77 +196,7 @@ export function startPushListeners(): void {
   //   - indexed object: very old servers that sent raw Uint8Array through JSON.stringify
   //   - string "data" field: legacy JSON fallback
   unsubs.push(
-    pushEmitter.on("terminal.data", (data) => {
-      const d = data as Record<string, unknown>;
-      if (typeof d["ptyId"] !== "string") return;
-      const ptyId = d["ptyId"];
-      const seq = typeof d["seq"] === "number" ? d["seq"] : 0;
-
-      let detail: { ptyId: string; payload: Uint8Array; seq: number };
-      if (d["payload"] instanceof Uint8Array) {
-        const payload = d["payload"] as Uint8Array;
-        if (payload.byteLength > MAX_PTY_PAYLOAD_BYTES) {
-          console.warn(
-            `[ws-events] dropped oversized terminal.data payload (${payload.byteLength} bytes) for PTY ${ptyId}`,
-          );
-          return;
-        }
-        detail = { ptyId, seq, payload };
-      } else if (typeof d["payload"] === "string" && d["encoding"] === "base64") {
-        const encoded = d["payload"];
-        const approxBytes = approxBase64DecodedBytes(encoded);
-        if (approxBytes > MAX_PTY_PAYLOAD_BYTES) {
-          console.warn(
-            `[ws-events] dropped oversized terminal.data payload (~${approxBytes} bytes) for PTY ${ptyId}`,
-          );
-          return;
-        }
-        // IPC path (current): base64-encoded bytes.
-        let bin: string;
-        try {
-          bin = atob(encoded);
-        } catch {
-          console.warn("[ws-events] dropped terminal.data frame: invalid base64 payload");
-          return;
-        }
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        detail = { ptyId, seq, payload: bytes };
-      } else if (Array.isArray(d["payload"])) {
-        const arr = d["payload"] as number[];
-        if (arr.length > MAX_PTY_PAYLOAD_BYTES) {
-          console.warn(
-            `[ws-events] dropped oversized terminal.data payload (${arr.length} bytes) for PTY ${ptyId}`,
-          );
-          return;
-        }
-        detail = { ptyId, seq, payload: new Uint8Array(arr) };
-      } else if (d["payload"] && typeof d["payload"] === "object") {
-        const values = Object.values(d["payload"] as Record<string, number>);
-        if (values.length > MAX_PTY_PAYLOAD_BYTES) {
-          console.warn(
-            `[ws-events] dropped oversized terminal.data payload (${values.length} bytes) for PTY ${ptyId}`,
-          );
-          return;
-        }
-        detail = { ptyId, seq, payload: new Uint8Array(values) };
-      } else {
-        // Legacy JSON fallback: { ptyId, data: string, seq? }.
-        if (typeof d["data"] !== "string") return;
-        detail = {
-          ptyId,
-          payload: _legacyEncoder.encode(d["data"]),
-          seq,
-        };
-      }
-      if (detail.payload.byteLength > MAX_PTY_PAYLOAD_BYTES) {
-        console.warn(
-          `[ws-events] dropping oversized terminal.data payload (${detail.payload.byteLength} bytes) for PTY ${detail.ptyId}`,
-        );
-        return;
-      }
-      emitPtyData(detail);
-    }),
+    pushEmitter.on("terminal.data", handleTerminalData),
   );
 
   // terminal.exit: broadcast exit event

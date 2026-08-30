@@ -91,6 +91,140 @@ function collectDirectoryIds(
   return ids;
 }
 
+type TreeKeyboardCommand =
+  | { action: "focus"; index: number; preventDefault: true }
+  | { action: "toggle"; id: string; preventDefault: true }
+  | { action: "activate"; path: string; preventDefault: boolean };
+
+function treeKeyboardCommand(
+  key: string,
+  row: PullRequestFileTreeRow,
+  index: number,
+  rows: PullRequestFileTreeRow[],
+  expandedDirectoryIds: Set<string>,
+): TreeKeyboardCommand | null {
+  const navigationIndex = treeNavigationIndex(key, index, rows.length);
+  if (navigationIndex !== null) {
+    return { action: "focus", index: navigationIndex, preventDefault: true };
+  }
+  if (key === "ArrowRight") {
+    return treeArrowRightCommand(row, index, expandedDirectoryIds);
+  }
+  if (key === "ArrowLeft") {
+    return treeArrowLeftCommand(row, rows, expandedDirectoryIds);
+  }
+  if (key !== "Enter" && key !== " ") return null;
+  return row.node.kind === "directory"
+    ? { action: "toggle", id: row.node.id, preventDefault: true }
+    : { action: "activate", path: row.node.path, preventDefault: true };
+}
+
+function treeNavigationIndex(key: string, index: number, rowCount: number): number | null {
+  if (key === "ArrowDown") return Math.min(rowCount - 1, index + 1);
+  if (key === "ArrowUp") return Math.max(0, index - 1);
+  if (key === "Home") return 0;
+  if (key === "End") return Math.max(0, rowCount - 1);
+  return null;
+}
+
+function treeArrowRightCommand(
+  row: PullRequestFileTreeRow,
+  index: number,
+  expandedDirectoryIds: Set<string>,
+): TreeKeyboardCommand {
+  if (row.node.kind !== "directory") {
+    return { action: "activate", path: row.node.path, preventDefault: false };
+  }
+  return expandedDirectoryIds.has(row.node.id)
+    ? { action: "focus", index: index + 1, preventDefault: true }
+    : { action: "toggle", id: row.node.id, preventDefault: true };
+}
+
+function treeArrowLeftCommand(
+  row: PullRequestFileTreeRow,
+  rows: PullRequestFileTreeRow[],
+  expandedDirectoryIds: Set<string>,
+): TreeKeyboardCommand | null {
+  if (row.node.kind === "directory" && expandedDirectoryIds.has(row.node.id)) {
+    return { action: "toggle", id: row.node.id, preventDefault: true };
+  }
+  if (!row.node.parentId) {
+    return { action: "focus", index: -1, preventDefault: true };
+  }
+  const parentIndex = rows.findIndex((candidate) => candidate.node.id === row.node.parentId);
+  return parentIndex >= 0
+    ? { action: "focus", index: parentIndex, preventDefault: true }
+    : { action: "focus", index: -1, preventDefault: true };
+}
+
+function executeTreeKeyboardCommand(
+  command: TreeKeyboardCommand,
+  focusIndex: (index: number) => void,
+  toggleDirectory: (id: string) => void,
+  onActivate: (path: string) => void,
+): void {
+  if (command.action === "focus") {
+    if (command.index >= 0) focusIndex(command.index);
+    return;
+  }
+  if (command.action === "toggle") {
+    toggleDirectory(command.id);
+    return;
+  }
+  onActivate(command.path);
+}
+
+function pullRequestFileTreeSource(props: PullRequestFileTreeProps): {
+  files: readonly PullRequestFile[];
+  filePaths: readonly string[] | undefined;
+  reviewFiles: readonly ReviewFileChange[];
+} {
+  if ("files" in props) {
+    return {
+      files: props.files ?? EMPTY_PULL_REQUEST_FILES,
+      filePaths: undefined,
+      reviewFiles: EMPTY_REVIEW_FILE_CHANGES,
+    };
+  }
+  if ("filePaths" in props) {
+    return {
+      files: EMPTY_PULL_REQUEST_FILES,
+      filePaths: props.filePaths ?? undefined,
+      reviewFiles: EMPTY_REVIEW_FILE_CHANGES,
+    };
+  }
+  return {
+    files: EMPTY_PULL_REQUEST_FILES,
+    filePaths: undefined,
+    reviewFiles: props.reviewFiles ?? EMPTY_REVIEW_FILE_CHANGES,
+  };
+}
+
+function usePullRequestFilePaths(
+  files: readonly PullRequestFile[],
+  providedFilePaths: readonly string[] | undefined,
+  reviewFiles: readonly ReviewFileChange[],
+): readonly string[] {
+  return useMemo(() => {
+    if (providedFilePaths) return providedFilePaths;
+    return (reviewFiles.length > 0 ? reviewFiles : files).map((file) => file.path);
+  }, [files, providedFilePaths, reviewFiles]);
+}
+
+function isFocusedTreeRowMounted(
+  virtualized: boolean,
+  virtualRows: ReturnType<ReturnType<typeof useVirtualizer>[
+    "getVirtualItems"
+  ]>,
+  rows: PullRequestFileTreeRow[],
+  focusedId: string | null,
+): boolean {
+  if (virtualized) {
+    return virtualRows.some((virtualRow) => rows[virtualRow.index]?.node.id === focusedId);
+  }
+  return rows.some((row) => row.node.id === focusedId);
+}
+
 /** Props for the virtual, keyboard-navigable pull request file tree. */
 interface FileTreeBaseProps {
   activePath: string | null;
@@ -117,18 +251,8 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
     ariaLabel = "Pull request changed files",
     onActivate,
   } = props;
-  const files =
-    "files" in props && props.files ? props.files : EMPTY_PULL_REQUEST_FILES;
-  const providedFilePaths =
-    "filePaths" in props && props.filePaths ? props.filePaths : undefined;
-  const reviewFiles =
-    "reviewFiles" in props && props.reviewFiles
-      ? props.reviewFiles
-      : EMPTY_REVIEW_FILE_CHANGES;
-  const filePaths = useMemo(
-    () => providedFilePaths ?? (reviewFiles.length > 0 ? reviewFiles : files).map((file) => file.path),
-    [files, providedFilePaths, reviewFiles],
-  );
+  const { files, filePaths: providedFilePaths, reviewFiles } = pullRequestFileTreeSource(props);
+  const filePaths = usePullRequestFilePaths(files, providedFilePaths, reviewFiles);
   const viewportRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
   const tree = useMemo(
@@ -163,11 +287,12 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
     useFlushSync: false,
   });
   const virtualRows = virtualized ? virtualizer.getVirtualItems() : [];
-  const focusedRowMounted = virtualized
-    ? virtualRows.some(
-        (virtualRow) => rows[virtualRow.index]?.node.id === focusedId,
-      )
-    : rows.some((row) => row.node.id === focusedId);
+  const focusedRowMounted = isFocusedTreeRowMounted(
+    virtualized,
+    virtualRows,
+    rows,
+    focusedId,
+  );
 
   useEffect(() => {
     const directoryIds = collectDirectoryIds(tree);
@@ -239,64 +364,27 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
     row: PullRequestFileTreeRow,
     index: number,
   ): void => {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      focusIndex(index + 1);
-      return;
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      focusIndex(index - 1);
-      return;
-    }
-    if (event.key === "Home") {
-      event.preventDefault();
-      focusIndex(0);
-      return;
-    }
-    if (event.key === "End") {
-      event.preventDefault();
-      focusIndex(rows.length - 1);
-      return;
-    }
-    if (event.key === "ArrowRight") {
-      if (row.node.kind === "directory") {
-        event.preventDefault();
-        if (!expandedDirectoryIds.has(row.node.id))
-          toggleDirectory(row.node.id);
-        else focusIndex(index + 1);
-      } else {
-        onActivate(row.node.path);
-      }
-      return;
-    }
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      if (
-        row.node.kind === "directory" &&
-        expandedDirectoryIds.has(row.node.id)
-      ) {
-        toggleDirectory(row.node.id);
-        return;
-      }
-      if (!row.node.parentId) return;
-      const parentIndex = rows.findIndex(
-        (candidate) => candidate.node.id === row.node.parentId,
-      );
-      if (parentIndex >= 0) focusIndex(parentIndex);
-      return;
-    }
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    if (row.node.kind === "directory") toggleDirectory(row.node.id);
-    else onActivate(row.node.path);
+    const command = treeKeyboardCommand(
+      event.key,
+      row,
+      index,
+      rows,
+      expandedDirectoryIds,
+    );
+    if (!command) return;
+    if (command.preventDefault) event.preventDefault();
+    executeTreeKeyboardCommand(command, focusIndex, toggleDirectory, onActivate);
   };
 
-  const renderRow = (row: PullRequestFileTreeRow, index: number) => {
-    if (row.node.kind === "file") {
-      const item = filesByPath.get(row.node.path);
-      const reviewFile = reviewFilesByPath.get(row.node.path);
-      return item ? (
+  const setRowRef = (id: string, node: HTMLButtonElement | null): void => {
+    if (node) rowRefs.current.set(id, node);
+    else rowRefs.current.delete(id);
+  };
+
+  const renderFileRow = (row: PullRequestFileTreeRow, index: number) => {
+    const item = filesByPath.get(row.node.path);
+    if (item) {
+      return (
         <PullRequestFileRow
           file={item}
           active={item.path === activePath}
@@ -304,15 +392,16 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
           positionInSet={row.positionInSet}
           setSize={row.setSize}
           tabIndex={focusedId === row.node.id ? 0 : -1}
-          buttonRef={(node) => {
-            if (node) rowRefs.current.set(row.node.id, node);
-            else rowRefs.current.delete(row.node.id);
-          }}
+          buttonRef={(node) => setRowRef(row.node.id, node)}
           onActivate={onActivate}
           onFocus={() => setFocusedId(row.node.id)}
           onKeyDown={(event) => handleKeyDown(event, row, index)}
         />
-      ) : reviewFile ? (
+      );
+    }
+    const reviewFile = reviewFilesByPath.get(row.node.path);
+    if (reviewFile) {
+      return (
         <ReviewFileChangeRow
           file={reviewFile}
           active={reviewFile.path === activePath}
@@ -320,48 +409,45 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
           positionInSet={row.positionInSet}
           setSize={row.setSize}
           tabIndex={focusedId === row.node.id ? 0 : -1}
-          buttonRef={(node) => {
-            if (node) rowRefs.current.set(row.node.id, node);
-            else rowRefs.current.delete(row.node.id);
-          }}
+          buttonRef={(node) => setRowRef(row.node.id, node)}
           onActivate={onActivate}
           onFocus={() => setFocusedId(row.node.id)}
           onKeyDown={(event) => handleKeyDown(event, row, index)}
         />
-      ) : (
-        <Button
-          type="button"
-          role="treeitem"
-          variant="ghost"
-          size="sm"
-          tabIndex={focusedId === row.node.id ? 0 : -1}
-          aria-label={row.node.path}
-          aria-level={row.depth}
-          aria-posinset={row.positionInSet}
-          aria-setsize={row.setSize}
-          aria-selected={row.node.path === activePath}
-          ref={(node) => {
-            if (node) rowRefs.current.set(row.node.id, node);
-            else rowRefs.current.delete(row.node.id);
-          }}
-          title={row.node.path}
-          className={cn(
-            "mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1.5 rounded-md px-2 font-mono text-xs font-normal",
-            row.node.path === activePath
-              ? "bg-muted/70 text-foreground"
-              : "text-foreground/75 hover:bg-muted/40",
-          )}
-          style={{ paddingLeft: `${Math.max(8, row.depth * 12 - 4)}px` }}
-          onClick={() => onActivate(row.node.path)}
-          onFocus={() => setFocusedId(row.node.id)}
-          onKeyDown={(event) => handleKeyDown(event, row, index)}
-        >
-          <FileTypeIcon filePath={row.node.path} size={14} />
-          <OverflowPathLabel label={row.node.name} path={row.node.path} />
-        </Button>
       );
     }
+    return (
+      <Button
+        type="button"
+        role="treeitem"
+        variant="ghost"
+        size="sm"
+        tabIndex={focusedId === row.node.id ? 0 : -1}
+        aria-label={row.node.path}
+        aria-level={row.depth}
+        aria-posinset={row.positionInSet}
+        aria-setsize={row.setSize}
+        aria-selected={row.node.path === activePath}
+        ref={(node) => setRowRef(row.node.id, node)}
+        title={row.node.path}
+        className={cn(
+          "mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1.5 rounded-md px-2 font-mono text-xs font-normal",
+          row.node.path === activePath
+            ? "bg-muted/70 text-foreground"
+            : "text-foreground/75 hover:bg-muted/40",
+        )}
+        style={{ paddingLeft: `${Math.max(8, row.depth * 12 - 4)}px` }}
+        onClick={() => onActivate(row.node.path)}
+        onFocus={() => setFocusedId(row.node.id)}
+        onKeyDown={(event) => handleKeyDown(event, row, index)}
+      >
+        <FileTypeIcon filePath={row.node.path} size={14} />
+        <OverflowPathLabel label={row.node.name} path={row.node.path} />
+      </Button>
+    );
+  };
 
+  const renderDirectoryRow = (row: PullRequestFileTreeRow, index: number) => {
     const expanded = searchActive || expandedDirectoryIds.has(row.node.id);
     return (
       <Button
@@ -374,33 +460,24 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
         aria-posinset={row.positionInSet}
         aria-setsize={row.setSize}
         aria-expanded={expanded}
-        ref={(node) => {
-          if (node) rowRefs.current.set(row.node.id, node);
-          else rowRefs.current.delete(row.node.id);
-        }}
+        ref={(node) => setRowRef(row.node.id, node)}
         className="mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1 rounded-md px-2 font-mono text-xs font-medium text-muted-foreground aria-expanded:bg-transparent hover:bg-muted/40 hover:text-foreground"
         style={{ paddingLeft: `${Math.max(8, row.depth * 12 - 4)}px` }}
         onClick={() => toggleDirectory(row.node.id)}
         onFocus={() => setFocusedId(row.node.id)}
         onKeyDown={(event) => handleKeyDown(event, row, index)}
       >
-        {expanded ? (
-          <ChevronDown size={11} aria-hidden />
-        ) : (
-          <ChevronRight size={11} aria-hidden />
-        )}
-        {expanded ? (
-          <FolderOpen
-            size={12}
-            aria-hidden
-            className="text-muted-foreground/80"
-          />
-        ) : (
-          <Folder size={12} aria-hidden />
-        )}
+        {expanded ? <ChevronDown size={11} aria-hidden /> : <ChevronRight size={11} aria-hidden />}
+        {expanded ? <FolderOpen size={12} aria-hidden className="text-muted-foreground/80" /> : <Folder size={12} aria-hidden />}
         <OverflowPathLabel label={row.node.name} path={row.node.path} />
       </Button>
     );
+  };
+
+  const renderRow = (row: PullRequestFileTreeRow, index: number) => {
+    return row.node.kind === "file"
+      ? renderFileRow(row, index)
+      : renderDirectoryRow(row, index);
   };
 
   return (

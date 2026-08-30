@@ -135,6 +135,91 @@ function generateLabel(existing: readonly TerminalInstance[]): string {
   return `Terminal ${max + 1}`;
 }
 
+function reconcileActiveTerminalSessions(
+  state: Pick<TerminalState, "terminals" | "ptyToThread" | "terminalPanelByThread" | "terminalSearchByPty">,
+  sessions: readonly ActiveTerminalSession[],
+) {
+  const existingById = new Map(
+    Object.values(state.terminals).flat().map((terminal) => [terminal.id, terminal] as const),
+  );
+  const { terminals, ptyToThread } = reconcileTerminalInstances(sessions, existingById);
+  return {
+    terminals,
+    ptyToThread,
+    terminalPanelByThread: reconcileTerminalPanels(state, terminals),
+    terminalSearchByPty: reconcileTerminalSearch(state.terminalSearchByPty, sessions),
+  };
+}
+
+function reconcileTerminalInstances(
+  sessions: readonly ActiveTerminalSession[],
+  existingById: ReadonlyMap<string, TerminalInstance>,
+): {
+  readonly terminals: Record<string, readonly TerminalInstance[]>;
+  readonly ptyToThread: Record<string, string>;
+} {
+  const terminals: Record<string, readonly TerminalInstance[]> = {};
+  const ptyToThread: Record<string, string> = {};
+  for (const session of sessions) {
+    const scopeTerminals = terminals[session.threadId] ?? [];
+    const terminal = reconcileTerminalInstance(session, existingById.get(session.ptyId), scopeTerminals);
+    terminals[session.threadId] = [...scopeTerminals, terminal];
+    ptyToThread[session.ptyId] = session.threadId;
+  }
+  return { terminals, ptyToThread };
+}
+
+function reconcileTerminalInstance(
+  session: ActiveTerminalSession,
+  existing: TerminalInstance | undefined,
+  scopeTerminals: readonly TerminalInstance[],
+): TerminalInstance {
+  const terminal = existing ?? { id: session.ptyId, label: generateLabel(scopeTerminals) };
+  return {
+    ...terminal,
+    threadId: session.threadId,
+    state: session.state ?? "running",
+    ...(session.exit ? { exit: session.exit } : {}),
+  };
+}
+
+function reconcileTerminalPanels(
+  state: Pick<TerminalState, "terminals" | "terminalPanelByThread">,
+  terminals: Record<string, readonly TerminalInstance[]>,
+): Record<string, TerminalPanelState> {
+  const terminalPanelByThread = { ...state.terminalPanelByThread };
+  const scopeIds = new Set([...Object.keys(state.terminals), ...Object.keys(terminals)]);
+  for (const scopeId of scopeIds) {
+    const current = terminalPanelByThread[scopeId] ?? TERMINAL_PANEL_DEFAULTS;
+    terminalPanelByThread[scopeId] = {
+      ...current,
+      activeTerminalId: resolveReconciledActiveTerminalId(current, terminals[scopeId] ?? []),
+    };
+  }
+  return terminalPanelByThread;
+}
+
+function resolveReconciledActiveTerminalId(
+  panel: TerminalPanelState,
+  terminals: readonly TerminalInstance[],
+): string | null {
+  return terminals.some((terminal) => terminal.id === panel.activeTerminalId)
+    ? panel.activeTerminalId
+    : terminals[0]?.id ?? null;
+}
+
+function reconcileTerminalSearch(
+  terminalSearchByPty: Record<string, TerminalSearchState>,
+  sessions: readonly ActiveTerminalSession[],
+): Record<string, TerminalSearchState> {
+  const next = { ...terminalSearchByPty };
+  const activePtyIds = new Set(sessions.map((session) => session.ptyId));
+  for (const ptyId of Object.keys(next)) {
+    if (!activePtyIds.has(ptyId)) delete next[ptyId];
+  }
+  return next;
+}
+
 /** Zustand store for terminal instances and per-thread panel state. */
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   terminals: {},
@@ -340,61 +425,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }),
 
   reconcileActiveSessions: (sessions) =>
-    set((state) => {
-      const existingById = new Map(
-        Object.values(state.terminals)
-          .flat()
-          .map((terminal) => [terminal.id, terminal] as const),
-      );
-      const terminals: Record<string, readonly TerminalInstance[]> = {};
-      const ptyToThread: Record<string, string> = {};
-
-      for (const session of sessions) {
-        const existing = existingById.get(session.ptyId);
-        const scopeTerminals = terminals[session.threadId] ?? [];
-        const terminal: TerminalInstance = existing
-          ? {
-              ...existing,
-              threadId: session.threadId,
-              state: session.state ?? "running",
-              ...(session.exit ? { exit: session.exit } : {}),
-            }
-          : {
-              id: session.ptyId,
-              threadId: session.threadId,
-              label: generateLabel(scopeTerminals),
-              state: session.state ?? "running",
-              ...(session.exit ? { exit: session.exit } : {}),
-            };
-        terminals[session.threadId] = [...scopeTerminals, terminal];
-        ptyToThread[session.ptyId] = session.threadId;
-      }
-
-      const terminalPanelByThread = { ...state.terminalPanelByThread };
-      const allScopes = new Set([
-        ...Object.keys(state.terminals),
-        ...Object.keys(terminals),
-      ]);
-      for (const scopeId of allScopes) {
-        const current =
-          terminalPanelByThread[scopeId] ?? TERMINAL_PANEL_DEFAULTS;
-        const active = terminals[scopeId] ?? [];
-        const activeTerminalId = active.some(
-          (terminal) => terminal.id === current.activeTerminalId,
-        )
-          ? current.activeTerminalId
-          : (active[0]?.id ?? null);
-        terminalPanelByThread[scopeId] = { ...current, activeTerminalId };
-      }
-
-      const terminalSearchByPty = { ...state.terminalSearchByPty };
-      const activePtyIds = new Set(sessions.map((session) => session.ptyId));
-      for (const ptyId of Object.keys(terminalSearchByPty)) {
-        if (!activePtyIds.has(ptyId)) delete terminalSearchByPty[ptyId];
-      }
-
-      return { terminals, ptyToThread, terminalPanelByThread, terminalSearchByPty };
-    }),
+    set((state) => reconcileActiveTerminalSessions(state, sessions)),
 
   removeTerminal: (ptyId) =>
     set((state) => {

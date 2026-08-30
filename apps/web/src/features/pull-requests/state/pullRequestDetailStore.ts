@@ -622,6 +622,146 @@ function compareConversation(
   );
 }
 
+type PullRequestResourceResult = Extract<
+  Awaited<ReturnType<PullRequestTransport["get"]>>,
+  { ok: true }
+>;
+type PullRequestResourceResponse = Awaited<ReturnType<PullRequestTransport["get"]>>;
+
+interface ResourceCandidate {
+  entry: PullRequestDetailEntry;
+  invalidatedOperationIds: string[];
+}
+
+function resourceCursor(
+  resource: PullRequestGetResource,
+  entry: PullRequestDetailEntry,
+): string | null {
+  return resource === "checks" ? entry.checksNextCursor : entry.commentsNextCursor;
+}
+
+function requestResource(
+  resource: PullRequestGetResource,
+  started: StartedLane,
+  append: boolean,
+  cursor: string | null,
+  transport: PullRequestTransport,
+) {
+  if (resource === "detail") {
+    return transport.get({ operationId: started.operationId, identity: started.identity, resource });
+  }
+  return transport.get({
+    operationId: started.operationId,
+    identity: started.identity,
+    resource,
+    limit: DETAIL_PAGE_SIZE,
+    ...(append && cursor ? { cursor } : {}),
+  });
+}
+
+function detailResourceCandidate(
+  entry: PullRequestDetailEntry,
+  result: Extract<PullRequestResourceResult, { resource: "detail" }>,
+): ResourceCandidate {
+  const invalidated = entry.detail && entry.detail.head.oid !== result.item.head.oid
+    ? invalidateHeadDependentLanes(entry)
+    : { entry, operationIds: [] };
+  return {
+    entry: withByteSizes(
+      { ...invalidated.entry, detail: result.item },
+      { detail: estimateValueBytes(result.item) },
+    ),
+    invalidatedOperationIds: invalidated.operationIds,
+  };
+}
+
+function checksResourceCandidate(
+  entry: PullRequestDetailEntry,
+  result: Extract<PullRequestResourceResult, { resource: "checks" }>,
+  append: boolean,
+): ResourceCandidate {
+  const merged = mergeByIdWithBytes(
+    entry.checks,
+    result.items,
+    entry.byteSizes.checks,
+    !append,
+    (item) => item.providerNodeId,
+    (left, right) => left.name.localeCompare(right.name) || left.providerNodeId.localeCompare(right.providerNodeId),
+  );
+  return {
+    entry: withByteSizes(
+      { ...entry, checks: merged.items, checksNextCursor: result.nextCursor },
+      { checks: merged.bytes },
+    ),
+    invalidatedOperationIds: [],
+  };
+}
+
+function commentsResourceCandidate(
+  entry: PullRequestDetailEntry,
+  result: Extract<PullRequestResourceResult, { resource: "comments" }>,
+  append: boolean,
+): ResourceCandidate {
+  const merged = mergeByIdWithBytes(
+    entry.comments,
+    result.items,
+    entry.byteSizes.comments,
+    !append,
+    (item) => item.providerNodeId,
+    compareConversation,
+  );
+  return {
+    entry: withByteSizes(
+      { ...entry, comments: merged.items, commentsNextCursor: result.nextCursor },
+      { comments: merged.bytes },
+    ),
+    invalidatedOperationIds: [],
+  };
+}
+
+function resourceCandidate(
+  entry: PullRequestDetailEntry,
+  result: PullRequestResourceResult,
+  append: boolean,
+): ResourceCandidate {
+  switch (result.resource) {
+    case "detail":
+      return detailResourceCandidate(entry, result);
+    case "checks":
+      return checksResourceCandidate(entry, result, append);
+    case "comments":
+      return commentsResourceCandidate(entry, result, append);
+  }
+}
+
+function processResourceResponse(
+  resource: PullRequestGetResource,
+  append: boolean,
+  started: StartedLane,
+  laneName: PullRequestDetailLane,
+  result: PullRequestResourceResponse,
+  transport: PullRequestTransport,
+): void {
+  const current = currentLane(started, laneName);
+  if (!current) return;
+  if (!result.ok) return failLane(started, laneName, result.error);
+  if (result.resource !== resource) {
+    return failLane(started, laneName, {
+      code: "remote_unavailable",
+      message: "The pull request resource response did not match the request.",
+    });
+  }
+  const candidate = resourceCandidate(current.entry, result, append);
+  const committed = commitCandidate(started, laneName, candidate.entry, result, {
+    forceMarker: append
+      ? strongerBoundedData(current.entry.lanes[laneName].boundedData, result.boundedData)
+      : result.boundedData,
+  });
+  if (committed && candidate.invalidatedOperationIds.length > 0) {
+    void cancelOperations(candidate.invalidatedOperationIds, transport);
+  }
+}
+
 async function loadResource(
   resource: PullRequestGetResource,
   append: boolean,
@@ -631,98 +771,15 @@ async function loadResource(
   const before = usePullRequestDetailStore.getState();
   const entry = before.activeKey ? before.entries[before.activeKey] : undefined;
   if (!entry) return;
-  const cursor =
-    resource === "checks" ? entry.checksNextCursor : entry.commentsNextCursor;
+  const cursor = resourceCursor(resource, entry);
   if (append && !cursor) return;
 
   const started = beginLane(laneName);
   if (!started) return;
   const transport = transportOverride ?? getPullRequestTransport();
   try {
-    const result = resource === "detail"
-      ? await transport.get({
-          operationId: started.operationId,
-          identity: started.identity,
-          resource: "detail",
-        })
-      : await transport.get({
-          operationId: started.operationId,
-          identity: started.identity,
-          resource,
-          limit: DETAIL_PAGE_SIZE,
-          ...(append && cursor ? { cursor } : {}),
-        });
-    const current = currentLane(started, laneName);
-    if (!current) return;
-    if (!result.ok) {
-      failLane(started, laneName, result.error);
-      return;
-    }
-    if (result.resource !== resource) {
-      failLane(started, laneName, {
-        code: "remote_unavailable",
-        message: "The pull request resource response did not match the request.",
-      });
-      return;
-    }
-
-    let candidate = current.entry;
-    let invalidatedOperationIds: string[] = [];
-    if (result.resource === "detail") {
-      if (
-        candidate.detail &&
-        candidate.detail.head.oid !== result.item.head.oid
-      ) {
-        const invalidated = invalidateHeadDependentLanes(candidate);
-        candidate = invalidated.entry;
-        invalidatedOperationIds = invalidated.operationIds;
-      }
-      candidate = withByteSizes(
-        { ...candidate, detail: result.item },
-        { detail: estimateValueBytes(result.item) },
-      );
-    } else if (result.resource === "checks") {
-      const merged = mergeByIdWithBytes(
-        candidate.checks,
-        result.items,
-        candidate.byteSizes.checks,
-        !append,
-        (item) => item.providerNodeId,
-        (left, right) =>
-          left.name.localeCompare(right.name) ||
-          left.providerNodeId.localeCompare(right.providerNodeId),
-      );
-      candidate = withByteSizes({
-        ...candidate,
-        checks: merged.items,
-        checksNextCursor: result.nextCursor,
-      }, { checks: merged.bytes });
-    } else {
-      const merged = mergeByIdWithBytes(
-        candidate.comments,
-        result.items,
-        candidate.byteSizes.comments,
-        !append,
-        (item) => item.providerNodeId,
-        compareConversation,
-      );
-      candidate = withByteSizes({
-        ...candidate,
-        comments: merged.items,
-        commentsNextCursor: result.nextCursor,
-      }, { comments: merged.bytes });
-    }
-    const committed = commitCandidate(started, laneName, candidate, result, {
-      forceMarker: append
-        ? strongerBoundedData(
-            current.entry.lanes[laneName].boundedData,
-            result.boundedData,
-          )
-        : result.boundedData,
-    });
-    if (committed && invalidatedOperationIds.length > 0) {
-      void cancelOperations(invalidatedOperationIds, transport);
-    }
+    const result = await requestResource(resource, started, append, cursor, transport);
+    processResourceResponse(resource, append, started, laneName, result, transport);
   } catch (error) {
     failLane(started, laneName, normalizeError(error));
   }
@@ -767,10 +824,28 @@ async function loadTimelineInitial(transportOverride?: PullRequestTransport): Pr
   }
 }
 
+type OlderTimelineEntry = PullRequestDetailEntry & { olderCursor: string };
+
+function hasOlderTimelineCursor(
+  entry: PullRequestDetailEntry | undefined,
+): entry is OlderTimelineEntry {
+  return (
+    entry !== undefined &&
+    entry.hasMoreOlder &&
+    entry.olderCursor !== null &&
+    entry.olderCursor.length > 0
+  );
+}
+
+function olderTimelineEntry(): OlderTimelineEntry | null {
+  const state = usePullRequestDetailStore.getState();
+  const entry = state.activeKey ? state.entries[state.activeKey] : undefined;
+  return hasOlderTimelineCursor(entry) ? entry : null;
+}
+
 async function loadTimelineOlder(transportOverride?: PullRequestTransport): Promise<void> {
-  const before = usePullRequestDetailStore.getState();
-  const entry = before.activeKey ? before.entries[before.activeKey] : undefined;
-  if (!entry?.olderCursor || !entry.hasMoreOlder) return;
+  const entry = olderTimelineEntry();
+  if (!entry) return;
   const started = beginLane("timelineOlder");
   if (!started) return;
   const transport = transportOverride ?? getPullRequestTransport();
@@ -810,9 +885,117 @@ async function loadTimelineOlder(transportOverride?: PullRequestTransport): Prom
   }
 }
 
+type PullRequestTimelineResponse = Awaited<ReturnType<PullRequestTransport["timeline"]>>;
+type PullRequestTimelineResult = Extract<PullRequestTimelineResponse, { ok: true }>;
+
+interface TimelineCatchUpState {
+  newerItems: PullRequestTimelineItem[];
+  candidate: PullRequestDetailEntry | null;
+  cursor: string;
+  freshness: PullRequestTimelineResult | null;
+}
+
+function currentTimelineEntry(): PullRequestDetailEntry | null {
+  const state = usePullRequestDetailStore.getState();
+  const entry = state.activeKey ? state.entries[state.activeKey] : undefined;
+  return entry ?? null;
+}
+
+function timelineCatchUpCandidate(
+  entry: PullRequestDetailEntry,
+  newerItems: readonly PullRequestTimelineItem[],
+  result: PullRequestTimelineResult,
+  cursor: string,
+): { entry: PullRequestDetailEntry; newerItems: PullRequestTimelineItem[] } {
+  const accumulated = mergeByIdWithBytes(
+    newerItems,
+    result.items,
+    2,
+    false,
+    (item) => item.providerNodeId,
+    compareTimeline,
+  );
+  const merged = mergeByIdWithBytes(
+    entry.timeline,
+    accumulated.items,
+    entry.byteSizes.timeline,
+    false,
+    (item) => item.providerNodeId,
+    compareTimeline,
+  );
+  return {
+    newerItems: accumulated.items,
+    entry: withByteSizes(
+      {
+        ...entry,
+        timeline: merged.items,
+        newerCursor: result.newerCursor ?? cursor,
+        hasMoreNewer: result.hasMoreNewer,
+      },
+      { timeline: merged.bytes },
+    ),
+  };
+}
+
+function entryLimitReason(entry: PullRequestDetailEntry): "record_limit" | "byte_limit" | null {
+  if (entryRecordCount(entry) > MAX_DETAIL_RECORDS) return "record_limit";
+  return entry.estimatedBytes > MAX_IDENTITY_BYTES ? "byte_limit" : null;
+}
+
+function stopTimelineCatchUp(
+  started: StartedLane,
+  current: NonNullable<ReturnType<typeof currentLane>>,
+  reason: "record_limit" | "byte_limit",
+): void {
+  usePullRequestDetailStore.setState({
+    entries: {
+      ...current.state.entries,
+      [started.key]: stoppedEntry(current.entry, "timelineNewer", { reason }),
+    },
+  });
+}
+
+function commitTimelineCatchUp(
+  started: StartedLane,
+  candidate: PullRequestDetailEntry,
+  freshness: PullRequestTimelineResult,
+): void {
+  commitCandidate(started, "timelineNewer", candidate, freshness, {
+    forceMarker: freshness.boundedData?.reason === "catch_up_limit"
+      ? null
+      : freshness.boundedData,
+  });
+}
+
+function processTimelineCatchUpPage(
+  started: StartedLane,
+  result: PullRequestTimelineResponse,
+  state: TimelineCatchUpState,
+): boolean {
+  if (!laneStillOwns(started, "timelineNewer")) return true;
+  if (!result.ok) {
+    failLane(started, "timelineNewer", result.error);
+    return true;
+  }
+  const current = currentLane(started, "timelineNewer");
+  if (!current) return true;
+  const next = timelineCatchUpCandidate(current.entry, state.newerItems, result, state.cursor);
+  const limitReason = entryLimitReason(next.entry);
+  if (limitReason) {
+    stopTimelineCatchUp(started, current, limitReason);
+    return true;
+  }
+  state.newerItems = next.newerItems;
+  state.candidate = next.entry;
+  state.cursor = next.entry.newerCursor ?? state.cursor;
+  state.freshness = result;
+  if (result.hasMoreNewer) return false;
+  commitTimelineCatchUp(started, next.entry, result);
+  return true;
+}
+
 async function catchUpTimeline(transportOverride?: PullRequestTransport): Promise<void> {
-  const before = usePullRequestDetailStore.getState();
-  const initialEntry = before.activeKey ? before.entries[before.activeKey] : undefined;
+  const initialEntry = currentTimelineEntry();
   if (!initialEntry) return;
   if (!initialEntry.newerCursor) {
     await loadTimelineInitial(transportOverride);
@@ -821,10 +1004,12 @@ async function catchUpTimeline(transportOverride?: PullRequestTransport): Promis
   const started = beginLane("timelineNewer");
   if (!started) return;
   const transport = transportOverride ?? getPullRequestTransport();
-  let newerItems: PullRequestTimelineItem[] = [];
-  let candidate: PullRequestDetailEntry | null = null;
-  let cursor = initialEntry.newerCursor;
-  let freshness: Freshness | null = null;
+  const state: TimelineCatchUpState = {
+    newerItems: [],
+    candidate: null,
+    cursor: initialEntry.newerCursor,
+    freshness: null,
+  };
 
   try {
     for (let page = 0; page < TIMELINE_CATCH_UP_PAGES; page += 1) {
@@ -832,71 +1017,14 @@ async function catchUpTimeline(transportOverride?: PullRequestTransport): Promis
         operationId: started.operationId,
         identity: started.identity,
         lane: "newer",
-        cursor,
+        cursor: state.cursor,
         limit: DETAIL_PAGE_SIZE,
       });
-      if (!laneStillOwns(started, "timelineNewer")) return;
-      if (!result.ok) {
-        failLane(started, "timelineNewer", result.error);
-        return;
-      }
-
-      const accumulated = mergeByIdWithBytes(
-        newerItems,
-        result.items,
-        2,
-        false,
-        (item) => item.providerNodeId,
-        compareTimeline,
-      );
-      newerItems = accumulated.items;
-      const current = currentLane(started, "timelineNewer");
-      if (!current) return;
-      const merged = mergeByIdWithBytes(
-        current.entry.timeline,
-        newerItems,
-        current.entry.byteSizes.timeline,
-        false,
-        (item) => item.providerNodeId,
-        compareTimeline,
-      );
-      const nextCandidate = withByteSizes({
-        ...current.entry,
-        timeline: merged.items,
-        newerCursor: result.newerCursor ?? cursor,
-        hasMoreNewer: result.hasMoreNewer,
-      }, { timeline: merged.bytes });
-      if (
-        entryRecordCount(nextCandidate) > MAX_DETAIL_RECORDS ||
-        nextCandidate.estimatedBytes > MAX_IDENTITY_BYTES
-      ) {
-        const reason = entryRecordCount(nextCandidate) > MAX_DETAIL_RECORDS
-          ? "record_limit"
-          : "byte_limit";
-        usePullRequestDetailStore.setState({
-          entries: {
-            ...current.state.entries,
-            [started.key]: stoppedEntry(current.entry, "timelineNewer", { reason }),
-          },
-        });
-        return;
-      }
-
-      candidate = nextCandidate;
-      cursor = candidate.newerCursor ?? cursor;
-      freshness = result;
-      if (!result.hasMoreNewer) {
-        commitCandidate(started, "timelineNewer", candidate, result, {
-          forceMarker: result.boundedData?.reason === "catch_up_limit"
-            ? null
-            : result.boundedData,
-        });
-        return;
-      }
+      if (processTimelineCatchUpPage(started, result, state)) return;
     }
 
-    if (freshness && candidate) {
-      commitCandidate(started, "timelineNewer", candidate, freshness, {
+    if (state.freshness && state.candidate) {
+      commitCandidate(started, "timelineNewer", state.candidate, state.freshness, {
         forceMarker: { reason: "catch_up_limit" },
       });
     }
@@ -907,6 +1035,44 @@ async function catchUpTimeline(transportOverride?: PullRequestTransport): Promis
 
 function laneIsStale(lane: PullRequestDetailLaneState, now: number): boolean {
   return lane.stale || lane.staleAt === null || now >= lane.staleAt;
+}
+
+function activeDetailEntry(state: PullRequestDetailStoreState): PullRequestDetailEntry | null {
+  return state.activeKey ? (state.entries[state.activeKey] ?? null) : null;
+}
+
+function refreshableResourceLoaded(
+  resource: "detail" | "checks" | "comments",
+  entry: PullRequestDetailEntry,
+): boolean {
+  return resource === "detail" || entry.lanes[resource].fetchedAt !== null;
+}
+
+function refreshResourceTasks(
+  entry: PullRequestDetailEntry,
+  force: boolean,
+  now: number,
+  transport: PullRequestTransport | undefined,
+): Promise<void>[] {
+  const tasks: Promise<void>[] = [];
+  for (const resource of ["detail", "checks", "comments"] as const) {
+    if (refreshableResourceLoaded(resource, entry) && (force || laneIsStale(entry.lanes[resource], now))) {
+      tasks.push(loadResource(resource, false, transport));
+    }
+  }
+  return tasks;
+}
+
+function refreshTimelineTask(
+  entry: PullRequestDetailEntry,
+  force: boolean,
+  now: number,
+  transport: PullRequestTransport | undefined,
+): Promise<void>[] {
+  const timelineStale = laneIsStale(entry.lanes.timelineInitial, now) || laneIsStale(entry.lanes.timelineNewer, now);
+  return entry.lanes.timelineInitial.fetchedAt !== null && (force || timelineStale)
+    ? [catchUpTimeline(transport)]
+    : [];
 }
 
 /** Normalized byte-bounded cache for pull request Summary and Timeline reads. */
@@ -964,35 +1130,15 @@ export const usePullRequestDetailStore = create<PullRequestDetailStoreState>((se
   loadOlderTimeline: (transport) => loadTimelineOlder(transport),
   catchUpTimeline: (transport) => catchUpTimeline(transport),
   refreshActive: async (options) => {
-    const state = get();
-    const entry = state.activeKey ? state.entries[state.activeKey] : undefined;
+    const entry = activeDetailEntry(get());
     if (!entry) return;
     const now = Date.now();
     const force = options?.force ?? false;
     const transport = options?.transport;
-    const tasks: Promise<void>[] = [];
-    if (force || laneIsStale(entry.lanes.detail, now)) {
-      tasks.push(loadResource("detail", false, transport));
-    }
-    if (
-      entry.lanes.checks.fetchedAt !== null &&
-      (force || laneIsStale(entry.lanes.checks, now))
-    ) {
-      tasks.push(loadResource("checks", false, transport));
-    }
-    if (
-      entry.lanes.comments.fetchedAt !== null &&
-      (force || laneIsStale(entry.lanes.comments, now))
-    ) {
-      tasks.push(loadResource("comments", false, transport));
-    }
-    const timelineStale =
-      laneIsStale(entry.lanes.timelineInitial, now) ||
-      laneIsStale(entry.lanes.timelineNewer, now);
-    if (entry.lanes.timelineInitial.fetchedAt !== null && (force || timelineStale)) {
-      tasks.push(catchUpTimeline(transport));
-    }
-    await Promise.all(tasks);
+    await Promise.all([
+      ...refreshResourceTasks(entry, force, now, transport),
+      ...refreshTimelineTask(entry, force, now, transport),
+    ]);
   },
   invalidateAfterMutation: async (identity, transport) => {
     const key = getPullRequestDetailKey(identity);

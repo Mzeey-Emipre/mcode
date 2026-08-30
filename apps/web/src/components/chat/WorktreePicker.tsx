@@ -20,6 +20,70 @@ interface WorktreePickerProps {
   iconSize?: number;
 }
 
+function worktreeFilter(worktrees: WorktreeInfo[]) {
+  return (value: string, search: string): number => {
+    const worktree = worktrees.find((candidate) => candidate.path === value);
+    if (!worktree) return 0;
+    const query = search.toLowerCase();
+    return [worktree.name, worktreeBranchLabel(worktree), worktree.path]
+      .some((candidate) => candidate.toLowerCase().includes(query))
+      ? 1
+      : 0;
+  };
+}
+
+function WorktreePickerContent({
+  worktrees,
+  normalizedSelected,
+  loading,
+  onSelect,
+  onClose,
+}: {
+  worktrees: WorktreeInfo[];
+  normalizedSelected: string;
+  loading: boolean;
+  onSelect: (worktree: WorktreeInfo) => void;
+  onClose: () => void;
+}) {
+  if (loading) {
+    return <div className="flex items-center justify-center py-4"><Spinner size={16} className="text-muted-foreground" /></div>;
+  }
+  return (
+    <Command filter={worktreeFilter(worktrees)}>
+      <CommandInput placeholder="Search worktrees..." />
+      <CommandList>
+        {worktrees.length === 0 ? <CommandEmpty>No worktrees found in this workspace</CommandEmpty> : (
+          <CommandGroup>
+            <CommandEmpty>No worktrees match</CommandEmpty>
+            {worktrees.map((worktree) => (
+              <CommandItem
+                key={worktree.path}
+                value={worktree.path}
+                onSelect={() => {
+                  onSelect(worktree);
+                  onClose();
+                }}
+                className={cn(
+                  "flex flex-col items-start px-3 py-1.5 text-xs",
+                  normalizeWorktreePath(worktree.path) === normalizedSelected
+                    ? "bg-accent text-foreground"
+                    : "text-popover-foreground",
+                )}
+              >
+                <span className="font-medium">{worktree.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {worktreeBranchLabel(worktree)} &middot; {truncatePath(worktree.path)}
+                  {!worktree.managed && <Badge variant="secondary" size="sm" className="ml-1">external</Badge>}
+                </span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+      </CommandList>
+    </Command>
+  );
+}
+
 /** Searchable dropdown listing managed worktrees for attaching to an existing one. */
 export function WorktreePicker({
   worktrees,
@@ -42,67 +106,19 @@ export function WorktreePicker({
       <PopoverTrigger render={
         <Button variant="ghost" size="xs" className={cn("text-muted-foreground", triggerClassName)}>
           <GitFork size={iconSize} className={triggerClassName ? "size-3.5" : undefined} />
-          {selectedName === null
-            ? <Spinner size={11} className="text-current" />
-            : <span>{selectedName}</span>}
+          {selectedName === null ? <Spinner size={11} className="text-current" /> : <span>{selectedName}</span>}
           <ChevronDown size={Math.max(10, iconSize - 2)} className={triggerClassName ? "size-3" : undefined} />
         </Button>
       } />
 
       <PopoverContent align="end" sideOffset={4} className="w-[300px] p-0">
-        {loading ? (
-          <div className="flex items-center justify-center py-4">
-            <Spinner size={16} className="text-muted-foreground" />
-          </div>
-        ) : (
-          <Command
-            filter={(value, search) => {
-              const wt = worktrees.find((w) => w.path === value);
-              if (!wt) return 0;
-              const q = search.toLowerCase();
-              const branchLabel = worktreeBranchLabel(wt);
-              if (wt.name.toLowerCase().includes(q)) return 1;
-              if (branchLabel.toLowerCase().includes(q)) return 1;
-              if (wt.path.toLowerCase().includes(q)) return 1;
-              return 0;
-            }}
-          >
-            <CommandInput placeholder="Search worktrees..." />
-            <CommandList>
-              {worktrees.length === 0 ? (
-                <CommandEmpty>No worktrees found in this workspace</CommandEmpty>
-              ) : (
-                <CommandGroup>
-                  <CommandEmpty>No worktrees match</CommandEmpty>
-                  {worktrees.map((w) => (
-                    <CommandItem
-                      key={w.path}
-                      value={w.path}
-                      onSelect={() => {
-                        onSelect(w);
-                        setOpen(false);
-                      }}
-                      className={cn(
-                        "flex flex-col items-start px-3 py-1.5 text-xs",
-                        normalizeWorktreePath(w.path) === normalizedSelected
-                          ? "bg-accent text-foreground"
-                          : "text-popover-foreground",
-                      )}
-                    >
-                      <span className="font-medium">{w.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {worktreeBranchLabel(w)} &middot; {truncatePath(w.path)}
-                        {!w.managed && (
-                          <Badge variant="secondary" size="sm" className="ml-1">external</Badge>
-                        )}
-                      </span>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              )}
-            </CommandList>
-          </Command>
-        )}
+        <WorktreePickerContent
+          worktrees={worktrees}
+          normalizedSelected={normalizedSelected}
+          loading={loading}
+          onSelect={onSelect}
+          onClose={() => setOpen(false)}
+        />
       </PopoverContent>
     </Popover>
   );

@@ -16,6 +16,51 @@ type DeepPartial<T> = {
 const OLD_SETTINGS_KEY = "mcode-settings";
 const MIGRATION_FLAG = "mcode-settings-migrated";
 
+function legacyTheme(value: unknown): Settings["appearance"]["theme"] | undefined {
+  switch (value) {
+    case "system":
+    case "dark":
+    case "light":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function legacyNamingMode(value: unknown): Settings["worktree"]["naming"]["mode"] | undefined {
+  switch (value) {
+    case "auto":
+    case "custom":
+    case "ai":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function legacyTopLevelPatch(state: Record<string, unknown>): DeepPartial<Settings> {
+  const theme = legacyTheme(state.theme);
+  const appearance = theme ? { theme } : undefined;
+  const agent = typeof state.maxConcurrentAgents === "number" ? { maxConcurrent: state.maxConcurrentAgents } : undefined;
+  const notifications = typeof state.notificationsEnabled === "boolean" ? { enabled: state.notificationsEnabled } : undefined;
+  return { ...(appearance ? { appearance } : {}), ...(agent ? { agent } : {}), ...(notifications ? { notifications } : {}) };
+}
+
+function legacyWorktreePatch(value: unknown): DeepPartial<Settings> {
+  if (!value || typeof value !== "object") return {};
+  const global = value as Record<string, unknown>;
+  const mode = legacyNamingMode(global.defaultNamingMode);
+  const aiConfirmation = typeof global.aiConfirmation === "boolean" ? global.aiConfirmation : undefined;
+  const naming = { ...(mode === undefined ? {} : { mode }), ...(aiConfirmation === undefined ? {} : { aiConfirmation }) };
+  return Object.keys(naming).length > 0 ? { worktree: { naming } } : {};
+}
+
+function legacySettingsPatch(value: unknown): DeepPartial<Settings> {
+  const parsed = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const state = parsed.state && typeof parsed.state === "object" ? parsed.state as Record<string, unknown> : parsed;
+  return { ...legacyTopLevelPatch(state), ...legacyWorktreePatch(parsed.global) };
+}
+
 /**
  * One-time migration from the old localStorage-based settings to the
  * new RPC-backed settings store.
@@ -38,38 +83,7 @@ async function migrateFromLocalStorage(
 
   try {
     const parsed = JSON.parse(raw);
-    const patch: DeepPartial<Settings> = {};
-
-    // Zustand persist wraps state under a "state" key: { state: {...}, version: 0 }
-    // lib/settings.ts stored flat: { global: {...}, workspaces: {...} }
-    // Handle both formats defensively.
-    const zustandState =
-      parsed.state && typeof parsed.state === "object" ? parsed.state : parsed;
-
-    if (typeof zustandState.theme === "string") {
-      patch.appearance = { theme: zustandState.theme };
-    }
-    if (typeof zustandState.maxConcurrentAgents === "number") {
-      patch.agent = { maxConcurrent: zustandState.maxConcurrentAgents };
-    }
-    if (typeof zustandState.notificationsEnabled === "boolean") {
-      patch.notifications = { enabled: zustandState.notificationsEnabled };
-    }
-
-    // Nested global worktree settings come from the lib/settings.ts format
-    const global = parsed.global;
-    if (global && typeof global === "object") {
-      const naming: DeepPartial<Settings["worktree"]["naming"]> = {};
-      if (typeof global.defaultNamingMode === "string") {
-        naming.mode = global.defaultNamingMode;
-      }
-      if (typeof global.aiConfirmation === "boolean") {
-        naming.aiConfirmation = global.aiConfirmation;
-      }
-      if (Object.keys(naming).length > 0) {
-        patch.worktree = { naming };
-      }
-    }
+    const patch = legacySettingsPatch(parsed);
 
     if (Object.keys(patch).length > 0) {
       await update(patch);

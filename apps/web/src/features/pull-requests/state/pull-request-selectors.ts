@@ -70,42 +70,126 @@ type PullRequestFilterState = Pick<
   | "search"
 >;
 
+type PullRequestRelationship = PullRequestSummary["relationships"][number];
+
+function pullRequestSearchValues(item: PullRequestSummary): string[] {
+  return [
+    item.title,
+    `${item.identity.owner}/${item.identity.repository}`,
+    item.head.name,
+    item.author?.login ?? "unknown",
+    `#${item.identity.number}`,
+  ];
+}
+
+function matchesSearch(item: PullRequestSummary, search: string): boolean {
+  return !search || pullRequestSearchValues(item).some((value) => value.toLowerCase().includes(search));
+}
+
+function matchesRepository(
+  item: PullRequestSummary,
+  repositoryFilter: string | null,
+): boolean {
+  return !repositoryFilter || `${item.identity.owner}/${item.identity.repository}` === repositoryFilter;
+}
+
+function matchesAuthor(item: PullRequestSummary, authorFilter: string | null): boolean {
+  return !authorFilter || (item.author?.login ?? "unknown") === authorFilter;
+}
+
+function matchesReviewFilters(
+  item: PullRequestSummary,
+  reviewFilters: readonly PullRequestRelationship[],
+): boolean {
+  return reviewFilters.length === 0 || item.relationships.some((relationship) => reviewFilters.includes(relationship));
+}
+
+function matchesCheckFilters(item: PullRequestSummary, checkFilters: readonly string[]): boolean {
+  return checkFilters.length === 0 || checkFilters.includes(item.checks.state);
+}
+
+function matchesPullRequestFilters(
+  item: PullRequestSummary,
+  state: PullRequestFilterState,
+  search: string,
+): boolean {
+  return (
+    matchesSearch(item, search) &&
+    matchesRepository(item, state.repositoryFilter) &&
+    matchesAuthor(item, state.authorFilter) &&
+    matchesReviewFilters(item, state.reviewFilters) &&
+    matchesCheckFilters(item, state.checkFilters)
+  );
+}
+
 /** Return keys that match the active local search and filter controls. */
 export function filterPullRequestKeys(state: PullRequestFilterState): string[] {
   const search = state.search.trim().toLowerCase();
   return state.orderedKeys.filter((key) => {
     const item = state.entities[key];
-    if (!item) return false;
-    const repository = `${item.identity.owner}/${item.identity.repository}`;
-    const author = item.author?.login ?? "unknown";
-    const number = `#${item.identity.number}`;
-    if (
-      search &&
-      ![item.title, repository, item.head.name, author, number].some((value) =>
-        value.toLowerCase().includes(search),
-      )
-    ) {
-      return false;
-    }
-    if (state.repositoryFilter && repository !== state.repositoryFilter)
-      return false;
-    if (state.authorFilter && author !== state.authorFilter) return false;
-    if (
-      state.reviewFilters.length > 0 &&
-      !item.relationships.some((relationship) =>
-        state.reviewFilters.includes(relationship),
-      )
-    ) {
-      return false;
-    }
-    if (
-      state.checkFilters.length > 0 &&
-      !state.checkFilters.includes(item.checks.state)
-    ) {
-      return false;
-    }
-    return true;
+    return item !== undefined && matchesPullRequestFilters(item, state, search);
   });
+}
+
+type PullRequestInboxGroup = Exclude<PullRequestInboxListItem, { type: "row" }> & {
+  keys: string[];
+};
+
+function groupForRelationship(
+  item: PullRequestSummary,
+  relationship: PullRequestInboxRelationship,
+): PullRequestInboxGroup["key"] | null {
+  if (item.relationships.some((value) => value === "direct_review_requested" || value === "team_review_requested")) {
+    return "group:review-requested";
+  }
+  if (item.relationships.includes("reviewed")) return "group:previously-reviewed";
+  return relationship === "all" && item.relationships.includes("authored") ? "group:authored" : null;
+}
+
+function inboxGroups(): Record<PullRequestInboxGroup["key"], PullRequestInboxGroup> {
+  return {
+    "group:review-requested": {
+      type: "header",
+      key: "group:review-requested",
+      id: "pull-request-group-review-requested",
+      label: "Review requested",
+      count: 0,
+      keys: [],
+    },
+    "group:previously-reviewed": {
+      type: "header",
+      key: "group:previously-reviewed",
+      id: "pull-request-group-previously-reviewed",
+      label: "Previously reviewed",
+      count: 0,
+      keys: [],
+    },
+    "group:authored": {
+      type: "header",
+      key: "group:authored",
+      id: "pull-request-group-authored",
+      label: "Authored",
+      count: 0,
+      keys: [],
+    },
+  };
+}
+
+function groupItems(group: PullRequestInboxGroup): PullRequestInboxListItem[] {
+  if (group.keys.length === 0) return [];
+  return [
+    { ...group, count: group.keys.length },
+    ...group.keys.map((key) => ({ type: "row" as const, key, describedBy: group.id })),
+  ];
+}
+
+function authoredItems(
+  keys: readonly string[],
+  entities: Record<string, PullRequestSummary>,
+): PullRequestInboxListItem[] {
+  return keys.flatMap((key) =>
+    entities[key]?.relationships.includes("authored") ? [{ type: "row" as const, key }] : [],
+  );
 }
 
 /** Build deterministic relationship groups without creating a second row list. */
@@ -114,86 +198,13 @@ export function buildPullRequestInboxListItems(
   keys: string[],
   entities: Record<string, PullRequestSummary>,
 ): PullRequestInboxListItem[] {
-  if (relationship === "authored") {
-    return keys.flatMap((key) => {
-      const item = entities[key];
-      return item?.relationships.includes("authored")
-        ? [{ type: "row" as const, key }]
-        : [];
-    });
-  }
-
-  const requested: string[] = [];
-  const previouslyReviewed: string[] = [];
-  const authored: string[] = [];
+  if (relationship === "authored") return authoredItems(keys, entities);
+  const groups = inboxGroups();
   for (const key of keys) {
     const item = entities[key];
     if (!item) continue;
-    const isRequested = item.relationships.some(
-      (value) =>
-        value === "direct_review_requested" ||
-        value === "team_review_requested",
-    );
-    if (isRequested) {
-      requested.push(key);
-    } else if (item.relationships.includes("reviewed")) {
-      previouslyReviewed.push(key);
-    } else if (
-      relationship === "all" &&
-      item.relationships.includes("authored")
-    ) {
-      authored.push(key);
-    }
+    const group = groupForRelationship(item, relationship);
+    if (group) groups[group].keys.push(key);
   }
-
-  const items: PullRequestInboxListItem[] = [];
-  if (requested.length > 0) {
-    items.push({
-      type: "header",
-      key: "group:review-requested",
-      id: "pull-request-group-review-requested",
-      label: "Review requested",
-      count: requested.length,
-    });
-    items.push(
-      ...requested.map((key) => ({
-        type: "row" as const,
-        key,
-        describedBy: "pull-request-group-review-requested" as const,
-      })),
-    );
-  }
-  if (previouslyReviewed.length > 0) {
-    items.push({
-      type: "header",
-      key: "group:previously-reviewed",
-      id: "pull-request-group-previously-reviewed",
-      label: "Previously reviewed",
-      count: previouslyReviewed.length,
-    });
-    items.push(
-      ...previouslyReviewed.map((key) => ({
-        type: "row" as const,
-        key,
-        describedBy: "pull-request-group-previously-reviewed" as const,
-      })),
-    );
-  }
-  if (authored.length > 0) {
-    items.push({
-      type: "header",
-      key: "group:authored",
-      id: "pull-request-group-authored",
-      label: "Authored",
-      count: authored.length,
-    });
-    items.push(
-      ...authored.map((key) => ({
-        type: "row" as const,
-        key,
-        describedBy: "pull-request-group-authored" as const,
-      })),
-    );
-  }
-  return items;
+  return Object.values(groups).flatMap(groupItems);
 }

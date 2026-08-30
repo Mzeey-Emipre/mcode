@@ -131,23 +131,67 @@ function projectionOffsetForPoint(
   offset: number,
 ): number | null {
   if (!Number.isInteger(offset) || offset < 0 || !root.contains(container)) return null;
+  return container.nodeType === Node.TEXT_NODE
+    ? textNodeProjectionOffset(segments, container, offset)
+    : elementProjectionOffset(segments, container, offset);
+}
 
-  if (container.nodeType === Node.TEXT_NODE) {
-    const segment = segmentForNode(segments, container);
-    const length = container.textContent?.length ?? 0;
-    return segment && offset <= length ? segment.start + offset : null;
-  }
+function textNodeProjectionOffset(
+  segments: readonly TextSegment[],
+  container: Node,
+  offset: number,
+): number | null {
+  const segment = segmentForNode(segments, container);
+  const length = container.textContent?.length ?? 0;
+  return segment && offset <= length ? segment.start + offset : null;
+}
 
+function elementProjectionOffset(
+  segments: readonly TextSegment[],
+  container: Node,
+  offset: number,
+): number | null {
   if (offset > container.childNodes.length) return null;
-  if (offset < container.childNodes.length) {
-    const segment = firstSegmentInNode(segments, container.childNodes[offset]);
-    if (segment) return segment.start;
-  }
-  if (offset > 0) {
-    const segment = lastSegmentInNode(segments, container.childNodes[offset - 1]);
-    if (segment) return segment.end;
-  }
-  return null;
+  const following = offset < container.childNodes.length
+    ? firstSegmentInNode(segments, container.childNodes[offset])
+    : undefined;
+  if (following) return following.start;
+  const previous = offset > 0
+    ? lastSegmentInNode(segments, container.childNodes[offset - 1])
+    : undefined;
+  return previous?.end ?? null;
+}
+
+function selectedTextRoot(
+  selection: Selection,
+  contextMenuTarget: EventTarget | null,
+): { root: HTMLElement; range: Range } | null {
+  if (selection.isCollapsed || selection.rangeCount !== 1) return null;
+  const range = selection.getRangeAt(0);
+  const root = contentElement(range.startContainer);
+  const endRoot = contentElement(range.endContainer);
+  const targetRoot = contextMenuTarget instanceof Node ? contentElement(contextMenuTarget) : null;
+  return root && root === endRoot && root === targetRoot && root.dataset.selectedTextEligible === "true"
+    ? { root, range }
+    : null;
+}
+
+function selectedTextMessage(root: HTMLElement): Pick<SelectedTextCommentSource, "threadId" | "messageId" | "sourceRole"> | null {
+  const message = root.closest<HTMLElement>("[data-message-id][data-message-role][data-thread-id]");
+  const messageId = message?.dataset.messageId;
+  const threadId = message?.dataset.threadId;
+  const sourceRole = message?.dataset.messageRole;
+  return messageId && threadId && (sourceRole === "user" || sourceRole === "assistant")
+    ? { threadId, messageId, sourceRole }
+    : null;
+}
+
+function selectedTextRange(projection: ProjectionState, root: HTMLElement, range: Range): { start: number; end: number; quote: string } | null {
+  const start = projectionOffsetForPoint(root, projection.segments, range.startContainer, range.startOffset);
+  const end = projectionOffsetForPoint(root, projection.segments, range.endContainer, range.endOffset);
+  if (start === null || end === null || end <= start) return null;
+  const quote = projection.text.slice(start, end);
+  return quote.trim() && quote.length <= MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS ? { start, end, quote } : null;
 }
 
 /** Builds the canonical visible prose-and-code projection for one Message. */
@@ -161,41 +205,12 @@ export function createSelectedTextCommentSource(
   selection: Selection,
   contextMenuTarget: EventTarget | null,
 ): SelectedTextCommentSource | null {
-  if (selection.isCollapsed || selection.rangeCount !== 1) return null;
-
-  const range = selection.getRangeAt(0);
-  const root = contentElement(range.startContainer);
-  const endRoot = contentElement(range.endContainer);
-  const targetRoot = contextMenuTarget instanceof Node
-    ? contentElement(contextMenuTarget)
-    : null;
-  if (
-    !root
-    || root !== endRoot
-    || root !== targetRoot
-    || root.dataset.selectedTextEligible !== "true"
-  ) return null;
-  if (rangeIntersectsExcludedContent(root, range)) return null;
-
-  const message = root.closest<HTMLElement>("[data-message-id][data-message-role][data-thread-id]");
-  const messageId = message?.dataset.messageId;
-  const threadId = message?.dataset.threadId;
-  const sourceRole = message?.dataset.messageRole;
-  if (
-    !messageId
-    || !threadId
-    || (sourceRole !== "user" && sourceRole !== "assistant")
-  ) return null;
-
-  const projection = buildProjection(root);
-  const start = projectionOffsetForPoint(root, projection.segments, range.startContainer, range.startOffset);
-  const end = projectionOffsetForPoint(root, projection.segments, range.endContainer, range.endOffset);
-  if (start === null || end === null || end <= start) return null;
-
-  const quote = projection.text.slice(start, end);
-  if (!quote.trim() || quote.length > MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS) return null;
-
-  return { threadId, messageId, sourceRole, start, end, quote };
+  const selectedRoot = selectedTextRoot(selection, contextMenuTarget);
+  if (!selectedRoot || rangeIntersectsExcludedContent(selectedRoot.root, selectedRoot.range)) return null;
+  const message = selectedTextMessage(selectedRoot.root);
+  if (!message) return null;
+  const selectedRange = selectedTextRange(buildProjection(selectedRoot.root), selectedRoot.root, selectedRoot.range);
+  return selectedRange ? { ...message, ...selectedRange } : null;
 }
 
 /** Reconstructs an exact stored range from canonical UTF-16 offsets without quote searching. */

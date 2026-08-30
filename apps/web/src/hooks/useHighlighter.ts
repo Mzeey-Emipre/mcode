@@ -35,6 +35,114 @@ interface HighlightResponse {
   error?: string;
 }
 
+type MutableValue<T> = { current: T };
+
+type DirectHighlightInput = {
+  code: string;
+  language: string;
+  theme: ShikiTheme;
+  measurePerformance: boolean;
+  measurementIdRef: MutableValue<string | null>;
+  requestIdRef: MutableValue<string | null>;
+  setHtml: (html: string | null) => void;
+};
+
+type CoordinatorHighlightInput = Omit<DirectHighlightInput, "requestIdRef"> & {
+  visible: boolean;
+  requestHandleRef: MutableValue<ChatHighlightRequestHandle | null>;
+  requestTokenRef: MutableValue<symbol | null>;
+};
+
+function getAvailableWorker(): Worker | null {
+  try {
+    return getWorker();
+  } catch {
+    return null;
+  }
+}
+
+function handleDirectHighlightResponse(
+  input: DirectHighlightInput,
+  id: string,
+  generationAtRequest: number,
+  response: unknown,
+): void {
+  if (input.requestIdRef.current !== id || workerGeneration !== generationAtRequest) return;
+  const result = response as HighlightResponse | null;
+  if (!result || result.type !== "highlight") return;
+  const responseMeasured = input.measurePerformance && result.timing
+    ? recordShikiWorkerTiming(id, result.timing, performance.now(), Date.now())
+    : false;
+  if (result.error) console.warn("[shiki-worker]", result.error);
+  input.measurementIdRef.current = responseMeasured ? id : null;
+  input.setHtml(result.error ? null : result.html);
+}
+
+function postDirectHighlightRequest(worker: Worker, input: DirectHighlightInput, id: string): boolean {
+  try {
+    worker.postMessage({
+      id,
+      type: "highlight",
+      code: input.code,
+      language: input.language,
+      theme: input.theme,
+      ...(input.measurePerformance ? { measurePerformance: true } : {}),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requestDirectHighlight(input: DirectHighlightInput): (() => void) | undefined {
+  const worker = getAvailableWorker();
+  if (!worker) return undefined;
+  const id = nextRequestId("hl");
+  const generationAtRequest = workerGeneration;
+  input.requestIdRef.current = id;
+  if (input.measurePerformance) startShikiMeasurement(id, performance.now());
+  pending.set(id, (response) => handleDirectHighlightResponse(input, id, generationAtRequest, response));
+
+  if (!postDirectHighlightRequest(worker, input, id)) {
+    pending.delete(id);
+    input.setHtml(null);
+  }
+
+  return () => {
+    pending.delete(id);
+    if (input.requestIdRef.current === id) input.requestIdRef.current = null;
+  };
+}
+
+function requestCoordinatorHighlight(input: CoordinatorHighlightInput): () => void {
+  const measurementId = input.measurePerformance ? nextRequestId("hl") : null;
+  if (measurementId) startShikiMeasurement(measurementId, performance.now());
+  const requestToken = Symbol("chat-highlight-request");
+  input.requestTokenRef.current = requestToken;
+  const requestHandle = chatHighlightCoordinator.request({
+    code: input.code,
+    language: input.language,
+    theme: input.theme,
+    visible: input.visible,
+    ...(input.measurePerformance ? { measurePerformance: true } : {}),
+    onResult: (result, timing) => {
+      if (input.requestTokenRef.current !== requestToken) return;
+      const responseMeasured = measurementId && timing
+        ? recordShikiWorkerTiming(measurementId, timing, performance.now(), Date.now())
+        : false;
+      input.measurementIdRef.current = responseMeasured ? measurementId : null;
+      input.setHtml(result);
+    },
+  });
+  input.requestHandleRef.current = requestHandle;
+
+  return () => {
+    requestHandle.cancel();
+    if (input.requestHandleRef.current === requestHandle) input.requestHandleRef.current = null;
+    if (input.requestTokenRef.current === requestToken) input.requestTokenRef.current = null;
+  };
+}
+
 /**
  * Sends code to the Shiki Web Worker for highlighting.
  * Returns `{ html }` where `html` is `null` until the Worker responds.
@@ -80,94 +188,23 @@ export function useHighlighter(
     prevCode.current = code;
     prevLanguage.current = language;
 
-    const measurePerformance = shouldMeasureShiki();
-    if (!options.coordinator) {
-      let worker: Worker;
-      try {
-        worker = getWorker();
-      } catch {
-        return;
-      }
-
-      const id = nextRequestId("hl");
-      const generationAtRequest = workerGeneration;
-      currentRequestIdRef.current = id;
-      if (measurePerformance) startShikiMeasurement(id, performance.now());
-
-      pending.set(id, (response) => {
-        if (
-          currentRequestIdRef.current !== id
-          || workerGeneration !== generationAtRequest
-        ) return;
-        const result = response as HighlightResponse | null;
-        if (!result || result.type !== "highlight") return;
-        let responseMeasured = false;
-        if (measurePerformance && result.timing) {
-          responseMeasured = recordShikiWorkerTiming(
-            id,
-            result.timing,
-            performance.now(),
-            Date.now(),
-          );
-        }
-        if (result.error) console.warn("[shiki-worker]", result.error);
-        measurementIdRef.current = responseMeasured ? id : null;
-        setHtml(result.error ? null : result.html);
-      });
-
-      try {
-        worker.postMessage({
-          id,
-          type: "highlight",
-          code,
-          language,
-          theme,
-          ...(measurePerformance ? { measurePerformance: true } : {}),
-        });
-      } catch {
-        pending.delete(id);
-        setHtml(null);
-      }
-
-      return () => {
-        pending.delete(id);
-        if (currentRequestIdRef.current === id) currentRequestIdRef.current = null;
-      };
-    }
-
-    const measurementId = measurePerformance ? nextRequestId("hl") : null;
-    if (measurementId) startShikiMeasurement(measurementId, performance.now());
-
-    const requestToken = Symbol("chat-highlight-request");
-    currentRequestTokenRef.current = requestToken;
-    const requestHandle = chatHighlightCoordinator.request({
+    const input = {
       code,
       language,
       theme,
-      visible: options.visible ?? true,
-      ...(measurePerformance ? { measurePerformance: true } : {}),
-      onResult: (result, timing) => {
-        if (currentRequestTokenRef.current !== requestToken) return;
-        let responseMeasured = false;
-        if (measurementId && timing) {
-          responseMeasured = recordShikiWorkerTiming(
-            measurementId,
-            timing,
-            performance.now(),
-            Date.now(),
-          );
-        }
-        measurementIdRef.current = responseMeasured ? measurementId : null;
-        setHtml(result);
-      },
-    });
-    currentRequestRef.current = requestHandle;
-
-    return () => {
-      requestHandle.cancel();
-      if (currentRequestRef.current === requestHandle) currentRequestRef.current = null;
-      if (currentRequestTokenRef.current === requestToken) currentRequestTokenRef.current = null;
+      measurePerformance: shouldMeasureShiki(),
+      measurementIdRef,
+      setHtml,
     };
+    if (!options.coordinator) {
+      return requestDirectHighlight({ ...input, requestIdRef: currentRequestIdRef });
+    }
+    return requestCoordinatorHighlight({
+      ...input,
+      visible: options.visible ?? true,
+      requestHandleRef: currentRequestRef,
+      requestTokenRef: currentRequestTokenRef,
+    });
   }, [code, language, theme, enabled, options.coordinator, options.threadId]);
 
   useEffect(() => {

@@ -76,6 +76,61 @@ describe("handleTurnPersisted", () => {
     expect(readThreadField(THREAD_ID, (r) => r.pendingTurnPersistMessageIds)).toEqual([]);
   });
 
+  it("keeps volatile narrative through turn completion and persistence", () => {
+    startTrackedTurn("turn-volatile");
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolUse",
+      threadId: THREAD_ID,
+      toolCallId: "tool-volatile",
+      toolName: "Read",
+      toolInput: { path: "src/threadStore.ts" },
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: THREAD_ID,
+      delta: "Checking the state transition.",
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "assistantMessageBoundary",
+      threadId: THREAD_ID,
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "hookStarted",
+      threadId: THREAD_ID,
+      hookName: "validate",
+      hookType: "stop",
+    } as AgentEvent);
+    const agentStartTime = readThreadField(THREAD_ID, (record) => record.agentStartTime);
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    } as AgentEvent);
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: THREAD_ID,
+      messageId: "server-volatile",
+      toolCallCount: 1,
+      filesChanged: [],
+    });
+
+    expect(readThreadField(THREAD_ID, (record) => record.toolCalls)).toEqual([
+      expect.objectContaining({ id: "tool-volatile", toolName: "Read" }),
+    ]);
+    expect(readThreadField(THREAD_ID, (record) => record.thoughtSegments)).toEqual([
+      expect.objectContaining({ text: "Checking the state transition.", endedAt: expect.any(Number) }),
+    ]);
+    expect(readThreadField(THREAD_ID, (record) => record.hooks)).toEqual([
+      expect.objectContaining({ hookName: "validate", status: "running" }),
+    ]);
+    expect(readThreadField(THREAD_ID, (record) => record.agentStartTime)).toBe(agentStartTime);
+  });
+
   it("materializes an empty assistant row for tools-only turns", () => {
     useThreadStore.setState({
       records: seedThreadRecord(THREAD_ID, {

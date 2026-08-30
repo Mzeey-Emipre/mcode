@@ -105,35 +105,35 @@ export function filterCommandPaletteGroups(groups: PaletteGroup[], query: string
  */
 export type PaletteMode = "root" | "actions" | "browse" | "drives" | "search";
 
+const BROWSE_PREFIXES = ["/", "./", "../", ".\\", "..\\"] as const;
+
 /** Test whether `s` begins with a Windows drive letter and colon (e.g. "C:" or "d:"). */
 function startsWithWindowsDrive(s: string): boolean {
   return /^[A-Za-z]:/.test(s);
 }
+
+function isHomeBrowseQuery(query: string): boolean {
+  return query === "~" || query.startsWith("~/") || query.startsWith("~\\");
+}
+
+function isPathBrowseQuery(query: string): boolean {
+  return BROWSE_PREFIXES.some((prefix) => query.startsWith(prefix)) || startsWithWindowsDrive(query);
+}
+
+const PALETTE_MODE_RULES: ReadonlyArray<{ mode: Exclude<PaletteMode, "search">; matches: (query: string) => boolean }> = [
+  { mode: "root", matches: (query) => query.length === 0 },
+  { mode: "actions", matches: (query) => query.startsWith(">") },
+  { mode: "browse", matches: isHomeBrowseQuery },
+  { mode: "drives", matches: (query) => query === "/" },
+  { mode: "browse", matches: isPathBrowseQuery },
+];
 
 /**
  * Compute the palette mode from the raw input query.
  * The query is checked verbatim — leading whitespace is treated as plain text.
  */
 export function getPaletteMode(query: string): PaletteMode {
-  if (query.length === 0) return "root";
-  if (query.startsWith(">")) return "actions";
-  // `~` and `~/...` always mean "browse from home".
-  if (query === "~" || query.startsWith("~/") || query.startsWith("~\\")) return "browse";
-  // Bare `/` is the special "drives" trigger.
-  if (query === "/") return "drives";
-  // `/foo`, `./...`, `../...`, `.\...`, `..\...` are browse-mode path entries.
-  if (
-    query.startsWith("/") ||
-    query.startsWith("./") ||
-    query.startsWith("../") ||
-    query.startsWith(".\\") ||
-    query.startsWith("..\\")
-  ) {
-    return "browse";
-  }
-  // Windows absolute path: drive letter + colon, optionally followed by anything.
-  if (startsWithWindowsDrive(query)) return "browse";
-  return "search";
+  return PALETTE_MODE_RULES.find((rule) => rule.matches(query))?.mode ?? "search";
 }
 
 /** Returns true when the query represents any kind of filesystem path the picker should browse. */

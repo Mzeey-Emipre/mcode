@@ -292,6 +292,47 @@ export function createWsTransport(
   // retries, preventing a tight loop when the token is persistently wrong.
   let consecutiveAuthFailures = 0;
 
+  async function reattachTerminalSession(
+    terminalClient: TerminalClient,
+    session: TerminalActiveSession,
+  ): Promise<void> {
+    // -1 means "I have seen nothing" — server replays everything including seq=0.
+    const lastSeq = ptyLastSeqMap.get(session.ptyId) ?? -1;
+    const result = await terminalClient.reattach(session.ptyId, lastSeq);
+    if (result.mode === "reset") {
+      ptyLastSeqMap.set(session.ptyId, result.discardThrough);
+      terminalClient.notifyReconnectGap(session.ptyId);
+      return;
+    }
+    if (result.mode === "checkpoint") {
+      ptyLastSeqMap.set(session.ptyId, result.checkpointThrough);
+    }
+  }
+
+  async function reattachActiveTerminals(): Promise<void> {
+    await terminalSelectionPromise;
+    const terminalClient = terminalClientSelector.getSelected();
+    const activePtys = await terminalClient.listActive();
+    const [terminalStoreModule, workspaceStoreModule] = await Promise.all([
+      import("@/features/terminal/state/terminalStore"),
+      import("@/features/projects/state/workspaceStore"),
+    ]);
+    terminalStoreModule.useTerminalStore.getState().reconcileActiveSessions(activePtys);
+    const terminalState = terminalStoreModule.useTerminalStore.getState();
+    const workspaceState = workspaceStoreModule.useWorkspaceStore.getState();
+    const selectedTerminalId = resolveSelectedTerminalId({
+      activeThreadId: workspaceState.activeThreadId,
+      activeWorkspaceId: workspaceState.activeWorkspaceId,
+      terminalPanelByThread: terminalState.terminalPanelByThread,
+    });
+    const selectedSessions = activePtys.filter((session) =>
+      shouldReattachSelectedTerminal(session, selectedTerminalId),
+    );
+    await Promise.allSettled(
+      selectedSessions.map((session) => reattachTerminalSession(terminalClient, session)),
+    );
+  }
+
   /** Resolves when the current WebSocket connection is open. */
   let ready: Promise<void>;
   let resolveReady: () => void;
@@ -300,6 +341,76 @@ export function createWsTransport(
     ready = new Promise<void>((resolve) => {
       resolveReady = resolve;
     });
+  }
+
+  function emitTerminalDataFrame(view: Uint8Array): void {
+    try {
+      const decoded = decodeTerminalDataFrame(view);
+      if (!suppressedPushChannels.has("terminal.data")) {
+        pushEmitter.emit("terminal.data", decoded);
+      }
+    } catch (error) {
+      console.warn("[ws] failed to decode terminal.data frame", error);
+    }
+  }
+
+  function handleBinaryMessage(data: ArrayBuffer): void {
+    const view = new Uint8Array(data);
+    if (view[0] === TERMINAL_BINARY_MAGIC[0] && view[1] === TERMINAL_BINARY_MAGIC[1]) {
+      terminalClientSelector.handleFrame(view);
+      return;
+    }
+    if (view[0] === TERMINAL_DATA_TAG) {
+      emitTerminalDataFrame(view);
+      return;
+    }
+    console.warn("[ws] unknown binary tag 0x" + view[0]?.toString(16));
+  }
+
+  function parseSocketMessage(data: string): Record<string, unknown> | null {
+    try {
+      return JSON.parse(data) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  function handleRpcResponse(message: Record<string, unknown>): boolean {
+    if (!message.id || !pending.has(message.id as string)) return false;
+    const { resolve, reject } = pending.get(message.id as string)!;
+    pending.delete(message.id as string);
+    if (!message.error) {
+      resolve(message.result);
+      return true;
+    }
+    const error = message.error as {
+      code?: string;
+      message?: string;
+      data?: Record<string, unknown>;
+      retry?: string;
+    };
+    if (TerminalErrorCodeSchema().safeParse(error.code).success) {
+      reject(new TerminalRpcError(error));
+    } else {
+      reject(new RpcError(error.message ?? "RPC error", error.code ?? "RPC_ERROR", error.data, error.retry));
+    }
+    return true;
+  }
+
+  function emitPushMessage(message: Record<string, unknown>): void {
+    if (message.type !== "push") return;
+    const channel = message.channel as string;
+    if (!suppressedPushChannels.has(channel)) pushEmitter.emit(channel, message.data);
+  }
+
+  function handleSocketMessage(data: unknown): void {
+    if (data instanceof ArrayBuffer) {
+      handleBinaryMessage(data);
+      return;
+    }
+    const message = parseSocketMessage(data as string);
+    if (!message || handleRpcResponse(message)) return;
+    emitPushMessage(message);
   }
 
   function connect(targetUrl?: string) {
@@ -362,99 +473,12 @@ export function createWsTransport(
 
       // Reattach active terminals after reconnect.
       // Deferred import avoids a circular dependency at module evaluation time.
-      import("@/features/terminal/state/terminalStore").then(async ({ useTerminalStore }) => {
-        try {
-          await terminalSelectionPromise;
-          const terminalClient = terminalClientSelector.getSelected();
-          const activePtys = await terminalClient.listActive();
-          useTerminalStore.getState().reconcileActiveSessions(activePtys);
-          const terminalState = useTerminalStore.getState();
-          const { useWorkspaceStore } = await import("@/features/projects/state/workspaceStore");
-          const workspaceState = useWorkspaceStore.getState();
-          const selectedTerminalId = resolveSelectedTerminalId({
-            activeThreadId: workspaceState.activeThreadId,
-            activeWorkspaceId: workspaceState.activeWorkspaceId,
-            terminalPanelByThread: terminalState.terminalPanelByThread,
-          });
-
-          await Promise.allSettled(
-            activePtys
-              .filter((p) => shouldReattachSelectedTerminal(p, selectedTerminalId))
-              .map(async (p) => {
-                // -1 means "I have seen nothing" — server replays everything including seq=0.
-                const lastSeq = ptyLastSeqMap.get(p.ptyId) ?? -1;
-                const result = await terminalClient.reattach(p.ptyId, lastSeq);
-                if (result.mode === "reset") {
-                  ptyLastSeqMap.set(p.ptyId, result.discardThrough);
-                  terminalClient.notifyReconnectGap(p.ptyId);
-                } else if (result.mode === "checkpoint") {
-                  ptyLastSeqMap.set(p.ptyId, result.checkpointThrough);
-                }
-              }),
-          );
-        } catch {
-          // Best-effort; terminal output from the gap window is already lost.
-        }
+      void reattachActiveTerminals().catch(() => {
+        // Best-effort; terminal output from the gap window is already lost.
       });
     };
 
-    ws.onmessage = (event) => {
-      // Binary frame: only terminal.data uses binary frames. The tag byte
-      // identifies the frame type so future binary channels can coexist.
-      if (event.data instanceof ArrayBuffer) {
-        const view = new Uint8Array(event.data);
-        if (view[0] === TERMINAL_BINARY_MAGIC[0] && view[1] === TERMINAL_BINARY_MAGIC[1]) {
-          terminalClientSelector.handleFrame(view);
-          return;
-        }
-        if (view[0] === TERMINAL_DATA_TAG) {
-          try {
-            const decoded = decodeTerminalDataFrame(view);
-            if (!suppressedPushChannels.has("terminal.data")) {
-              pushEmitter.emit("terminal.data", decoded);
-            }
-          } catch (err) {
-            console.warn("[ws] failed to decode terminal.data frame", err);
-          }
-        } else {
-          console.warn("[ws] unknown binary tag 0x" + view[0]?.toString(16));
-        }
-        return;
-      }
-
-      let msg: Record<string, unknown>;
-      try {
-        msg = JSON.parse(event.data as string);
-      } catch {
-        return;
-      }
-
-      // RPC response
-      if (msg.id && pending.has(msg.id as string)) {
-        const { resolve, reject } = pending.get(msg.id as string)!;
-        pending.delete(msg.id as string);
-        if (msg.error) {
-          const err = msg.error as { code?: string; message?: string; data?: Record<string, unknown>; retry?: string };
-          if (TerminalErrorCodeSchema().safeParse(err.code).success) {
-            reject(new TerminalRpcError(err));
-          } else {
-            reject(new RpcError(err.message ?? "RPC error", err.code ?? "RPC_ERROR", err.data, err.retry));
-          }
-        } else {
-          resolve(msg.result);
-        }
-        return;
-      }
-
-      // Push message
-      if (msg.type === "push") {
-        const channel = msg.channel as string;
-        // Skip channels handled by MessagePort to avoid duplicate events
-        if (!suppressedPushChannels.has(channel)) {
-          pushEmitter.emit(channel, msg.data);
-        }
-      }
-    };
+    ws.onmessage = (event) => handleSocketMessage(event.data);
 
     ws.onclose = (event: CloseEvent) => {
       rejectPending("WebSocket disconnected");

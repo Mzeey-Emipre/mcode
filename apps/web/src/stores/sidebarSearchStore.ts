@@ -31,34 +31,52 @@ const VALID_THREAD_STATUSES = new Set([
   "completed",
   "deleted",
 ]);
+const DEFAULT_PREFS: PersistedPrefs = {
+  sortField: "updated_at",
+  sortDirection: "desc",
+  filters: { status: [], provider: [] },
+};
+
+function validSortField(value: unknown): ThreadSortField {
+  return value === "created_at" || value === "title" || value === "updated_at"
+    ? value
+    : DEFAULT_PREFS.sortField;
+}
+
+function validSortDirection(value: unknown): SortDirection {
+  return value === "asc" || value === "desc" ? value : DEFAULT_PREFS.sortDirection;
+}
+
+function validStatusFilters(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((status: unknown): status is string => typeof status === "string" && VALID_THREAD_STATUSES.has(status))
+    : [];
+}
+
+function validProviderFilters(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((provider: unknown): provider is string => typeof provider === "string")
+    : [];
+}
+
+function parsedPrefs(value: unknown): PersistedPrefs {
+  const parsed = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const filters = parsed.filters && typeof parsed.filters === "object"
+    ? parsed.filters as Record<string, unknown>
+    : {};
+  return {
+    sortField: validSortField(parsed.sortField),
+    sortDirection: validSortDirection(parsed.sortDirection),
+    filters: { status: validStatusFilters(filters.status), provider: validProviderFilters(filters.provider) },
+  };
+}
 
 function loadPrefs(): PersistedPrefs {
-  const defaults: PersistedPrefs = { sortField: "updated_at", sortDirection: "desc", filters: { status: [], provider: [] } };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw);
-    const validFields = new Set<string>(["updated_at", "created_at", "title"]);
-    const validDirs = new Set<string>(["asc", "desc"]);
-    return {
-      sortField: validFields.has(parsed?.sortField) ? parsed.sortField : "updated_at",
-      sortDirection: validDirs.has(parsed?.sortDirection) ? parsed.sortDirection : "desc",
-      filters: {
-        status: Array.isArray(parsed?.filters?.status)
-          ? parsed.filters.status.filter(
-              (status: unknown): status is string =>
-                typeof status === "string" && VALID_THREAD_STATUSES.has(status),
-            )
-          : [],
-        provider: Array.isArray(parsed?.filters?.provider)
-          ? parsed.filters.provider.filter(
-              (provider: unknown): provider is string => typeof provider === "string",
-            )
-          : [],
-      },
-    };
+    return raw ? parsedPrefs(JSON.parse(raw)) : DEFAULT_PREFS;
   } catch {
-    return defaults;
+    return DEFAULT_PREFS;
   }
 }
 

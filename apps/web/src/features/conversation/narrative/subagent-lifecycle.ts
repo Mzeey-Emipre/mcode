@@ -12,26 +12,40 @@ export const SUBAGENT_LIFECYCLE_TOOL_NAME = "__McodeSubagentLifecycle";
 export type SubagentLifecycle = "started" | "updated" | "finished";
 
 function mergeToolCallState(current: ToolCall, incoming: ToolCall): ToolCall {
-  const terminal = current.isComplete ? current : incoming.isComplete ? incoming : current;
+  const terminal = terminalToolCall(current, incoming);
   return {
     ...current,
     toolInput: { ...current.toolInput, ...incoming.toolInput },
+    ...terminalToolCallState(current, terminal),
+    parentToolCallId: current.parentToolCallId ?? incoming.parentToolCallId,
+    startedAt: current.startedAt ?? incoming.startedAt,
+    lastActivityAt: Math.max(current.lastActivityAt ?? 0, incoming.lastActivityAt ?? 0) || undefined,
+    subagentPresentation: mergedSubagentPresentation(current, incoming),
+  };
+}
+
+function terminalToolCall(current: ToolCall, incoming: ToolCall): ToolCall {
+  return current.isComplete ? current : incoming.isComplete ? incoming : current;
+}
+
+function terminalToolCallState(current: ToolCall, terminal: ToolCall): Partial<ToolCall> {
+  return {
     output: terminal.output ?? current.output,
     isError: terminal.isError,
     isComplete: terminal.isComplete,
     ...(terminal.isCancelled ? { isCancelled: true } : {}),
     ...(terminal.outputTruncated ? { outputTruncated: true } : {}),
-    ...(terminal.outputTotalBytes !== undefined ? { outputTotalBytes: terminal.outputTotalBytes } : {}),
+    ...(terminal.outputTotalBytes === undefined ? {} : { outputTotalBytes: terminal.outputTotalBytes }),
     ...(terminal.outputArtifactPath ? { outputArtifactPath: terminal.outputArtifactPath } : {}),
-    ...(terminal.exitCode !== undefined ? { exitCode: terminal.exitCode } : {}),
-    ...(terminal.durationMs !== undefined ? { durationMs: terminal.durationMs } : {}),
-    parentToolCallId: current.parentToolCallId ?? incoming.parentToolCallId,
-    startedAt: current.startedAt ?? incoming.startedAt,
-    lastActivityAt: Math.max(current.lastActivityAt ?? 0, incoming.lastActivityAt ?? 0) || undefined,
-    subagentPresentation: current.subagentPresentation && incoming.subagentPresentation
-      ? mergeSubagentPresentation(current.subagentPresentation, incoming.subagentPresentation, current.id)
-      : current.subagentPresentation ?? incoming.subagentPresentation,
+    ...(terminal.exitCode === undefined ? {} : { exitCode: terminal.exitCode }),
+    ...(terminal.durationMs === undefined ? {} : { durationMs: terminal.durationMs }),
   };
+}
+
+function mergedSubagentPresentation(current: ToolCall, incoming: ToolCall) {
+  return current.subagentPresentation && incoming.subagentPresentation
+    ? mergeSubagentPresentation(current.subagentPresentation, incoming.subagentPresentation, current.id)
+    : current.subagentPresentation ?? incoming.subagentPresentation;
 }
 
 function exactIdentityForCall(call: ToolCall, providerKey: string | undefined): string | undefined {
@@ -83,54 +97,67 @@ function rebasePersistedMarker(record: ToolCallRecord, aliases: ReadonlyMap<stri
  * retaining the first record's terminal outcome and rebasing descendants.
  */
 export function collapseSubagentCalls(calls: readonly ToolCall[]): ToolCall[] {
-  const canonicalByProviderKey = new Map<string, string>();
-  const canonicalByExactIdentity = new Map<string, string>();
-  const exactIdentityByCanonical = new Map<string, string>();
-  const aliases = new Map<string, string>();
-  const canonicalCalls = new Map<string, ToolCall>();
-  const orderedIds: string[] = [];
+  const state = createLiveSubagentCollapseState();
+  for (const call of calls) collapseSubagentCall(state, call);
+  return state.orderedIds.map((id) => rebaseLiveCall(state.canonicalCalls.get(id)!, state.aliases));
+}
 
-  for (const call of calls) {
-    if (call.toolName !== "Agent") {
-      canonicalCalls.set(call.id, call);
-      orderedIds.push(call.id);
-      continue;
-    }
-    const providerKey = call.subagentPresentation?.providerAgentKey
-      ?? resolveProviderAgentKey(call.toolInput);
-    const exactIdentity = exactIdentityForCall(call, providerKey);
-    let canonicalId = exactIdentity
-      ? canonicalByExactIdentity.get(exactIdentity)
-      : undefined;
-    if (!canonicalId && providerKey) {
-      const providerCandidate = canonicalByProviderKey.get(providerKey);
-      if (providerCandidate && (!exactIdentity || !exactIdentityByCanonical.has(providerCandidate))) {
-        canonicalId = providerCandidate;
-      }
-    }
-    if (!canonicalId) {
-      if (providerKey) canonicalByProviderKey.set(providerKey, call.id);
-      if (exactIdentity) {
-        canonicalByExactIdentity.set(exactIdentity, call.id);
-        exactIdentityByCanonical.set(call.id, exactIdentity);
-      }
-      canonicalCalls.set(call.id, call);
-      orderedIds.push(call.id);
-      continue;
-    }
-    aliases.set(call.id, canonicalId);
-    if (exactIdentity) {
-      canonicalByExactIdentity.set(exactIdentity, canonicalId);
-      exactIdentityByCanonical.set(canonicalId, exactIdentity);
-    }
-    canonicalCalls.set(canonicalId, mergeToolCallState(canonicalCalls.get(canonicalId)!, call));
+interface LiveSubagentCollapseState {
+  canonicalByProviderKey: Map<string, string>;
+  canonicalByExactIdentity: Map<string, string>;
+  exactIdentityByCanonical: Map<string, string>;
+  aliases: Map<string, string>;
+  canonicalCalls: Map<string, ToolCall>;
+  orderedIds: string[];
+}
+
+function createLiveSubagentCollapseState(): LiveSubagentCollapseState {
+  return { canonicalByProviderKey: new Map(), canonicalByExactIdentity: new Map(), exactIdentityByCanonical: new Map(), aliases: new Map(), canonicalCalls: new Map(), orderedIds: [] };
+}
+
+function liveCanonicalId(state: LiveSubagentCollapseState, providerKey: string | undefined, exactIdentity: string | undefined): string | undefined {
+  const exactMatch = exactIdentity ? state.canonicalByExactIdentity.get(exactIdentity) : undefined;
+  if (exactMatch || !providerKey) return exactMatch;
+  const providerMatch = state.canonicalByProviderKey.get(providerKey);
+  return providerMatch && (!exactIdentity || !state.exactIdentityByCanonical.has(providerMatch)) ? providerMatch : undefined;
+}
+
+function rememberLiveCanonical(state: LiveSubagentCollapseState, call: ToolCall, providerKey: string | undefined, exactIdentity: string | undefined): void {
+  if (providerKey) state.canonicalByProviderKey.set(providerKey, call.id);
+  if (exactIdentity) {
+    state.canonicalByExactIdentity.set(exactIdentity, call.id);
+    state.exactIdentityByCanonical.set(call.id, exactIdentity);
   }
+  state.canonicalCalls.set(call.id, call);
+  state.orderedIds.push(call.id);
+}
 
-  return orderedIds.map((id) => {
-    const call = rebaseLiveMarker(canonicalCalls.get(id)!, aliases);
-    const parentId = call.parentToolCallId ? resolveAlias(call.parentToolCallId, aliases) : undefined;
-    return parentId === call.parentToolCallId ? call : { ...call, parentToolCallId: parentId };
-  });
+function mergeLiveCanonical(state: LiveSubagentCollapseState, call: ToolCall, canonicalId: string, exactIdentity: string | undefined): void {
+  state.aliases.set(call.id, canonicalId);
+  if (exactIdentity) {
+    state.canonicalByExactIdentity.set(exactIdentity, canonicalId);
+    state.exactIdentityByCanonical.set(canonicalId, exactIdentity);
+  }
+  state.canonicalCalls.set(canonicalId, mergeToolCallState(state.canonicalCalls.get(canonicalId)!, call));
+}
+
+function collapseSubagentCall(state: LiveSubagentCollapseState, call: ToolCall): void {
+  if (call.toolName !== "Agent") {
+    state.canonicalCalls.set(call.id, call);
+    state.orderedIds.push(call.id);
+    return;
+  }
+  const providerKey = call.subagentPresentation?.providerAgentKey ?? resolveProviderAgentKey(call.toolInput);
+  const exactIdentity = exactIdentityForCall(call, providerKey);
+  const canonicalId = liveCanonicalId(state, providerKey, exactIdentity);
+  if (canonicalId) mergeLiveCanonical(state, call, canonicalId, exactIdentity);
+  else rememberLiveCanonical(state, call, providerKey, exactIdentity);
+}
+
+function rebaseLiveCall(call: ToolCall, aliases: ReadonlyMap<string, string>): ToolCall {
+  const rebasedMarker = rebaseLiveMarker(call, aliases);
+  const parentId = rebasedMarker.parentToolCallId ? resolveAlias(rebasedMarker.parentToolCallId, aliases) : undefined;
+  return parentId === rebasedMarker.parentToolCallId ? rebasedMarker : { ...rebasedMarker, parentToolCallId: parentId };
 }
 
 interface PersistedSubagentIdentity {

@@ -343,6 +343,22 @@ describe("projectSubagents", () => {
     })]);
   });
 
+  it("preserves persisted descendant depth and parent attribution", () => {
+    const detail = projectSubagents([], [[
+      record({ id: "agent", sort_order: 0 }),
+      record({ id: "direct-child", parent_tool_call_id: "agent", tool_name: "Read", sort_order: 1 }),
+      record({ id: "nested-child", parent_tool_call_id: "direct-child", tool_name: "Write", sort_order: 2 }),
+    ]]).finished[0]?.detail;
+
+    expect(detail?.activity).toEqual([
+      expect.objectContaining({ id: "direct-child", parentId: "agent", depth: 1 }),
+      expect.objectContaining({ id: "nested-child", parentId: "direct-child", depth: 2 }),
+    ]);
+    expect(detail?.transcript[0]).toMatchObject({ id: "direct-child" });
+    expect(detail?.transcript[0]).not.toHaveProperty("parentToolCallId");
+    expect(detail?.transcript[1]).toMatchObject({ id: "nested-child", parentToolCallId: "direct-child" });
+  });
+
   it("preserves a live provider identity when the matching persisted record has none", () => {
     const roster = projectSubagents([
       call({

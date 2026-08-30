@@ -161,26 +161,36 @@ export function hasEnoughThreadRecapSubstance(
   );
 }
 
+function isRecapScheduleBlocked(input: ThreadRecapScheduleInput): boolean {
+  return (
+    input.isRunning ||
+    input.autoCapReached ||
+    !hasEnoughThreadRecapSubstance(input.messages)
+  );
+}
+
+function hasStaleLastRecapMessage(input: ThreadRecapScheduleInput, staleMs: number): boolean {
+  const lastMessage = input.messages.at(-1);
+  if (!lastMessage) return false;
+  const lastMessageTime = Date.parse(lastMessage.timestamp);
+  if (!Number.isFinite(lastMessageTime)) return false;
+  return input.now - lastMessageTime >= staleMs;
+}
+
+function hasCurrentRecapRequest(input: ThreadRecapScheduleInput): boolean {
+  return [input.cached, input.inFlight, input.lastFailed].some(
+    (entry) => entry?.signature === input.signature,
+  );
+}
+
 /**
  * Decides whether an automatic Recap generation should be scheduled.
  */
 export function shouldScheduleThreadRecapGeneration(input: ThreadRecapScheduleInput): boolean {
   const staleMs = input.staleMs ?? STALE_RECAP_MS;
-  if (input.isRunning) return false;
-  if (input.autoCapReached) return false;
-  if (!hasEnoughThreadRecapSubstance(input.messages)) return false;
-
-  const lastMessage = input.messages.at(-1);
-  if (!lastMessage) return false;
-  const lastMessageTime = Date.parse(lastMessage.timestamp);
-  if (!Number.isFinite(lastMessageTime)) return false;
-  if (input.now - lastMessageTime < staleMs) return false;
-
-  if (input.cached?.signature === input.signature) return false;
-  if (input.inFlight?.signature === input.signature) return false;
-  if (input.lastFailed?.signature === input.signature) return false;
-
-  return true;
+  if (isRecapScheduleBlocked(input)) return false;
+  if (!hasStaleLastRecapMessage(input, staleMs)) return false;
+  return !hasCurrentRecapRequest(input);
 }
 
 /**
@@ -253,6 +263,121 @@ export function getThreadRecapCoverageGap({
   };
 }
 
+type RecapGenerationState = {
+  threadId: string;
+  cached: ThreadRecapCacheEntry | undefined;
+  messages: ThreadRecapMessage[];
+  recordGeneration: ReturnType<typeof useThreadStore.getState>["recordThreadRecapGeneration"];
+  signature: string;
+  key: string;
+};
+
+function resolveRecapGenerationState(
+  latestState: {
+    threadId: string;
+    cached: ThreadRecapCacheEntry | undefined;
+    filteredMessages: ThreadRecapMessage[];
+    recordThreadRecapGeneration: ReturnType<typeof useThreadStore.getState>["recordThreadRecapGeneration"];
+  },
+  messageOverride: readonly Message[] | undefined,
+): RecapGenerationState {
+  const storeState = getThreadStoreState();
+  const messages = messageOverride
+    ? filterThreadRecapMessages(messageOverride)
+    : latestState.filteredMessages;
+  const signature = createThreadRecapSignature(messages);
+  return {
+    threadId: latestState.threadId,
+    cached: storeState?.recapByThread?.[latestState.threadId] ?? latestState.cached,
+    messages,
+    recordGeneration: latestState.recordThreadRecapGeneration,
+    signature,
+    key: requestKey(latestState.threadId, signature),
+  };
+}
+
+function startAutomaticRecapIfScheduled(state: RecapGenerationState): boolean {
+  const storeState = getThreadStoreState();
+  const marker = { threadId: state.threadId, signature: state.signature };
+  const shouldRun = shouldScheduleThreadRecapGeneration({
+    messages: state.messages,
+    cached: state.cached,
+    isRunning: storeState?.runningThreadIds?.has(state.threadId) ?? false,
+    now: Date.now(),
+    signature: state.signature,
+    inFlight: inFlightRequests.has(state.key) ? marker : undefined,
+    lastFailed: lastFailedByThread.get(state.threadId),
+    autoCapReached: automaticRequests.has(state.key),
+  });
+  if (shouldRun) automaticRequests.add(state.key);
+  return shouldRun;
+}
+
+function createRecapRequest({
+  state,
+  source,
+  payload,
+  setError,
+  setIsGenerating,
+}: {
+  state: RecapGenerationState;
+  source: ThreadRecapSource;
+  payload: ReturnType<typeof buildThreadRecapPayload> & { coveredMessageId: string };
+  setError: (error: string | null) => void;
+  setIsGenerating: (isGenerating: boolean) => void;
+}): Promise<void> {
+  return getTransport()
+    .generateRecap(
+      state.threadId,
+      payload.messages.map(({ role, content }) => ({ role, content })),
+      payload.previousRecap,
+    )
+    .then((result) => {
+      state.recordGeneration({
+        threadId: state.threadId,
+        text: result.text,
+        signature: state.signature,
+        coveredMessageId: payload.coveredMessageId,
+        generatedAt: new Date().toISOString(),
+        source,
+      });
+      if (lastFailedByThread.get(state.threadId)?.signature === state.signature) {
+        lastFailedByThread.delete(state.threadId);
+      }
+    })
+    .catch((error: unknown) => {
+      lastFailedByThread.set(state.threadId, {
+        threadId: state.threadId,
+        signature: state.signature,
+      });
+      setError(error instanceof Error ? error.message : "Recap unavailable");
+    })
+    .finally(() => {
+      inFlightRequests.delete(state.key);
+      setIsGenerating(false);
+    });
+}
+
+function shouldGenerateRecapOnOverviewOpen(
+  threadId: string,
+  messages: readonly ThreadRecapMessage[],
+  cached: ThreadRecapCacheEntry | undefined,
+  signature: string,
+): boolean {
+  const storeState = getThreadStoreState();
+  const key = requestKey(threadId, signature);
+  return shouldScheduleThreadRecapGeneration({
+    messages,
+    cached: storeState?.recapByThread?.[threadId] ?? cached,
+    isRunning: storeState?.runningThreadIds?.has(threadId) ?? false,
+    now: Date.now(),
+    signature,
+    inFlight: inFlightRequests.has(key) ? { threadId, signature } : undefined,
+    lastFailed: lastFailedByThread.get(threadId),
+    autoCapReached: automaticRequests.has(key),
+  });
+}
+
 /**
  * Generates and caches a thread Recap on manual refresh or stale re-orientation.
  */
@@ -298,80 +423,29 @@ export function useThreadRecap({
     source: ThreadRecapSource,
     messageOverride?: readonly Message[],
   ) => {
-    const {
-      threadId: currentThreadId,
-      cached: renderCached,
-      filteredMessages: renderFilteredMessages,
-      recordThreadRecapGeneration: recordGeneration,
-    } = latestStateRef.current;
-    const storeState = getThreadStoreState();
-    const currentCached = storeState?.recapByThread?.[currentThreadId] ?? renderCached;
-    const recapMessages = messageOverride
-      ? filterThreadRecapMessages(messageOverride)
-      : renderFilteredMessages;
-    const currentSignature = createThreadRecapSignature(recapMessages);
-    const key = requestKey(currentThreadId, currentSignature);
-    const existing = inFlightRequests.get(key);
+    const state = resolveRecapGenerationState(latestStateRef.current, messageOverride);
+    const existing = inFlightRequests.get(state.key);
     if (existing) {
       setIsGenerating(true);
       await existing.finally(() => setIsGenerating(false));
       return;
     }
 
-    if (source === "automatic") {
-      const marker = { threadId: currentThreadId, signature: currentSignature };
-      const shouldRun = shouldScheduleThreadRecapGeneration({
-        messages: recapMessages,
-        cached: currentCached,
-        isRunning: storeState?.runningThreadIds?.has(currentThreadId) ?? false,
-        now: Date.now(),
-        signature: currentSignature,
-        inFlight: inFlightRequests.has(key) ? marker : undefined,
-        lastFailed: lastFailedByThread.get(currentThreadId),
-        autoCapReached: automaticRequests.has(key),
-      });
-      if (!shouldRun) return;
-      automaticRequests.add(key);
-    }
+    if (source === "automatic" && !startAutomaticRecapIfScheduled(state)) return;
 
-    const payload = buildThreadRecapPayload(recapMessages, currentCached);
+    const payload = buildThreadRecapPayload(state.messages, state.cached);
     if (!payload.coveredMessageId || payload.messages.length === 0) return;
 
     setIsGenerating(true);
     setError(null);
-
-    const promise = getTransport()
-      .generateRecap(
-        currentThreadId,
-        payload.messages.map(({ role, content }) => ({ role, content })),
-        payload.previousRecap,
-      )
-      .then((result) => {
-        recordGeneration({
-          threadId: currentThreadId,
-          text: result.text,
-          signature: currentSignature,
-          coveredMessageId: payload.coveredMessageId!,
-          generatedAt: new Date().toISOString(),
-          source,
-        });
-        if (lastFailedByThread.get(currentThreadId)?.signature === currentSignature) {
-          lastFailedByThread.delete(currentThreadId);
-        }
-      })
-      .catch((err: unknown) => {
-        lastFailedByThread.set(currentThreadId, {
-          threadId: currentThreadId,
-          signature: currentSignature,
-        });
-        setError(err instanceof Error ? err.message : "Recap unavailable");
-      })
-      .finally(() => {
-        inFlightRequests.delete(key);
-        setIsGenerating(false);
-      });
-
-    inFlightRequests.set(key, promise);
+    const promise = createRecapRequest({
+      state,
+      source,
+      payload: { ...payload, coveredMessageId: payload.coveredMessageId },
+      setError,
+      setIsGenerating,
+    });
+    inFlightRequests.set(state.key, promise);
     await promise;
   }, []);
 
@@ -383,19 +457,7 @@ export function useThreadRecap({
     }
     if (overviewOpenAutoAttemptedRef.current) return;
 
-    const storeState = getThreadStoreState();
-    const key = requestKey(threadId, signature);
-    const shouldRun = shouldScheduleThreadRecapGeneration({
-      messages: filteredMessages,
-      cached: storeState?.recapByThread?.[threadId] ?? cached,
-      isRunning: storeState?.runningThreadIds?.has(threadId) ?? false,
-      now: Date.now(),
-      signature,
-      inFlight: inFlightRequests.has(key) ? { threadId, signature } : undefined,
-      lastFailed: lastFailedByThread.get(threadId),
-      autoCapReached: automaticRequests.has(key),
-    });
-    if (!shouldRun) return;
+    if (!shouldGenerateRecapOnOverviewOpen(threadId, filteredMessages, cached, signature)) return;
 
     overviewOpenAutoAttemptedRef.current = true;
     void generate("automatic");

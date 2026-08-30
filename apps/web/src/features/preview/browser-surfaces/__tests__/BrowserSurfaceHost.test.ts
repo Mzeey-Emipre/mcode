@@ -91,7 +91,7 @@ class TestAdapter implements BrowserSurfaceAdapter {
 
   emit(event: BrowserSurfaceAdapterEventPayload, identity = IDENTITY, generation = 1): void {
     const complete = { ...event, identity, generation } as BrowserSurfaceAdapterEvent;
-    for (const listener of [...this.listeners]) listener(complete);
+    for (const listener of this.listeners) listener(complete);
   }
 }
 
@@ -186,6 +186,19 @@ describe("BrowserSurfaceHost", () => {
     expect(host.getSnapshot(IDENTITY)?.phase).toBe("error");
     adapter.emit({ type: "load-failed", mainFrame: true, expected: true, error: "aborted" });
     scheduling.flush();
+  });
+
+  it("uses a numeric failure code when the adapter has no error text", () => {
+    const { host, adapter } = testHost();
+
+    adapter.emit({ type: "load-failed", mainFrame: true, errorCode: -105 });
+
+    expect(host.getSnapshot(IDENTITY)).toMatchObject({
+      phase: "error",
+      mainFrameError: "-105",
+      mainFrameErrorCode: -105,
+    });
+    host.disposeHost();
   });
 
   it("ignores subframe events and semantic no-ops", () => {

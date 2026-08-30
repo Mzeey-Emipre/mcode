@@ -43,35 +43,40 @@ function containsControlCharacter(value: string): boolean {
 
 /** Parses one Terminal file link without accepting URLs or traversal paths. */
 export function parseTerminalLink(value: string): TerminalLinkTarget | null {
-  const candidate = value.trim().replace(TRAILING_PUNCTUATION, "");
-  const location = /^(.*?)(?::([0-9]+))?(?::([0-9]+))?$/.exec(candidate);
+  const location = parseTerminalLinkLocation(value);
   if (!location) return null;
 
   const path = location[1];
-  if (
-    !path ||
-    path.length > 2_048 ||
-    containsControlCharacter(path) ||
-    path.includes("://") ||
-    path.split(/[\\/]/).includes("..") ||
-    !(/^[A-Za-z]:[\\/]/.test(path) || path.startsWith("/"))
-  ) {
-    return null;
-  }
+  if (!isSafeTerminalPath(path)) return null;
 
-  const line = location[2] ? Number(location[2]) : undefined;
-  const column = location[3] ? Number(location[3]) : undefined;
-  if (
-    (line !== undefined && (!Number.isSafeInteger(line) || line < 1 || line > LOCATION_LIMIT)) ||
-    (column !== undefined && (!Number.isSafeInteger(column) || column < 1 || column > LOCATION_LIMIT))
-  ) {
-    return null;
-  }
+  const line = parseTerminalLocationNumber(location[2]);
+  const column = parseTerminalLocationNumber(location[3]);
+  if (line === null || column === null) return null;
   return {
     path,
     ...(line === undefined ? {} : { line }),
     ...(column === undefined ? {} : { column }),
   };
+}
+
+function parseTerminalLinkLocation(value: string): RegExpExecArray | null {
+  const candidate = value.trim().replace(TRAILING_PUNCTUATION, "");
+  return /^(.*?)(?::([0-9]+))?(?::([0-9]+))?$/.exec(candidate);
+}
+
+function isSafeTerminalPath(path: string): boolean {
+  if (!path || path.length > 2_048 || containsControlCharacter(path)) return false;
+  if (path.includes("://") || path.split(/[\\/]/).includes("..")) return false;
+  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("/");
+}
+
+function parseTerminalLocationNumber(value: string | undefined): number | undefined | null {
+  if (!value) return undefined;
+  const location = Number(value);
+  if (!Number.isSafeInteger(location) || location < 1 || location > LOCATION_LIMIT) {
+    return null;
+  }
+  return location;
 }
 
 /** Finds all safe absolute file targets in one Terminal line. */

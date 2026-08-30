@@ -7,26 +7,38 @@ export class WebBrowserSemanticRegistry {
   private readonly elementsById = new Map<string, Element>();
   private nextSyntheticId = 1;
 
+  private isConnectedTo(ownerDocument: Document, element: Element): boolean {
+    return element.ownerDocument === ownerDocument && element.isConnected;
+  }
+
+  private retainExistingId(ownerDocument: Document, element: Element, id: string): string | null {
+    const retained = this.elementsById.get(id);
+    if (retained === element && this.isConnectedTo(ownerDocument, element)) return id;
+    if (!retained && this.isConnectedTo(ownerDocument, element)) {
+      this.retain(id, element);
+      return id;
+    }
+    this.idsByElement.delete(element);
+    if (retained === element) this.elementsById.delete(id);
+    return null;
+  }
+
+  private preferredIdFor(ownerDocument: Document, element: Element, preferredId: string | undefined): string {
+    if (preferredId && preferredId.length <= MAX_SEMANTIC_ID_CHARS) {
+      const owner = this.elementsById.get(preferredId);
+      if (!owner || owner === element) return preferredId;
+    }
+    return this.nextSyntheticIdFor(ownerDocument);
+  }
+
   /** Returns a stable identity for one element, preferring its real DOM identity. */
   register(ownerDocument: Document, element: Element, preferredId?: string): string {
     const existing = this.idsByElement.get(element);
     if (existing) {
-      const retained = this.elementsById.get(existing);
-      if (retained === element && element.ownerDocument === ownerDocument && element.isConnected) return existing;
-      if (!retained && element.ownerDocument === ownerDocument && element.isConnected) {
-        this.retain(existing, element);
-        return existing;
-      }
-      this.idsByElement.delete(element);
-      if (retained === element) this.elementsById.delete(existing);
+      const retainedId = this.retainExistingId(ownerDocument, element, existing);
+      if (retainedId) return retainedId;
     }
-    const usablePreferred = preferredId && preferredId.length <= MAX_SEMANTIC_ID_CHARS
-      ? preferredId
-      : undefined;
-    const preferredOwner = usablePreferred ? this.elementsById.get(usablePreferred) : undefined;
-    const id = usablePreferred && (!preferredOwner || preferredOwner === element)
-      ? usablePreferred
-      : this.nextSyntheticIdFor(ownerDocument);
+    const id = this.preferredIdFor(ownerDocument, element, preferredId);
     this.retain(id, element);
     return id;
   }

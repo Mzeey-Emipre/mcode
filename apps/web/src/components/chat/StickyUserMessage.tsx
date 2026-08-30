@@ -21,6 +21,11 @@ export const STICKY_USER_MESSAGE_ESTIMATED_HEIGHT = 56;
 
 const STICKY_PREVIEW_HINT_ID = "sticky-user-message-preview-hint";
 
+function getPreviewAriaLabel(expandable: boolean, expanded: boolean): string {
+  if (!expandable) return "Jump to your last message in transcript";
+  return expanded ? "Collapse your last message" : "Expand your last message";
+}
+
 /** Props for {@link StickyUserMessage}. */
 export interface StickyUserMessageProps {
   /** Plain-text preview of the user's last visible message. */
@@ -106,11 +111,7 @@ export function StickyUserMessage({
     onJumpToMessage();
   };
 
-  const previewAriaLabel = expandable
-    ? expanded
-      ? "Collapse your last message"
-      : "Expand your last message"
-    : "Jump to your last message in transcript";
+  const previewAriaLabel = getPreviewAriaLabel(expandable, expanded);
 
   if (!visible) {
     return null;

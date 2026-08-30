@@ -87,7 +87,7 @@ export function useProjectSetupAttempt(threadId: string): {
   }, [attempt?.cleanupPending, attempt?.status, refresh]);
 
   const start = useCallback(async () => {
-    if (visibleStarting || visibleAttempt?.status === "running" || visibleAttempt?.status === "awaiting-approval" || visibleAttempt?.cleanupPending) return;
+    if (!canStartSetupAttempt(visibleAttempt, visibleStarting)) return;
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
     requestSequence.current += 1;
@@ -189,36 +189,76 @@ export function ProjectSetupAttemptCard({ attempt, onApprove }: ProjectSetupAtte
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent id={contentId} role="region" aria-labelledby={headingId} forceMount>
-          <div className={cn("border-t border-border/50 p-2.5", !open && "hidden")}>
-            {command ? <TerminalBlock label="Command" value={command} wraps /> : null}
-            <TerminalBlock label="Output" value={attempt.output || "No output"} />
-            {attempt.exitCode !== null ? (
-              <p className="mt-2 font-mono text-xs tabular-nums text-muted-foreground">Exit code: {attempt.exitCode}</p>
-            ) : null}
-            {attempt.outputTruncated ? (
-              <p className="mt-2 text-xs text-muted-foreground">Output was truncated.</p>
-            ) : null}
-            {attempt.cleanupPending ? (
-              <p className="mt-2 text-xs text-muted-foreground">Setup cleanup is still pending.</p>
-            ) : null}
-            {attempt.status === "awaiting-approval" && !approvalOpen ? (
-              <Button type="button" size="sm" className="mt-2" onClick={() => setApprovalOpen(true)}>Review shared command</Button>
-            ) : null}
-          </div>
+          <ProjectSetupAttemptDetails
+            attempt={attempt}
+            command={command}
+            open={open}
+            approvalOpen={approvalOpen}
+            onOpenApproval={() => setApprovalOpen(true)}
+          />
         </CollapsibleContent>
       </section>
       {approvalOpen ? (
-        <ProjectCommandApprovalDialog
-          approval={attempt.status === "awaiting-approval" ? attempt.snapshot.approval ?? null : null}
-          script={attempt.snapshot.script}
-          onApprove={async () => {
-            await (onApprove ?? (async () => undefined))();
-            return true;
-          }}
-          onCancel={() => setApprovalOpen(false)}
-        />
+        <ProjectSetupApprovalDialog attempt={attempt} onApprove={onApprove} onCancel={() => setApprovalOpen(false)} />
       ) : null}
     </Collapsible>
+  );
+}
+
+function ProjectSetupAttemptDetails({
+  attempt,
+  command,
+  open,
+  approvalOpen,
+  onOpenApproval,
+}: {
+  readonly attempt: WorkspaceEnvironmentSetupAttempt;
+  readonly command: string | null;
+  readonly open: boolean;
+  readonly approvalOpen: boolean;
+  readonly onOpenApproval: () => void;
+}) {
+  return (
+    <div className={cn("border-t border-border/50 p-2.5", !open && "hidden")}>
+      {command ? <TerminalBlock label="Command" value={command} wraps /> : null}
+      <TerminalBlock label="Output" value={attempt.output || "No output"} />
+      {attempt.exitCode !== null ? <p className="mt-2 font-mono text-xs tabular-nums text-muted-foreground">Exit code: {attempt.exitCode}</p> : null}
+      {attempt.outputTruncated ? <p className="mt-2 text-xs text-muted-foreground">Output was truncated.</p> : null}
+      {attempt.cleanupPending ? <p className="mt-2 text-xs text-muted-foreground">Setup cleanup is still pending.</p> : null}
+      {attempt.status === "awaiting-approval" && !approvalOpen ? <Button type="button" size="sm" className="mt-2" onClick={onOpenApproval}>Review shared command</Button> : null}
+    </div>
+  );
+}
+
+function canStartSetupAttempt(
+  attempt: WorkspaceEnvironmentSetupAttempt | null,
+  starting: boolean,
+): boolean {
+  return !starting
+    && attempt?.status !== "running"
+    && attempt?.status !== "awaiting-approval"
+    && !attempt?.cleanupPending;
+}
+
+function ProjectSetupApprovalDialog({
+  attempt,
+  onApprove,
+  onCancel,
+}: {
+  readonly attempt: WorkspaceEnvironmentSetupAttempt;
+  readonly onApprove: ProjectSetupAttemptCardProps["onApprove"];
+  readonly onCancel: () => void;
+}) {
+  return (
+    <ProjectCommandApprovalDialog
+      approval={attempt.status === "awaiting-approval" ? attempt.snapshot.approval ?? null : null}
+      script={attempt.snapshot.script}
+      onApprove={async () => {
+        await (onApprove ?? (async () => undefined))();
+        return true;
+      }}
+      onCancel={onCancel}
+    />
   );
 }
 

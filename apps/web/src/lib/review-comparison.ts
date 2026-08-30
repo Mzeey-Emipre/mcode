@@ -31,6 +31,102 @@ export function reviewFilesForSnapshot(snapshot: TurnSnapshot): ReviewFileChange
   }));
 }
 
+function mergeBinary(prior: ReviewFileChange | undefined, change: ReviewFileChange): boolean {
+  return prior?.binary === true || change.binary;
+}
+
+function applyRenamedChange(
+  current: Map<string, ReviewFileChange>,
+  change: ReviewFileChange,
+): void {
+  if (!change.previousPath) return;
+  const prior = current.get(change.previousPath);
+  current.delete(change.previousPath);
+  if (prior?.changeType === "added") {
+    current.set(change.path, {
+      ...change,
+      previousPath: null,
+      changeType: "added",
+      binary: mergeBinary(prior, change),
+    });
+    return;
+  }
+  current.set(change.path, {
+    ...change,
+    previousPath: prior?.previousPath ?? change.previousPath,
+    binary: mergeBinary(prior, change),
+  });
+}
+
+function applyDeletedChange(
+  current: Map<string, ReviewFileChange>,
+  change: ReviewFileChange,
+): void {
+  const prior = current.get(change.path);
+  if (prior?.changeType === "added") {
+    current.delete(change.path);
+    return;
+  }
+  if (prior?.changeType === "renamed" && prior.previousPath) {
+    current.delete(change.path);
+    current.set(prior.previousPath, {
+      path: prior.previousPath,
+      previousPath: null,
+      changeType: "deleted",
+      binary: mergeBinary(prior, change),
+    });
+    return;
+  }
+  current.set(change.path, change);
+}
+
+function applyCurrentFileChange(
+  current: Map<string, ReviewFileChange>,
+  change: ReviewFileChange,
+): void {
+  const prior = current.get(change.path);
+  if (change.changeType === "added" && prior?.changeType === "deleted") {
+    current.set(change.path, { ...change, changeType: "modified" });
+    return;
+  }
+  if (prior?.changeType === "added") {
+    current.set(change.path, { ...prior, binary: mergeBinary(prior, change) });
+    return;
+  }
+  current.set(change.path, {
+    ...change,
+    changeType: change.changeType === "added" ? "added" : "modified",
+    binary: mergeBinary(prior, change),
+  });
+}
+
+function applyReviewFileChange(
+  current: Map<string, ReviewFileChange>,
+  change: ReviewFileChange,
+): void {
+  if (change.changeType === "renamed" && change.previousPath) {
+    applyRenamedChange(current, change);
+    return;
+  }
+  if (change.changeType === "deleted") {
+    applyDeletedChange(current, change);
+    return;
+  }
+  applyCurrentFileChange(current, change);
+}
+
+function resolveAuthoritativeFileChange(
+  current: ReadonlyMap<string, ReviewFileChange>,
+  path: string,
+): ReviewFileChange {
+  const change = current.get(path);
+  if (!change) return { path, previousPath: null, changeType: "modified", binary: false };
+  if (change.changeType === "renamed" && change.previousPath === path) {
+    return { ...change, previousPath: null, changeType: "modified" };
+  }
+  return change;
+}
+
 /** Decorate the authoritative first-ref to final-ref file set with persisted turn metadata. */
 export function cumulativeReviewFiles(
   snapshots: readonly TurnSnapshot[],
@@ -39,58 +135,10 @@ export function cumulativeReviewFiles(
   const current = new Map<string, ReviewFileChange>();
   for (const snapshot of snapshots) {
     for (const change of reviewFilesForSnapshot(snapshot)) {
-      if (change.changeType === "renamed" && change.previousPath) {
-        const prior = current.get(change.previousPath);
-        current.delete(change.previousPath);
-        if (prior?.changeType === "added") {
-          current.set(change.path, { ...change, previousPath: null, changeType: "added", binary: prior.binary || change.binary });
-        } else {
-          current.set(change.path, {
-            ...change,
-            previousPath: prior?.previousPath ?? change.previousPath,
-            binary: prior?.binary === true || change.binary,
-          });
-        }
-        continue;
-      }
-
-      const prior = current.get(change.path);
-      if (change.changeType === "deleted") {
-        if (prior?.changeType === "added") current.delete(change.path);
-        else if (prior?.changeType === "renamed" && prior.previousPath) {
-          current.delete(change.path);
-          current.set(prior.previousPath, {
-            path: prior.previousPath,
-            previousPath: null,
-            changeType: "deleted",
-            binary: prior.binary || change.binary,
-          });
-        } else current.set(change.path, change);
-        continue;
-      }
-      if (change.changeType === "added" && prior?.changeType === "deleted") {
-        current.set(change.path, { ...change, changeType: "modified" });
-        continue;
-      }
-      if (prior?.changeType === "added") {
-        current.set(change.path, { ...prior, binary: prior.binary || change.binary });
-        continue;
-      }
-      current.set(change.path, {
-        ...change,
-        changeType: change.changeType === "added" ? "added" : "modified",
-        binary: prior?.binary === true || change.binary,
-      });
+      applyReviewFileChange(current, change);
     }
   }
-  return [...new Set(authoritativePaths)].sort((left, right) => left.localeCompare(right)).map((path) => {
-    const change = current.get(path);
-    if (!change) {
-      return { path, previousPath: null, changeType: "modified", binary: false };
-    }
-    if (change.changeType === "renamed" && change.previousPath === path) {
-      return { ...change, previousPath: null, changeType: "modified" };
-    }
-    return change;
-  });
+  return [...new Set(authoritativePaths)]
+    .sort((left, right) => left.localeCompare(right))
+    .map((path) => resolveAuthoritativeFileChange(current, path));
 }

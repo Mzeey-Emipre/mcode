@@ -148,6 +148,40 @@ function visualSummary(proposedChanges: PreviewAnnotationVisualProposal | undefi
   return labels ? `Change ${labels}.` : undefined;
 }
 
+function savedPreviewAnnotation(
+  existing: readonly SavedPreviewAnnotation[],
+  draft: PreviewDraftAnnotation,
+  id: string | undefined,
+): SavedPreviewAnnotation {
+  const note = draft.note.trim();
+  return {
+    id: id ?? crypto.randomUUID(),
+    createdAt: id ? (existing.find((row) => row.id === id)?.createdAt ?? Date.now()) : Date.now(),
+    displayNumber: 1,
+    pageIdentity: draft.pageIdentity,
+    pageContext: draft.pageContext,
+    targetContext: {
+      label: draft.label ?? null,
+      selectorHint: draft.selectorHint ?? null,
+      bounds: draft.bounds,
+    },
+    note: note || undefined,
+    changeSummary: note ? undefined : visualSummary(draft.proposedChanges),
+    proposedChanges: draft.proposedChanges,
+    snapshot: draft.snapshot!,
+  };
+}
+
+function replaceOrAppendPreviewAnnotation(
+  existing: readonly SavedPreviewAnnotation[],
+  annotation: SavedPreviewAnnotation,
+  replacesId: string | undefined,
+): SavedPreviewAnnotation[] {
+  return replacesId
+    ? existing.map((row) => row.id === replacesId ? annotation : row)
+    : [...existing, annotation];
+}
+
 /** Zustand store for thread-scoped Preview annotation sets. */
 export const usePreviewAnnotationStore = create<PreviewAnnotationStore>((set, get) => ({
   byThread: {},
@@ -173,26 +207,8 @@ export const usePreviewAnnotationStore = create<PreviewAnnotationStore>((set, ge
       throw new Error("annotation snapshot is required");
     }
     const existing = get().byThread[threadId] ?? [];
-    const trimmedNote = draft.note.trim();
-    const annotation: SavedPreviewAnnotation = {
-      id: id ?? crypto.randomUUID(),
-      createdAt: id ? (existing.find((row) => row.id === id)?.createdAt ?? Date.now()) : Date.now(),
-      displayNumber: 1,
-      pageIdentity: draft.pageIdentity,
-      pageContext: draft.pageContext,
-      targetContext: {
-        label: draft.label ?? null,
-        selectorHint: draft.selectorHint ?? null,
-        bounds: draft.bounds,
-      },
-      note: trimmedNote || undefined,
-      changeSummary: trimmedNote ? undefined : visualSummary(draft.proposedChanges),
-      proposedChanges: draft.proposedChanges,
-      snapshot: draft.snapshot,
-    };
-    const nextPreview = id
-      ? existing.map((row) => (row.id === id ? annotation : row))
-      : [...existing, annotation];
+    const annotation = savedPreviewAnnotation(existing, draft, id);
+    const nextPreview = replaceOrAppendPreviewAnnotation(existing, annotation, id);
     const next = renumberAnnotations(nextPreview, get().diffByThread[threadId] ?? []);
     set((state) => ({
       byThread: { ...state.byThread, [threadId]: next.preview },

@@ -40,6 +40,72 @@ function splitCombo(shortcut: string): string[] {
     .filter(Boolean);
 }
 
+type GoToThreadCandidate = Pick<ShortcutRow, "title" | "pieces"> & {
+  digit: string;
+  category: string;
+};
+
+function isUniformGoToThread(candidates: readonly GoToThreadCandidate[]): boolean {
+  const first = candidates[0];
+  if (!first || candidates.length !== 9) return false;
+  const sharedModifiers = first.pieces.slice(0, -1).join("+");
+  return candidates.every((candidate, index) =>
+    candidate.digit === String(index + 1) &&
+    candidate.category === first.category &&
+    candidate.pieces.length >= 2 &&
+    candidate.pieces.slice(0, -1).join("+") === sharedModifiers &&
+    candidate.pieces[candidate.pieces.length - 1] === String(index + 1),
+  );
+}
+
+function addShortcutRow(map: Map<string, ShortcutRow[]>, category: string, row: ShortcutRow): void {
+  const group = map.get(category) ?? [];
+  group.push(row);
+  map.set(category, group);
+}
+
+function addGoToThreadRows(map: Map<string, ShortcutRow[]>, candidates: GoToThreadCandidate[]): void {
+  if (isUniformGoToThread(candidates)) {
+    const first = candidates[0]!;
+    addShortcutRow(map, first.category, {
+      key: "thread.goTo.range",
+      title: "Go to thread",
+      pieces: [...first.pieces.slice(0, -1), "1", "9"],
+    });
+    return;
+  }
+  for (const candidate of candidates) {
+    addShortcutRow(map, candidate.category, {
+      key: `thread.goTo${candidate.digit}`,
+      title: candidate.title,
+      pieces: candidate.pieces,
+    });
+  }
+}
+
+function buildShortcutGroups(): Map<string, ShortcutRow[]> {
+  const hidden = new Set(["escape.handle"]);
+  const rowsByCategory = new Map<string, ShortcutRow[]>();
+  const goToThreadCandidates: GoToThreadCandidate[] = [];
+  const goToThreadPattern = /^thread\.goTo([1-9])$/;
+
+  for (const command of getAllCommands()) {
+    if (hidden.has(command.id)) continue;
+    const binding = getKeybindingForCommand(command.id);
+    if (!binding) continue;
+    const pieces = splitCombo(formatKeybinding(binding.key, isMac));
+    const goToMatch = goToThreadPattern.exec(command.id);
+    if (goToMatch) {
+      goToThreadCandidates.push({ digit: goToMatch[1], title: command.title, category: command.category, pieces });
+      continue;
+    }
+    addShortcutRow(rowsByCategory, command.category, { key: command.id, title: command.title, pieces });
+  }
+  addGoToThreadRows(rowsByCategory, goToThreadCandidates);
+  for (const rows of rowsByCategory.values()) rows.sort((left, right) => left.title.localeCompare(right.title));
+  return rowsByCategory;
+}
+
 /**
  * Full-screen dialog showing all keyboard shortcuts grouped by category.
  * Accessible via Cmd+? or from the command palette.
@@ -50,93 +116,7 @@ export function ShortcutHelpDialog() {
 
   const grouped = useMemo(() => {
     if (!open) return new Map<string, ShortcutRow[]>();
-
-    const all = getAllCommands();
-    // Escape handler is an internal command, not meaningful to surface to users.
-    const hidden = new Set(["escape.handle"]);
-    const map = new Map<string, ShortcutRow[]>();
-
-    // Collect `thread.goTo1`…`thread.goTo9` separately so we only collapse them
-    // into the single "Go to thread (1…9)" row when all nine bindings are
-    // uniform — same modifier prefix, numeric tail "1"…"9", same category.
-    // Customised or partial bindings fall back to individual rows so the help
-    // dialog can't lie about what the user actually typed.
-    const goToThreadRe = /^thread\.goTo([1-9])$/;
-    const goToThreadCandidates: Array<{
-      digit: string;
-      title: string;
-      category: string;
-      pieces: string[];
-    }> = [];
-
-    for (const cmd of all) {
-      if (hidden.has(cmd.id)) continue;
-      const binding = getKeybindingForCommand(cmd.id);
-      if (!binding) continue;
-
-      const goToMatch = goToThreadRe.exec(cmd.id);
-      if (goToMatch) {
-        goToThreadCandidates.push({
-          digit: goToMatch[1],
-          title: cmd.title,
-          category: cmd.category,
-          pieces: splitCombo(formatKeybinding(binding.key, isMac)),
-        });
-        continue;
-      }
-
-      const group = map.get(cmd.category) ?? [];
-      group.push({
-        key: cmd.id,
-        title: cmd.title,
-        pieces: splitCombo(formatKeybinding(binding.key, isMac)),
-      });
-      map.set(cmd.category, group);
-    }
-
-    if (goToThreadCandidates.length > 0) {
-      const first = goToThreadCandidates[0];
-      const sharedModifiers = first.pieces.slice(0, -1).join("+");
-      const uniform =
-        goToThreadCandidates.length === 9 &&
-        goToThreadCandidates.every((c, i) => c.digit === String(i + 1)) &&
-        goToThreadCandidates.every((c) => c.category === first.category) &&
-        goToThreadCandidates.every((c) => c.pieces.length >= 2) &&
-        goToThreadCandidates.every(
-          (c, i) =>
-            c.pieces.slice(0, -1).join("+") === sharedModifiers &&
-            c.pieces[c.pieces.length - 1] === String(i + 1),
-        );
-
-      if (uniform) {
-        const group = map.get(first.category) ?? [];
-        group.push({
-          key: "thread.goTo.range",
-          title: "Go to thread",
-          pieces: [...first.pieces.slice(0, -1), "1", "9"],
-        });
-        map.set(first.category, group);
-      } else {
-        // Non-uniform bindings — render each one individually so the dialog
-        // shows the user's actual configuration.
-        for (const c of goToThreadCandidates) {
-          const group = map.get(c.category) ?? [];
-          group.push({
-            key: `thread.goTo${c.digit}`,
-            title: c.title,
-            pieces: c.pieces,
-          });
-          map.set(c.category, group);
-        }
-      }
-    }
-
-    // Sort each category alphabetically by title for stability.
-    for (const rows of map.values()) {
-      rows.sort((a, b) => a.title.localeCompare(b.title));
-    }
-
-    return map;
+    return buildShortcutGroups();
   }, [open]);
 
   const orderedCategories = useMemo(() => {

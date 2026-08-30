@@ -286,6 +286,21 @@ interface BranchRefPickerProps {
   diffScopeRevision: number;
 }
 
+function BranchRefPickerPlaceholder({ children }: { children: string }) {
+  return <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">{children}</span>;
+}
+
+function BranchRefPickerContent({ comparison, onSelect }: { comparison: BranchComparison | null; onSelect: (target: string) => void }) {
+  const refs = comparison?.refs ?? [];
+  return <div className="flex min-w-0 max-w-[min(46vw,390px)] items-center gap-1 overflow-hidden" data-testid="branch-ref-picker" role="group" aria-label="Branch comparison range">
+    <CurrentRefChip value={comparison?.base ?? null} />
+    <div className="flex min-w-0 flex-1 items-center gap-0.5 border-l border-border/25 pl-1">
+      <span aria-hidden="true" data-testid="branch-range-arrow" className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/50"><ArrowRight size={12} strokeWidth={1.8} /></span>
+      <RefCombobox value={comparison?.target ?? null} refs={refs} onSelect={onSelect} />
+    </div>
+  </div>;
+}
+
 /**
  * The Branch view's operand control: a read-only current-branch chip on the left
  * and one selected comparison ref on the right. The stored pair is always
@@ -304,40 +319,10 @@ export function BranchRefPicker({
   const setBranchTarget = useDiffStore((s) => s.setBranchTarget);
 
   if (loading && !comparison) {
-    return (
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
-        Resolving
-      </span>
-    );
+    return <BranchRefPickerPlaceholder>Resolving</BranchRefPickerPlaceholder>;
   }
   if (comparison?.isUnborn) {
-    return (
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
-        No commits yet
-      </span>
-    );
+    return <BranchRefPickerPlaceholder>No commits yet</BranchRefPickerPlaceholder>;
   }
-
-  const refs = comparison?.refs ?? [];
-  return (
-    <div
-      className="flex min-w-0 max-w-[min(46vw,390px)] items-center gap-1 overflow-hidden"
-      data-testid="branch-ref-picker"
-      role="group"
-      aria-label="Branch comparison range"
-    >
-      <CurrentRefChip value={comparison?.base ?? null} />
-      {/* Target side: divider + arrow + picker share one hover surface (no nested chip). */}
-      <div className="flex min-w-0 flex-1 items-center gap-0.5 border-l border-border/25 pl-1">
-        <span
-          aria-hidden="true"
-          data-testid="branch-range-arrow"
-          className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/50"
-        >
-          <ArrowRight size={12} strokeWidth={1.8} />
-        </span>
-        <RefCombobox value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
-      </div>
-    </div>
-  );
+  return <BranchRefPickerContent comparison={comparison} onSelect={setBranchTarget} />;
 }

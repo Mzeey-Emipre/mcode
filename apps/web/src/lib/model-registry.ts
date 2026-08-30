@@ -235,6 +235,31 @@ const RETIRED_CODEX_MODEL_IDS: ReadonlySet<string> = new Set([
   "gpt-5.1-codex-mini",
 ]);
 
+function providerStaticFallback(providerId: string, catalog: ModelProvider | undefined): string {
+  if (providerId === "claude") return "claude-sonnet-4-6";
+  return catalog?.models[0]?.id ?? "claude-sonnet-4-6";
+}
+
+function matchesConfiguredProvider(
+  modelId: string,
+  providerId: string,
+  catalog: ModelProvider | undefined,
+): boolean {
+  if (catalog?.models.some((model) => model.id === modelId)) return true;
+  return findModelById(modelId)?.providerId === providerId;
+}
+
+function resolveDynamicModelId(
+  modelId: string,
+  providerId: string,
+  fallback: string,
+): string {
+  const definition = findModelById(modelId);
+  if (definition) return fallback;
+  if (providerId === "codex" && RETIRED_CODEX_MODEL_IDS.has(modelId)) return fallback;
+  return modelId;
+}
+
 /**
  * Return the default model ID from user settings. Empty or invalid values
  * resolve to a model that belongs to the configured provider (never a Claude
@@ -244,37 +269,19 @@ export function getDefaultModelId(): string {
   const { settings } = useSettingsStore.getState();
   const providerId = settings.model.defaults.provider ?? "claude";
   const catalog = MODEL_PROVIDERS.find((p) => p.id === providerId);
-  const providerStaticFallback =
-    providerId === "claude"
-      ? "claude-sonnet-4-6"
-      : (catalog?.models[0]?.id ?? "claude-sonnet-4-6");
+  const fallback = providerStaticFallback(providerId, catalog);
 
   const rawId = settings.model.defaults.id;
   if (!rawId?.trim()) {
-    return providerId === "claude" ? "claude-sonnet-4-6" : providerStaticFallback;
+    return fallback;
   }
 
   const id = rawId.trim();
+  if (matchesConfiguredProvider(id, providerId, catalog)) return id;
 
-  if (catalog?.models.some((m) => m.id === id)) {
-    return id;
-  }
-
-  const def = findModelById(id);
-  if (def?.providerId === providerId) {
-    return id;
-  }
-
-  // Dynamic provider models are valid persisted IDs even when not in the static registry,
-  // but only if the provider supports dynamic discovery and findModelById did not
-  // find the ID under a different provider.
-  // If it matched a different provider, the saved ID is stale from a provider switch.
-  if (!def) {
-    return providerId === "codex" && RETIRED_CODEX_MODEL_IDS.has(id)
-      ? providerStaticFallback
-      : id;
-  }
-  return providerStaticFallback;
+  // Dynamic provider models are valid persisted IDs when the static registry
+  // cannot resolve them. A static match for another provider is stale.
+  return resolveDynamicModelId(id, providerId, fallback);
 }
 
 /**

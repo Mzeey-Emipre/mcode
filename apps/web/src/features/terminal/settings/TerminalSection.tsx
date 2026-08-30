@@ -3,6 +3,8 @@ import type {
   TerminalCustomProfile,
   TerminalPreferencesUpdate,
   TerminalProfileReference,
+  TerminalProfileRecovery,
+  TerminalResolvedProfile,
   TerminalSettings,
 } from "@mcode/contracts";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useTerminalSettingsStore } from "./terminalSettingsStore";
+import { useTerminalSettingsStore, type TerminalWorkspaceOverride } from "./terminalSettingsStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { RangeControl } from "@/components/settings/RangeControl";
 import { SectionHeading } from "@/components/settings/SectionHeading";
@@ -134,15 +136,8 @@ function ProfileSelect({
   onChange: (value: string) => void;
   allowInherit?: boolean;
 }) {
-  const selectedCertified = certified.find((profile) => profile.id === value);
-  const selectedCustom = custom.find((profile) => profile.id === value);
-  const selectedLabel = value === INHERIT_PROFILE
-    ? "Use inherited global profile"
-    : value === "automatic"
-      ? "Automatic"
-      : selectedCertified?.name
-        ?? selectedCustom?.name
-        ?? `Unavailable: ${profileName(value as TerminalProfileReference)}`;
+  const selectedLabel = terminalProfileLabel(value, certified, custom);
+  const unavailable = terminalProfileUnavailable(value, certified, custom);
 
   return (
     <Select value={value} onValueChange={(next) => { if (next) onChange(next); }} disabled={disabled}>
@@ -154,12 +149,32 @@ function ProfileSelect({
         <SelectItem value="automatic">Automatic</SelectItem>
         {certified.map((profile) => <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>)}
         {custom.map((profile) => <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>)}
-        {value !== INHERIT_PROFILE && value !== "automatic" && !certified.some((profile) => profile.id === value) && !custom.some((profile) => profile.id === value) ? (
-          <SelectItem value={value}>{`Unavailable: ${profileName(value as TerminalProfileReference)}`}</SelectItem>
-        ) : null}
+        {unavailable ? <SelectItem value={value}>{`Unavailable: ${profileName(value as TerminalProfileReference)}`}</SelectItem> : null}
       </SelectContent>
     </Select>
   );
+}
+
+function terminalProfileLabel(
+  value: string,
+  certified: readonly { id: TerminalProfileReference; name: string }[],
+  custom: readonly TerminalCustomProfile[],
+): string {
+  if (value === INHERIT_PROFILE) return "Use inherited global profile";
+  if (value === "automatic") return "Automatic";
+  return certified.find((profile) => profile.id === value)?.name
+    ?? custom.find((profile) => profile.id === value)?.name
+    ?? `Unavailable: ${profileName(value as TerminalProfileReference)}`;
+}
+
+function terminalProfileUnavailable(
+  value: string,
+  certified: readonly { id: TerminalProfileReference; name: string }[],
+  custom: readonly TerminalCustomProfile[],
+): boolean {
+  if (value === INHERIT_PROFILE || value === "automatic") return false;
+  return !certified.some((profile) => profile.id === value)
+    && !custom.some((profile) => profile.id === value);
 }
 
 function PreferencesStatus({ pending, error }: { pending: boolean; error: string | null }) {
@@ -168,8 +183,58 @@ function PreferencesStatus({ pending, error }: { pending: boolean; error: string
   return null;
 }
 
-/** Complete global, workspace, presentation, behavior, and accessibility Terminal settings. */
-export function TerminalSection() {
+type TerminalProfileOption = {
+  readonly id: TerminalProfileReference;
+  readonly name: string;
+};
+
+interface TerminalSectionModel {
+  readonly activeWorkspaceId: string | null;
+  readonly certifiedProfiles: readonly TerminalResolvedProfile[];
+  readonly certifiedOptions: readonly TerminalProfileOption[];
+  readonly customProfiles: readonly TerminalCustomProfile[];
+  readonly recovery: TerminalProfileRecovery | null;
+  readonly profilesLoaded: boolean;
+  readonly profilesLoading: boolean;
+  readonly workspaceOverride: TerminalWorkspaceOverride | null;
+  readonly workspaceLoading: boolean;
+  readonly pending: boolean;
+  readonly error: string | null;
+  readonly deleteReferences: {
+    readonly globalDefault: boolean;
+    readonly workspaceIds: readonly string[];
+  } | null;
+  readonly globalDefault: TerminalProfileReference;
+  readonly workspaceValue: string;
+  readonly automaticProfile: TerminalResolvedProfile | undefined;
+  readonly selectedProfileUnavailable: boolean;
+  readonly terminalSettings: TerminalSettings;
+  readonly profileDialogOpen: boolean;
+  readonly editingProfile: TerminalCustomProfile | null;
+  readonly fontFamilyDraft: string;
+  readonly setFontFamilyDraft: (value: string) => void;
+  readonly commitFontFamily: () => void;
+  readonly selectGlobalProfile: (value: string) => void;
+  readonly selectWorkspaceProfile: (value: string) => void;
+  readonly resetWorkspaceProfile: () => void;
+  readonly openNewProfileDialog: () => void;
+  readonly openEditProfileDialog: (profile: TerminalCustomProfile) => void;
+  readonly setProfileDialogOpen: (open: boolean) => void;
+  readonly saveProfile: (input: Omit<TerminalCustomProfile, "id">, profileId?: string) => Promise<boolean>;
+  readonly deleteProfile: (profileId: string) => void;
+  readonly updatePresentation: <K extends keyof TerminalSettings["presentation"]>(
+    key: K,
+    value: TerminalSettings["presentation"][K],
+  ) => void;
+  readonly updateBehavior: <K extends keyof TerminalSettings["behavior"]>(
+    key: K,
+    value: TerminalSettings["behavior"][K],
+  ) => void;
+  readonly updateAccessibility: (mode: TerminalSettings["accessibility"]["screenReaderMode"]) => void;
+  readonly resetTerminalPreferences: () => void;
+}
+
+function useTerminalSectionModel(): TerminalSectionModel {
   const settings = useSettingsStore((state) => state.settings);
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
   const {
@@ -211,10 +276,9 @@ export function TerminalSection() {
   const globalDefault = recovery?.unavailableProfileId ?? settings.terminal.defaultProfileId;
   const workspaceValue = workspaceOverride?.defaultProfileId ?? INHERIT_PROFILE;
   const automaticProfile = certifiedProfiles[0];
-  const selectedProfileUnavailable = Boolean(recovery?.unavailableProfileId) || (globalDefault !== "automatic" && !certifiedProfiles.some((profile) => profile.id === globalDefault) && !customProfiles.some((profile) => profile.id === globalDefault));
+  const selectedProfileUnavailable = Boolean(recovery?.unavailableProfileId)
+    || terminalProfileUnavailable(globalDefault, certifiedOptions, customProfiles);
   const presentation = settings.terminal.presentation;
-  const behavior = settings.terminal.behavior;
-  const accessibility = settings.terminal.accessibility;
   useEffect(() => {
     setFontFamilyDraft(presentation.fontFamily);
   }, [presentation.fontFamily]);
@@ -234,352 +298,387 @@ export function TerminalSection() {
     }
   };
 
+  const selectWorkspaceProfile = (value: string) => {
+    if (!activeWorkspaceId) return;
+    if (value === INHERIT_PROFILE) {
+      void resetWorkspaceDefault(activeWorkspaceId);
+      return;
+    }
+    void setWorkspaceDefault(activeWorkspaceId, value as TerminalProfileReference);
+  };
+
+  const resetWorkspaceProfile = () => {
+    if (activeWorkspaceId) void resetWorkspaceDefault(activeWorkspaceId);
+  };
+
+  const saveProfile = (input: Omit<TerminalCustomProfile, "id">, profileId?: string) =>
+    profileId ? updateProfile({ ...input, profileId }) : createProfile(input);
+
+  return {
+    activeWorkspaceId,
+    certifiedProfiles,
+    certifiedOptions,
+    customProfiles,
+    recovery,
+    profilesLoaded,
+    profilesLoading,
+    workspaceOverride,
+    workspaceLoading,
+    pending,
+    error,
+    deleteReferences,
+    globalDefault,
+    workspaceValue,
+    automaticProfile,
+    selectedProfileUnavailable,
+    terminalSettings: settings.terminal,
+    profileDialogOpen,
+    editingProfile,
+    fontFamilyDraft,
+    setFontFamilyDraft,
+    commitFontFamily,
+    selectGlobalProfile: (value) => { void setGlobalDefault(value as TerminalProfileReference); },
+    selectWorkspaceProfile,
+    resetWorkspaceProfile,
+    openNewProfileDialog: () => {
+      setEditingProfile(null);
+      setProfileDialogOpen(true);
+    },
+    openEditProfileDialog: (profile) => {
+      setEditingProfile(profile);
+      setProfileDialogOpen(true);
+    },
+    setProfileDialogOpen,
+    saveProfile,
+    deleteProfile: (profileId) => { void deleteProfile(profileId); },
+    updatePresentation,
+    updateBehavior,
+    updateAccessibility: (mode) => update({ accessibility: { screenReaderMode: mode } }),
+    resetTerminalPreferences: () => {
+      clearError();
+      void resetPreferences(activeWorkspaceId ?? undefined);
+    },
+  };
+}
+
+function globalProfileHint(model: TerminalSectionModel): string | undefined {
+  if (model.globalDefault === "automatic" && model.automaticProfile) {
+    return `Automatic currently uses ${model.automaticProfile.name}.`;
+  }
+  if (model.selectedProfileUnavailable) return "The selected profile is unavailable. Choose another profile.";
+  return undefined;
+}
+
+function GlobalProfileDefault({ model }: { readonly model: TerminalSectionModel }) {
   return (
-    <div aria-busy={pending || profilesLoading || workspaceLoading}>
-      <SectionHeading>Terminal</SectionHeading>
-      <PreferencesStatus pending={pending} error={error} />
+    <SettingRow
+      label="Global default profile"
+      configKey="terminal.defaultProfileId"
+      hint={globalProfileHint(model)}
+    >
+      <ProfileSelect
+        value={model.globalDefault}
+        certified={model.certifiedOptions}
+        custom={model.customProfiles}
+        disabled={!model.profilesLoaded || model.pending}
+        onChange={model.selectGlobalProfile}
+      />
+    </SettingRow>
+  );
+}
 
-      <section aria-labelledby="terminal-profiles-heading">
-        <h2 id="terminal-profiles-heading" className="mb-1 px-1 text-sm font-semibold text-foreground">
-          Profiles and defaults
-        </h2>
-        <p className="mb-2 px-1 text-xs text-muted-foreground">Defaults apply to new terminals.</p>
-        <SettingRow
-          label="Global default profile"
-          configKey="terminal.defaultProfileId"
-          hint={
-            globalDefault === "automatic" && automaticProfile
-              ? `Automatic currently uses ${automaticProfile.name}.`
-              : selectedProfileUnavailable
-                ? "The selected profile is unavailable. Choose another profile."
-                : undefined
-          }
-        >
-          <ProfileSelect
-            value={globalDefault}
-            certified={certifiedOptions}
-            custom={customProfiles}
-            disabled={!profilesLoaded || pending}
-            onChange={(value) => void setGlobalDefault(value as TerminalProfileReference)}
-          />
-        </SettingRow>
-        {selectedProfileUnavailable ? (
-          <p role="alert" className="mx-1 border-b border-border/50 px-1 py-2 text-xs text-destructive">
-            Selected profile is unavailable: {globalDefault}
-          </p>
+function ProfileRecoveryNotices({ model }: { readonly model: TerminalSectionModel }) {
+  return (
+    <>
+      {model.selectedProfileUnavailable ? (
+        <p role="alert" className="mx-1 border-b border-border/50 px-1 py-2 text-xs text-destructive">
+          Selected profile is unavailable: {model.globalDefault}
+        </p>
+      ) : null}
+      {model.recovery ? (
+        <div role="alert" className="mx-1 border-b border-border/50 px-1 py-2 text-xs text-destructive">
+          Terminal settings need repair. Reset Terminal preferences to restore defaults.
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function WorkspaceProfileDefault({ model }: { readonly model: TerminalSectionModel }) {
+  if (!model.activeWorkspaceId) {
+    return <p className="border-b border-border/50 px-1 py-3 text-xs text-muted-foreground">Open a project to set a project default.</p>;
+  }
+
+  return (
+    <SettingRow
+      label="Project default profile"
+      configKey="terminal.workspace.defaultProfileId"
+      hint="Use the inherited global profile, or choose a project override."
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <ProfileSelect
+          value={model.workspaceValue}
+          certified={model.certifiedOptions}
+          custom={model.customProfiles}
+          disabled={!model.profilesLoaded || model.workspaceLoading || model.pending}
+          allowInherit
+          onChange={model.selectWorkspaceProfile}
+        />
+        {model.workspaceOverride ? (
+          <Button variant="ghost" size="sm" disabled={model.pending} onClick={model.resetWorkspaceProfile}>
+            Use inherited profile
+          </Button>
         ) : null}
-        {recovery ? (
-          <div role="alert" className="mx-1 border-b border-border/50 px-1 py-2 text-xs text-destructive">
-            Terminal settings need repair. Reset Terminal preferences to restore defaults.
-          </div>
-        ) : null}
-        {activeWorkspaceId ? (
-          <SettingRow
-            label="Project default profile"
-            configKey="terminal.workspace.defaultProfileId"
-            hint="Use the inherited global profile, or choose a project override."
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <ProfileSelect
-                value={workspaceValue}
-                certified={certifiedOptions}
-                custom={customProfiles}
-                disabled={!profilesLoaded || workspaceLoading || pending}
-                allowInherit
-                onChange={(value) =>
-                  value === INHERIT_PROFILE
-                    ? void resetWorkspaceDefault(activeWorkspaceId)
-                    : void setWorkspaceDefault(activeWorkspaceId, value as TerminalProfileReference)
-                }
-              />
-              {workspaceOverride ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={pending}
-                  onClick={() => void resetWorkspaceDefault(activeWorkspaceId)}
-                >
-                  Use inherited profile
-                </Button>
-              ) : null}
+      </div>
+    </SettingRow>
+  );
+}
+
+function CustomProfileRow({
+  profile,
+  pending,
+  onEdit,
+  onDelete,
+}: {
+  readonly profile: TerminalCustomProfile;
+  readonly pending: boolean;
+  readonly onEdit: (profile: TerminalCustomProfile) => void;
+  readonly onDelete: (profileId: string) => void;
+}) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border/50 px-3 py-2 text-xs">
+      <span className="min-w-0 truncate">
+        {profile.name}
+        <span className="ml-2 text-muted-foreground">{profile.executable}</span>
+      </span>
+      <span className="flex shrink-0 gap-1">
+        <Button variant="ghost" size="xs" disabled={pending} onClick={() => onEdit(profile)}>Edit</Button>
+        <Button variant="ghost" size="xs" disabled={pending} onClick={() => onDelete(profile.id)}>Delete</Button>
+      </span>
+    </div>
+  );
+}
+
+function ProfileDeleteReferences({ references }: {
+  readonly references: TerminalSectionModel["deleteReferences"];
+}) {
+  if (!references) return null;
+  return (
+    <div role="alert" className="mx-1 border-b border-border/50 px-1 py-2 text-xs text-destructive">
+      This profile is still in use.
+      {references.globalDefault ? " It is the global default." : ""}
+      {references.workspaceIds.length ? ` Project references: ${references.workspaceIds.join(", ")}.` : ""}
+    </div>
+  );
+}
+
+function TerminalProfileLists({ model }: { readonly model: TerminalSectionModel }) {
+  return (
+    <>
+      <SettingRow label="Certified profiles" hint="Detected profiles are read-only.">
+        <div className="grid min-w-52 gap-2 sm:min-w-64">
+          {model.profilesLoading && !model.profilesLoaded ? <p className="text-xs text-muted-foreground">Loading profiles…</p> : null}
+          {!model.profilesLoading && model.certifiedProfiles.length === 0 ? <p className="text-xs text-muted-foreground">No certified profiles detected.</p> : null}
+          {model.certifiedProfiles.map((profile) => (
+            <div key={profile.id} className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2 text-xs">
+              <span className="min-w-0 truncate">
+                {profile.name}
+                <span className="ml-2 text-muted-foreground">{profile.executable}</span>
+              </span>
+              <Badge variant="secondary" size="sm">Detected</Badge>
             </div>
-          </SettingRow>
-        ) : (
-          <p className="border-b border-border/50 px-1 py-3 text-xs text-muted-foreground">
-            Open a project to set a project default.
-          </p>
-        )}
-        <SettingRow label="Certified profiles" hint="Detected profiles are read-only.">
-          <div className="grid min-w-52 gap-2 sm:min-w-64">
-            {profilesLoading && !profilesLoaded ? (
-              <p className="text-xs text-muted-foreground">Loading profiles…</p>
-            ) : null}
-            {!profilesLoading && certifiedProfiles.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No certified profiles detected.</p>
-            ) : null}
-            {certifiedProfiles.map((profile) => (
-              <div
-                key={profile.id}
-                className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2 text-xs"
-              >
-                <span className="min-w-0 truncate">
-                  {profile.name}
-                  <span className="ml-2 text-muted-foreground">{profile.executable}</span>
-                </span>
-                <Badge variant="secondary" size="sm">Detected</Badge>
-              </div>
-            ))}
-          </div>
-        </SettingRow>
-        <SettingRow label="Custom profiles" hint="Custom profiles remain after a Terminal preference reset.">
-          <div className="grid min-w-52 gap-2 sm:min-w-64">
-            {customProfiles.map((profile) => (
-              <div
-                key={profile.id}
-                className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border/50 px-3 py-2 text-xs"
-              >
-                <span className="min-w-0 truncate">
-                  {profile.name}
-                  <span className="ml-2 text-muted-foreground">{profile.executable}</span>
-                </span>
-                <span className="flex shrink-0 gap-1">
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabled={pending}
-                    onClick={() => {
-                      setEditingProfile(profile);
-                      setProfileDialogOpen(true);
-                    }}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabled={pending}
-                    onClick={() => void deleteProfile(profile.id)}
-                  >
-                    Delete
-                  </Button>
-                </span>
-              </div>
-            ))}
-            {recovery?.blockedProfiles.map((profile) => (
-              <div
-                key={`recovered-${profile.id}`}
-                className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border/50 px-3 py-2 text-xs"
-              >
-                <span className="min-w-0 truncate">
-                  {profile.name}
-                  <span className="ml-2 text-muted-foreground">{profile.executable}</span>
-                </span>
-                <Badge variant="secondary" size="sm">Recovered</Badge>
-              </div>
-            ))}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pending || customProfiles.length >= 32}
-              onClick={() => {
-                setEditingProfile(null);
-                setProfileDialogOpen(true);
-              }}
-            >
-              Add custom profile
-            </Button>
-          </div>
-        </SettingRow>
-        {deleteReferences ? (
-          <div role="alert" className="mx-1 border-b border-border/50 px-1 py-2 text-xs text-destructive">
-            This profile is still in use.
-            {deleteReferences.globalDefault ? " It is the global default." : ""}
-            {deleteReferences.workspaceIds.length
-              ? ` Project references: ${deleteReferences.workspaceIds.join(", ")}.`
-              : ""}
-          </div>
-        ) : null}
-      </section>
+          ))}
+        </div>
+      </SettingRow>
+      <SettingRow label="Custom profiles" hint="Custom profiles remain after a Terminal preference reset.">
+        <div className="grid min-w-52 gap-2 sm:min-w-64">
+          {model.customProfiles.map((profile) => (
+            <CustomProfileRow
+              key={profile.id}
+              profile={profile}
+              pending={model.pending}
+              onEdit={model.openEditProfileDialog}
+              onDelete={model.deleteProfile}
+            />
+          ))}
+          {model.recovery?.blockedProfiles.map((profile) => (
+            <div key={`recovered-${profile.id}`} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border/50 px-3 py-2 text-xs">
+              <span className="min-w-0 truncate">
+                {profile.name}
+                <span className="ml-2 text-muted-foreground">{profile.executable}</span>
+              </span>
+              <Badge variant="secondary" size="sm">Recovered</Badge>
+            </div>
+          ))}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={model.pending || model.customProfiles.length >= 32}
+            onClick={model.openNewProfileDialog}
+          >
+            Add custom profile
+          </Button>
+        </div>
+      </SettingRow>
+      <ProfileDeleteReferences references={model.deleteReferences} />
+    </>
+  );
+}
 
-      <section aria-labelledby="terminal-presentation-heading">
-        <h2 id="terminal-presentation-heading" className="mb-1 mt-6 px-1 text-sm font-semibold text-foreground">
-          Presentation
-        </h2>
-        <SettingRow label="Font family" configKey="terminal.presentation.fontFamily" hint="Changes apply to new and open terminals.">
-          <Input
-            aria-label="Terminal font family"
-            value={fontFamilyDraft}
-            onChange={(event) => setFontFamilyDraft(event.target.value)}
-            onBlur={commitFontFamily}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                event.currentTarget.blur();
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setFontFamilyDraft(presentation.fontFamily);
-              }
-            }}
-            maxLength={128}
-            className={`${terminalFieldClassName} w-full sm:w-64`}
-          />
-        </SettingRow>
-        <SettingRow label="Font size" configKey="terminal.presentation.fontSize">
-          <SegControl
-            options={(["xs", "sm", "md", "lg", "xl"] as const).map((value) => ({
-              value,
-              label: value.toUpperCase(),
-              disabled: pending,
-            }))}
-            value={presentation.fontSize}
-            onChange={(value) => updatePresentation("fontSize", value as typeof presentation.fontSize)}
-          />
-        </SettingRow>
-        <SettingRow label="Line height" configKey="terminal.presentation.lineHeight">
-          <SegControl
-            options={(["compact", "normal", "relaxed"] as const).map((value) => ({
-              value,
-              label: value[0].toUpperCase() + value.slice(1),
-              disabled: pending,
-            }))}
-            value={presentation.lineHeight}
-            onChange={(value) => updatePresentation("lineHeight", value as typeof presentation.lineHeight)}
-          />
-        </SettingRow>
-        <SettingRow label="Cursor style" configKey="terminal.presentation.cursorStyle">
-          <SegControl
-            options={(["block", "underline", "bar"] as const).map((value) => ({
-              value,
-              label: value[0].toUpperCase() + value.slice(1),
-              disabled: pending,
-            }))}
-            value={presentation.cursorStyle}
-            onChange={(value) => updatePresentation("cursorStyle", value as typeof presentation.cursorStyle)}
-          />
-        </SettingRow>
-        <SettingRow label="Cursor blink" configKey="terminal.presentation.cursorBlink">
-          <Switch
-            aria-label="Cursor blink"
-            checked={presentation.cursorBlink}
-            disabled={pending}
-            onCheckedChange={(value) => updatePresentation("cursorBlink", value)}
-          />
-        </SettingRow>
-        <SettingRow label="Ligatures" configKey="terminal.presentation.ligatures">
-          <Switch
-            aria-label="Terminal ligatures"
-            checked={presentation.ligatures}
-            disabled={pending}
-            onCheckedChange={(value) => updatePresentation("ligatures", value)}
-          />
-        </SettingRow>
-      </section>
+function TerminalProfilesSection({ model }: { readonly model: TerminalSectionModel }) {
+  return (
+    <section aria-labelledby="terminal-profiles-heading">
+      <h2 id="terminal-profiles-heading" className="mb-1 px-1 text-sm font-semibold text-foreground">Profiles and defaults</h2>
+      <p className="mb-2 px-1 text-xs text-muted-foreground">Defaults apply to new terminals.</p>
+      <GlobalProfileDefault model={model} />
+      <ProfileRecoveryNotices model={model} />
+      <WorkspaceProfileDefault model={model} />
+      <TerminalProfileLists model={model} />
+    </section>
+  );
+}
 
-      <section aria-labelledby="terminal-behavior-heading">
-        <h2 id="terminal-behavior-heading" className="mb-1 mt-6 px-1 text-sm font-semibold text-foreground">
-          Behavior
-        </h2>
-        <SettingRow
-          label="Scrollback lines"
-          configKey="terminal.behavior.scrollback"
-          hint="Lines to retain in the buffer."
-        >
-          <RangeControl
-            ariaLabel="Scrollback lines"
-            min={100}
-            max={5000}
-            step={100}
-            value={behavior.scrollback}
-            onCommit={(value) => updateBehavior("scrollback", value)}
-          />
-        </SettingRow>
-        <SettingRow
-          label="Session limit"
-          configKey="terminal.behavior.sessionLimit"
-          hint="Maximum retained Terminal sessions."
-        >
-          <RangeControl
-            ariaLabel="Session limit"
-            min={1}
-            max={20}
-            value={behavior.sessionLimit}
-            onCommit={(value) => updateBehavior("sessionLimit", value)}
-          />
-        </SettingRow>
-        <SettingRow label="Confirm on kill" configKey="terminal.behavior.confirmOnKill">
-          <SegControl
-            options={[
-              { value: "never", label: "Never", disabled: pending },
-              { value: "withChildProcesses", label: "With child processes", disabled: pending },
-              { value: "always", label: "Always", disabled: pending },
-            ]}
-            value={behavior.confirmOnKill}
-            onChange={(value) => updateBehavior("confirmOnKill", value as typeof behavior.confirmOnKill)}
-          />
-        </SettingRow>
-        <SettingRow label="Copy on select" configKey="terminal.behavior.copyOnSelect">
-          <Switch
-            aria-label="Copy on select"
-            checked={behavior.copyOnSelect}
-            disabled={pending}
-            onCheckedChange={(value) => updateBehavior("copyOnSelect", value)}
-          />
-        </SettingRow>
-        <SettingRow label="Confirm multiline paste" configKey="terminal.behavior.confirmMultilinePaste">
-          <Switch
-            aria-label="Confirm multiline paste"
-            checked={behavior.confirmMultilinePaste}
-            disabled={pending}
-            onCheckedChange={(value) => updateBehavior("confirmMultilinePaste", value)}
-          />
-        </SettingRow>
-      </section>
+function handleFontFamilyKey(
+  event: React.KeyboardEvent<HTMLInputElement>,
+  resetFontFamilyDraft: () => void,
+): void {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    event.currentTarget.blur();
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    resetFontFamilyDraft();
+  }
+}
 
-      <section aria-labelledby="terminal-accessibility-heading">
-        <h2 id="terminal-accessibility-heading" className="mb-1 mt-6 px-1 text-sm font-semibold text-foreground">
-          Accessibility
-        </h2>
-        <SettingRow
-          label="Screen reader"
-          configKey="terminal.accessibility.screenReaderMode"
-          hint="Automatic uses the terminal default."
-        >
-          <SegControl
-            options={[
-              { value: "off", label: "Off", disabled: pending },
-              { value: "auto", label: "Automatic", disabled: pending },
-              { value: "on", label: "On", disabled: pending },
-            ]}
-            value={accessibility.screenReaderMode}
-            onChange={(value) =>
-              update({ accessibility: { screenReaderMode: value as typeof accessibility.screenReaderMode } })
-            }
-          />
-        </SettingRow>
-      </section>
+function TerminalPresentationSection({ model }: { readonly model: TerminalSectionModel }) {
+  const presentation = model.terminalSettings.presentation;
+  return (
+    <section aria-labelledby="terminal-presentation-heading">
+      <h2 id="terminal-presentation-heading" className="mb-1 mt-6 px-1 text-sm font-semibold text-foreground">Presentation</h2>
+      <SettingRow label="Font family" configKey="terminal.presentation.fontFamily" hint="Changes apply to new and open terminals.">
+        <Input
+          aria-label="Terminal font family"
+          value={model.fontFamilyDraft}
+          onChange={(event) => model.setFontFamilyDraft(event.target.value)}
+          onBlur={model.commitFontFamily}
+          onKeyDown={(event) => handleFontFamilyKey(event, () => model.setFontFamilyDraft(presentation.fontFamily))}
+          maxLength={128}
+          className={`${terminalFieldClassName} w-full sm:w-64`}
+        />
+      </SettingRow>
+      <SettingRow label="Font size" configKey="terminal.presentation.fontSize">
+        <SegControl
+          options={(["xs", "sm", "md", "lg", "xl"] as const).map((value) => ({ value, label: value.toUpperCase(), disabled: model.pending }))}
+          value={presentation.fontSize}
+          onChange={(value) => model.updatePresentation("fontSize", value as typeof presentation.fontSize)}
+        />
+      </SettingRow>
+      <SettingRow label="Line height" configKey="terminal.presentation.lineHeight">
+        <SegControl
+          options={(["compact", "normal", "relaxed"] as const).map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1), disabled: model.pending }))}
+          value={presentation.lineHeight}
+          onChange={(value) => model.updatePresentation("lineHeight", value as typeof presentation.lineHeight)}
+        />
+      </SettingRow>
+      <SettingRow label="Cursor style" configKey="terminal.presentation.cursorStyle">
+        <SegControl
+          options={(["block", "underline", "bar"] as const).map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1), disabled: model.pending }))}
+          value={presentation.cursorStyle}
+          onChange={(value) => model.updatePresentation("cursorStyle", value as typeof presentation.cursorStyle)}
+        />
+      </SettingRow>
+      <SettingRow label="Cursor blink" configKey="terminal.presentation.cursorBlink">
+        <Switch aria-label="Cursor blink" checked={presentation.cursorBlink} disabled={model.pending} onCheckedChange={(value) => model.updatePresentation("cursorBlink", value)} />
+      </SettingRow>
+      <SettingRow label="Ligatures" configKey="terminal.presentation.ligatures">
+        <Switch aria-label="Terminal ligatures" checked={presentation.ligatures} disabled={model.pending} onCheckedChange={(value) => model.updatePresentation("ligatures", value)} />
+      </SettingRow>
+    </section>
+  );
+}
 
+function TerminalBehaviorSection({ model }: { readonly model: TerminalSectionModel }) {
+  const behavior = model.terminalSettings.behavior;
+  return (
+    <section aria-labelledby="terminal-behavior-heading">
+      <h2 id="terminal-behavior-heading" className="mb-1 mt-6 px-1 text-sm font-semibold text-foreground">Behavior</h2>
+      <SettingRow label="Scrollback lines" configKey="terminal.behavior.scrollback" hint="Lines to retain in the buffer.">
+        <RangeControl ariaLabel="Scrollback lines" min={100} max={5000} step={100} value={behavior.scrollback} onCommit={(value) => model.updateBehavior("scrollback", value)} />
+      </SettingRow>
+      <SettingRow label="Session limit" configKey="terminal.behavior.sessionLimit" hint="Maximum retained Terminal sessions.">
+        <RangeControl ariaLabel="Session limit" min={1} max={20} value={behavior.sessionLimit} onCommit={(value) => model.updateBehavior("sessionLimit", value)} />
+      </SettingRow>
+      <SettingRow label="Confirm on kill" configKey="terminal.behavior.confirmOnKill">
+        <SegControl
+          options={[
+            { value: "never", label: "Never", disabled: model.pending },
+            { value: "withChildProcesses", label: "With child processes", disabled: model.pending },
+            { value: "always", label: "Always", disabled: model.pending },
+          ]}
+          value={behavior.confirmOnKill}
+          onChange={(value) => model.updateBehavior("confirmOnKill", value as typeof behavior.confirmOnKill)}
+        />
+      </SettingRow>
+      <SettingRow label="Copy on select" configKey="terminal.behavior.copyOnSelect">
+        <Switch aria-label="Copy on select" checked={behavior.copyOnSelect} disabled={model.pending} onCheckedChange={(value) => model.updateBehavior("copyOnSelect", value)} />
+      </SettingRow>
+      <SettingRow label="Confirm multiline paste" configKey="terminal.behavior.confirmMultilinePaste">
+        <Switch aria-label="Confirm multiline paste" checked={behavior.confirmMultilinePaste} disabled={model.pending} onCheckedChange={(value) => model.updateBehavior("confirmMultilinePaste", value)} />
+      </SettingRow>
+    </section>
+  );
+}
+
+function TerminalAccessibilitySection({ model }: { readonly model: TerminalSectionModel }) {
+  const accessibility = model.terminalSettings.accessibility;
+  return (
+    <section aria-labelledby="terminal-accessibility-heading">
+      <h2 id="terminal-accessibility-heading" className="mb-1 mt-6 px-1 text-sm font-semibold text-foreground">Accessibility</h2>
+      <SettingRow label="Screen reader" configKey="terminal.accessibility.screenReaderMode" hint="Automatic uses the terminal default.">
+        <SegControl
+          options={[
+            { value: "off", label: "Off", disabled: model.pending },
+            { value: "auto", label: "Automatic", disabled: model.pending },
+            { value: "on", label: "On", disabled: model.pending },
+          ]}
+          value={accessibility.screenReaderMode}
+          onChange={(value) => model.updateAccessibility(value as typeof accessibility.screenReaderMode)}
+        />
+      </SettingRow>
+    </section>
+  );
+}
+
+function TerminalSectionContent({ model }: { readonly model: TerminalSectionModel }) {
+  return (
+    <div aria-busy={model.pending || model.profilesLoading || model.workspaceLoading}>
+      <SectionHeading>Terminal</SectionHeading>
+      <PreferencesStatus pending={model.pending} error={model.error} />
+      <TerminalProfilesSection model={model} />
+      <TerminalPresentationSection model={model} />
+      <TerminalBehaviorSection model={model} />
+      <TerminalAccessibilitySection model={model} />
       <div className="mt-6 flex justify-end border-t border-border/50 px-1 pt-4">
-        <Button
-          variant="outline"
-          disabled={pending}
-          onClick={() => {
-            clearError();
-            void resetPreferences(activeWorkspaceId ?? undefined);
-          }}
-        >
+        <Button variant="outline" disabled={model.pending} onClick={model.resetTerminalPreferences}>
           Reset Terminal preferences
         </Button>
       </div>
       <ProfileDialog
-        open={profileDialogOpen}
-        profile={editingProfile}
-        pending={pending}
-        onOpenChange={setProfileDialogOpen}
-        onSubmit={(input, profileId) =>
-          profileId ? updateProfile({ ...input, profileId }) : createProfile(input)
-        }
+        open={model.profileDialogOpen}
+        profile={model.editingProfile}
+        pending={model.pending}
+        onOpenChange={model.setProfileDialogOpen}
+        onSubmit={model.saveProfile}
       />
     </div>
   );
+}
+
+/** Complete global, workspace, presentation, behavior, and accessibility Terminal settings. */
+export function TerminalSection() {
+  const model = useTerminalSectionModel();
+
+  return <TerminalSectionContent model={model} />;
 }

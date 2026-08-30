@@ -34,48 +34,136 @@ export interface PullRequestDiffHighlightResult {
   pending: boolean;
 }
 
+interface HighlightTokenState {
+  tokenMap: ReadonlyMap<string, TokenSpan[]>;
+  truncatedLineKeys: ReadonlySet<string>;
+  tokenBytes: number;
+}
+
+function visibleHighlightRows(
+  rows: readonly PullRequestDiffRow[],
+  range: PullRequestDiffHighlightRange,
+): readonly PullRequestDiffRow[] {
+  if (rows.length === 0 || range.endIndex < range.startIndex) return [];
+  const start = Math.max(0, range.startIndex - HIGHLIGHT_CONTEXT_ROWS);
+  const end = Math.min(rows.length, range.endIndex + HIGHLIGHT_CONTEXT_ROWS + 1);
+  return rows.slice(start, end);
+}
+
+function addHighlightCell(
+  blocks: Map<string, PullRequestDiffHighlightBlock>,
+  row: Extract<PullRequestDiffRow, { kind: "line" }>,
+  cell: ReturnType<typeof getPullRequestDiffCell>,
+  language: string,
+  theme: ShikiTheme,
+  sourceLineCount: number,
+): number {
+  if (cell.type === "empty" || sourceLineCount >= MAX_WINDOW_SOURCE_LINES)
+    return sourceLineCount;
+  const groupKey = `${row.path}:${row.hunkIndex}:${cell.side}`;
+  let block = blocks.get(groupKey);
+  if (!block) {
+    block = {
+      blockId: `pr-window:${encodeURIComponent(groupKey)}`,
+      path: row.path,
+      lineKeys: [],
+      lines: [],
+      language,
+      theme,
+    };
+    blocks.set(groupKey, block);
+  }
+  block.lineKeys.push(cell.key);
+  block.lines.push(cell.content);
+  return sourceLineCount + 1;
+}
+
+function appendHighlightRow(
+  blocks: Map<string, PullRequestDiffHighlightBlock>,
+  row: PullRequestDiffRow,
+  theme: ShikiTheme,
+  sourceLineCount: number,
+): number {
+  if (row.kind !== "line") return sourceLineCount;
+  const language = langFromPath(row.path);
+  if (language === "text") return sourceLineCount;
+  return [getPullRequestDiffCell(row, "left"), getPullRequestDiffCell(row, "right")].reduce(
+    (count, cell) => addHighlightCell(blocks, row, cell, language, theme, count),
+    sourceLineCount,
+  );
+}
+
 /** Builds coherent side-and-hunk blocks for only the visible virtual row window. */
 export function buildPullRequestHighlightWindow(
   rows: readonly PullRequestDiffRow[],
   range: PullRequestDiffHighlightRange,
   theme: ShikiTheme,
 ): PullRequestDiffHighlightBlock[] {
-  if (rows.length === 0 || range.endIndex < range.startIndex) return [];
-  const start = Math.max(0, range.startIndex - HIGHLIGHT_CONTEXT_ROWS);
-  const end = Math.min(rows.length - 1, range.endIndex + HIGHLIGHT_CONTEXT_ROWS);
   const grouped = new Map<string, PullRequestDiffHighlightBlock>();
   let sourceLineCount = 0;
-
-  for (let index = start; index <= end; index += 1) {
-    const row = rows[index];
-    if (row?.kind !== "line") continue;
-    const language = langFromPath(row.path);
-    if (language === "text") continue;
-    for (const cell of [
-      getPullRequestDiffCell(row, "left"),
-      getPullRequestDiffCell(row, "right"),
-    ]) {
-      if (cell.type === "empty" || sourceLineCount >= MAX_WINDOW_SOURCE_LINES) continue;
-      const groupKey = `${row.path}:${row.hunkIndex}:${cell.side}`;
-      let block = grouped.get(groupKey);
-      if (!block) {
-        block = {
-          blockId: `pr-window:${encodeURIComponent(groupKey)}`,
-          path: row.path,
-          lineKeys: [],
-          lines: [],
-          language,
-          theme,
-        };
-        grouped.set(groupKey, block);
-      }
-      block.lineKeys.push(cell.key);
-      block.lines.push(cell.content);
-      sourceLineCount += 1;
-    }
-  }
-
+  for (const row of visibleHighlightRows(rows, range))
+    sourceLineCount = appendHighlightRow(grouped, row, theme, sourceLineCount);
   return [...grouped.values()];
+}
+
+function currentHighlightResponse(
+  requestId: string | null,
+  id: string,
+  generation: number,
+): boolean {
+  return requestId === id && workerGeneration === generation;
+}
+
+function validHighlightResponse(
+  response: unknown,
+): PullRequestDiffTokenizeResponse | null {
+  const result = response as PullRequestDiffTokenizeResponse | null;
+  return result && result.type === "tokenize-diff-window" && !result.error ? result : null;
+}
+
+function responseBytesByPath(
+  result: PullRequestDiffTokenizeResponse,
+  blockPaths: ReadonlyMap<string, string>,
+): Map<string, number> {
+  const bytesByPath = new Map<string, number>();
+  for (const block of result.results) {
+    const path = blockPaths.get(block.blockId);
+    if (path) bytesByPath.set(path, (bytesByPath.get(path) ?? 0) + block.tokenBytes);
+  }
+  return bytesByPath;
+}
+
+function acceptedHighlightPaths(
+  bytesByPath: ReadonlyMap<string, number>,
+  onTokenBytesChange: ((path: string, bytes: number) => boolean) | undefined,
+): Set<string> {
+  const accepted = new Set<string>();
+  for (const [path, bytes] of bytesByPath) {
+    if (onTokenBytesChange?.(path, bytes) !== false) accepted.add(path);
+    else onTokenBytesChange?.(path, 0);
+  }
+  return accepted;
+}
+
+function acceptedHighlightTokenState(
+  result: PullRequestDiffTokenizeResponse,
+  blockPaths: ReadonlyMap<string, string>,
+  acceptedPaths: ReadonlySet<string>,
+): HighlightTokenState {
+  const tokenMap = new Map<string, TokenSpan[]>();
+  const truncatedLineKeys = new Set<string>();
+  let tokenBytes = 0;
+  for (const block of result.results) {
+    const path = blockPaths.get(block.blockId);
+    if (!path || !acceptedPaths.has(path) || block.error) continue;
+    tokenBytes += block.tokenBytes;
+    block.lineKeys.forEach((lineKey, index) => {
+      const tokens = block.lines[index];
+      if (tokens) tokenMap.set(lineKey, tokens);
+    });
+    for (const lineKey of block.truncatedLineKeys) truncatedLineKeys.add(lineKey);
+  }
+  return { tokenMap, truncatedLineKeys, tokenBytes };
 }
 
 function blockSignature(blocks: readonly PullRequestDiffHighlightBlock[]): string {
@@ -158,48 +246,19 @@ export function usePullRequestDiffHighlighter(
       requestBlocks.map((block) => [block.blockId, block.path]),
     );
     pending.set(id, (response) => {
-      if (
-        requestIdRef.current !== id ||
-        workerGeneration !== generationAtRequest
-      ) {
-        return;
-      }
+      if (!currentHighlightResponse(requestIdRef.current, id, generationAtRequest)) return;
       setIsPending(false);
-      const result = response as PullRequestDiffTokenizeResponse | null;
-      if (!result || result.type !== "tokenize-diff-window" || result.error) return;
-
-      const bytesByPath = new Map<string, number>();
-      for (const block of result.results) {
-        const path = blockPaths.get(block.blockId);
-        if (!path) continue;
-        bytesByPath.set(path, (bytesByPath.get(path) ?? 0) + block.tokenBytes);
-      }
-      const acceptedPaths = new Set<string>();
-      for (const [path, bytes] of bytesByPath) {
-        if (onTokenBytesChangeRef.current?.(path, bytes) !== false) {
-          acceptedPaths.add(path);
-        } else {
-          onTokenBytesChangeRef.current?.(path, 0);
-        }
-      }
+      const result = validHighlightResponse(response);
+      if (!result) return;
+      const acceptedPaths = acceptedHighlightPaths(
+        responseBytesByPath(result, blockPaths),
+        onTokenBytesChangeRef.current,
+      );
       reportClearedPaths(acceptedPaths);
-
-      const nextTokens = new Map<string, TokenSpan[]>();
-      const nextTruncated = new Set<string>();
-      let acceptedBytes = 0;
-      for (const block of result.results) {
-        const path = blockPaths.get(block.blockId);
-        if (!path || !acceptedPaths.has(path) || block.error) continue;
-        acceptedBytes += block.tokenBytes;
-        for (let index = 0; index < block.lineKeys.length; index += 1) {
-          const tokens = block.lines[index];
-          if (tokens) nextTokens.set(block.lineKeys[index], tokens);
-        }
-        for (const lineKey of block.truncatedLineKeys) nextTruncated.add(lineKey);
-      }
-      setTokenMap(nextTokens);
-      setTruncatedLineKeys(nextTruncated);
-      setTokenBytes(acceptedBytes);
+      const next = acceptedHighlightTokenState(result, blockPaths, acceptedPaths);
+      setTokenMap(next.tokenMap);
+      setTruncatedLineKeys(next.truncatedLineKeys);
+      setTokenBytes(next.tokenBytes);
     });
 
     worker.postMessage({

@@ -248,65 +248,70 @@ export class AuxiliaryHydrator {
 
     void this.transport()
       .listSnapshots(threadId)
-      .then((snapshots) => {
-        if (snapshots.length === 0) return;
-
-        const state = this.deps.getState();
-        const record = getThreadRecord(state.records, threadId);
-        if (expectedLoadEpoch != null && (
-          state.currentThreadId !== threadId
-          || record.loadEpoch !== expectedLoadEpoch
-        )) return;
-
-        const latestCached = getCachedRecord(threadId);
-        if (!latestCached) return;
-        const liveState = this.deps.getState();
-        const liveRecord = getThreadRecord(liveState.records, threadId);
-        const ownsLiveFileEffects = liveRecord.fileEffectTurnId.length > 0
-          || liveState.runningThreadIds.has(threadId);
-
-        const fileChanges = SnapshotBuilder.deriveFileChanges(snapshots);
-        if (
-          Object.keys(fileChanges.persistedFilesChanged).length === 0
-          && fileChanges.fileEffectSummary.fileCount === 0
-        ) return;
-
-        cacheRecord(threadId, {
-          ...latestCached,
-          persistedFilesChanged: {
-            ...latestCached.persistedFilesChanged,
-            ...fileChanges.persistedFilesChanged,
-          },
-          latestTurnWithChanges: fileChanges.latestTurnWithChanges,
-          ...(!ownsLiveFileEffects
-            ? { settledFileEffectSummary: fileChanges.fileEffectSummary }
-            : {}),
-        });
-
-        if (!commitToStore) return;
-        const { getState, setState } = this.deps;
-        if (getState().currentThreadId !== threadId) return;
-
-        setState((state: ThreadHydratorWriteState) => {
-          if (state.currentThreadId !== threadId) return {};
-          const rec = getThreadRecord(state.records, threadId);
-          if (expectedLoadEpoch != null && rec.loadEpoch !== expectedLoadEpoch) return {};
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              persistedFilesChanged: {
-                ...rec.persistedFilesChanged,
-                ...fileChanges.persistedFilesChanged,
-              },
-              latestTurnWithChanges: fileChanges.latestTurnWithChanges,
-              ...(rec.fileEffectTurnId.length === 0 && !state.runningThreadIds.has(threadId)
-                ? { fileEffectSummary: fileChanges.fileEffectSummary }
-                : {}),
-            }),
-          };
-        });
-      })
+      .then((snapshots) => this.applyFileChangeSnapshots(threadId, snapshots, commitToStore, expectedLoadEpoch))
       .catch(() => {
         /* non-critical */
       });
+  }
+
+  private applyFileChangeSnapshots(
+    threadId: string,
+    snapshots: Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>,
+    commitToStore: boolean,
+    expectedLoadEpoch: number | undefined,
+  ): void {
+    if (snapshots.length === 0 || !this.fileChangeSnapshotRequestIsCurrent(threadId, expectedLoadEpoch)) return;
+    const cached = getCachedRecord(threadId);
+    if (!cached) return;
+    const fileChanges = SnapshotBuilder.deriveFileChanges(snapshots);
+    if (!this.hasFileChanges(fileChanges)) return;
+    this.cacheFileChanges(threadId, cached, fileChanges);
+    if (commitToStore) this.commitFileChanges(threadId, fileChanges, expectedLoadEpoch);
+  }
+
+  private fileChangeSnapshotRequestIsCurrent(threadId: string, expectedLoadEpoch: number | undefined): boolean {
+    if (expectedLoadEpoch === undefined) return true;
+    const state = this.deps.getState();
+    return state.currentThreadId === threadId && getThreadRecord(state.records, threadId).loadEpoch === expectedLoadEpoch;
+  }
+
+  private hasFileChanges(fileChanges: ReturnType<typeof SnapshotBuilder.deriveFileChanges>): boolean {
+    return Object.keys(fileChanges.persistedFilesChanged).length > 0 || fileChanges.fileEffectSummary.fileCount > 0;
+  }
+
+  private cacheFileChanges(
+    threadId: string,
+    cached: NonNullable<ReturnType<typeof getCachedRecord>>,
+    fileChanges: ReturnType<typeof SnapshotBuilder.deriveFileChanges>,
+  ): void {
+    const state = this.deps.getState();
+    const record = getThreadRecord(state.records, threadId);
+    const ownsLiveEffects = record.fileEffectTurnId.length > 0 || state.runningThreadIds.has(threadId);
+    cacheRecord(threadId, {
+      ...cached,
+      persistedFilesChanged: { ...cached.persistedFilesChanged, ...fileChanges.persistedFilesChanged },
+      latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+      ...(!ownsLiveEffects ? { settledFileEffectSummary: fileChanges.fileEffectSummary } : {}),
+    });
+  }
+
+  private commitFileChanges(
+    threadId: string,
+    fileChanges: ReturnType<typeof SnapshotBuilder.deriveFileChanges>,
+    expectedLoadEpoch: number | undefined,
+  ): void {
+    if (this.deps.getState().currentThreadId !== threadId) return;
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      const record = getThreadRecord(state.records, threadId);
+      if (state.currentThreadId !== threadId || (expectedLoadEpoch !== undefined && record.loadEpoch !== expectedLoadEpoch)) return {};
+      const ownsLiveEffects = record.fileEffectTurnId.length > 0 || state.runningThreadIds.has(threadId);
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          persistedFilesChanged: { ...record.persistedFilesChanged, ...fileChanges.persistedFilesChanged },
+          latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+          ...(!ownsLiveEffects ? { fileEffectSummary: fileChanges.fileEffectSummary } : {}),
+        }),
+      };
+    });
   }
 }

@@ -62,6 +62,24 @@ function StatusDot({ hasError, hasRunning }: { hasError: boolean; hasRunning: bo
   return <span className="size-1.5 rounded-full bg-diff-add-strong" />;
 }
 
+function HookStatusDetails({ hook }: { hook: HookExecution }) {
+  if (hook.status === "running") return <ElapsedTimer startedAt={hook.startedAt} />;
+  if (hook.status === "completed" && hook.durationMs != null) {
+    return <span className="font-mono tabular-nums text-xs text-muted-foreground">{formatDuration(hook.durationMs)}</span>;
+  }
+  return null;
+}
+
+function HookFailureDetails({ hook }: { hook: HookExecution }) {
+  if (hook.status === "completed" && hook.exitCode != null && hook.exitCode !== 0) {
+    return <span className="font-mono text-xs px-1 rounded bg-diff-remove-strong/15 text-diff-remove-strong">exit {hook.exitCode}</span>;
+  }
+  if (hook.didBlock) {
+    return <span className="font-mono text-xs tracking-[0.12em] uppercase text-diff-remove-strong">blocked</span>;
+  }
+  return null;
+}
+
 /** Shared row content for a single hook execution (name, trigger, status badges). */
 function HookRowContent({ hook, hasOutput, detailOpen }: { hook: HookExecution; hasOutput: boolean; detailOpen: boolean }) {
   return (
@@ -84,24 +102,8 @@ function HookRowContent({ hook, hasOutput, detailOpen }: { hook: HookExecution; 
         </span>
       )}
       <span className="ml-auto flex items-center gap-1.5 shrink-0">
-        {hook.status === "running" && (
-          <ElapsedTimer startedAt={hook.startedAt} />
-        )}
-        {hook.status === "completed" && hook.durationMs != null && (
-          <span className="font-mono tabular-nums text-xs text-muted-foreground">
-            {formatDuration(hook.durationMs)}
-          </span>
-        )}
-        {hook.status === "completed" && hook.exitCode != null && hook.exitCode !== 0 && (
-          <span className="font-mono text-xs px-1 rounded bg-diff-remove-strong/15 text-diff-remove-strong">
-            exit {hook.exitCode}
-          </span>
-        )}
-        {hook.didBlock && (
-          <span className="font-mono text-xs tracking-[0.12em] uppercase text-diff-remove-strong">
-            blocked
-          </span>
-        )}
+        <HookStatusDetails hook={hook} />
+        <HookFailureDetails hook={hook} />
       </span>
     </>
   );

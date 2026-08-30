@@ -8,6 +8,22 @@ import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { getTransport } from "@/transport";
 import { registerCommand } from "@/lib/command-registry";
 
+interface SummaryRecord {
+  readonly id: string;
+  readonly threadId: string;
+  readonly content: string;
+  readonly turnCount: number;
+  readonly lastTurnId: string | null;
+  readonly model: string;
+  readonly createdAt: string;
+}
+
+interface SummaryActions {
+  readonly onCancel: () => void;
+  readonly onCopy: () => Promise<void>;
+  readonly onGenerate: () => Promise<void>;
+}
+
 /**
  * Format an ISO timestamp as a short relative time string (e.g. "2h ago").
  * Returns "just now" for timestamps within the last minute.
@@ -170,180 +186,279 @@ export function SummaryView() {
     });
   }, []);
 
-  const hasSummary = summaryRecord && summaryRecord.threadId === activeThreadId;
+  const summary = summaryRecord?.threadId === activeThreadId ? summaryRecord : null;
+  const state = getSummaryViewState(summaryLoading, summary);
+  return (
+    <SummaryContent
+      actions={{ onCancel: handleCancel, onCopy: handleCopy, onGenerate: handleGenerate }}
+      activeThreadId={activeThreadId}
+      copied={copied}
+      error={error}
+      hasFileChanges={hasFileChanges}
+      newTurnCount={newTurnCount}
+      state={state}
+      summary={summary}
+    />
+  );
+}
 
-  // Regenerating state — preserve old summary with overlay
-  if (summaryLoading && hasSummary) {
-    return (
-      <div className="relative flex flex-col gap-3 p-4">
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/80">
-          <div className="flex items-center gap-1.5" role="status" aria-live="polite" aria-busy="true">
-            {[0, 150, 300].map((delay) => (
-              <div
-                key={delay}
-                className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
-                style={{ animationDelay: `${delay}ms` }}
-              />
-            ))}
-          </div>
-          <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-muted-foreground/40">
-            Regenerating
+type SummaryViewState = "empty" | "loading" | "regenerating" | "rendered";
+
+function getSummaryViewState(
+  loading: boolean,
+  summary: SummaryRecord | null,
+): SummaryViewState {
+  if (!loading) return summary ? "rendered" : "empty";
+  return summary ? "regenerating" : "loading";
+}
+
+function SummaryContent({
+  actions,
+  activeThreadId,
+  copied,
+  error,
+  hasFileChanges,
+  newTurnCount,
+  state,
+  summary,
+}: {
+  readonly actions: SummaryActions;
+  readonly activeThreadId: string | null;
+  readonly copied: boolean;
+  readonly error: string | null;
+  readonly hasFileChanges: boolean;
+  readonly newTurnCount: number;
+  readonly state: SummaryViewState;
+  readonly summary: SummaryRecord | null;
+}) {
+  switch (state) {
+    case "loading":
+      return <InitialSummaryLoading onCancel={actions.onCancel} />;
+    case "regenerating":
+      return <RegeneratingSummary onCancel={actions.onCancel} summary={summary!} />;
+    case "rendered":
+      return (
+        <RenderedSummary
+          actions={actions}
+          copied={copied}
+          error={error}
+          newTurnCount={newTurnCount}
+          summary={summary!}
+        />
+      );
+    case "empty":
+      return (
+        <EmptySummary
+          activeThreadId={activeThreadId}
+          error={error}
+          hasFileChanges={hasFileChanges}
+          onGenerate={actions.onGenerate}
+        />
+      );
+  }
+}
+
+function SummaryDots() {
+  return (
+    <div className="flex items-center gap-1.5">
+      {[0, 150, 300].map((delay) => (
+        <div
+          key={delay}
+          className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SummaryError({ error }: { readonly error: string | null }) {
+  if (!error) return null;
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-destructive" role="alert">
+      <AlertCircle size={12} aria-hidden="true" />
+      <span>{error}</span>
+    </div>
+  );
+}
+
+function RegeneratingSummary({
+  onCancel,
+  summary,
+}: {
+  readonly onCancel: () => void;
+  readonly summary: SummaryRecord;
+}) {
+  return (
+    <div className="relative flex flex-col gap-3 p-4">
+      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/80">
+        <div role="status" aria-live="polite" aria-busy="true">
+          <SummaryDots />
+        </div>
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-muted-foreground/40">
+          Regenerating
+        </span>
+        <CancelSummaryButton onCancel={onCancel} />
+      </div>
+      <div className="prose prose-sm dark:prose-invert text-[13px] leading-relaxed opacity-40">
+        <MarkdownContent content={summary.content} />
+      </div>
+      <div className="flex items-center justify-between border-t border-border/30 pt-3">
+        <span className="text-[11px] text-muted-foreground truncate max-w-[200px]" title={summary.model}>
+          {summary.model}
+        </span>
+        <SummaryTiming summary={summary} />
+      </div>
+    </div>
+  );
+}
+
+function InitialSummaryLoading({ onCancel }: { readonly onCancel: () => void }) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center gap-3 py-14"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <SummaryDots />
+      <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-muted-foreground/40">
+        Summarizing
+      </span>
+      <CancelSummaryButton onCancel={onCancel} />
+    </div>
+  );
+}
+
+function CancelSummaryButton({ onCancel }: { readonly onCancel: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      onClick={onCancel}
+      className="gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+    >
+      <X size={12} />
+      Cancel
+    </Button>
+  );
+}
+
+function SummaryTiming({ summary }: { readonly summary: SummaryRecord }) {
+  return (
+    <span className="text-[11px] text-muted-foreground">
+      <span title={absoluteTime(summary.createdAt)}>{relativeTime(summary.createdAt)}</span>
+      {" · "}{summary.turnCount} {summary.turnCount === 1 ? "turn" : "turns"}
+    </span>
+  );
+}
+
+function RenderedSummary({
+  actions,
+  copied,
+  error,
+  newTurnCount,
+  summary,
+}: {
+  readonly actions: SummaryActions;
+  readonly copied: boolean;
+  readonly error: string | null;
+  readonly newTurnCount: number;
+  readonly summary: SummaryRecord;
+}) {
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      <SummaryError error={error} />
+      <NewTurnsNotice newTurnCount={newTurnCount} />
+      <div className="prose prose-sm dark:prose-invert text-[13px] leading-relaxed">
+        <MarkdownContent content={summary.content} />
+      </div>
+      <div className="flex items-center justify-between border-t border-border/30 pt-3">
+        <span className="flex items-center gap-1 text-[11px] text-muted-foreground min-w-0">
+          <span className="truncate max-w-[140px]" title={summary.model}>{summary.model}</span>
+          <span className="shrink-0">
+            {" · "}
+            <span title={absoluteTime(summary.createdAt)}>{relativeTime(summary.createdAt)}</span>
+            {" · "}{summary.turnCount} {summary.turnCount === 1 ? "turn" : "turns"}
           </span>
+        </span>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={actions.onCopy}
+                  className="h-6 w-6 text-muted-foreground/50 hover:text-foreground/70"
+                  aria-label="Copy summary to clipboard"
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                </Button>
+              }
+            />
+            <TooltipContent side="top" className="text-xs">
+              {copied ? "Copied" : "Copy summary"}
+            </TooltipContent>
+          </Tooltip>
           <Button
             variant="ghost"
             size="xs"
-            onClick={handleCancel}
+            onClick={actions.onGenerate}
             className="gap-1 text-[11px] text-muted-foreground hover:text-foreground"
           >
-            <X size={12} />
-            Cancel
+            <RefreshCw size={12} />
+            Regenerate
           </Button>
         </div>
-
-        <div className="prose prose-sm dark:prose-invert text-[13px] leading-relaxed opacity-40">
-          <MarkdownContent content={summaryRecord.content} />
-        </div>
-
-        <div className="flex items-center justify-between border-t border-border/30 pt-3">
-          <span className="text-[11px] text-muted-foreground truncate max-w-[200px]" title={summaryRecord.model}>
-            {summaryRecord.model}
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            <span title={absoluteTime(summaryRecord.createdAt)}>{relativeTime(summaryRecord.createdAt)}</span>
-            {" · "}{summaryRecord.turnCount} {summaryRecord.turnCount === 1 ? "turn" : "turns"}
-          </span>
-        </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  // Initial loading state — three-dot pulse (no prior summary exists)
-  if (summaryLoading) {
-    return (
-      <div
-        className="flex flex-col items-center justify-center gap-3 py-14"
-        role="status"
-        aria-live="polite"
-        aria-busy="true"
-      >
-        <div className="flex items-center gap-1.5">
-          {[0, 150, 300].map((delay) => (
-            <div
-              key={delay}
-              className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
-              style={{ animationDelay: `${delay}ms` }}
-            />
-          ))}
-        </div>
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-muted-foreground/40">
-          Summarizing
-        </span>
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={handleCancel}
-          className="gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-        >
-          <X size={12} />
-          Cancel
-        </Button>
-      </div>
-    );
-  }
+function NewTurnsNotice({ newTurnCount }: { readonly newTurnCount: number }) {
+  if (newTurnCount === 0) return null;
+  return (
+    <div className="flex items-center gap-2 border-b border-border/30 pb-2">
+      <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" aria-hidden="true" />
+      <span className="font-mono text-[10.5px] text-muted-foreground/60">
+        {newTurnCount} new {newTurnCount === 1 ? "turn" : "turns"} since summary
+      </span>
+    </div>
+  );
+}
 
-  // Rendered state
-  if (hasSummary) {
-    return (
-      <div className="flex flex-col gap-3 p-4">
-        {error && (
-          <div className="flex items-center gap-1.5 text-xs text-destructive" role="alert">
-            <AlertCircle size={12} aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {newTurnCount > 0 && (
-          <div className="flex items-center gap-2 border-b border-border/30 pb-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" aria-hidden="true" />
-            <span className="font-mono text-[10.5px] text-muted-foreground/60">
-              {newTurnCount} new {newTurnCount === 1 ? "turn" : "turns"} since summary
-            </span>
-          </div>
-        )}
-
-        <div className="prose prose-sm dark:prose-invert text-[13px] leading-relaxed">
-          <MarkdownContent content={summaryRecord.content} />
-        </div>
-
-        <div className="flex items-center justify-between border-t border-border/30 pt-3">
-          <span className="flex items-center gap-1 text-[11px] text-muted-foreground min-w-0">
-            <span className="truncate max-w-[140px]" title={summaryRecord.model}>{summaryRecord.model}</span>
-            <span className="shrink-0">
-              {" · "}
-              <span title={absoluteTime(summaryRecord.createdAt)}>{relativeTime(summaryRecord.createdAt)}</span>
-              {" · "}{summaryRecord.turnCount} {summaryRecord.turnCount === 1 ? "turn" : "turns"}
-            </span>
-          </span>
-          <div className="flex items-center gap-0.5 shrink-0">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={handleCopy}
-                    className="h-6 w-6 text-muted-foreground/50 hover:text-foreground/70"
-                    aria-label="Copy summary to clipboard"
-                  >
-                    {copied ? <Check size={12} /> : <Copy size={12} />}
-                  </Button>
-                }
-              />
-              <TooltipContent side="top" className="text-xs">
-                {copied ? "Copied" : "Copy summary"}
-              </TooltipContent>
-            </Tooltip>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={handleGenerate}
-              className="gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              <RefreshCw size={12} />
-              Regenerate
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Empty state — glyph + mono small-caps matching sibling diff views
+function EmptySummary({
+  activeThreadId,
+  error,
+  hasFileChanges,
+  onGenerate,
+}: {
+  readonly activeThreadId: string | null;
+  readonly error: string | null;
+  readonly hasFileChanges: boolean;
+  readonly onGenerate: () => Promise<void>;
+}) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-14">
       <span aria-hidden="true" className="font-mono text-2xl leading-none text-muted-foreground/20">Σ</span>
       <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
         no summary
       </p>
-      {error && (
-        <div className="flex items-center gap-1.5 text-xs text-destructive" role="alert">
-          <AlertCircle size={12} aria-hidden="true" />
-          <span>{error}</span>
-        </div>
-      )}
+      <SummaryError error={error} />
       <Button
         variant="ghost"
         size="xs"
-        onClick={handleGenerate}
+        onClick={onGenerate}
         disabled={!hasFileChanges || !activeThreadId}
         className="mt-1 text-[11px] text-muted-foreground hover:text-foreground"
         aria-describedby={!hasFileChanges ? "generate-hint" : undefined}
       >
         {error ? "Try again" : "Generate"}
       </Button>
-      {!hasFileChanges && (
+      {!hasFileChanges ? (
         <span id="generate-hint" className="sr-only">No file changes to summarize</span>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -116,6 +116,247 @@ function waitUntilVisible(element: HTMLElement, timeoutMs = 2_000): Promise<void
   });
 }
 
+interface MermaidRenderRequest {
+  code: string;
+  mermaidTheme: "dark" | "default";
+  renderId: string;
+  container: HTMLDivElement | null;
+  isCancelled: () => boolean;
+}
+
+async function renderMermaidDiagram({
+  code,
+  mermaidTheme,
+  renderId,
+  container,
+  isCancelled,
+}: MermaidRenderRequest): Promise<RenderState | null> {
+  await waitForLayout();
+  if (isCancelled()) return null;
+
+  if (container) {
+    await waitUntilVisible(container);
+    if (isCancelled()) return null;
+  }
+
+  const mermaid = await ensureInitialized(mermaidTheme);
+  if (isCancelled()) return null;
+
+  const parseResult = await mermaid.parse(code, { suppressErrors: true });
+  if (isCancelled()) return null;
+  if (!parseResult) return { status: "error" };
+
+  const { svg } = await mermaid.render(renderId, code);
+  return isCancelled() ? null : { status: "success", svg };
+}
+
+function useMermaidRendering(
+  code: string,
+  isStreaming: boolean,
+  mermaidTheme: "dark" | "default",
+  mermaidId: string,
+) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const renderAttemptRef = useRef(0);
+  const [state, setState] = useState<RenderState>({ status: "loading" });
+
+  useEffect(() => {
+    if (isStreaming || !code.trim()) return;
+
+    const attempt = ++renderAttemptRef.current;
+    const renderId = `${mermaidId}-${attempt}`;
+    let cancelled = false;
+    const isCancelled = () => cancelled || attempt !== renderAttemptRef.current;
+    setState({ status: "loading" });
+
+    void renderMermaidDiagram({
+      code,
+      mermaidTheme,
+      renderId,
+      container: containerRef.current,
+      isCancelled,
+    }).then(
+      (nextState) => {
+        if (nextState && !isCancelled()) setState(nextState);
+      },
+      (error: unknown) => {
+        removeMermaidArtifacts(renderId);
+        if (isCancelled()) return;
+        console.error("[MermaidBlock] render failed:", error);
+        setState({ status: "error" });
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      removeMermaidArtifacts(renderId);
+    };
+  }, [code, mermaidTheme, isStreaming, mermaidId]);
+
+  return { containerRef, state };
+}
+
+interface MermaidToolbarProps {
+  copied: boolean;
+  onCopy: () => void;
+  view?: "diagram" | "code";
+  onToggleView?: () => void;
+}
+
+function MermaidToolbar({ copied, onCopy, view, onToggleView }: MermaidToolbarProps) {
+  const canToggleView = view !== undefined && onToggleView !== undefined;
+  return (
+    <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
+      <span className="text-xs text-muted-foreground">mermaid</span>
+      <div className="flex items-center gap-1">
+        {canToggleView ? (
+          <button
+            type="button"
+            onClick={onToggleView}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            aria-label={view === "diagram" ? "View code" : "View diagram"}
+          >
+            {view === "diagram" ? <Code2 size={13} /> : <GitGraph size={13} />}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onCopy}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          aria-label={copied ? "Copied" : "Copy code"}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MermaidCode({ code }: { code: string }) {
+  return (
+    <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+      <code>{code}</code>
+    </pre>
+  );
+}
+
+function MermaidErrorBlock({ code, copied, onCopy }: { code: string } & Pick<MermaidToolbarProps, "copied" | "onCopy">) {
+  return (
+    <div className="my-2 rounded-lg overflow-hidden border border-border">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive bg-destructive/10 border-b border-destructive/20">
+        Diagram could not be rendered
+      </div>
+      <MermaidToolbar copied={copied} onCopy={onCopy} />
+      <MermaidCode code={code} />
+    </div>
+  );
+}
+
+interface MermaidReadyBlockProps extends Pick<MermaidToolbarProps, "copied" | "onCopy"> {
+  code: string;
+  state: Exclude<RenderState, { status: "error" }>;
+  view: "diagram" | "code";
+  onToggleView: () => void;
+  onPreviewOpen: () => void;
+  previewOpen: boolean;
+  onPreviewChange: (open: boolean) => void;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}
+
+function MermaidReadyContent({
+  code,
+  state,
+  view,
+  onPreviewOpen,
+}: Pick<MermaidReadyBlockProps, "code" | "state" | "view" | "onPreviewOpen">) {
+  if (state.status === "loading" || view === "code") return <MermaidCode code={code} />;
+  return (
+    <button
+      type="button"
+      aria-label="Open diagram preview"
+      className={[
+        "group/diagram block w-full cursor-zoom-in overflow-x-auto bg-background p-3 text-left",
+        "outline-none transition-colors hover:bg-muted/15",
+        "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        "motion-reduce:transition-none",
+      ].join(" ")}
+      onClick={onPreviewOpen}
+    >
+      <span
+        className="block min-w-fit [&_svg]:mx-auto"
+        // SVG is sanitized by mermaid's bundled DOMPurify with securityLevel "strict"
+        dangerouslySetInnerHTML={{ __html: state.svg }}
+      />
+    </button>
+  );
+}
+
+function MermaidReadyBlock({
+  code,
+  copied,
+  onCopy,
+  state,
+  view,
+  onToggleView,
+  onPreviewOpen,
+  previewOpen,
+  onPreviewChange,
+  containerRef,
+}: MermaidReadyBlockProps) {
+  return (
+    <div ref={containerRef} className="my-2 rounded-lg overflow-hidden border border-border">
+      <MermaidToolbar copied={copied} onCopy={onCopy} view={state.status === "success" ? view : undefined} onToggleView={state.status === "success" ? onToggleView : undefined} />
+      <MermaidReadyContent code={code} state={state} view={view} onPreviewOpen={onPreviewOpen} />
+      {state.status === "success" ? <MermaidPreviewDialog open={previewOpen} onOpenChange={onPreviewChange} svg={state.svg} /> : null}
+    </div>
+  );
+}
+
+interface MermaidBlockContentProps {
+  code: string;
+  isStreaming: boolean;
+  state: RenderState;
+  copied: boolean;
+  onCopy: () => void;
+  view: "diagram" | "code";
+  onToggleView: () => void;
+  previewOpen: boolean;
+  onPreviewChange: (open: boolean) => void;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}
+
+function MermaidBlockContent({
+  code,
+  isStreaming,
+  state,
+  copied,
+  onCopy,
+  view,
+  onToggleView,
+  previewOpen,
+  onPreviewChange,
+  containerRef,
+}: MermaidBlockContentProps) {
+  if (!code.trim()) return null;
+  if (isStreaming) return <MermaidCode code={code} />;
+  if (state.status === "error") return <MermaidErrorBlock code={code} copied={copied} onCopy={onCopy} />;
+
+  return (
+    <MermaidReadyBlock
+      code={code}
+      copied={copied}
+      onCopy={onCopy}
+      state={state}
+      view={view}
+      onToggleView={onToggleView}
+      onPreviewOpen={() => onPreviewChange(true)}
+      previewOpen={previewOpen}
+      onPreviewChange={onPreviewChange}
+      containerRef={containerRef}
+    />
+  );
+}
+
 /**
  * Renders a mermaid diagram from fenced code blocks.
  * Lazy-loads the mermaid library on first mount and caches it for subsequent blocks.
@@ -128,12 +369,8 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
   const shikiTheme = useShikiTheme();
   const mermaidTheme = toMermaidTheme(shikiTheme);
   const rawId = useId();
-  // Memoized and colon-replaced with "-" (not "") to prevent ID collisions between adjacent instances.
   const mermaidId = useMemo(() => "mermaid-" + rawId.replace(/:/g, "-"), [rawId]);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const renderAttemptRef = useRef(0);
-
-  const [state, setState] = useState<RenderState>({ status: "loading" });
+  const { containerRef, state } = useMermaidRendering(code, isStreaming, mermaidTheme, mermaidId);
   const [view, setView] = useState<"diagram" | "code">("diagram");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -144,59 +381,6 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
       if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
     };
   }, []);
-
-  // Render mermaid diagram
-  useEffect(() => {
-    if (isStreaming || !code.trim()) return;
-
-    const attempt = ++renderAttemptRef.current;
-    const renderId = `${mermaidId}-${attempt}`;
-    let cancelled = false;
-    setState({ status: "loading" });
-
-    (async () => {
-      try {
-        await waitForLayout();
-        if (cancelled) return;
-
-        const container = containerRef.current;
-        if (container) {
-          await waitUntilVisible(container);
-          if (cancelled) return;
-        }
-
-        const mermaid = await ensureInitialized(mermaidTheme);
-        if (cancelled) return;
-
-        // Validate first so invalid source never reaches the renderer.
-        // mermaid.render appends a temp measurement node (#d<id>) to
-        // document.body and does NOT clean it up on throw — validating
-        // up front prevents those orphans from littering the page.
-        const parseResult = await mermaid.parse(code, { suppressErrors: true });
-        if (cancelled) return;
-        if (!parseResult) {
-          if (attempt === renderAttemptRef.current) {
-            setState({ status: "error" });
-          }
-          return;
-        }
-
-        const { svg } = await mermaid.render(renderId, code);
-        if (cancelled || attempt !== renderAttemptRef.current) return;
-        setState({ status: "success", svg });
-      } catch (err) {
-        removeMermaidArtifacts(renderId);
-        if (cancelled || attempt !== renderAttemptRef.current) return;
-        console.error("[MermaidBlock] render failed:", err);
-        setState({ status: "error" });
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      removeMermaidArtifacts(renderId);
-    };
-  }, [code, mermaidTheme, isStreaming, mermaidId]);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -209,109 +393,19 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
     }
   }, [code]);
 
-  // Empty code - render nothing
-  if (!code.trim()) return null;
-
-  // Streaming - show raw code
-  if (isStreaming) {
-    return (
-      <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed rounded-lg">
-        <code>{code}</code>
-      </pre>
-    );
-  }
-
-  // Error state - error banner + code view, no toggle
-  if (state.status === "error") {
-    return (
-      <div className="my-2 rounded-lg overflow-hidden border border-border">
-        <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive bg-destructive/10 border-b border-destructive/20">
-          Diagram could not be rendered
-        </div>
-        <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
-          <span className="text-xs text-muted-foreground">mermaid</span>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            aria-label={copied ? "Copied" : "Copy code"}
-          >
-            {copied ? <Check size={13} /> : <Copy size={13} />}
-          </button>
-        </div>
-        <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
-          <code>{code}</code>
-        </pre>
-      </div>
-    );
-  }
-
-  // Loading or success state
   return (
-    <div ref={containerRef} className="my-2 rounded-lg overflow-hidden border border-border">
-      {/* Header bar - solid bg-background matches diagram view, no transparency bleed in user bubble */}
-      <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
-        <span className="text-xs text-muted-foreground">mermaid</span>
-        <div className="flex items-center gap-1">
-          {state.status === "success" && (
-            <button
-              type="button"
-              onClick={() => setView(view === "diagram" ? "code" : "diagram")}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              aria-label={view === "diagram" ? "View code" : "View diagram"}
-            >
-              {view === "diagram" ? <Code2 size={13} /> : <GitGraph size={13} />}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            aria-label={copied ? "Copied" : "Copy code"}
-          >
-            {copied ? <Check size={13} /> : <Copy size={13} />}
-          </button>
-        </div>
-      </div>
-
-      {/* Content area */}
-      {state.status === "loading" && (
-        <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
-          <code>{code}</code>
-        </pre>
-      )}
-      {state.status === "success" && view === "diagram" && (
-        <>
-          <button
-            type="button"
-            aria-label="Open diagram preview"
-            className={[
-              "group/diagram block w-full cursor-zoom-in overflow-x-auto bg-background p-3 text-left",
-              "outline-none transition-colors hover:bg-muted/15",
-              "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              "motion-reduce:transition-none",
-            ].join(" ")}
-            onClick={() => setPreviewOpen(true)}
-          >
-            <span
-              className="block min-w-fit [&_svg]:mx-auto"
-              // SVG is sanitized by mermaid's bundled DOMPurify with securityLevel "strict"
-              dangerouslySetInnerHTML={{ __html: state.svg }}
-            />
-          </button>
-          <MermaidPreviewDialog
-            open={previewOpen}
-            onOpenChange={setPreviewOpen}
-            svg={state.svg}
-          />
-        </>
-      )}
-      {state.status === "success" && view === "code" && (
-        <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">
-          <code>{code}</code>
-        </pre>
-      )}
-    </div>
+    <MermaidBlockContent
+      code={code}
+      isStreaming={isStreaming}
+      state={state}
+      copied={copied}
+      onCopy={handleCopy}
+      view={view}
+      onToggleView={() => setView(view === "diagram" ? "code" : "diagram")}
+      previewOpen={previewOpen}
+      onPreviewChange={setPreviewOpen}
+      containerRef={containerRef}
+    />
   );
 });
 

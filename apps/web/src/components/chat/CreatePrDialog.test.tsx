@@ -121,6 +121,7 @@ describe("CreatePrDialog preferred base branch", () => {
     });
     expect(await screen.findByDisplayValue("Draft title")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Draft body")).toBeInTheDocument();
+    expect(mockGeneratePrDraft).toHaveBeenCalledTimes(1);
   });
 
   it("announces draft generation status while the initial draft is loading", async () => {
