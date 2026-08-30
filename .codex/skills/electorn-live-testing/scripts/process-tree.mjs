@@ -5,19 +5,24 @@ export function terminateProcessTree(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) {
     throw new Error("Process tree PID must be a positive integer");
   }
+  return process.platform === "win32"
+    ? terminateWindowsProcessTree(pid)
+    : terminatePosixProcessTree(pid);
+}
 
-  if (process.platform === "win32") {
-    const stopped = spawnSync(
-      "taskkill.exe",
-      ["/PID", String(pid), "/T", "/F"],
-      { encoding: "utf8" },
-    );
-    return {
-      ok: stopped.status === 0,
-      error: stopped.status === 0 ? null : stopped.stderr.trim(),
-    };
-  }
+function terminateWindowsProcessTree(pid) {
+  const stopped = spawnSync(
+    "taskkill.exe",
+    ["/PID", String(pid), "/T", "/F"],
+    { encoding: "utf8" },
+  );
+  return {
+    ok: stopped.status === 0,
+    error: stopped.status === 0 ? null : stopped.stderr.trim(),
+  };
+}
 
+function terminatePosixProcessTree(pid) {
   try {
     process.kill(-pid, "SIGTERM");
     return { ok: true, error: null };

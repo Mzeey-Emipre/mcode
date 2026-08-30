@@ -46,7 +46,7 @@ function readCommandLine(pid) {
       [
         "-NoProfile",
         "-Command",
-        `(Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\").CommandLine`,
+        `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
       ],
       { encoding: "utf8" },
     );
