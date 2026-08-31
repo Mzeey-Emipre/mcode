@@ -7,7 +7,7 @@
     "oxc"
   ],
   "jsPlugins": [
-    "./packages/oxlint-plugin/src/index.ts"
+    "./packages/oxlint-plugin/dist/index.mjs"
   ],
   "categories": {
     "correctness": "warn"

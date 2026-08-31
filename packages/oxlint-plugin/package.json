@@ -7,7 +7,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "node ./node_modules/vitest/vitest.mjs run",
+    "build": "bun build ./src/index.ts --target=node --format=esm --outfile=./dist/index.mjs",
+    "test": "bun run build && node --input-type=module --eval \"const { startVitest } = await import('vitest/node'); await startVitest('test', [], { run: true })\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

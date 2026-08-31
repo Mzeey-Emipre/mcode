@@ -22,7 +22,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "lint:fast": "oxlint",
+    "lint:fast": "bun run --cwd packages/oxlint-plugin build && oxlint",
     "test:oxlint-plugin": "bun --cwd packages/oxlint-plugin test",
     "lint:deadcode": "knip",
     "typecheck": "turbo run typecheck",
