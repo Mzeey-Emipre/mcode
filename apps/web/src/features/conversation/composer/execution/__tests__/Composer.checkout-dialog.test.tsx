@@ -1137,7 +1137,12 @@ describe("Composer checkout confirmation", () => {
     expect(screen.getByLabelText("Stop agent")).toBeInTheDocument();
 
     act(() => {
-      handleAgentEvent({ type: "ended", threadId: thread.id, turnExecutionId: "exec-b" } as AgentEvent);
+      handleAgentEvent({
+        type: "ended",
+        threadId: thread.id,
+        turnExecutionId: "exec-b",
+        outcome: "completed",
+      } as AgentEvent);
     });
     await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
   });
