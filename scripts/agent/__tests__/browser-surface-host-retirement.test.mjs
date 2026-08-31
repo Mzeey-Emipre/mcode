@@ -1,8 +1,8 @@
 /** Proves that the retired native Browser host cannot return to current source or documentation. */
-import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { extname, join, relative } from "node:path";
-import { test } from "node:test";
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeTest from "node:test";
 
 const repositoryRoot = process.cwd();
 const sourceExtensions = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx"]);
@@ -25,8 +25,8 @@ const retiredDocumentationPattern = /\bWebContentsView\b|\bwebContentsView\b/;
 
 function listFiles(directory) {
   const files = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name);
+  for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
+    const path = NodePath.join(directory, entry.name);
     if (entry.isDirectory() && !nonSourceDirectories.has(entry.name)) files.push(...listFiles(path));
     else if (entry.isFile()) files.push(path);
   }
@@ -34,20 +34,20 @@ function listFiles(directory) {
 }
 
 function repositoryPath(path) {
-  return relative(repositoryRoot, path).replaceAll("\\", "/");
+  return NodePath.relative(repositoryRoot, path).replaceAll("\\", "/");
 }
 
 function matchingFiles(roots, pattern, include) {
-  return roots.flatMap((root) => listFiles(join(repositoryRoot, root)))
+  return roots.flatMap((root) => listFiles(NodePath.join(repositoryRoot, root)))
     .filter(include)
-    .filter((path) => pattern.test(readFileSync(path, "utf8")))
+    .filter((path) => pattern.test(NodeFS.readFileSync(path, "utf8")))
     .map(repositoryPath)
     .sort();
 }
 
-test("current source contains no retired Browser host path or identifier", () => {
-  assert.equal(
-    existsSync(join(repositoryRoot, "apps/desktop/src/main/preview/preview-lifecycle.ts")),
+NodeTest.test("current source contains no retired Browser host path or identifier", () => {
+  NodeAssertStrict.default.equal(
+    NodeFS.existsSync(NodePath.join(repositoryRoot, "apps/desktop/src/main/preview/preview-lifecycle.ts")),
     false,
     "the retired native lifecycle module still exists",
   );
@@ -55,20 +55,20 @@ test("current source contains no retired Browser host path or identifier", () =>
   const matches = matchingFiles(
     ["apps", "packages"],
     retiredRuntimePattern,
-    (path) => sourceExtensions.has(extname(path)) && !legacyMigrationFixtures.has(repositoryPath(path)),
+    (path) => sourceExtensions.has(NodePath.extname(path)) && !legacyMigrationFixtures.has(repositoryPath(path)),
   );
-  assert.deepEqual(matches, []);
+  NodeAssertStrict.default.deepEqual(matches, []);
 });
 
-test("current documentation describes BrowserSurfaceHost as the only host", () => {
+NodeTest.test("current documentation describes BrowserSurfaceHost as the only host", () => {
   const matches = matchingFiles(
     ["docs"],
     retiredDocumentationPattern,
-    (path) => extname(path) === ".md" && repositoryPath(path) !== supersededDecision,
+    (path) => NodePath.extname(path) === ".md" && repositoryPath(path) !== supersededDecision,
   );
-  assert.deepEqual(matches, []);
+  NodeAssertStrict.default.deepEqual(matches, []);
 
-  const decision = readFileSync(join(repositoryRoot, supersededDecision), "utf8");
-  assert.match(decision, /^Status: Superseded$/m);
-  assert.match(decision, /BrowserSurfaceHost/);
+  const decision = NodeFS.readFileSync(NodePath.join(repositoryRoot, supersededDecision), "utf8");
+  NodeAssertStrict.default.match(decision, /^Status: Superseded$/m);
+  NodeAssertStrict.default.match(decision, /BrowserSurfaceHost/);
 });

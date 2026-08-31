@@ -1,8 +1,8 @@
-import { createRequire } from "node:module";
-import { hostname } from "node:os";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import {
   collectRunEnvironment,
   summarizeDurationSamples,
@@ -47,9 +47,9 @@ function parseChoice(name, choices) {
 }
 
 function resolveOutputFile(repoRoot) {
-  const outputRoot = resolve(repoRoot, ".dev", "verification", "performance");
-  const outputFile = resolve(repoRoot, readRequiredArgument("--output"));
-  const outputRelativePath = relative(outputRoot, outputFile);
+  const outputRoot = NodePath.resolve(repoRoot, ".dev", "verification", "performance");
+  const outputFile = NodePath.resolve(repoRoot, readRequiredArgument("--output"));
+  const outputRelativePath = NodePath.relative(outputRoot, outputFile);
   if (
     outputRelativePath.length === 0 ||
     outputRelativePath.startsWith("..")
@@ -94,7 +94,7 @@ async function run() {
       sessionFileName: context.sessionFileName,
     });
     const result = await measurePackagedSession(electronSession, context);
-    await writeFile(context.outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+    await NodeFSPromises.writeFile(context.outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     if (!result.correctness.passed) process.exitCode = 1;
   } finally {
     await disconnectElectronSession(electronSession, context.electronHelper);
@@ -109,8 +109,8 @@ async function prepareWorkerContext() {
   validateSessionFileName(sessionFileName);
   const electronVersion = readRequiredArgument("--electron-version");
   const outputFile = resolveOutputFile(repoRoot);
-  await mkdir(dirname(outputFile), { recursive: true });
-  const scratchRequire = createRequire(join(repoRoot, ".dev", "playwright-scratch", "package.json"));
+  await NodeFSPromises.mkdir(NodePath.dirname(outputFile), { recursive: true });
+  const scratchRequire = NodeModule.createRequire(NodePath.join(repoRoot, ".dev", "playwright-scratch", "package.json"));
   const playwrightVersion = scratchRequire("playwright/package.json").version;
   return {
     repoRoot,
@@ -141,7 +141,7 @@ function validateSessionFileName(sessionFileName) {
 }
 
 function loadElectronHelper(repoRoot) {
-  return import(pathToFileURL(join(
+  return import(NodeURL.pathToFileURL(NodePath.join(
     repoRoot, ".codex", "skills", "electorn-live-testing", "scripts", "electron-session.mjs",
   )).href);
 }
@@ -180,7 +180,7 @@ function buildPackagedResult(context, startupMetrics, matrix, gpu) {
     gpuClassification: resolveWindowsGpuClassification(gpu.devices, context.adapterName, context.gpuType),
     sourceRevision: context.runEnvironment.sourceRevision,
     sourceDirty: context.runEnvironment.sourceDirty,
-    deviceIdentity: { hostname: hostname(), adapters: gpu.devices },
+    deviceIdentity: { hostname: NodeOS.hostname(), adapters: gpu.devices },
     comparisonContract: {
       viewport: VIEWPORT,
       workloadOrder: FRONTEND_RENDERER_WORKLOADS,

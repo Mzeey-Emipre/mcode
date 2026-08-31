@@ -1,5 +1,5 @@
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeTest from "node:test";
 import {
   summarizeDurationSamples,
   summarizeTrace,
@@ -241,9 +241,9 @@ function createExpectedVListLifecycleFacts() {
   };
 }
 
-describe("frontend performance runner", () => {
-  it("uses the approved workload order", () => {
-    assert.deepEqual(FRONTEND_RENDERER_WORKLOADS, [
+NodeTest.describe("frontend performance runner", () => {
+  NodeTest.it("uses the approved workload order", () => {
+    NodeAssertStrict.default.deepEqual(FRONTEND_RENDERER_WORKLOADS, [
       "message100",
       "message1000",
       "threadSwitch",
@@ -255,26 +255,26 @@ describe("frontend performance runner", () => {
     ]);
   });
 
-  it("requires explicit selection and accepts only the vlist lifecycle phase ordering", () => {
-    assert.deepEqual(FRONTEND_RENDERER_EXPLICIT_WORKLOADS, ["vlistLifecycle"]);
-    assert.deepEqual(normalizeFrontendRendererWorkloads(null), FRONTEND_RENDERER_WORKLOADS);
-    assert.deepEqual(normalizeFrontendRendererWorkloads("vlistLifecycle"), ["vlistLifecycle"]);
-    assert.throws(
+  NodeTest.it("requires explicit selection and accepts only the vlist lifecycle phase ordering", () => {
+    NodeAssertStrict.default.deepEqual(FRONTEND_RENDERER_EXPLICIT_WORKLOADS, ["vlistLifecycle"]);
+    NodeAssertStrict.default.deepEqual(normalizeFrontendRendererWorkloads(null), FRONTEND_RENDERER_WORKLOADS);
+    NodeAssertStrict.default.deepEqual(normalizeFrontendRendererWorkloads("vlistLifecycle"), ["vlistLifecycle"]);
+    NodeAssertStrict.default.throws(
       () => normalizeFrontendRendererWorkloads("message100,vlistLifecycle"),
       /must be selected without another frontend renderer workload/,
     );
 
     const expectedFacts = createExpectedVListLifecycleFacts();
     const derived = deriveVListLifecycleGate(expectedFacts);
-    assert.deepEqual(derived.lifecycleGate, { passed: true, failure: null });
-    assert.deepEqual(derived.gateDecision, {
+    NodeAssertStrict.default.deepEqual(derived.lifecycleGate, { passed: true, failure: null });
+    NodeAssertStrict.default.deepEqual(derived.gateDecision, {
       status: "accepted",
       candidateEligible: true,
       reason: null,
     });
-    assert.deepEqual(validateVListLifecycleFacts(expectedFacts), []);
-    assert.deepEqual(validateWorkloadCheck("vlistLifecycle", expectedFacts), []);
-    assert.equal(getFrontendPerformanceExitCode({
+    NodeAssertStrict.default.deepEqual(validateVListLifecycleFacts(expectedFacts), []);
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("vlistLifecycle", expectedFacts), []);
+    NodeAssertStrict.default.equal(getFrontendPerformanceExitCode({
       correctness: { passed: true },
       runtimes: {
         electron: { metrics: { vlistLifecycle: { gateDecision: derived.gateDecision } } },
@@ -291,8 +291,8 @@ describe("frontend performance runner", () => {
         : transition),
     };
     const lateCleanupDerived = deriveVListLifecycleGate(lateCleanup);
-    assert.equal(lateCleanupDerived.checks.reactCleanupPrecedesVListPhase2, false);
-    assert.ok(validateVListLifecycleFacts(lateCleanup).includes(
+    NodeAssertStrict.default.equal(lateCleanupDerived.checks.reactCleanupPrecedesVListPhase2, false);
+    NodeAssertStrict.default.ok(validateVListLifecycleFacts(lateCleanup).includes(
       "vlist lifecycle assertion failed: reactCleanupPrecedesVListPhase2",
     ));
 
@@ -308,11 +308,11 @@ describe("frontend performance runner", () => {
           }
         : transition),
     };
-    assert.equal(
+    NodeAssertStrict.default.equal(
       deriveVListLifecycleGate(disconnectedBeforePreUnmount).checks.reactCleanupPrecedesVListPhase2,
       false,
     );
-    assert.ok(validateVListLifecycleFacts(disconnectedBeforePreUnmount).includes(
+    NodeAssertStrict.default.ok(validateVListLifecycleFacts(disconnectedBeforePreUnmount).includes(
       "vlist lifecycle assertion failed: reactCleanupPrecedesVListPhase2",
     ));
 
@@ -323,8 +323,8 @@ describe("frontend performance runner", () => {
         { type: "effect-cleanup", rowId: VLIST_A_ROW_ID },
       ],
     };
-    assert.equal(deriveVListLifecycleGate(duplicateCleanup).checks.effectsCleanUpExactlyOnce, false);
-    assert.ok(validateVListLifecycleFacts(duplicateCleanup).includes(
+    NodeAssertStrict.default.equal(deriveVListLifecycleGate(duplicateCleanup).checks.effectsCleanUpExactlyOnce, false);
+    NodeAssertStrict.default.ok(validateVListLifecycleFacts(duplicateCleanup).includes(
       "vlist lifecycle assertion failed: effectsCleanUpExactlyOnce",
     ));
 
@@ -335,8 +335,8 @@ describe("frontend performance runner", () => {
         a: { ...expectedFacts.values.a, draftAfterReturn: "edited-A" },
       },
     };
-    assert.equal(deriveVListLifecycleGate(mutatedRawState).checks.stateDoesNotTransfer, false);
-    assert.ok(validateVListLifecycleFacts(mutatedRawState).includes(
+    NodeAssertStrict.default.equal(deriveVListLifecycleGate(mutatedRawState).checks.stateDoesNotTransfer, false);
+    NodeAssertStrict.default.ok(validateVListLifecycleFacts(mutatedRawState).includes(
       "vlist lifecycle assertion failed: stateDoesNotTransfer",
     ));
 
@@ -347,8 +347,8 @@ describe("frontend performance runner", () => {
         afterAToB: { ...expectedFacts.focus.afterAToB, activeProbeInputRowId: VLIST_B_ROW_ID },
       },
     };
-    assert.equal(deriveVListLifecycleGate(mutatedRawFocus).checks.focusAndControlsRemainCorrect, false);
-    assert.ok(validateVListLifecycleFacts(mutatedRawFocus).includes(
+    NodeAssertStrict.default.equal(deriveVListLifecycleGate(mutatedRawFocus).checks.focusAndControlsRemainCorrect, false);
+    NodeAssertStrict.default.ok(validateVListLifecycleFacts(mutatedRawFocus).includes(
       "vlist lifecycle assertion failed: focusAndControlsRemainCorrect",
     ));
 
@@ -360,15 +360,15 @@ describe("frontend performance runner", () => {
         refAttachCountAfter: 2,
       },
     };
-    assert.equal(
+    NodeAssertStrict.default.equal(
       deriveVListLifecycleGate(remountedDuringPrepend).checks.prependPreservesAnchorAndIdentity,
       false,
     );
-    assert.ok(validateVListLifecycleFacts(remountedDuringPrepend).includes(
+    NodeAssertStrict.default.ok(validateVListLifecycleFacts(remountedDuringPrepend).includes(
       "vlist lifecycle assertion failed: prependPreservesAnchorAndIdentity",
     ));
 
-    assert.equal(getFrontendPerformanceExitCode({
+    NodeAssertStrict.default.equal(getFrontendPerformanceExitCode({
       correctness: { passed: true },
       runtimes: {
         electron: { metrics: { vlistLifecycle: { gateDecision: lateCleanupDerived.gateDecision } } },
@@ -376,30 +376,30 @@ describe("frontend performance runner", () => {
     }), 1);
   });
 
-  it("reports deterministic duration statistics", () => {
-    assert.deepEqual(summarizeDurationSamples([4, 1, 3, 2]), {
+  NodeTest.it("reports deterministic duration statistics", () => {
+    NodeAssertStrict.default.deepEqual(summarizeDurationSamples([4, 1, 3, 2]), {
       sampleCount: 4,
       minMs: 1,
       medianMs: 2,
       p95Ms: 4,
       maxMs: 4,
     });
-    assert.equal(summarizeDurationSamples([]), null);
-    assert.throws(
+    NodeAssertStrict.default.equal(summarizeDurationSamples([]), null);
+    NodeAssertStrict.default.throws(
       () => summarizeDurationSamples([1, Number.NaN]),
       /finite non-negative numbers/,
     );
   });
 
-  it("rejects wrong visible state for every workload contract", () => {
-    assert.deepEqual(validateWorkloadCheck("message100", {
+  NodeTest.it("rejects wrong visible state for every workload contract", () => {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("message100", {
       activeThreadId: "left",
       currentThreadId: "right",
       visibleThreadId: "right",
       mountedMessages: 9,
       totalMessages: 100,
     }), ["selected and visible thread identities differ"]);
-    assert.deepEqual(validateWorkloadCheck("streaming", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("streaming", {
       expectedText: "complete response",
       streamingText: "partial response",
       storeUpdateCommits: 200,
@@ -408,7 +408,7 @@ describe("frontend performance runner", () => {
       tailFollowed: true,
       userAwayPreserved: true,
     }), ["streamed response text differs"]);
-    assert.deepEqual(validateWorkloadCheck("markdownShiki", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("markdownShiki", {
       codeBlocks: 10,
       highlightedBlocks: 9,
     }), [
@@ -422,7 +422,7 @@ describe("frontend performance runner", () => {
       "expected highlighted code text selection",
       "expected Shiki stage attribution",
     ]);
-    assert.deepEqual(validateWorkloadCheck("markdownShiki", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("markdownShiki", {
       codeBlocks: 10,
       highlightedBlocks: 10,
       plainFallbackObserved: true,
@@ -434,7 +434,7 @@ describe("frontend performance runner", () => {
       textSelection: true,
       shikiAttribution: completeShikiObservations,
     }), []);
-    assert.deepEqual(validateWorkloadCheck("markdownShiki", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("markdownShiki", {
       buildMode: "production",
       codeBlocks: 10,
       highlightedBlocks: 10,
@@ -448,7 +448,7 @@ describe("frontend performance runner", () => {
       shikiAttribution: productionShikiObservations,
       shikiLongTasksOver50Ms: [],
     }, "production"), []);
-    assert.deepEqual(validateWorkloadCheck("panelTransitions", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("panelTransitions", {
       activeTab: "preview",
       browserTabOpen: true,
       terminalTabOpen: true,
@@ -457,7 +457,7 @@ describe("frontend performance runner", () => {
     }), ["Terminal is not the active panel"]);
   });
 
-  it("rejects a message-list behavior sample when a cache-miss does not render the restored record", () => {
+  NodeTest.it("rejects a message-list behavior sample when a cache-miss does not render the restored record", () => {
     const accepted = {
       longThreadScroll: true,
       dynamicHeightSettled: true,
@@ -479,35 +479,35 @@ describe("frontend performance runner", () => {
       interactiveControl: true,
       liveToPersistedIdentity: true,
     };
-    assert.deepEqual(validateWorkloadCheck("messageListBehavior", accepted), []);
-    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("messageListBehavior", accepted), []);
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("messageListBehavior", {
       ...accepted,
       cacheMissRestored: false,
     }), ["cache-miss did not render the restored client record"]);
-    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("messageListBehavior", {
       ...accepted,
       olderHistoryLoaded: false,
     }), ["older history did not load a page"]);
-    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("messageListBehavior", {
       ...accepted,
       cacheMissLoadingObserved: false,
     }), ["cache-miss did not hold the outgoing transcript while empty"]);
-    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("messageListBehavior", {
       ...accepted,
       cacheMissTailPositioned: false,
     }), ["cache-miss did not position the restored transcript at the tail"]);
-    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("messageListBehavior", {
       ...accepted,
       stickyTargetWasUnmountedBeforeJump: false,
     }), ["sticky user target stayed mounted before jump"]);
-    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("messageListBehavior", {
       ...accepted,
       stickyUserJumped: false,
     }), ["sticky user message did not jump to its transcript row"]);
   });
 
-  it("rejects a streaming sample when one update never reaches the live response", () => {
-    assert.deepEqual(validateWorkloadCheck("streaming", {
+  NodeTest.it("rejects a streaming sample when one update never reaches the live response", () => {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("streaming", {
       expectedText: "complete response",
       streamingText: "complete response",
       storeUpdateCommits: 200,
@@ -518,8 +518,8 @@ describe("frontend performance runner", () => {
     }), ["streaming did not visibly commit 200 updates"]);
   });
 
-  it("rejects an unvirtualized long-thread mount", () => {
-    assert.deepEqual(validateWorkloadCheck("message100", {
+  NodeTest.it("rejects an unvirtualized long-thread mount", () => {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("message100", {
       activeThreadId: "thread-100",
       currentThreadId: "thread-100",
       visibleThreadId: "thread-100",
@@ -528,19 +528,19 @@ describe("frontend performance runner", () => {
     }), ["virtualized message rows exceeded 64"]);
   });
 
-  it("rejects missing MessageList timing stages before a virtualizer attribution becomes incomplete", () => {
-    assert.deepEqual(MESSAGE_LIST_PERFORMANCE_STAGE_NAMES, [
+  NodeTest.it("rejects missing MessageList timing stages before a virtualizer attribution becomes incomplete", () => {
+    NodeAssertStrict.default.deepEqual(MESSAGE_LIST_PERFORMANCE_STAGE_NAMES, [
       "narrativeItemProjection",
       "tanstackVirtualItems",
     ]);
-    assert.deepEqual(validateMessageListPerformanceAttribution([
+    NodeAssertStrict.default.deepEqual(validateMessageListPerformanceAttribution([
       { stage: "narrativeItemProjection", durationMs: 0.5 },
       { stage: "tanstackVirtualItems", durationMs: 0.25 },
     ]), []);
-    assert.deepEqual(validateMessageListPerformanceAttribution([
+    NodeAssertStrict.default.deepEqual(validateMessageListPerformanceAttribution([
       { stage: "narrativeItemProjection", durationMs: 0.5 },
     ]), ["missing MessageList performance stage: tanstackVirtualItems"]);
-    assert.deepEqual(aggregateMessageListPerformanceAttribution([
+    NodeAssertStrict.default.deepEqual(aggregateMessageListPerformanceAttribution([
       [
         { stage: "narrativeItemProjection", durationMs: 4 },
         { stage: "tanstackVirtualItems", durationMs: 1 },
@@ -567,16 +567,16 @@ describe("frontend performance runner", () => {
     });
   });
 
-  it("recognizes MinorGC and MajorGC trace events", () => {
-    assert.equal(summarizeTrace([
+  NodeTest.it("recognizes MinorGC and MajorGC trace events", () => {
+    NodeAssertStrict.default.equal(summarizeTrace([
       { ph: "X", name: "MinorGC", dur: 1_000 },
       { ph: "X", name: "MajorGC", dur: 2_000 },
       { ph: "X", name: "Logic", dur: 5_000 },
     ]).gcTraceMs, 3);
   });
 
-  it("aggregates known Shiki stages by cold and warm phase", () => {
-    assert.deepEqual(SHIKI_STAGE_NAMES, [
+  NodeTest.it("aggregates known Shiki stages by cold and warm phase", () => {
+    NodeAssertStrict.default.deepEqual(SHIKI_STAGE_NAMES, [
       "workerStartup",
       "highlighterCreation",
       "grammarLoad",
@@ -590,20 +590,20 @@ describe("frontend performance runner", () => {
       "totalCompletion",
     ]);
     const result = aggregateShikiStageAttribution(completeShikiObservations);
-    assert.equal(result.stages.cold.codeToHtml.medianMs, 18);
-    assert.equal(result.stages.warm.codeToHtml.medianMs, 51);
-    assert.equal(result.workload.style.medianMs, 8);
-    assert.deepEqual(result.responseBytes, {
+    NodeAssertStrict.default.equal(result.stages.cold.codeToHtml.medianMs, 18);
+    NodeAssertStrict.default.equal(result.stages.warm.codeToHtml.medianMs, 51);
+    NodeAssertStrict.default.equal(result.workload.style.medianMs, 8);
+    NodeAssertStrict.default.deepEqual(result.responseBytes, {
       cold: { sampleCount: 1, minBytes: 512, medianBytes: 512, p95Bytes: 512, maxBytes: 512 },
       warm: { sampleCount: 1, minBytes: 512, medianBytes: 512, p95Bytes: 512, maxBytes: 512 },
     });
-    assert.equal(result.largestStage, "codeToHtml");
-    assert.deepEqual(result.largestStageObservation, {
+    NodeAssertStrict.default.equal(result.largestStage, "codeToHtml");
+    NodeAssertStrict.default.deepEqual(result.largestStageObservation, {
       stage: "codeToHtml",
       medianMs: 69,
       sampleTotals: [69],
     });
-    assert.deepEqual(result.stageObservationsOver50Ms, [{
+    NodeAssertStrict.default.deepEqual(result.stageObservationsOver50Ms, [{
       phase: "warm",
       stage: "codeToHtml",
       durationMs: 51,
@@ -614,7 +614,7 @@ describe("frontend performance runner", () => {
     }]);
   });
 
-  it("chooses the largest stage from per-sample totals", () => {
+  NodeTest.it("chooses the largest stage from per-sample totals", () => {
     const secondSample = completeShikiObservations.map((observation) =>
       observation.stage === "codeToHtml"
         ? { ...observation, durationMs: observation.durationMs + 20 }
@@ -630,28 +630,28 @@ describe("frontend performance runner", () => {
       secondSample,
       thirdSample,
     ]);
-    assert.deepEqual(result.largestStageObservation, {
+    NodeAssertStrict.default.deepEqual(result.largestStageObservation, {
       stage: "codeToHtml",
       medianMs: 109,
       sampleTotals: [69, 109, 189],
     });
   });
 
-  it("keeps unavailable production React stages null", () => {
+  NodeTest.it("keeps unavailable production React stages null", () => {
     const result = aggregateShikiStageAttribution(productionShikiObservations, "production");
-    assert.equal(result.stages.cold.reactCommit, null);
-    assert.equal(result.stages.warm.htmlInsertion, null);
-    assert.equal(result.stages.cold.totalCompletion, null);
-    assert.equal(result.workload.style?.sampleCount, 1);
-    assert.notEqual(result.largestStage, "totalCompletion");
+    NodeAssertStrict.default.equal(result.stages.cold.reactCommit, null);
+    NodeAssertStrict.default.equal(result.stages.warm.htmlInsertion, null);
+    NodeAssertStrict.default.equal(result.stages.cold.totalCompletion, null);
+    NodeAssertStrict.default.equal(result.workload.style?.sampleCount, 1);
+    NodeAssertStrict.default.notEqual(result.largestStage, "totalCompletion");
   });
 
-  it("requires mode-specific Shiki stages", () => {
-    assert.throws(
+  NodeTest.it("requires mode-specific Shiki stages", () => {
+    NodeAssertStrict.default.throws(
       () => aggregateShikiStageAttribution(productionShikiObservations, "profiling"),
       /reactCommit/,
     );
-    assert.throws(
+    NodeAssertStrict.default.throws(
       () => aggregateShikiStageAttribution(
         completeShikiObservations.filter(({ stage }) => stage !== "style"),
         "production",
@@ -660,8 +660,8 @@ describe("frontend performance runner", () => {
     );
   });
 
-  it("rejects a Shiki sample that lacks the measured worker delivery boundary", () => {
-    assert.throws(
+  NodeTest.it("rejects a Shiki sample that lacks the measured worker delivery boundary", () => {
+    NodeAssertStrict.default.throws(
       () => aggregateShikiStageAttribution(
         completeShikiObservations.filter(({ stage }) => stage !== "workerDelivery"),
       ),
@@ -669,21 +669,21 @@ describe("frontend performance runner", () => {
     );
   });
 
-  it("extracts every Chromium long task without mixing stage observations", () => {
-    assert.deepEqual(extractShikiLongTasks([49, 50, 50.5, 75, Number.NaN], 3), [
+  NodeTest.it("extracts every Chromium long task without mixing stage observations", () => {
+    NodeAssertStrict.default.deepEqual(extractShikiLongTasks([49, 50, 50.5, 75, Number.NaN], 3), [
       { sampleIndex: 3, durationMs: 50.5 },
       { sampleIndex: 3, durationMs: 75 },
     ]);
-    assert.deepEqual(extractShikiLongTasks([], 0), []);
+    NodeAssertStrict.default.deepEqual(extractShikiLongTasks([], 0), []);
   });
 
-  it("collects Shiki tracing only in production mode", () => {
-    assert.equal(getShikiTraceOptions(true, "profiling"), undefined);
-    assert.deepEqual(getShikiTraceOptions(true, "production"), { trace: true });
-    assert.equal(getShikiTraceOptions(false, "production"), undefined);
+  NodeTest.it("collects Shiki tracing only in production mode", () => {
+    NodeAssertStrict.default.equal(getShikiTraceOptions(true, "profiling"), undefined);
+    NodeAssertStrict.default.deepEqual(getShikiTraceOptions(true, "production"), { trace: true });
+    NodeAssertStrict.default.equal(getShikiTraceOptions(false, "production"), undefined);
   });
 
-  it("rejects unknown, invalid, and unbounded Shiki observations", () => {
+  NodeTest.it("rejects unknown, invalid, and unbounded Shiki observations", () => {
     for (const invalid of [
       [{ phase: "cold", stage: "unknown", durationMs: 1 }],
       [{ phase: "cold", stage: "codeToHtml", durationMs: -1 }],
@@ -699,15 +699,15 @@ describe("frontend performance runner", () => {
         index === 0 ? { ...observation, extra: true } : observation,
       ),
     ]) {
-      assert.throws(() => aggregateShikiStageAttribution(invalid));
+      NodeAssertStrict.default.throws(() => aggregateShikiStageAttribution(invalid));
     }
   });
 
-  it("requires at least three samples", async () => {
+  NodeTest.it("requires at least three samples", async () => {
     const originalArguments = [...process.argv];
     process.argv.push("--sample-count", "2");
     try {
-      await assert.rejects(
+      await NodeAssertStrict.default.rejects(
         runFrontendPerformance(process.cwd()),
         /integer from 3 through 20/,
       );
@@ -716,18 +716,18 @@ describe("frontend performance runner", () => {
     }
   });
 
-  it("rejects stable narrative sibling renders", () => {
-    assert.deepEqual(validateNarrativeRowIsolation({
+  NodeTest.it("rejects stable narrative sibling renders", () => {
+    NodeAssertStrict.default.deepEqual(validateNarrativeRowIsolation({
       affectedRow: { rowId: "thought-1", renderCount: 1 },
       stableSiblingRows: [{ rowId: "hook-1", renderCount: 1 }],
     }), ["stable narrative row rendered: hook-1"]);
-    assert.deepEqual(validateNarrativeRowIsolation({
+    NodeAssertStrict.default.deepEqual(validateNarrativeRowIsolation({
       affectedRow: { rowId: "thought-1", renderCount: 1 },
       stableSiblingRows: [{ rowId: "hook-1", renderCount: 0 }],
     }), []);
   });
 
-  it("enforces the dense narrative DOM and disclosure contract", () => {
+  NodeTest.it("enforces the dense narrative DOM and disclosure contract", () => {
     const accepted = {
       sourceRows: 90,
       descendants: 499,
@@ -743,31 +743,31 @@ describe("frontend performance runner", () => {
       hookVisible: true,
     };
 
-    assert.deepEqual(validateWorkloadCheck("denseNarrative", accepted), []);
-    assert.deepEqual(validateWorkloadCheck("denseNarrative", {
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("denseNarrative", accepted), []);
+    NodeAssertStrict.default.deepEqual(validateWorkloadCheck("denseNarrative", {
       ...accepted,
       descendants: 500,
     }), ["dense narrative viewport exceeded 499 descendants"]);
   });
 
-  it("accepts only profiling and production modes", () => {
+  NodeTest.it("accepts only profiling and production modes", () => {
     const originalArguments = [...process.argv];
     try {
       process.argv.push("--mode", "profiling");
-      assert.equal(parsePerformanceMode(), "profiling");
+      NodeAssertStrict.default.equal(parsePerformanceMode(), "profiling");
       process.argv.splice(0, process.argv.length, ...originalArguments, "--mode", "development");
-      assert.throws(parsePerformanceMode, /profiling or production/);
+      NodeAssertStrict.default.throws(parsePerformanceMode, /profiling or production/);
     } finally {
       process.argv.splice(0, process.argv.length, ...originalArguments);
     }
   });
 
-  it("filters runtime probes without changing their fixed workload order", () => {
+  NodeTest.it("filters runtime probes without changing their fixed workload order", () => {
     const originalArguments = [...process.argv];
     try {
       process.argv.push("--workload", "markdownShiki,messageListBehavior", "--runtime", "electron");
-      assert.deepEqual(parseFrontendPerformanceWorkloads(), ["messageListBehavior", "markdownShiki"]);
-      assert.deepEqual(parseFrontendPerformanceRuntimes(), ["electron"]);
+      NodeAssertStrict.default.deepEqual(parseFrontendPerformanceWorkloads(), ["messageListBehavior", "markdownShiki"]);
+      NodeAssertStrict.default.deepEqual(parseFrontendPerformanceRuntimes(), ["electron"]);
       process.argv.splice(
         0,
         process.argv.length,
@@ -775,7 +775,7 @@ describe("frontend performance runner", () => {
         "--workload",
         "unknown",
       );
-      assert.throws(parseFrontendPerformanceWorkloads, /known workloads/);
+      NodeAssertStrict.default.throws(parseFrontendPerformanceWorkloads, /known workloads/);
       process.argv.splice(
         0,
         process.argv.length,
@@ -783,7 +783,7 @@ describe("frontend performance runner", () => {
         "--runtime",
         "browser",
       );
-      assert.throws(parseFrontendPerformanceRuntimes, /known runtimes/);
+      NodeAssertStrict.default.throws(parseFrontendPerformanceRuntimes, /known runtimes/);
     } finally {
       process.argv.splice(0, process.argv.length, ...originalArguments);
     }

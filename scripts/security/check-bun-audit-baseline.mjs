@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeChildProcess from "node:child_process";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const BASELINE_PATH = resolve(ROOT, "docs", "security", "bun-audit-baseline.json");
+const ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..", "..");
+const BASELINE_PATH = NodePath.resolve(ROOT, "docs", "security", "bun-audit-baseline.json");
 const WRITE_MODE = process.argv.includes("--write");
 
 function extractJsonObject(text) {
@@ -50,7 +50,7 @@ function scanStringCharacter(state, character) {
 }
 
 function runAudit() {
-  const result = spawnSync("bun", ["audit", "--json"], {
+  const result = NodeChildProcess.spawnSync("bun", ["audit", "--json"], {
     cwd: ROOT,
     encoding: "utf8",
     env: {
@@ -97,8 +97,8 @@ function severitySummary(advisories) {
 const advisories = flattenAudit(runAudit());
 
 if (WRITE_MODE) {
-  mkdirSync(dirname(BASELINE_PATH), { recursive: true });
-  writeFileSync(
+  NodeFS.mkdirSync(NodePath.dirname(BASELINE_PATH), { recursive: true });
+  NodeFS.writeFileSync(
     BASELINE_PATH,
     `${JSON.stringify(
       {
@@ -119,7 +119,7 @@ if (WRITE_MODE) {
   process.exit(0);
 }
 
-const baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
+const baseline = JSON.parse(NodeFS.readFileSync(BASELINE_PATH, "utf8"));
 if (baseline.schemaVersion !== 1 || !Array.isArray(baseline.advisories)) {
   throw new Error(`Invalid audit baseline: ${BASELINE_PATH}`);
 }

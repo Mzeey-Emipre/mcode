@@ -2,7 +2,7 @@
 
 Source traces: `/tmp/codex-trace/A.ndjson`, `/tmp/codex-trace/B.ndjson` captured against `codex-cli 0.130.0` on Windows, ChatGPT auth, sandbox auto-downgraded to `readOnly`, `approvalPolicy: "never"`, default `reasoningEffort: "low"`. cwd: a disposable git repo.
 
-Trace harness: `scripts/codex-trace.mjs` (spawns `codex app-server`, NDJSON JSON-RPC 2.0, records every inbound notification in order).
+Trace harness: `scripts/providers/codex/codex-trace.mjs` (spawns `codex app-server`, NDJSON JSON-RPC 2.0, records every inbound notification in order).
 
 Runtime trace: set `MCODE_CODEX_TRACE=1` to log each app-server notification plus mapped `AgentEvent` summaries while reproducing narrative issues in Mcode.
 
@@ -51,7 +51,7 @@ The current mapper implements these routes. The traces give no contradiction; th
 
 ## Sub-agent nesting (collabAgentToolCall)
 
-**Verified in golden fixture** (`packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson`, scenario `D_subagents`, codex-cli 0.130.0, capture via `scripts/codex-protocol-capture.mjs`):
+**Verified in golden fixture** (`packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson`, scenario `D_subagents`, codex-cli 0.130.0, capture via `scripts/providers/codex/codex-protocol-capture.mjs`):
 
 - Many `item/started` / `item/completed` rows with `type: "collabAgentToolCall"` (`spawnAgent`, `wait`).
 - `item/started` can be provisional: rejected or superseded spawn attempts may carry empty `receiverThreadIds` and empty `agentsStates`.

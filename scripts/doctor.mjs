@@ -4,11 +4,11 @@
  * Prints ✓/✗ per check with actionable remediation on failure.
  * Exits 1 if any check fails.
  */
-import { existsSync, accessSync, constants, readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { resolve, join } from 'node:path';
-import { homedir } from 'node:os';
-import { createRequire } from 'node:module';
+import * as NodeFS from 'node:fs';
+import * as NodeChildProcess from 'node:child_process';
+import * as NodePath from 'node:path';
+import * as NodeOS from 'node:os';
+import * as NodeModule from 'node:module';
 import { resolveMainRoot } from './utils.mjs';
 import {
   isElectronBinaryInstalled,
@@ -23,8 +23,8 @@ const mainRoot = resolveMainRoot();
  */
 function resolveSqliteModule() {
   try {
-    const serverRequire = createRequire(resolve(mainRoot, 'apps', 'server', 'package.json'));
-    return resolve(serverRequire.resolve('better-sqlite3/package.json'), '..');
+    const serverRequire = NodeModule.createRequire(NodePath.resolve(mainRoot, 'apps', 'server', 'package.json'));
+    return NodePath.resolve(serverRequire.resolve('better-sqlite3/package.json'), '..');
   } catch {
     return null;
   }
@@ -32,9 +32,9 @@ function resolveSqliteModule() {
 
 /** Returns the installed Electron module ABI. */
 function getElectronABI() {
-  const desktopRequire = createRequire(resolve(mainRoot, 'apps', 'desktop', 'package.json'));
+  const desktopRequire = NodeModule.createRequire(NodePath.resolve(mainRoot, 'apps', 'desktop', 'package.json'));
   const electronBinary = desktopRequire('electron');
-  const abi = execFileSync(
+  const abi = NodeChildProcess.execFileSync(
     electronBinary,
     ['-e', 'process.stdout.write(process.versions.modules)'],
     {
@@ -70,7 +70,7 @@ function check(label, fn, fix) {
 /** Check whether a binary is available on PATH. */
 function hasCommand(cmd) {
   const locator = process.platform === 'win32' ? 'where' : 'which';
-  execFileSync(locator, [cmd], { stdio: 'pipe' });
+  NodeChildProcess.execFileSync(locator, [cmd], { stdio: 'pipe' });
 }
 
 console.log('Checking prerequisites...\n');
@@ -99,14 +99,14 @@ check(
   () => {
     const modulePath = resolveSqliteModule();
     if (!modulePath) throw new Error('better-sqlite3 module is not installed; run bun install');
-    const electronBinding = resolve(modulePath, 'build', 'Release', 'better_sqlite3.electron.node');
-    if (!existsSync(electronBinding)) {
+    const electronBinding = NodePath.resolve(modulePath, 'build', 'Release', 'better_sqlite3.electron.node');
+    if (!NodeFS.existsSync(electronBinding)) {
       throw new Error(`better-sqlite3 Electron binding is missing: ${electronBinding}`);
     }
 
-    const markerPath = resolve(modulePath, 'build', 'Release', '.electron-abi');
-    if (!existsSync(markerPath)) throw new Error(`Electron ABI marker is missing: ${markerPath}`);
-    const marker = readFileSync(markerPath, 'utf8').trim();
+    const markerPath = NodePath.resolve(modulePath, 'build', 'Release', '.electron-abi');
+    if (!NodeFS.existsSync(markerPath)) throw new Error(`Electron ABI marker is missing: ${markerPath}`);
+    const marker = NodeFS.readFileSync(markerPath, 'utf8').trim();
     const electronABI = getElectronABI();
     if (!/^\d+$/.test(marker) || marker !== electronABI) {
       throw new Error(
@@ -119,12 +119,12 @@ check(
 
 // 7. MCODE_DATA_DIR writable
 const dataDir = process.env.MCODE_DATA_DIR
-  ?? join(homedir(), process.env.NODE_ENV === 'production' ? '.mcode' : '.mcode-dev');
+  ?? NodePath.join(NodeOS.homedir(), process.env.NODE_ENV === 'production' ? '.mcode' : '.mcode-dev');
 check(
   `MCODE_DATA_DIR writable (${dataDir})`,
   () => {
-    if (!existsSync(dataDir)) throw new Error('directory does not exist — start the app once to create it');
-    accessSync(dataDir, constants.W_OK);
+    if (!NodeFS.existsSync(dataDir)) throw new Error('directory does not exist — start the app once to create it');
+    NodeFS.accessSync(dataDir, NodeFS.constants.W_OK);
   },
   `Start the server once (bun run dev:web) or create manually: mkdir -p ${dataDir}`
 );

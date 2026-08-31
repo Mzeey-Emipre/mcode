@@ -1,33 +1,33 @@
 /**
  * Tests for root package development entry points.
  */
-import { test } from "node:test";
-import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import * as NodeTest from "node:test";
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { discoverAgentTestFiles } from "../test-scripts.mjs";
 
-test("root dev uses the paired dev:web runtime", () => {
-  const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
+NodeTest.test("root dev uses the paired dev:web runtime", () => {
+  const packageJson = JSON.parse(NodeFS.readFileSync(NodePath.resolve("package.json"), "utf8"));
 
-  assert.equal(packageJson.scripts.dev, "bun scripts/dev-web.mjs");
+  NodeAssertStrict.default.equal(packageJson.scripts.dev, "bun run dev:web");
 });
 
-test("root dev:server runs only the Electron-backed server launcher", () => {
-  const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
+NodeTest.test("root dev:server runs only the Electron-backed server launcher", () => {
+  const packageJson = JSON.parse(NodeFS.readFileSync(NodePath.resolve("package.json"), "utf8"));
 
-  assert.equal(packageJson.scripts["dev:server"], "bun scripts/dev-web.mjs --server-only");
+  NodeAssertStrict.default.equal(packageJson.scripts["dev:server"], "bun scripts/dev-web.mjs --server-only");
 });
 
-test("root db:info dispatches to the Electron SQLite runtime", () => {
-  const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
+NodeTest.test("root db:info dispatches to the Electron SQLite runtime", () => {
+  const packageJson = JSON.parse(NodeFS.readFileSync(NodePath.resolve("package.json"), "utf8"));
 
-  assert.equal(packageJson.scripts["db:info"], "bun scripts/db-info.mjs");
+  NodeAssertStrict.default.equal(packageJson.scripts["db:info"], "bun scripts/db-info.mjs");
 });
 
-test("repository orchestration scripts use Bun without a system Node contract", () => {
-  const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
+NodeTest.test("repository orchestration scripts use Bun without a system Node contract", () => {
+  const packageJson = JSON.parse(NodeFS.readFileSync(NodePath.resolve("package.json"), "utf8"));
   for (const name of [
     "postinstall",
     "setup",
@@ -42,14 +42,14 @@ test("repository orchestration scripts use Bun without a system Node contract", 
     "agent:down",
     "agent:reset",
   ]) {
-    assert.doesNotMatch(packageJson.scripts[name], /\bnode(?:\.exe)?\b/);
+    NodeAssertStrict.default.doesNotMatch(packageJson.scripts[name], /\bnode(?:\.exe)?\b/);
   }
-  assert.equal(packageJson.engines, undefined);
+  NodeAssertStrict.default.equal(packageJson.engines, undefined);
 });
 
-test("agent commands install missing dependencies before they start", () => {
-  const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
-  assert.equal(
+NodeTest.test("agent commands no longer rely on lifecycle dependency hooks", () => {
+  const packageJson = JSON.parse(NodeFS.readFileSync(NodePath.resolve("package.json"), "utf8"));
+  NodeAssertStrict.default.equal(
     packageJson.scripts["deps:ensure"],
     "bun scripts/agent/ensure-dependencies.mjs",
   );
@@ -63,18 +63,18 @@ test("agent commands install missing dependencies before they start", () => {
     "agent:up",
     "agent:reset",
   ]) {
-    assert.equal(packageJson.scripts[`pre${name}`], "bun run deps:ensure", name);
+    NodeAssertStrict.default.equal(packageJson.scripts[`pre${name}`], undefined, name);
   }
 });
 
-test("maintained test discovery fails when no tests exist", () => {
-  const directory = mkdtempSync(resolve(tmpdir(), "mcode-agent-tests-"));
+NodeTest.test("maintained test discovery fails when no tests exist", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.resolve(NodeOS.tmpdir(), "mcode-agent-tests-"));
   try {
-    assert.throws(
+    NodeAssertStrict.default.throws(
       () => discoverAgentTestFiles(directory),
       /No agent tests found/,
     );
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   }
 });

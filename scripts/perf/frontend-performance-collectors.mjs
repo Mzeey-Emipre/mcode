@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { cpus, platform, release, totalmem } from "node:os";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
 
 function percentile(sortedSamples, quantile) {
   return sortedSamples[Math.ceil(sortedSamples.length * quantile) - 1] ?? Number.NaN;
@@ -301,12 +301,12 @@ export async function createModeSignalCollector(page, mode) {
 
 /** Returns stable host and source metadata for a performance result. */
 export function collectRunEnvironment(repoRoot, runtimeVersions = {}) {
-  const cpuList = cpus();
-  const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], {
+  const cpuList = NodeOS.cpus();
+  const sourceRevision = NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: repoRoot,
     encoding: "utf8",
   }).trim();
-  const dirty = execFileSync("git", ["status", "--porcelain"], {
+  const dirty = NodeChildProcess.execFileSync("git", ["status", "--porcelain"], {
     cwd: repoRoot,
     encoding: "utf8",
   }).trim().length > 0;
@@ -318,9 +318,9 @@ export function collectRunEnvironment(repoRoot, runtimeVersions = {}) {
       arch: process.arch,
       cpuCount: cpuList.length,
       cpuModel: cpuList[0]?.model ?? "unknown",
-      memoryBytes: totalmem(),
-      platform: platform(),
-      release: release(),
+      memoryBytes: NodeOS.totalmem(),
+      platform: NodeOS.platform(),
+      release: NodeOS.release(),
     },
     versions: {
       node: process.versions.node,

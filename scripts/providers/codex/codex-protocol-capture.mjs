@@ -6,15 +6,14 @@
  * `packages/providers/src/__tests__/codex/codex-protocol-coverage.test.ts`.
  *
  * Usage:
- *   bun scripts/codex-protocol-capture.mjs <cwd> packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson
+ *   bun scripts/providers/codex/codex-protocol-capture.mjs <cwd> packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson
  *
  * Requires: `codex` on PATH, ChatGPT auth, network.
  */
-import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { execSync } from "node:child_process";
-import readline from "node:readline";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import { startCodexAppServer } from "./app-server-client.mjs";
 
 const [, , cwd, outFile] = process.argv;
 if (!cwd || !outFile) {
@@ -22,11 +21,11 @@ if (!cwd || !outFile) {
   process.exit(2);
 }
 
-mkdirSync(dirname(outFile), { recursive: true });
+NodeFS.mkdirSync(NodePath.dirname(outFile), { recursive: true });
 
 let codexVersion = "unknown";
 try {
-  codexVersion = execSync("codex --version", { encoding: "utf8", timeout: 5000 }).trim();
+  codexVersion = NodeChildProcess.execSync("codex --version", { encoding: "utf8", timeout: 5000 }).trim();
 } catch {
   /* optional */
 }
@@ -54,52 +53,16 @@ const SCENARIOS = [
 ];
 
 function log(obj) {
-  appendFileSync(outFile, JSON.stringify(obj) + "\n");
+  NodeFS.appendFileSync(outFile, JSON.stringify(obj) + "\n");
 }
 
-writeFileSync(outFile, "");
+NodeFS.writeFileSync(outFile, "");
 log({ type: "meta", codexVersion, cwd, capturedAt: new Date().toISOString() });
 
-const proc = spawn("codex", ["app-server"], {
-  cwd,
-  stdio: ["pipe", "pipe", "pipe"],
-  shell: true,
-  windowsHide: true,
-});
-
-let nextId = 1;
-const pending = new Map();
 let seq = 0;
 let activeScenario = null;
 let activeTurnId = null;
 let resolveTurnDone = null;
-
-function send(method, params) {
-  const id = nextId++;
-  proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject, method });
-  });
-}
-
-const rl = readline.createInterface({ input: proc.stdout });
-
-function parseLine(line) {
-  if (!line.trim()) return null;
-  try { return JSON.parse(line); } catch { return null; }
-}
-
-function settlePendingResponse(msg) {
-  if (msg.id == null || !pending.has(msg.id)) return false;
-  const { resolve, reject, method } = pending.get(msg.id);
-  pending.delete(msg.id);
-  if (msg.error) {
-    reject(new Error(`${method}: ${msg.error.message}`));
-  } else {
-    resolve(msg.result);
-  }
-  return true;
-}
 
 function buildNotification(msg) {
   const params = msg.params ?? {};
@@ -164,17 +127,15 @@ function handleMessage(msg) {
   resolveCompletedTurn(msg);
 }
 
-rl.on("line", (line) => {
-  const msg = parseLine(line);
-  if (!msg || settlePendingResponse(msg)) {
-    return;
-  }
-  handleMessage(msg);
+const client = startCodexAppServer({
+  cwd,
+  onNotification: handleMessage,
+  onStderr: (data) => {
+    log({ type: "stderr", scenario: activeScenario, text: data.toString().slice(0, 400) });
+  },
+  formatError: (method, error) => `${method}: ${error.message}`,
 });
-
-proc.stderr.on("data", (d) => {
-  log({ type: "stderr", scenario: activeScenario, text: d.toString().slice(0, 400) });
-});
+const send = client.request;
 
 async function runScenario(scenario) {
   activeScenario = scenario.id;
@@ -197,7 +158,7 @@ async function runScenario(scenario) {
   log({ type: "scenario_end", id: scenario.id, status });
   if (scenario.id === "C_file_touch") {
     try {
-      unlinkSync(join(cwd, SCRATCH_FILE));
+      NodeFS.unlinkSync(NodePath.join(cwd, SCRATCH_FILE));
     } catch {
       /* ignore */
     }
@@ -229,10 +190,5 @@ try {
   log({ type: "fatal", message: String(err?.message ?? err) });
   process.exitCode = 1;
 } finally {
-  try {
-    proc.stdin.end();
-  } catch {
-    /* ignore */
-  }
-  setTimeout(() => proc.kill(), 2000);
+  client.close(2000);
 }

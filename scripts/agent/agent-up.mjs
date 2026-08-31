@@ -2,12 +2,11 @@
 /**
  * Starts a self-contained per-worktree runtime for automation agents.
  */
-import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import {
   buildPortsContract,
@@ -23,11 +22,17 @@ import { seedFixtureRepo } from "./fixture-repo.mjs";
 import { stopRecordedPidFile } from "./runtime-processes.mjs";
 import { stopRecordedRuntimePids } from "./agent-down.mjs";
 import { ensureDependencies } from "./ensure-dependencies.mjs";
+import {
+  prepareRuntimeDirectories as prepareSharedRuntimeDirectories,
+  resolveElectronBinary as resolveSharedElectronBinary,
+  resolveElectronBinding,
+  waitForHttpOk as waitForSharedHttpOk,
+} from "../runtime/launch-mechanics.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = resolve(__dirname, "..", "..");
-const desktopRoot = resolve(rootDir, "apps", "desktop");
-const serverCjs = resolve(desktopRoot, "dist", "server", "server.cjs");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const rootDir = NodePath.resolve(__dirname, "..", "..");
+const desktopRoot = NodePath.resolve(rootDir, "apps", "desktop");
+const serverCjs = NodePath.resolve(desktopRoot, "dist", "server", "server.cjs");
 let agentUpTestHooks = {};
 
 /** Resolves the explicit web-automation opt-in for the Vite child process. */
@@ -73,7 +78,7 @@ export function setAgentUpTestHooks(hooks) {
  */
 export async function agentUp(repoRoot = resolveRepoRoot()) {
   const paths = ensureRuntimeRoot(repoRoot);
-  prepareRuntimeDirectories(paths);
+  prepareSharedRuntimeDirectories(paths);
   const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
   await stopRuntimePids(repoRoot);
 
@@ -103,24 +108,12 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
   }
 }
 
-function prepareRuntimeDirectories(paths) {
-  for (const directory of [
-    paths.dbDir,
-    paths.logsDir,
-    paths.pidsDir,
-    paths.playwrightScratchDir,
-    paths.electronDir,
-  ]) {
-    mkdirSync(directory, { recursive: true });
-  }
-}
-
 async function prepareRuntime(repoRoot) {
   const seedRuntimeFixtureRepo = agentUpTestHooks.seedFixtureRepo ?? seedFixtureRepo;
   const computeRuntimePorts = agentUpTestHooks.computeAvailablePorts ?? computeAvailablePorts;
   const fixtureRepo = seedRuntimeFixtureRepo(repoRoot);
   const { serverPort, webPort } = await computeRuntimePorts(repoRoot);
-  const token = randomUUID();
+  const token = NodeCrypto.randomUUID();
   const instanceToken = generateInstanceToken();
   return {
     fixtureRepo,
@@ -161,7 +154,7 @@ function startRuntimeServer({ electronBin, paths, repoRoot, runtime }) {
     electronBin,
     [serverCjs],
     {
-      cwd: dirname(serverCjs),
+      cwd: NodePath.dirname(serverCjs),
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
@@ -178,7 +171,7 @@ function startRuntimeServer({ electronBin, paths, repoRoot, runtime }) {
       },
       windowsHide: true,
     },
-    resolve(paths.logsDir, "server.log"),
+    NodePath.resolve(paths.logsDir, "server.log"),
   );
 }
 
@@ -188,7 +181,7 @@ function startRuntimeWeb({ paths, repoRoot, runtime }) {
     getBunBinary(),
     ["run", "dev", "--host", "127.0.0.1", "--port", String(runtime.webPort), "--strictPort"],
     {
-      cwd: resolve(rootDir, "apps", "web"),
+      cwd: NodePath.resolve(rootDir, "apps", "web"),
       env: {
         ...process.env,
         NODE_ENV: "development",
@@ -201,7 +194,7 @@ function startRuntimeWeb({ paths, repoRoot, runtime }) {
       },
       windowsHide: true,
     },
-    resolve(paths.logsDir, "web.log"),
+    NodePath.resolve(paths.logsDir, "web.log"),
   );
 }
 
@@ -215,24 +208,12 @@ async function writeRuntimeContract(contract) {
  * @returns {string | null}
  */
 function getElectronBinary() {
-  try {
-    const desktopRequire = createRequire(resolve(rootDir, "apps", "desktop", "package.json"));
-    const electronPath = desktopRequire("electron");
-    return existsSync(electronPath) ? electronPath : null;
-  } catch {
-    return null;
-  }
+  return resolveSharedElectronBinary(rootDir);
 }
 
 /** Resolve the workspace Electron-native better-sqlite3 binding. */
 function getElectronBinding() {
-  const serverRequire = createRequire(resolve(rootDir, "apps", "server", "package.json"));
-  const packagePath = serverRequire.resolve("better-sqlite3/package.json");
-  const bindingPath = resolve(dirname(packagePath), "build", "Release", "better_sqlite3.electron.node");
-  if (!existsSync(bindingPath)) {
-    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${bindingPath}`);
-  }
-  return bindingPath;
+  return resolveElectronBinding(rootDir);
 }
 
 /**
@@ -245,8 +226,8 @@ function getElectronBinding() {
  * @returns {import("node:child_process").ChildProcess}
  */
 function spawnLogged(command, args, options, logPath) {
-  const logFd = openSync(logPath, "a");
-  const child = spawn(command, args, {
+  const logFd = NodeFS.openSync(logPath, "a");
+  const child = NodeChildProcess.spawn(command, args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ["ignore", logFd, logFd],
@@ -266,7 +247,7 @@ function spawnLogged(command, args, options, logPath) {
 function getBunBinary() {
   if (process.env.BUN) return process.env.BUN;
   if (process.platform === "win32") {
-    const result = spawnSync("where.exe", ["bun"], { encoding: "utf8" });
+    const result = NodeChildProcess.spawnSync("where.exe", ["bun"], { encoding: "utf8" });
     const candidate = result.stdout.split(/\r?\n/).find(Boolean);
     if (candidate) return candidate;
   }
@@ -284,8 +265,8 @@ function writePid(paths, name, pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) {
     throw new Error(`Could not start ${name}: child process has no PID`);
   }
-  const pidFile = resolve(paths.pidsDir, `${name}.pid`);
-  writeFileSync(pidFile, `${pid}\n`, { encoding: "utf8" });
+  const pidFile = NodePath.resolve(paths.pidsDir, `${name}.pid`);
+  NodeFS.writeFileSync(pidFile, `${pid}\n`, { encoding: "utf8" });
   return pidFile;
 }
 
@@ -317,17 +298,7 @@ async function waitForHealth(healthUrl, timeoutMs = 30_000) {
  * @param {number} [timeoutMs]
  */
 async function waitForHttpOk(url, label, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {
-      // Retry until the startup deadline.
-    }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 300));
-  }
-  throw new Error(`${label} did not become reachable: ${url}`);
+  return waitForSharedHttpOk(url, label, timeoutMs);
 }
 
 /**
@@ -338,7 +309,7 @@ async function waitForHttpOk(url, label, timeoutMs = 30_000) {
  */
 async function cleanupStartedProcesses(pidFiles, repoRoot) {
   const paths = getRuntimePaths(repoRoot);
-  rmSync(paths.portsFile, { force: true });
+  NodeFS.rmSync(paths.portsFile, { force: true });
   for (const pidFile of [...pidFiles].reverse()) {
     try {
       await stopRecordedPidFile(pidFile, { repoRoot });
@@ -366,9 +337,9 @@ async function writeStdout(value) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   const repoArg = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
-  const repoRoot = repoArg ? resolve(repoArg) : resolveRepoRoot();
+  const repoRoot = repoArg ? NodePath.resolve(repoArg) : resolveRepoRoot();
   ensureDependencies({ repoRoot });
   await agentUp(repoRoot);
 }

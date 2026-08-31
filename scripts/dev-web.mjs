@@ -8,14 +8,13 @@
  * dev server so the browser can authenticate WebSocket connections.
  */
 
-import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
-import { resolve, dirname } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { rebuildServerDevBundle } from "./build-server-dev-bundle.mjs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { resolveServerOnlyExitCode } from "./dev-web-lifecycle.mjs";
+import { prepareRuntimeDirectories, resolveElectronBinary, resolveElectronBinding, waitForHttpOk } from "./runtime/launch-mechanics.mjs";
+import { ensureDependencies } from "./agent/ensure-dependencies.mjs";
 import { killProcessTree } from "./kill-process-tree.mjs";
 import {
   buildPortsContract,
@@ -29,67 +28,28 @@ import {
 import { seedFixtureRepo } from "./agent/fixture-repo.mjs";
 import { resolveDevSingleInstanceFlag } from "./agent/single-instance-flag.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = resolve(__dirname, "..");
-const desktopRoot = resolve(rootDir, "apps", "desktop");
-const serverCjs = resolve(desktopRoot, "dist", "server", "server.cjs");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const rootDir = NodePath.resolve(__dirname, "..");
+const desktopRoot = NodePath.resolve(rootDir, "apps", "desktop");
+const serverCjs = NodePath.resolve(desktopRoot, "dist", "server", "server.cjs");
 const serverOnly = process.argv.includes("--server-only");
+const repoRoot = resolveRepoRoot(rootDir);
+await ensureDependencies({ repoRoot });
+const { rebuildServerDevBundle } = await import("./build-server-dev-bundle.mjs");
 
 /**
  * Resolve the Electron binary path. The native module (better-sqlite3)
  * is compiled for Electron's ABI, so the server must run under
  * Electron's Node.js runtime.
  */
-function getElectronBinary() {
-  try {
-    const desktopRequire = createRequire(
-      resolve(rootDir, "apps", "desktop", "package.json"),
-    );
-    const electronPath = desktopRequire("electron");
-    if (existsSync(electronPath)) return electronPath;
-  } catch {
-    // fall through
-  }
-  return null;
-}
-
-/** Resolves the workspace Electron-native better-sqlite3 binding. */
-function getElectronBinding() {
-  const serverRequire = createRequire(resolve(rootDir, "apps", "server", "package.json"));
-  const packagePath = serverRequire.resolve("better-sqlite3/package.json");
-  const bindingPath = resolve(dirname(packagePath), "build", "Release", "better_sqlite3.electron.node");
-  if (!existsSync(bindingPath)) {
-    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${bindingPath}`);
-  }
-  return bindingPath;
-}
-
-/** Poll until the server's /health endpoint responds 200. */
-async function waitForHealth(healthUrl, timeoutMs = 15_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(healthUrl);
-      if (res.ok) return;
-    } catch {
-      // not ready yet
-    }
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  throw new Error(`Server did not respond at ${healthUrl} within ${timeoutMs}ms`);
-}
-
-const repoRoot = resolveRepoRoot(rootDir);
 const paths = ensureRuntimeRoot(repoRoot);
-mkdirSync(paths.dbDir, { recursive: true });
-mkdirSync(paths.logsDir, { recursive: true });
-mkdirSync(paths.electronDir, { recursive: true });
+prepareRuntimeDirectories(paths);
 const fixtureRepo = seedFixtureRepo(repoRoot);
 const runtimeStateEnv = buildRuntimeStateEnv(repoRoot, {
   MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
 });
 const { serverPort, webPort: computedWebPort } = await computeAvailablePorts(repoRoot);
-const devToken = randomUUID();
+const devToken = NodeCrypto.randomUUID();
 const instanceToken = generateInstanceToken();
 const singleInstance = resolveDevSingleInstanceFlag(process.env.MCODE_SINGLE_INSTANCE);
 const contract = buildPortsContract({
@@ -107,7 +67,7 @@ const contract = buildPortsContract({
     cookieName: "mcode-auth",
   },
 });
-const electronBin = getElectronBinary();
+const electronBin = resolveElectronBinary(rootDir);
 let electronBinding;
 
 if (!electronBin) {
@@ -119,7 +79,7 @@ if (!electronBin) {
 }
 
 try {
-  electronBinding = getElectronBinding();
+  electronBinding = resolveElectronBinding(rootDir);
 } catch (err) {
   console.error(`[dev:web] ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
@@ -139,11 +99,11 @@ console.log(`\x1b[36m[dev:web]\x1b[0m Starting server on port ${serverPort}...`)
 let serverFailed = false;
 
 // Start the server using Electron's Node.js (matches better-sqlite3 ABI).
-const server = spawn(
+const server = NodeChildProcess.spawn(
   electronBin,
   [serverCjs],
   {
-    cwd: dirname(serverCjs),
+    cwd: NodePath.dirname(serverCjs),
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
@@ -177,7 +137,7 @@ server.on("exit", (code) => {
 
 // Wait for the server to become healthy
 try {
-  await waitForHealth(contract.healthUrl);
+  await waitForHttpOk(contract.healthUrl, "Server", 15_000);
   writePortsFile(contract, repoRoot);
   console.log(`\x1b[36m[dev:web]\x1b[0m Server ready on port ${serverPort}`);
 } catch {
@@ -231,8 +191,8 @@ console.log(
   `\x1b[36m[dev:web]\x1b[0m Starting Vite dev server${webPort ? ` on http://localhost:${webPort}` : ""}...`,
 );
 
-vite = spawn("bun", viteArgs, {
-  cwd: resolve(rootDir, "apps", "web"),
+vite = NodeChildProcess.spawn("bun", viteArgs, {
+  cwd: NodePath.resolve(rootDir, "apps", "web"),
   env: {
     ...process.env,
     NODE_ENV: "development",

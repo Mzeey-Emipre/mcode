@@ -1,9 +1,9 @@
 import { summarizeDurationSamples } from "./frontend-performance-collectors.mjs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { join } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
+import * as NodePath from "node:path";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 
 /** Matches an operator classification to one adapter reported by Windows. */
 export function resolveWindowsGpuClassification(devices, adapterName, gpuType) {
@@ -104,7 +104,7 @@ export async function collectWindowsGpuEngineEvidence(
     throw new Error("At least one Electron process is required for GPU attribution");
   }
 
-  const script = join(repoRoot, "scripts", "perf", "collect-windows-gpu-engine.ps1");
+  const script = NodePath.join(repoRoot, "scripts", "perf", "collect-windows-gpu-engine.ps1");
   const { stdout } = await execFileAsync(
     "powershell.exe",
     [

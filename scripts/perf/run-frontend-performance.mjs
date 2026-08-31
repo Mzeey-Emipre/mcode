@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { agentDown } from "../agent/agent-down.mjs";
 import { readPortsFile } from "../agent/runtime-contract.mjs";
 import { ensurePlaywright } from "../../.codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
@@ -46,16 +46,16 @@ export function parseFrontendPerformanceRuntimes() {
 }
 
 function resolveOutputFile(repoRoot) {
-  const outputRoot = resolve(repoRoot, ".dev", "verification", "performance");
+  const outputRoot = NodePath.resolve(repoRoot, ".dev", "verification", "performance");
   const requested = readArgument("--output");
   const outputFile = requested
-    ? resolve(repoRoot, requested)
-    : join(outputRoot, "frontend-latest.json");
-  const relativePath = relative(outputRoot, outputFile);
+    ? NodePath.resolve(repoRoot, requested)
+    : NodePath.join(outputRoot, "frontend-latest.json");
+  const relativePath = NodePath.relative(outputRoot, outputFile);
   if (
     relativePath.length === 0 ||
     relativePath.startsWith("..") ||
-    resolve(outputFile) === outputRoot
+    NodePath.resolve(outputFile) === outputRoot
   ) {
     throw new Error("--output must name a file inside .dev/verification/performance");
   }
@@ -64,7 +64,7 @@ function resolveOutputFile(repoRoot) {
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolveCommand, rejectCommand) => {
-    const child = spawn(command, args, {
+    const child = NodeChildProcess.spawn(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
       shell: false,
@@ -91,7 +91,7 @@ async function isRuntimeReady(repoRoot) {
   if (!ports) return false;
   try {
     if (
-      resolve(ports.worktreeIdentity).toLowerCase() !== repoRoot.toLowerCase() ||
+      NodePath.resolve(ports.worktreeIdentity).toLowerCase() !== repoRoot.toLowerCase() ||
       !ports.healthUrl.startsWith("http://127.0.0.1:") ||
       !ports.appUrl.startsWith("http://127.0.0.1:")
     ) {
@@ -128,12 +128,12 @@ async function waitForWorker(outputFile, failureFile, sampleCount) {
   const timeoutMs = 120_000 + sampleCount * 120_000;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (existsSync(failureFile)) {
-      const failure = JSON.parse(readFileSync(failureFile, "utf8"));
+    if (NodeFS.existsSync(failureFile)) {
+      const failure = JSON.parse(NodeFS.readFileSync(failureFile, "utf8"));
       throw new Error(`Frontend performance worker failed: ${failure.message}`);
     }
-    if (existsSync(completionFile)) {
-      return JSON.parse(readFileSync(outputFile, "utf8"));
+    if (NodeFS.existsSync(completionFile)) {
+      return JSON.parse(NodeFS.readFileSync(outputFile, "utf8"));
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, POLL_INTERVAL_MS));
   }
@@ -141,14 +141,14 @@ async function waitForWorker(outputFile, failureFile, sampleCount) {
 }
 
 async function startBuiltRendererServer(root, port) {
-  const child = spawn(
+  const child = NodeChildProcess.spawn(
     process.execPath,
     [
-      join(root, "scripts", "perf", "frontend-performance-server.mjs"),
+      NodePath.join(root, "scripts", "perf", "frontend-performance-server.mjs"),
       "--root",
-      join(root, "apps", "desktop", "dist", "renderer"),
+      NodePath.join(root, "apps", "desktop", "dist", "renderer"),
       "--contract",
-      join(root, ".dev", "ports.json"),
+      NodePath.join(root, ".dev", "ports.json"),
       "--port",
       String(port),
     ],
@@ -241,7 +241,7 @@ function printShikiAttribution(attribution) {
 
 /** Runs the paired standalone-web and Electron renderer matrix. */
 export async function runFrontendPerformance(repoRoot = process.cwd()) {
-  const root = resolve(repoRoot);
+  const root = NodePath.resolve(repoRoot);
   const options = readFrontendPerformanceOptions(root);
   const state = { startedRuntime: false, startedElectron: false, rendererServer: null };
   try {
@@ -259,7 +259,7 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
 function readFrontendPerformanceOptions(root) {
   const mode = parsePerformanceMode();
   const outputFile = resolveOutputFile(root);
-  const failureFile = resolve(root, ".dev", "verification", "performance", "frontend-worker-error.json");
+  const failureFile = NodePath.resolve(root, ".dev", "verification", "performance", "frontend-worker-error.json");
   const options = {
     sampleCount: parseSampleCount(),
     mode,
@@ -269,7 +269,7 @@ function readFrontendPerformanceOptions(root) {
     failureFile,
     sessionFileName: `electron-performance-${mode}.json`,
   };
-  for (const artifact of [outputFile, `${outputFile}.complete`, failureFile]) rmSync(artifact, { force: true });
+  for (const artifact of [outputFile, `${outputFile}.complete`, failureFile]) NodeFS.rmSync(artifact, { force: true });
   return options;
 }
 
@@ -279,8 +279,8 @@ async function startFrontendPerformanceResources(root, options, state) {
   await buildFrontendPerformanceApp(root, options.mode);
   state.rendererServer = await startRendererPerformanceServer(root);
   if (!options.runtimes.includes("electron")) return undefined;
-  const sessionPath = join(root, ".dev", options.sessionFileName);
-  if (existsSync(sessionPath)) stopElectron(root, { sessionFileName: options.sessionFileName });
+  const sessionPath = NodePath.join(root, ".dev", options.sessionFileName);
+  if (NodeFS.existsSync(sessionPath)) stopElectron(root, { sessionFileName: options.sessionFileName });
   const record = await startElectron(root, {
     performanceMode: options.mode,
     rendererUrl: null,
@@ -311,7 +311,7 @@ async function startRendererPerformanceServer(root) {
 }
 
 async function runFrontendPerformanceWorker(root, options, rendererServer, electronRecord) {
-  const worker = spawn(
+  const worker = NodeChildProcess.spawn(
     electronRecord?.executablePath ?? process.execPath,
     frontendPerformanceWorkerArguments(root, options, rendererServer.url),
     {
@@ -335,7 +335,7 @@ async function runFrontendPerformanceWorker(root, options, rendererServer, elect
 
 function frontendPerformanceWorkerArguments(root, options, webUrl) {
   const args = [
-    join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
+    NodePath.join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
     "--sample-count", String(options.sampleCount), "--mode", options.mode,
     "--workload", options.workloads.join(","), "--runtime", options.runtimes.join(","),
     "--web-url", webUrl, "--output", options.outputFile,

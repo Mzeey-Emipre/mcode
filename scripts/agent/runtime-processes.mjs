@@ -2,8 +2,8 @@
 /**
  * Manages runtime process PID files under the `.dev` directory.
  */
-import { readFileSync, rmSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import {
   assertInsideDevDir,
@@ -19,7 +19,7 @@ import { killPidTree } from "../kill-process-tree.mjs";
  * @returns {number}
  */
 export function parsePidFile(pidFilePath) {
-  const raw = readFileSync(pidFilePath, "utf8").trim();
+  const raw = NodeFS.readFileSync(pidFilePath, "utf8").trim();
   if (!/^[1-9][0-9]*$/.test(raw)) {
     throw new Error(`Invalid PID file ${pidFilePath}: expected a positive integer`);
   }
@@ -39,16 +39,16 @@ export function parsePidFile(pidFilePath) {
 export async function stopRecordedPidFile(pidFilePath, options = {}) {
   const repoRoot = options.repoRoot ?? resolveRepoRoot();
   const { devDir } = getRuntimePaths(repoRoot);
-  const resolvedPidFile = resolve(pidFilePath);
+  const resolvedPidFile = NodePath.resolve(pidFilePath);
   assertInsideDevDir(resolvedPidFile, devDir);
-  if (!/^[a-z0-9.-]+\.pid$/i.test(basename(resolvedPidFile))) {
+  if (!/^[a-z0-9.-]+\.pid$/i.test(NodePath.basename(resolvedPidFile))) {
     throw new Error(`Invalid PID file name: ${pidFilePath}`);
   }
 
   const pid = parsePidFile(resolvedPidFile);
   const stop = options.stop ?? stopPid;
   await stop(pid, options.signal ?? "SIGTERM");
-  rmSync(resolvedPidFile);
+  NodeFS.rmSync(resolvedPidFile);
 }
 
 /**

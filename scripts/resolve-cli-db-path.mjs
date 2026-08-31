@@ -1,7 +1,7 @@
 /**
  * Match server startup DB resolution for CLI tooling (`state:paths`, `db:info`).
  */
-import { execFileSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import { getMcodeDir, resolveDbPath } from "../packages/shared/src/index.ts";
 
 /**
@@ -20,7 +20,7 @@ export function resolveCliDbPath() {
 
 function resolveGitValue(args) {
   try {
-    return execFileSync("git", args, { encoding: "utf-8", timeout: 3000 }).trim();
+    return NodeChildProcess.execFileSync("git", args, { encoding: "utf-8", timeout: 3000 }).trim();
   } catch {
     return undefined;
   }

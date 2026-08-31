@@ -2,8 +2,12 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": [
     "typescript",
+    "react",
     "unicorn",
     "oxc"
+  ],
+  "jsPlugins": [
+    "./packages/oxlint-plugin/src/index.ts"
   ],
   "categories": {
     "correctness": "warn"
@@ -13,6 +17,23 @@
     "max-depth": ["warn", 4],
     "no-control-regex": "off",
     "no-unused-vars": "warn",
+    "react/set-state-in-effect": "error",
+    "react/no-deriving-state-in-effects": "error",
+    "react/exhaustive-deps": "error",
+    "react/rules-of-hooks": "error",
+    "react/immutability": "off",
+    "react/incompatible-library": "off",
+    "react/no-children-prop": "off",
+    "react/preserve-manual-memoization": "off",
+    "react/purity": "off",
+    "react/refs": "off",
+    "react/static-components": "off",
+    "react/use-memo": "off",
+    "mcode/namespace-node-imports": "error",
+    "mcode/no-function-scope-zod-schema": "error",
+    "mcode/no-global-host-runtime": "error",
+    "mcode/no-native-title-tooltip": "error",
+    "mcode/require-lazy-nontrivial-schema": "error",
     "unicorn/no-useless-spread": "warn",
     "unicorn/no-useless-fallback-in-spread": "warn"
   },

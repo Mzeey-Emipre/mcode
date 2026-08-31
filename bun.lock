@@ -197,6 +197,18 @@
         "vitest": "^4.1.0",
       },
     },
+    "packages/oxlint-plugin": {
+      "name": "@mcode/oxlint-plugin",
+      "version": "0.0.1",
+      "dependencies": {
+        "@oxlint/plugins": "^1.80.0",
+      },
+      "devDependencies": {
+        "oxlint": "^1.80.0",
+        "typescript": "^5.8.0",
+        "vitest": "^4.1.0",
+      },
+    },
     "packages/providers": {
       "name": "@mcode/providers",
       "version": "0.0.1",
@@ -615,6 +627,8 @@
 
     "@mcode/contracts": ["@mcode/contracts@workspace:packages/contracts"],
 
+    "@mcode/oxlint-plugin": ["@mcode/oxlint-plugin@workspace:packages/oxlint-plugin"],
+
     "@mcode/providers": ["@mcode/providers@workspace:packages/providers"],
 
     "@mcode/server": ["@mcode/server@workspace:apps/server"],
@@ -804,6 +818,8 @@
     "@oxlint/binding-win32-ia32-msvc": ["@oxlint/binding-win32-ia32-msvc@1.80.0", "", { "os": "win32", "cpu": "ia32" }, "sha512-xhRWBMpLxZvgKAH6+DJZmpP+W8Y8UdQOSU1JfxSWNXsaBaRGW77j+1hCuNHlzj7OH4SPN8fYd1q0o2qrDtoVyw=="],
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.80.0", "", { "os": "win32", "cpu": "x64" }, "sha512-yAnO7lwBYQnz2pcfBPIGQQZWIX5zd5R/1aAKIF3oE+TVj7IhoHcROjOkz3sRDngzqhfPKfFaXqug5j5rE5dn6Q=="],
+
+    "@oxlint/plugins": ["@oxlint/plugins@1.80.0", "", {}, "sha512-QRgH1XqQEYNHa4f1vvPQ5fAdNdncHGIUG1ZWLlGIZHky3qwCEeAKYitZNbZMtaXtAQAAFFTOwqUfzESvimqZNA=="],
 
     "@phosphor-icons/react": ["@phosphor-icons/react@2.1.10", "", { "peerDependencies": { "react": ">=16.8", "react-dom": ">=16.8" } }, "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA=="],
 

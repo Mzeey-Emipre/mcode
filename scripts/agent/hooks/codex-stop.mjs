@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /** Inspects the changed-file receipt and emits Codex's stop-hook protocol. */
-import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
-const script = resolve(dirname(fileURLToPath(import.meta.url)), "..", "verify-tests.mjs");
-const result = spawnSync(process.execPath, [script, "--check-receipt"], {
+const script = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..", "verify-tests.mjs");
+const result = NodeChildProcess.spawnSync(process.execPath, [script, "--check-receipt"], {
   cwd: process.cwd(),
   encoding: "utf8",
   timeout: 10_000,

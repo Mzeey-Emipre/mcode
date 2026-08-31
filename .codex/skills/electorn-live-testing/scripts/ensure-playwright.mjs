@@ -1,17 +1,17 @@
-import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 /** Creates an isolated Playwright installation under the worktree runtime directory. */
 export function ensurePlaywright(repoRoot = process.cwd()) {
-  const root = resolve(repoRoot);
-  const scratchDir = join(root, ".dev", "playwright-scratch");
-  const packageFile = join(scratchDir, "package.json");
-  const nodeModulesDir = join(scratchDir, "node_modules");
-  mkdirSync(scratchDir, { recursive: true });
+  const root = NodePath.resolve(repoRoot);
+  const scratchDir = NodePath.join(root, ".dev", "playwright-scratch");
+  const packageFile = NodePath.join(scratchDir, "package.json");
+  const nodeModulesDir = NodePath.join(scratchDir, "node_modules");
+  NodeFS.mkdirSync(scratchDir, { recursive: true });
   ensureScratchPackage(packageFile);
-  const scratchRequire = createRequire(packageFile);
+  const scratchRequire = NodeModule.createRequire(packageFile);
   if (isPlaywrightInstalled(scratchRequire, nodeModulesDir)) return nodeModulesDir;
   installPlaywright(scratchDir);
   if (waitForPlaywright(scratchRequire, nodeModulesDir)) return nodeModulesDir;
@@ -19,14 +19,14 @@ export function ensurePlaywright(repoRoot = process.cwd()) {
 }
 
 function ensureScratchPackage(packageFile) {
-  if (existsSync(packageFile)) {
-    const manifest = JSON.parse(readFileSync(packageFile, "utf8"));
+  if (NodeFS.existsSync(packageFile)) {
+    const manifest = JSON.parse(NodeFS.readFileSync(packageFile, "utf8"));
     if (manifest.private !== true) {
       throw new Error("Refusing to modify a scratch package that is not private");
     }
     return;
   }
-  writeFileSync(
+  NodeFS.writeFileSync(
     packageFile,
     `${JSON.stringify({ name: "mcode-electron-live-testing", private: true }, null, 2)}\n`,
     "utf8",
@@ -44,7 +44,7 @@ function isPlaywrightInstalled(scratchRequire, nodeModulesDir) {
 
 function installPlaywright(scratchDir) {
   const installer = process.versions.bun ? process.execPath : "bun";
-  const install = spawnSync(installer, ["add", "playwright"], {
+  const install = NodeChildProcess.spawnSync(installer, ["add", "playwright"], {
     cwd: scratchDir,
     stdio: "inherit",
   });
@@ -68,8 +68,8 @@ function waitForPlaywright(scratchRequire, nodeModulesDir) {
 }
 
 function isInside(parent, candidate) {
-  const relativePath = relative(parent, candidate);
-  return relativePath.length > 0 && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+  const relativePath = NodePath.relative(parent, candidate);
+  return relativePath.length > 0 && !relativePath.startsWith("..") && !NodePath.isAbsolute(relativePath);
 }
 
 if (import.meta.main) {

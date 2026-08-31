@@ -1,6 +1,6 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import * as NodeTest from "node:test";
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeFS from "node:fs";
 
 import { main } from "../cleanup-superseded-nightlies.mjs";
 
@@ -73,7 +73,7 @@ function createHarness({ releases, refetched = new Map(), failAt } = {}) {
   };
 }
 
-test("dry run selects only old superseded nightlies without mutating GitHub", () => {
+NodeTest.default("dry run selects only old superseded nightlies without mutating GitHub", () => {
   const eligiblePublished = nightly();
   const eligibleDraft = nightly({
     id: 2,
@@ -132,8 +132,8 @@ test("dry run selects only old superseded nightlies without mutating GitHub", ()
     io: harness.io,
   });
 
-  assert.equal(result, 0);
-  assert.deepEqual(harness.stdout, [
+  NodeAssertStrict.default.equal(result, 0);
+  NodeAssertStrict.default.deepEqual(harness.stdout, [
     `Stable tag: ${STABLE_TAG}`,
     "Cutoff: 2026-01-08T12:00:00.000Z",
     "Candidates (2):",
@@ -141,13 +141,13 @@ test("dry run selects only old superseded nightlies without mutating GitHub", ()
     "  v1.1.9-nightly.20251231.2",
     "Dry run: no releases or tags were deleted.",
   ]);
-  assert.equal(
+  NodeAssertStrict.default.equal(
     harness.calls.some((args) => args.includes("DELETE")),
     false,
   );
 });
 
-test("apply re-fetches candidates, skips stale plans, then deletes release before exact tag", () => {
+NodeTest.default("apply re-fetches candidates, skips stale plans, then deletes release before exact tag", () => {
   const first = nightly();
   const second = nightly({
     id: 2,
@@ -164,14 +164,14 @@ test("apply re-fetches candidates, skips stale plans, then deletes release befor
     io: harness.io,
   });
 
-  assert.equal(result, 0);
-  assert.ok(
+  NodeAssertStrict.default.equal(result, 0);
+  NodeAssertStrict.default.ok(
     harness.stdout.includes(
       "Skipped v1.2.0-nightly.20260101.1: release no longer matches the cleanup plan.",
     ),
   );
   const mutations = harness.calls.filter((args) => args.includes("DELETE"));
-  assert.deepEqual(mutations, [
+  NodeAssertStrict.default.deepEqual(mutations, [
     ["api", "--method", "DELETE", `repos/${REPO}/releases/2`],
     [
       "api",
@@ -182,7 +182,7 @@ test("apply re-fetches candidates, skips stale plans, then deletes release befor
   ]);
 });
 
-test("apply explicitly skips malformed tags returned by candidate revalidation", () => {
+NodeTest.default("apply explicitly skips malformed tags returned by candidate revalidation", () => {
   for (const malformedTag of [
     "v01.2.0-nightly.20251201.9",
     "v1.2.0-nightly.20261340.10",
@@ -196,20 +196,20 @@ test("apply explicitly skips malformed tags returned by candidate revalidation",
       ]),
     });
 
-    assert.equal(
+    NodeAssertStrict.default.equal(
       main(["--repo", REPO, "--stable-tag", STABLE_TAG, "--apply"], {
         gh: harness.gh,
         io: harness.io,
       }),
       0,
     );
-    assert.ok(
+    NodeAssertStrict.default.ok(
       harness.stdout.includes(
         `Skipped ${planned.tag_name}: release no longer matches the cleanup plan.`,
       ),
       malformedTag,
     );
-    assert.equal(
+    NodeAssertStrict.default.equal(
       harness.calls.some((args) => args.includes("DELETE")),
       false,
       malformedTag,
@@ -217,7 +217,7 @@ test("apply explicitly skips malformed tags returned by candidate revalidation",
   }
 });
 
-test("apply reports a partial failure and exits nonzero", () => {
+NodeTest.default("apply reports a partial failure and exits nonzero", () => {
   const release = nightly();
   const tagEndpoint = `repos/${REPO}/git/refs/tags/v1.2.0-nightly.20260101.1`;
   const harness = createHarness({
@@ -230,14 +230,14 @@ test("apply reports a partial failure and exits nonzero", () => {
     io: harness.io,
   });
 
-  assert.equal(result, 1);
-  assert.match(
+  NodeAssertStrict.default.equal(result, 1);
+  NodeAssertStrict.default.match(
     harness.stderr.join("\n"),
     /Release 1 was deleted, but exact tag v1\.2\.0-nightly\.20260101\.1 was not/,
   );
 });
 
-test("invalid or ambiguous CLI arguments fail closed", () => {
+NodeTest.default("invalid or ambiguous CLI arguments fail closed", () => {
   for (const argv of [
     [],
     ["--repo", REPO],
@@ -247,29 +247,29 @@ test("invalid or ambiguous CLI arguments fail closed", () => {
     ["--repo", REPO, "--stable-tag", STABLE_TAG, "--apply", "--apply"],
   ]) {
     const harness = createHarness({ releases: [] });
-    assert.equal(main(argv, { gh: harness.gh, io: harness.io }), 1);
-    assert.equal(harness.calls.length, 0);
+    NodeAssertStrict.default.equal(main(argv, { gh: harness.gh, io: harness.io }), 1);
+    NodeAssertStrict.default.equal(harness.calls.length, 0);
   }
 });
 
-test("an invalid stable release fails before nightly enumeration", () => {
+NodeTest.default("an invalid stable release fails before nightly enumeration", () => {
   const harness = createHarness({ releases: [] });
   harness.gh = (args) => {
     harness.calls.push(args);
     return JSON.stringify({ ...STABLE_RELEASE, prerelease: true });
   };
 
-  assert.equal(
+  NodeAssertStrict.default.equal(
     main(["--repo", REPO, "--stable-tag", STABLE_TAG], {
       gh: harness.gh,
       io: harness.io,
     }),
     1,
   );
-  assert.equal(harness.calls.length, 1);
+  NodeAssertStrict.default.equal(harness.calls.length, 1);
 });
 
-test("malformed stable tags fail before release enumeration", () => {
+NodeTest.default("malformed stable tags fail before release enumeration", () => {
   for (const stableTag of [
     "mcode-v01.2.0",
     "mcode-v1.02.0",
@@ -286,7 +286,7 @@ test("malformed stable tags fail before release enumeration", () => {
       });
     };
 
-    assert.equal(
+    NodeAssertStrict.default.equal(
       main(["--repo", REPO, "--stable-tag", stableTag], {
         gh,
         io: { stdout() {}, stderr: (line) => stderr.push(line) },
@@ -294,12 +294,12 @@ test("malformed stable tags fail before release enumeration", () => {
       1,
       stableTag,
     );
-    assert.equal(calls.length, 1, stableTag);
-    assert.match(stderr.join("\n"), /exactly match mcode-vX\.Y\.Z/, stableTag);
+    NodeAssertStrict.default.equal(calls.length, 1, stableTag);
+    NodeAssertStrict.default.match(stderr.join("\n"), /exactly match mcode-vX\.Y\.Z/, stableTag);
   }
 });
 
-test("a full tenth page reaches the enumeration cap and fails closed", () => {
+NodeTest.default("a full tenth page reaches the enumeration cap and fails closed", () => {
   const calls = [];
   const gh = (args) => {
     calls.push(args);
@@ -318,24 +318,24 @@ test("a full tenth page reaches the enumeration cap and fails closed", () => {
   };
   const stderr = [];
 
-  assert.equal(
+  NodeAssertStrict.default.equal(
     main(["--repo", REPO, "--stable-tag", STABLE_TAG], {
       gh,
       io: { stdout() {}, stderr: (line) => stderr.push(line) },
     }),
     1,
   );
-  assert.match(stderr.join("\n"), /1,000-release safety cap/);
-  assert.equal(calls.length, 11);
+  NodeAssertStrict.default.match(stderr.join("\n"), /1,000-release safety cap/);
+  NodeAssertStrict.default.equal(calls.length, 11);
 });
 
-test("release workflows share the non-cancelling bounded mutation queue", () => {
+NodeTest.default("release workflows share the non-cancelling bounded mutation queue", () => {
   for (const path of [
     ".github/workflows/nightly-desktop.yml",
     ".github/workflows/release-please.yml",
   ]) {
-    const workflow = readFileSync(path, "utf8");
-    assert.match(
+    const workflow = NodeFS.readFileSync(path, "utf8");
+    NodeAssertStrict.default.match(
       workflow,
       /concurrency:\r?\n  group: nightly-release-mutations\r?\n  cancel-in-progress: false\r?\n  queue: max/,
       path,
@@ -343,17 +343,17 @@ test("release workflows share the non-cancelling bounded mutation queue", () => 
   }
 });
 
-test("stable release cleanup uses least-privilege checkout and token settings", () => {
-  const workflow = readFileSync(".github/workflows/release-please.yml", "utf8");
+NodeTest.default("stable release cleanup uses least-privilege checkout and token settings", () => {
+  const workflow = NodeFS.readFileSync(".github/workflows/release-please.yml", "utf8");
   const cleanupJob = workflow.slice(
     workflow.indexOf("  cleanup-superseded-nightlies:"),
   );
 
-  assert.match(
+  NodeAssertStrict.default.match(
     cleanupJob,
     /- uses: actions\/checkout@v4\r?\n\s+with:\r?\n\s+persist-credentials: false/,
   );
-  assert.match(
+  NodeAssertStrict.default.match(
     cleanupJob,
     /uses: actions\/create-github-app-token@v1\r?\n\s+with:\r?\n(?:\s+.+\r?\n)*?\s+permission-contents: write/,
   );

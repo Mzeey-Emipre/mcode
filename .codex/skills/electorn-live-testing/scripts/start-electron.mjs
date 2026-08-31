@@ -1,17 +1,14 @@
-import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { terminateProcessTree } from "./process-tree.mjs";
+
+const { spawn } = NodeChildProcess;
+const { createRequire } = NodeModule;
+const { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } = NodeFS;
+const { dirname, isAbsolute, join, relative, resolve } = NodePath;
 
 const SESSION_FILE_NAME = "electron-live-testing.json";
 const CDP_PROBE_TIMEOUT_MS = 1_000;
@@ -107,7 +104,7 @@ export async function startElectron(repoRoot = process.cwd(), options = {}) {
 
 async function loadElectronRuntime(root, options) {
   const runtimeContract = await import(
-    pathToFileURL(join(root, "scripts", "agent", "runtime-contract.mjs")).href
+    NodeURL.pathToFileURL(NodePath.join(root, "scripts", "agent", "runtime-contract.mjs")).href
   );
   const paths = runtimeContract.getRuntimePaths(root);
   const packagedExecutablePath = options.packagedExecutablePath

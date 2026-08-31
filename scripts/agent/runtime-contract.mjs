@@ -2,18 +2,11 @@
 /**
  * Defines the per-worktree agent runtime filesystem and port contract.
  */
-import { createHash, randomBytes } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { createServer } from "node:net";
-import { join, resolve, sep } from "node:path";
-import { execFileSync } from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 export const DEV_DIR_NAME = ".dev";
 export const PORTS_FILE_NAME = "ports.json";
@@ -27,7 +20,7 @@ export const INSTANCE_TOKEN_BYTES = 32;
  * @returns {string}
  */
 export function generateInstanceToken() {
-  return randomBytes(INSTANCE_TOKEN_BYTES).toString("hex");
+  return NodeCrypto.randomBytes(INSTANCE_TOKEN_BYTES).toString("hex");
 }
 
 /**
@@ -37,7 +30,7 @@ export function generateInstanceToken() {
  * @returns {string}
  */
 export function resolveRepoRoot(cwd = process.cwd()) {
-  return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+  return NodeChildProcess.execFileSync("git", ["rev-parse", "--show-toplevel"], {
     cwd,
     encoding: "utf8",
   }).trim();
@@ -50,20 +43,20 @@ export function resolveRepoRoot(cwd = process.cwd()) {
  * @returns {{ repoRoot: string, devDir: string, portsFile: string, fixtureRepoDir: string, dbDir: string, dbPath: string, logsDir: string, pidsDir: string, playwrightScratchDir: string, electronDir: string }}
  */
 export function getRuntimePaths(repoRoot = resolveRepoRoot()) {
-  const root = resolve(repoRoot);
-  const devDir = join(root, DEV_DIR_NAME);
-  const dbDir = join(devDir, "db");
+  const root = NodePath.resolve(repoRoot);
+  const devDir = NodePath.join(root, DEV_DIR_NAME);
+  const dbDir = NodePath.join(devDir, "db");
   return {
     repoRoot: root,
     devDir,
-    portsFile: join(devDir, PORTS_FILE_NAME),
-    fixtureRepoDir: join(devDir, "fixture-repo"),
+    portsFile: NodePath.join(devDir, PORTS_FILE_NAME),
+    fixtureRepoDir: NodePath.join(devDir, "fixture-repo"),
     dbDir,
-    dbPath: join(dbDir, "app.sqlite"),
-    logsDir: join(devDir, "logs"),
-    pidsDir: join(devDir, "pids"),
-    playwrightScratchDir: join(devDir, "playwright-scratch"),
-    electronDir: join(devDir, "electron"),
+    dbPath: NodePath.join(dbDir, "app.sqlite"),
+    logsDir: NodePath.join(devDir, "logs"),
+    pidsDir: NodePath.join(devDir, "pids"),
+    playwrightScratchDir: NodePath.join(devDir, "playwright-scratch"),
+    electronDir: NodePath.join(devDir, "electron"),
   };
 }
 
@@ -91,8 +84,8 @@ export function buildRuntimeStateEnv(repoRoot = resolveRepoRoot(), overrides = {
  * @param {string} repoRoot
  */
 export function assertDevDirIgnored(repoRoot = resolveRepoRoot()) {
-  const gitignorePath = join(repoRoot, ".gitignore");
-  const gitignore = readFileSync(gitignorePath, "utf8");
+  const gitignorePath = NodePath.join(repoRoot, ".gitignore");
+  const gitignore = NodeFS.readFileSync(gitignorePath, "utf8");
   const ignoresDevDir = gitignore
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -112,7 +105,7 @@ export function assertDevDirIgnored(repoRoot = resolveRepoRoot()) {
 export function ensureRuntimeRoot(repoRoot = resolveRepoRoot()) {
   assertDevDirIgnored(repoRoot);
   const paths = getRuntimePaths(repoRoot);
-  mkdirSync(paths.devDir, { recursive: true });
+  NodeFS.mkdirSync(paths.devDir, { recursive: true });
   return paths;
 }
 
@@ -124,8 +117,8 @@ export function ensureRuntimeRoot(repoRoot = resolveRepoRoot()) {
  * @returns {number}
  */
 export function computeDeterministicPort(worktreePath, basePort = DEFAULT_PORT_BASE) {
-  const canonical = realpathSync.native(worktreePath).toLowerCase();
-  const digest = createHash("sha1").update(canonical).digest("hex");
+  const canonical = NodeFS.realpathSync.native(worktreePath).toLowerCase();
+  const digest = NodeCrypto.createHash("sha1").update(canonical).digest("hex");
   const bucket = Number.parseInt(digest.slice(0, 8), 16) % PORT_BUCKET_SIZE;
   return basePort + bucket;
 }
@@ -143,7 +136,7 @@ export function findAvailablePort(preferred, host = "127.0.0.1") {
   }
 
   return new Promise((resolvePort, reject) => {
-    const server = createServer();
+    const server = NodeNet.createServer();
     server.once("error", (error) => {
       if (
         (error.code === "EADDRINUSE" || error.code === "EACCES") &&
@@ -181,10 +174,10 @@ export async function computeAvailablePorts(worktreePath) {
  */
 export function readPortsFile(repoRoot = resolveRepoRoot()) {
   const { portsFile } = getRuntimePaths(repoRoot);
-  if (!existsSync(portsFile)) {
+  if (!NodeFS.existsSync(portsFile)) {
     return null;
   }
-  const parsed = JSON.parse(readFileSync(portsFile, "utf8"));
+  const parsed = JSON.parse(NodeFS.readFileSync(portsFile, "utf8"));
   validatePortsContract(parsed);
   return parsed;
 }
@@ -198,10 +191,10 @@ export function readPortsFile(repoRoot = resolveRepoRoot()) {
 export function writePortsFile(ports, repoRoot = resolveRepoRoot()) {
   validatePortsContract(ports);
   const paths = ensureRuntimeRoot(repoRoot);
-  writeFileSync(`${paths.portsFile}.tmp`, `${JSON.stringify(ports, null, 2)}\n`, {
+  NodeFS.writeFileSync(`${paths.portsFile}.tmp`, `${JSON.stringify(ports, null, 2)}\n`, {
     mode: 0o600,
   });
-  renameSync(`${paths.portsFile}.tmp`, paths.portsFile);
+  NodeFS.renameSync(`${paths.portsFile}.tmp`, paths.portsFile);
 }
 
 /**
@@ -211,7 +204,7 @@ export function writePortsFile(ports, repoRoot = resolveRepoRoot()) {
  * @returns {AgentRuntimePorts}
  */
 export function buildPortsContract(input) {
-  const repoRoot = resolve(input.repoRoot ?? resolveRepoRoot());
+  const repoRoot = NodePath.resolve(input.repoRoot ?? resolveRepoRoot());
   const paths = getRuntimePaths(repoRoot);
   return {
     instanceToken: input.instanceToken,
@@ -232,9 +225,9 @@ export function buildPortsContract(input) {
  * @param {string} devDir
  */
 export function assertInsideDevDir(candidate, devDir) {
-  const resolvedCandidate = resolve(candidate);
-  const resolvedDev = resolve(devDir);
-  const prefix = resolvedDev.endsWith(sep) ? resolvedDev : `${resolvedDev}${sep}`;
+  const resolvedCandidate = NodePath.resolve(candidate);
+  const resolvedDev = NodePath.resolve(devDir);
+  const prefix = resolvedDev.endsWith(NodePath.sep) ? resolvedDev : `${resolvedDev}${NodePath.sep}`;
   if (resolvedCandidate !== resolvedDev && !resolvedCandidate.startsWith(prefix)) {
     throw new Error(`Refusing to operate outside runtime directory: ${candidate}`);
   }

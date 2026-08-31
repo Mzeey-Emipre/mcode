@@ -1,7 +1,7 @@
-import { createRequire } from "node:module";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeModule from "node:module";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { collectRunEnvironment } from "./frontend-performance-collectors.mjs";
 import {
   normalizeFrontendRendererRuntimes,
@@ -61,12 +61,12 @@ function parseElectronSessionFile(required) {
 }
 
 function resolveOutputFile(repoRoot) {
-  const outputRoot = resolve(repoRoot, ".dev", "verification", "performance");
+  const outputRoot = NodePath.resolve(repoRoot, ".dev", "verification", "performance");
   const requested = readArgument("--output");
   const outputFile = requested
-    ? resolve(repoRoot, requested)
-    : join(outputRoot, `frontend-${new Date().toISOString().replaceAll(":", "-")}.json`);
-  const relativePath = relative(outputRoot, outputFile);
+    ? NodePath.resolve(repoRoot, requested)
+    : NodePath.join(outputRoot, `frontend-${new Date().toISOString().replaceAll(":", "-")}.json`);
+  const relativePath = NodePath.relative(outputRoot, outputFile);
   if (relativePath.length === 0 || relativePath.startsWith("..")) {
     throw new Error("--output must name a file inside .dev/verification/performance");
   }
@@ -127,7 +127,7 @@ async function run() {
     ({ electronSession, result: electronResult } = await runElectron(context));
     const result = buildWorkerResult(context, browserResult, electronResult);
     const invalidLifecycleCandidate = hasInvalidLifecycleCandidate(result);
-    await writeFile(context.outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+    await NodeFSPromises.writeFile(context.outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     process.stdout.write(`${JSON.stringify({
       outputFile: context.outputFile,
       correctness: result.correctness,
@@ -139,15 +139,15 @@ async function run() {
     await closeElectronSession(electronSession, context.electronHelper);
     if (browser) await browser.close();
   }
-  await writeFile(`${context.outputFile}.complete`, "complete\n", "utf8");
+  await NodeFSPromises.writeFile(`${context.outputFile}.complete`, "complete\n", "utf8");
 }
 
 async function prepareWorkerContext() {
   const repoRoot = process.cwd();
   const runtimes = parseRuntimes();
   const { outputFile, outputRoot } = resolveOutputFile(repoRoot);
-  await mkdir(outputRoot, { recursive: true });
-  const scratchRequire = createRequire(join(repoRoot, ".dev", "playwright-scratch", "package.json"));
+  await NodeFSPromises.mkdir(outputRoot, { recursive: true });
+  const scratchRequire = NodeModule.createRequire(NodePath.join(repoRoot, ".dev", "playwright-scratch", "package.json"));
   const playwright = scratchRequire("playwright");
   const playwrightVersion = scratchRequire("playwright/package.json").version;
   return {
@@ -159,7 +159,7 @@ async function prepareWorkerContext() {
     webUrl: parseWebUrl(),
     electronSessionFile: parseElectronSessionFile(runtimes.includes("electron")),
     outputFile,
-    ports: JSON.parse(await readFile(join(repoRoot, ".dev", "ports.json"), "utf8")),
+    ports: JSON.parse(await NodeFSPromises.readFile(NodePath.join(repoRoot, ".dev", "ports.json"), "utf8")),
     playwright,
     electronHelper: await loadElectronHelper(repoRoot),
     runEnvironment: collectRunEnvironment(repoRoot, {
@@ -170,7 +170,7 @@ async function prepareWorkerContext() {
 }
 
 function loadElectronHelper(repoRoot) {
-  return import(pathToFileURL(join(
+  return import(NodeURL.pathToFileURL(NodePath.join(
     repoRoot, ".codex", "skills", "electorn-live-testing", "scripts", "electron-session.mjs",
   )).href);
 }
@@ -285,15 +285,15 @@ async function closeElectronSession(electronSession, electronHelper) {
 try {
   await run();
 } catch (error) {
-  const failureFile = resolve(
+  const failureFile = NodePath.resolve(
     process.cwd(),
     ".dev",
     "verification",
     "performance",
     "frontend-worker-error.json",
   );
-  await mkdir(dirname(failureFile), { recursive: true });
-  await writeFile(
+  await NodeFSPromises.mkdir(NodePath.dirname(failureFile), { recursive: true });
+  await NodeFSPromises.writeFile(
     failureFile,
     `${JSON.stringify({
       message: error instanceof Error ? error.message : String(error),

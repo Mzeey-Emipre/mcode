@@ -1,29 +1,29 @@
 /** Runs a JavaScript CLI with the workspace Electron runtime and SQLite binding. */
 
-import { spawn } from "child_process";
-import { existsSync, readFileSync } from "fs";
-import { createRequire } from "module";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
-import { fileURLToPath } from "url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { killPidTree, killProcessTree } from "./kill-process-tree.mjs";
 
 /** Maximum time one Electron CLI invocation may run before its owned process tree is killed. */
 export const ELECTRON_PROCESS_TIMEOUT_MS = 10 * 60 * 1_000;
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const workspaceRoot = resolve(scriptDir, "..");
-const electronRequire = createRequire(resolve(workspaceRoot, "apps", "desktop", "package.json"));
-const serverRequire = createRequire(resolve(workspaceRoot, "apps", "server", "package.json"));
+const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const workspaceRoot = NodePath.resolve(scriptDir, "..");
+const electronRequire = NodeModule.createRequire(NodePath.resolve(workspaceRoot, "apps", "desktop", "package.json"));
+const serverRequire = NodeModule.createRequire(NodePath.resolve(workspaceRoot, "apps", "server", "package.json"));
 
 function resolveElectronBinding() {
-  const betterSqliteDir = dirname(serverRequire.resolve("better-sqlite3/package.json"));
-  const bindingPath = join(
+  const betterSqliteDir = NodePath.dirname(serverRequire.resolve("better-sqlite3/package.json"));
+  const bindingPath = NodePath.join(
     betterSqliteDir,
     "build",
     "Release",
     "better_sqlite3.electron.node",
   );
-  if (!existsSync(bindingPath)) {
+  if (!NodeFS.existsSync(bindingPath)) {
     throw new Error(`Workspace Electron better-sqlite3 binding not found: ${bindingPath}`);
   }
   return bindingPath;
@@ -37,18 +37,18 @@ function resolveWorkspaceCli(args) {
     throw new Error("Expected a package name and CLI entry after --workspace-cli.");
   }
 
-  const packageDir = dirname(serverRequire.resolve(`${packageName}/package.json`));
-  const cliEntry = resolve(packageDir, entryFile);
-  const packageRelativeEntry = relative(packageDir, cliEntry);
+  const packageDir = NodePath.dirname(serverRequire.resolve(`${packageName}/package.json`));
+  const cliEntry = NodePath.resolve(packageDir, entryFile);
+  const packageRelativeEntry = NodePath.relative(packageDir, cliEntry);
   if (
-    isAbsolute(entryFile)
+    NodePath.isAbsolute(entryFile)
     || packageRelativeEntry === ".."
-    || packageRelativeEntry.startsWith(`..${sep}`)
-    || isAbsolute(packageRelativeEntry)
+    || packageRelativeEntry.startsWith(`..${NodePath.sep}`)
+    || NodePath.isAbsolute(packageRelativeEntry)
   ) {
     throw new Error("Workspace CLI entry must stay inside its package directory.");
   }
-  if (!existsSync(cliEntry)) {
+  if (!NodeFS.existsSync(cliEntry)) {
     throw new Error(`Workspace CLI entry not found: ${cliEntry}`);
   }
 
@@ -68,7 +68,7 @@ function resolveWorkspaceCli(args) {
 export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = ELECTRON_PROCESS_TIMEOUT_MS }) {
   return new Promise((resolveProcess) => {
     const isWindows = process.platform === "win32";
-    const child = spawn(electronPath, args, {
+    const child = NodeChildProcess.spawn(electronPath, args, {
       cwd,
       env,
       shell: false,
@@ -161,13 +161,13 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
 }
 
 function resolveElectronBinary() {
-  const electronDir = dirname(electronRequire.resolve("electron/package.json"));
-  const executable = readFileSync(join(electronDir, "path.txt"), "utf8").trim();
-  return resolve(electronDir, "dist", executable);
+  const electronDir = NodePath.dirname(electronRequire.resolve("electron/package.json"));
+  const executable = NodeFS.readFileSync(NodePath.join(electronDir, "path.txt"), "utf8").trim();
+  return NodePath.resolve(electronDir, "dist", executable);
 }
 
-const invokedScript = process.argv[1] ? resolve(process.argv[1]) : null;
-const moduleScript = resolve(fileURLToPath(import.meta.url));
+const invokedScript = process.argv[1] ? NodePath.resolve(process.argv[1]) : null;
+const moduleScript = NodePath.resolve(NodeURL.fileURLToPath(import.meta.url));
 const isMain = invokedScript && (
   process.platform === "win32"
     ? invokedScript.toLowerCase() === moduleScript.toLowerCase()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 
 const PAGE_SIZE = 100;
 const MAX_RELEASES = 1_000;
@@ -15,7 +15,7 @@ const NIGHTLY_TAG_PATTERN = new RegExp(
 );
 
 function defaultGh(args) {
-  return execFileSync("gh", args, {
+  return NodeChildProcess.execFileSync("gh", args, {
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024,
   });
@@ -289,6 +289,6 @@ export function main(argv, { gh = defaultGh, io = defaultIo() } = {}) {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   process.exitCode = main(process.argv.slice(2));
 }

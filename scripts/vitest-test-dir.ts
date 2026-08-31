@@ -12,13 +12,13 @@
  * run completes.
  */
 
-import { mkdtempSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 /** Creates a unique per-run test data directory and sets `MCODE_DATA_DIR`. */
 export function createTestDataDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "mcode-test-"));
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-test-"));
   // Mirror into process.env so the shared globalSetup teardown can locate
   // and remove the dir after the run; workers still receive it via test.env.
   process.env.MCODE_DATA_DIR = dir;

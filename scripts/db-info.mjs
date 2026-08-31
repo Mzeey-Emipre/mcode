@@ -2,17 +2,17 @@
  * Print SQLite database location, schema version, and basic table stats.
  * Opens the database read-only; safe to run while the server is running.
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import * as NodeChildProcess from 'node:child_process';
+import * as NodeFS from 'node:fs';
+import * as NodePath from 'node:path';
+import * as NodeURL from 'node:url';
 import { resolveMainRoot } from './utils.mjs';
 
 if (!process.versions.electron) {
   const { resolveCliDbPath } = await import('./resolve-cli-db-path.mjs');
-  const result = spawnSync(
+  const result = NodeChildProcess.spawnSync(
     process.execPath,
-    ['scripts/run-electron-node.mjs', fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+    ['scripts/run-electron-node.mjs', NodeURL.fileURLToPath(import.meta.url), ...process.argv.slice(2)],
     {
       cwd: resolveMainRoot(),
       env: { ...process.env, MCODE_DB_PATH: resolveCliDbPath() },
@@ -32,13 +32,13 @@ const bindingPath = process.env.BETTER_SQLITE3_BINDING;
 if (!bindingPath) {
   throw new Error('BETTER_SQLITE3_BINDING is required when db-info runs under Electron Node.');
 }
-if (!isAbsolute(bindingPath) || !existsSync(bindingPath) || !statSync(bindingPath).isFile()) {
+if (!NodePath.isAbsolute(bindingPath) || !NodeFS.existsSync(bindingPath) || !NodeFS.statSync(bindingPath).isFile()) {
   throw new Error(`BETTER_SQLITE3_BINDING must reference an existing absolute file: ${bindingPath}`);
 }
 
 console.log(`Database : ${dbPath}`);
 
-if (!existsSync(dbPath)) {
+if (!NodeFS.existsSync(dbPath)) {
   console.log('Status   : not found (start the server to create it)');
   process.exit(0);
 }

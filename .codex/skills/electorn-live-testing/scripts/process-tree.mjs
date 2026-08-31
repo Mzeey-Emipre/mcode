@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 
 /** Stops a detached process tree and reports whether the operating system accepted the request. */
 export function terminateProcessTree(pid) {
@@ -11,7 +11,7 @@ export function terminateProcessTree(pid) {
 }
 
 function terminateWindowsProcessTree(pid) {
-  const stopped = spawnSync(
+  const stopped = NodeChildProcess.spawnSync(
     "taskkill.exe",
     ["/PID", String(pid), "/T", "/F"],
     { encoding: "utf8" },

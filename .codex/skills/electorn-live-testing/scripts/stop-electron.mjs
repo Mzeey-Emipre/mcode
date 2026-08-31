@@ -1,7 +1,11 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { terminateProcessTree } from "./process-tree.mjs";
+
+const { spawnSync } = NodeChildProcess;
+const { existsSync, readFileSync, rmSync } = NodeFS;
+const { join, resolve } = NodePath;
 
 const SESSION_FILE_NAME = "electron-live-testing.json";
 

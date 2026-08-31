@@ -8,31 +8,17 @@
  */
 
 import { build } from "esbuild";
-import { execFileSync } from "node:child_process";
-import {
-  chmodSync,
-  copyFileSync,
-  cpSync,
-  existsSync,
-  closeSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readSync,
-  realpathSync,
-  rmSync,
-  statSync,
-} from "node:fs";
-import { dirname, resolve } from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeModule from "node:module";
+import * as NodeURL from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 
 /** Monorepo root when this script lives at `<root>/scripts/`. */
 export function repoRootFromScript() {
-  return resolve(__dirname, "..");
+  return NodePath.resolve(__dirname, "..");
 }
 
 /**
@@ -40,10 +26,10 @@ export function repoRootFromScript() {
  *
  * @param serverRoot Usually `apps/server` (passed so worktrees/monorepo roots resolve reliably).
  */
-export function resolveServerTscBin(serverRoot = resolve(repoRootFromScript(), "apps/server")) {
-  const localTsc = resolve(serverRoot, "node_modules/typescript/bin/tsc");
-  const rootTsc = resolve(serverRoot, "../../node_modules/typescript/bin/tsc");
-  return existsSync(localTsc) ? localTsc : rootTsc;
+export function resolveServerTscBin(serverRoot = NodePath.resolve(repoRootFromScript(), "apps/server")) {
+  const localTsc = NodePath.resolve(serverRoot, "node_modules/typescript/bin/tsc");
+  const rootTsc = NodePath.resolve(serverRoot, "../../node_modules/typescript/bin/tsc");
+  return NodeFS.existsSync(localTsc) ? localTsc : rootTsc;
 }
 
 /**
@@ -58,12 +44,12 @@ export function resolveServerTscBin(serverRoot = resolve(repoRootFromScript(), "
  *
  * @param {string} [serverRoot] Root of `apps/server` (directory with `package.json`).
  */
-export function compileServerWithSwc(serverRoot = resolve(repoRootFromScript(), "apps/server")) {
-  const serverRequire = createRequire(resolve(serverRoot, "package.json"));
+export function compileServerWithSwc(serverRoot = NodePath.resolve(repoRootFromScript(), "apps/server")) {
+  const serverRequire = NodeModule.createRequire(NodePath.resolve(serverRoot, "package.json"));
   const swcBin = serverRequire.resolve("@swc/cli/bin/swc.js");
-  const outDir = resolve(serverRoot, "dist-tsc");
-  if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
-  execFileSync(
+  const outDir = NodePath.resolve(serverRoot, "dist-tsc");
+  if (NodeFS.existsSync(outDir)) NodeFS.rmSync(outDir, { recursive: true, force: true });
+  NodeChildProcess.execFileSync(
     process.execPath,
     [
       swcBin,
@@ -71,7 +57,7 @@ export function compileServerWithSwc(serverRoot = resolve(repoRootFromScript(), 
       "-d",
       "dist-tsc",
       "--config-file",
-      resolve(serverRoot, ".swcrc"),
+      NodePath.resolve(serverRoot, ".swcrc"),
       "--strip-leading-paths",
       // Compile in-process instead of via a piscina worker pool: worker
       // threads hit "Not implemented" under the bun version pinned for CI,
@@ -133,9 +119,9 @@ export function electronArchToNpm(electronArch) {
 export function resolvePackagedServerDir({ appOutDir, electronPlatformName, productFilename }) {
   const tail = ["app.asar.unpacked", "dist", "server"];
   if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
-    return resolve(appOutDir, `${productFilename}.app`, "Contents", "Resources", ...tail);
+    return NodePath.resolve(appOutDir, `${productFilename}.app`, "Contents", "Resources", ...tail);
   }
-  return resolve(appOutDir, "resources", ...tail);
+  return NodePath.resolve(appOutDir, "resources", ...tail);
 }
 
 /**
@@ -181,7 +167,7 @@ export function expectedClaudeSdkCliPath(
   arch = process.arch,
 ) {
   const { platformPkg, binName } = claudeSdkPlatformParts(platform, arch);
-  return resolve(dirname(serverCjsOut), "node_modules", platformPkg, binName);
+  return NodePath.resolve(NodePath.dirname(serverCjsOut), "node_modules", platformPkg, binName);
 }
 
 /**
@@ -194,10 +180,10 @@ export function expectedClaudeSdkCliPath(
  */
 export function findClaudeSdkCliPath(serverCjsOut, platform, arch) {
   const binName = platform === "win32" ? "claude.exe" : "claude";
-  const serverDir = dirname(serverCjsOut);
+  const serverDir = NodePath.dirname(serverCjsOut);
   for (const platformPkg of claudeSdkPlatformPackageCandidates(platform, arch)) {
-    const candidate = resolve(serverDir, "node_modules", platformPkg, binName);
-    if (existsSync(candidate)) {
+    const candidate = NodePath.resolve(serverDir, "node_modules", platformPkg, binName);
+    if (NodeFS.existsSync(candidate)) {
       return candidate;
     }
   }
@@ -217,16 +203,16 @@ export function resolveClaudeSdkCliSources(serverPackageRoot, platform, arch) {
   const failures = [];
 
   try {
-    const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
+    const serverRequire = NodeModule.createRequire(NodePath.resolve(serverPackageRoot, "package.json"));
     // Resolve from the SDK package itself: bun keeps platform packages as store
     // siblings of the SDK, not hoisted to the workspace root.
     const sdkEntry = serverRequire.resolve("@anthropic-ai/claude-agent-sdk");
-    const sdkRequire = createRequire(sdkEntry);
+    const sdkRequire = NodeModule.createRequire(sdkEntry);
 
     for (const platformPkg of candidates) {
       try {
         const binSrc = sdkRequire.resolve(`${platformPkg}/${binName}`);
-        const packageJsonSrc = resolve(dirname(binSrc), "package.json");
+        const packageJsonSrc = NodePath.resolve(NodePath.dirname(binSrc), "package.json");
         return { platformPkg, binName, binSrc, packageJsonSrc };
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
@@ -260,13 +246,13 @@ export function copyClaudeSdkCliToDir({ destServerDir, serverPackageRoot, platfo
     platform,
     arch,
   );
-  const dstPkgDir = resolve(destServerDir, "node_modules", platformPkg);
-  const binDst = resolve(dstPkgDir, binName);
-  mkdirSync(dstPkgDir, { recursive: true });
-  copyFileSync(packageJsonSrc, resolve(dstPkgDir, "package.json"));
-  copyFileSync(binSrc, binDst);
+  const dstPkgDir = NodePath.resolve(destServerDir, "node_modules", platformPkg);
+  const binDst = NodePath.resolve(dstPkgDir, binName);
+  NodeFS.mkdirSync(dstPkgDir, { recursive: true });
+  NodeFS.copyFileSync(packageJsonSrc, NodePath.resolve(dstPkgDir, "package.json"));
+  NodeFS.copyFileSync(binSrc, binDst);
   if (platform !== "win32") {
-    chmodSync(binDst, 0o755);
+    NodeFS.chmodSync(binDst, 0o755);
   }
   return { platformPkg, binDst };
 }
@@ -299,12 +285,12 @@ export function copyClaudeSdkCliNextTo(
     platform,
     arch,
   );
-  const dstPkgDir = resolve(dirname(serverCjsOut), "node_modules", platformPkg);
-  const binDst = resolve(dstPkgDir, binName);
-  mkdirSync(dstPkgDir, { recursive: true });
-  copyFileSync(packageJsonSrc, resolve(dstPkgDir, "package.json"));
-  if (!existsSync(binDst) || statSync(binDst).size !== statSync(binSrc).size) {
-    copyFileSync(binSrc, binDst);
+  const dstPkgDir = NodePath.resolve(NodePath.dirname(serverCjsOut), "node_modules", platformPkg);
+  const binDst = NodePath.resolve(dstPkgDir, binName);
+  NodeFS.mkdirSync(dstPkgDir, { recursive: true });
+  NodeFS.copyFileSync(packageJsonSrc, NodePath.resolve(dstPkgDir, "package.json"));
+  if (!NodeFS.existsSync(binDst) || NodeFS.statSync(binDst).size !== NodeFS.statSync(binSrc).size) {
+    NodeFS.copyFileSync(binSrc, binDst);
   }
 }
 
@@ -320,12 +306,12 @@ export function copilotSdkPlatformPackageName(platform, arch) {
 export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
   const platformPkg = copilotSdkPlatformPackageName(platform, arch);
   try {
-    const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
+    const serverRequire = NodeModule.createRequire(NodePath.resolve(serverPackageRoot, "package.json"));
     const sdkEntry = serverRequire.resolve("@github/copilot-sdk");
-    const sdkRequire = createRequire(sdkEntry);
-    const copilotPackageDir = realpathSync(resolve(dirname(sdkEntry), "..", "..", "..", "copilot"));
+    const sdkRequire = NodeModule.createRequire(sdkEntry);
+    const copilotPackageDir = NodeFS.realpathSync(NodePath.resolve(NodePath.dirname(sdkEntry), "..", "..", "..", "copilot"));
     const platformEntry = sdkRequire.resolve(platformPkg);
-    const platformPackageDir = realpathSync(dirname(platformEntry));
+    const platformPackageDir = NodeFS.realpathSync(NodePath.dirname(platformEntry));
     return { platformPkg, copilotPackageDir, platformPackageDir };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -361,7 +347,7 @@ function copilotTreesMatch(sourceDir, destinationDir, skipDanglingOptional = tru
 
 function inspectDestinationDirectory(destinationDir) {
   try {
-    return statSync(destinationDir).isDirectory() ? "readable" : "missing";
+    return NodeFS.statSync(destinationDir).isDirectory() ? "readable" : "missing";
   } catch (error) {
     return isDestinationAccessError(error) ? "unreadable" : "missing";
   }
@@ -369,7 +355,7 @@ function inspectDestinationDirectory(destinationDir) {
 
 function readDestinationEntries(destinationDir) {
   try {
-    return readdirSync(destinationDir, { withFileTypes: true });
+    return NodeFS.readdirSync(destinationDir, { withFileTypes: true });
   } catch (error) {
     if (isDestinationAccessError(error)) return "unreadable";
     throw error;
@@ -378,8 +364,8 @@ function readDestinationEntries(destinationDir) {
 
 function copilotEntryMatches(sourceDir, destinationDir, sourceEntry, destinationByName, skipDanglingOptional) {
   if (!destinationByName.has(sourceEntry.name)) return false;
-  const sourcePath = resolve(sourceDir, sourceEntry.name);
-  const destinationPath = resolve(destinationDir, sourceEntry.name);
+  const sourcePath = NodePath.resolve(sourceDir, sourceEntry.name);
+  const destinationPath = NodePath.resolve(destinationDir, sourceEntry.name);
   const destinationKind = readDestinationKind(destinationPath);
   if (destinationKind === "unreadable") return destinationKind;
   if (sourceEntry.kind !== destinationKind) return false;
@@ -391,7 +377,7 @@ function copilotEntryMatches(sourceDir, destinationDir, sourceEntry, destination
 
 function readDestinationKind(destinationPath) {
   try {
-    const stat = lstatSync(destinationPath);
+    const stat = NodeFS.lstatSync(destinationPath);
     if (stat.isDirectory()) return "directory";
     return stat.isFile() ? "file" : null;
   } catch (error) {
@@ -420,11 +406,11 @@ function isDestinationAccessError(error) {
  */
 function copilotSourceEntries(sourceDir, skipDanglingOptional) {
   const entries = [];
-  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
-    const sourcePath = resolve(sourceDir, entry.name);
+  for (const entry of NodeFS.readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = NodePath.resolve(sourceDir, entry.name);
     let sourceStat;
     try {
-      sourceStat = statSync(sourcePath);
+      sourceStat = NodeFS.statSync(sourcePath);
     } catch (error) {
       if (skipDanglingOptional && (error?.code === "ENOENT" || error?.code === "ENOTDIR")) continue;
       throw error;
@@ -440,36 +426,36 @@ function copilotSourceEntries(sourceDir, skipDanglingOptional) {
 
 /** Copy a readable Copilot package tree while skipping unavailable optional links. */
 function copyCopilotTree(sourceDir, destinationDir, skipDanglingOptional) {
-  mkdirSync(destinationDir, { recursive: true });
+  NodeFS.mkdirSync(destinationDir, { recursive: true });
   for (const sourceEntry of copilotSourceEntries(sourceDir, skipDanglingOptional)) {
-    const sourcePath = resolve(sourceDir, sourceEntry.name);
-    const destinationPath = resolve(destinationDir, sourceEntry.name);
+    const sourcePath = NodePath.resolve(sourceDir, sourceEntry.name);
+    const destinationPath = NodePath.resolve(destinationDir, sourceEntry.name);
     if (sourceEntry.kind === "directory") {
       copyCopilotTree(sourcePath, destinationPath, skipDanglingOptional);
       continue;
     }
-    copyFileSync(sourcePath, destinationPath);
-    chmodSync(destinationPath, statSync(sourcePath).mode & 0o777);
+    NodeFS.copyFileSync(sourcePath, destinationPath);
+    NodeFS.chmodSync(destinationPath, NodeFS.statSync(sourcePath).mode & 0o777);
   }
 }
 
 /** Compare file contents in bounded chunks so equal-size files remain content-checked. */
 function copilotFilesMatch(sourcePath, destinationPath) {
-  const sourceStat = statSync(sourcePath);
+  const sourceStat = NodeFS.statSync(sourcePath);
   let destinationStat;
   try {
-    destinationStat = statSync(destinationPath);
+    destinationStat = NodeFS.statSync(destinationPath);
   } catch (error) {
     throw markDestinationAccessError(error);
   }
   if (sourceStat.size !== destinationStat.size) return false;
 
-  const sourceFd = openSync(sourcePath, "r");
+  const sourceFd = NodeFS.openSync(sourcePath, "r");
   let destinationFd;
   try {
-    destinationFd = openSync(destinationPath, "r");
+    destinationFd = NodeFS.openSync(destinationPath, "r");
   } catch (error) {
-    closeSync(sourceFd);
+    NodeFS.closeSync(sourceFd);
     throw markDestinationAccessError(error);
   }
   const sourceBuffer = Buffer.allocUnsafe(64 * 1024);
@@ -478,10 +464,10 @@ function copilotFilesMatch(sourcePath, destinationPath) {
     let offset = 0;
     while (offset < sourceStat.size) {
       const expected = Math.min(sourceBuffer.length, sourceStat.size - offset);
-      const sourceRead = readSync(sourceFd, sourceBuffer, 0, expected, offset);
+      const sourceRead = NodeFS.readSync(sourceFd, sourceBuffer, 0, expected, offset);
       let destinationRead;
       try {
-        destinationRead = readSync(destinationFd, destinationBuffer, 0, expected, offset);
+        destinationRead = NodeFS.readSync(destinationFd, destinationBuffer, 0, expected, offset);
       } catch (error) {
         throw markDestinationAccessError(error);
       }
@@ -494,8 +480,8 @@ function copilotFilesMatch(sourcePath, destinationPath) {
     }
     return true;
   } finally {
-    closeSync(sourceFd);
-    closeSync(destinationFd);
+    NodeFS.closeSync(sourceFd);
+    NodeFS.closeSync(destinationFd);
   }
 }
 
@@ -514,16 +500,16 @@ export function copyCopilotSdkToDir({ destServerDir, serverPackageRoot, platform
     platform,
     arch,
   );
-  const githubDir = resolve(destServerDir, "node_modules", "@github");
-  const copilotDst = resolve(githubDir, "copilot");
-  const platformDst = resolve(githubDir, platformPkg.slice("@github/".length));
-  mkdirSync(githubDir, { recursive: true });
+  const githubDir = NodePath.resolve(destServerDir, "node_modules", "@github");
+  const copilotDst = NodePath.resolve(githubDir, "copilot");
+  const platformDst = NodePath.resolve(githubDir, platformPkg.slice("@github/".length));
+  NodeFS.mkdirSync(githubDir, { recursive: true });
   if (!copilotTreesMatch(copilotPackageDir, copilotDst)) {
-    rmSync(copilotDst, { recursive: true, force: true });
+    NodeFS.rmSync(copilotDst, { recursive: true, force: true });
     copyCopilotTree(copilotPackageDir, copilotDst, true);
   }
   if (!copilotTreesMatch(platformPackageDir, platformDst, false)) {
-    rmSync(platformDst, { recursive: true, force: true });
+    NodeFS.rmSync(platformDst, { recursive: true, force: true });
     copyCopilotTree(platformPackageDir, platformDst, false);
   }
   return { platformPkg, copilotDst, platformDst };
@@ -537,7 +523,7 @@ export function copyCopilotSdkNextTo(
   arch = process.arch,
 ) {
   return copyCopilotSdkToDir({
-    destServerDir: dirname(serverCjsOut),
+    destServerDir: NodePath.dirname(serverCjsOut),
     serverPackageRoot,
     platform,
     arch,
@@ -546,16 +532,16 @@ export function copyCopilotSdkNextTo(
 
 /** Detect a complete staged Copilot package tree beside a bundled server entry. */
 export function findCopilotSdkPath(serverCjsOut, platform, arch) {
-  const serverDir = dirname(serverCjsOut);
+  const serverDir = NodePath.dirname(serverCjsOut);
   const platformPkg = copilotSdkPlatformPackageName(platform, arch);
-  const copilotIndex = resolve(serverDir, "node_modules", "@github", "copilot", "index.js");
-  const platformEntry = resolve(
+  const copilotIndex = NodePath.resolve(serverDir, "node_modules", "@github", "copilot", "index.js");
+  const platformEntry = NodePath.resolve(
     serverDir,
     "node_modules",
     "@github",
     platformPkg.slice("@github/".length),
   );
-  return existsSync(copilotIndex) && existsSync(platformEntry) ? copilotIndex : undefined;
+  return NodeFS.existsSync(copilotIndex) && NodeFS.existsSync(platformEntry) ? copilotIndex : undefined;
 }
 
 /** Bundle the server and its isolated PTY host from one compiled server tree. */
@@ -583,13 +569,13 @@ export async function buildServerRuntimeBundles({
   await Promise.all([
     build({
       ...shared,
-      entryPoints: [resolve(serverRoot, "dist-tsc/index.js")],
+      entryPoints: [NodePath.resolve(serverRoot, "dist-tsc/index.js")],
       outfile: serverOutFile,
     }),
     build({
       ...shared,
       entryPoints: [
-        resolve(serverRoot, "dist-tsc/features/terminal/host/pty-host-entry.js"),
+        NodePath.resolve(serverRoot, "dist-tsc/features/terminal/host/pty-host-entry.js"),
       ],
       outfile: ptyHostOutFile,
     }),
@@ -604,10 +590,10 @@ export async function buildServerRuntimeBundles({
  */
 export async function rebuildServerDevBundle(options = {}) {
   const repoRoot = options.repoRoot ?? repoRootFromScript();
-  const desktopRoot = resolve(repoRoot, "apps/desktop");
-  const serverRoot = resolve(repoRoot, "apps/server");
-  const serverOutFile = resolve(desktopRoot, "dist/server/server.cjs");
-  const ptyHostOutFile = resolve(desktopRoot, "dist/server/pty-host.cjs");
+  const desktopRoot = NodePath.resolve(repoRoot, "apps/desktop");
+  const serverRoot = NodePath.resolve(repoRoot, "apps/server");
+  const serverOutFile = NodePath.resolve(desktopRoot, "dist/server/server.cjs");
+  const ptyHostOutFile = NodePath.resolve(desktopRoot, "dist/server/pty-host.cjs");
 
   console.log("[server-dev-bundle] Compiling apps/server with swc...");
   compileServerWithSwc(serverRoot);
@@ -622,11 +608,11 @@ export async function rebuildServerDevBundle(options = {}) {
   copyClaudeSdkCliNextTo(serverOutFile, serverRoot);
   copyCopilotSdkNextTo(serverOutFile, serverRoot);
 
-  const drizzleSrc = resolve(serverRoot, "drizzle");
-  const drizzleDst = resolve(desktopRoot, "dist/server/drizzle");
-  if (existsSync(drizzleSrc)) {
-    if (existsSync(drizzleDst)) rmSync(drizzleDst, { recursive: true, force: true });
-    cpSync(drizzleSrc, drizzleDst, { recursive: true });
+  const drizzleSrc = NodePath.resolve(serverRoot, "drizzle");
+  const drizzleDst = NodePath.resolve(desktopRoot, "dist/server/drizzle");
+  if (NodeFS.existsSync(drizzleSrc)) {
+    if (NodeFS.existsSync(drizzleDst)) NodeFS.rmSync(drizzleDst, { recursive: true, force: true });
+    NodeFS.cpSync(drizzleSrc, drizzleDst, { recursive: true });
     console.log(`[server-dev-bundle] Copied Drizzle migrations -> ${drizzleDst}`);
   }
 

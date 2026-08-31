@@ -2,10 +2,10 @@
 /**
  * Seeds the deterministic agent runtime fixture git repository.
  */
-import { spawnSync } from "node:child_process";
-import { rmSync, mkdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import {
   assertInsideDevDir,
@@ -24,8 +24,8 @@ export function seedFixtureRepo(repoRoot = resolveRepoRoot()) {
   const fixtureDir = paths.fixtureRepoDir;
   assertInsideDevDir(fixtureDir, paths.devDir);
 
-  rmSync(fixtureDir, { recursive: true, force: true });
-  mkdirSync(fixtureDir, { recursive: true });
+  NodeFS.rmSync(fixtureDir, { recursive: true, force: true });
+  NodeFS.mkdirSync(fixtureDir, { recursive: true });
 
   git(fixtureDir, ["init", "-q", "-b", "main"]);
   git(fixtureDir, ["config", "user.email", "agent-runtime@example.invalid"]);
@@ -110,7 +110,7 @@ function fastImportData(value) {
  * @returns {string}
  */
 function git(cwd, args, input) {
-  const result = spawnSync("git", [
+  const result = NodeChildProcess.spawnSync("git", [
     "-c",
     "core.fsmonitor=false",
     "-c",
@@ -138,7 +138,7 @@ function git(cwd, args, input) {
   return result.stdout;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const repoRoot = process.argv[2] ? resolve(process.argv[2]) : resolveRepoRoot();
+if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
+  const repoRoot = process.argv[2] ? NodePath.resolve(process.argv[2]) : resolveRepoRoot();
   console.log(seedFixtureRepo(repoRoot));
 }

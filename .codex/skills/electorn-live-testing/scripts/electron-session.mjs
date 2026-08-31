@@ -1,13 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 const SESSION_FILE_NAME = "electron-live-testing.json";
 
 /** Connects Playwright to the Electron process owned by start-electron.mjs. */
 export async function connectElectronSession({ playwright, repoRoot, sessionFileName = SESSION_FILE_NAME }) {
   validateConnectionArguments(playwright, repoRoot, sessionFileName);
-  const root = resolve(repoRoot);
-  const sessionFile = join(root, ".dev", sessionFileName);
+  const root = NodePath.resolve(repoRoot);
+  const sessionFile = NodePath.join(root, ".dev", sessionFileName);
   const record = readSessionRecord(sessionFile, root);
   const ports = readRuntimePorts(root, record.appUrlPrefix);
   const connection = await connectToElectron(playwright, record, ports);
@@ -36,17 +36,17 @@ function validateConnectionArguments(playwright, repoRoot, sessionFileName) {
 }
 
 function readSessionRecord(sessionFile, root) {
-  if (!existsSync(sessionFile)) {
+  if (!NodeFS.existsSync(sessionFile)) {
     throw new Error("Run start-electron.mjs before connecting Playwright");
   }
-  const record = JSON.parse(readFileSync(sessionFile, "utf8"));
+  const record = JSON.parse(NodeFS.readFileSync(sessionFile, "utf8"));
   validateSessionRecord(record, root);
   return record;
 }
 
 function readRuntimePorts(root, appUrlPrefix) {
   const ports = appUrlPrefix.startsWith("http://127.0.0.1:")
-    ? JSON.parse(readFileSync(join(root, ".dev", "ports.json"), "utf8"))
+    ? JSON.parse(NodeFS.readFileSync(NodePath.join(root, ".dev", "ports.json"), "utf8"))
     : null;
   if (ports) validatePortsRecord(ports, root);
   return ports;
@@ -118,7 +118,7 @@ function hasSafeElectronEndpoint(record) {
 }
 
 function isRecordForRoot(record, root) {
-  return resolve(record.repoRoot).toLowerCase() === root.toLowerCase();
+  return NodePath.resolve(record.repoRoot).toLowerCase() === root.toLowerCase();
 }
 
 function validatePortsRecord(ports, root) {
@@ -127,7 +127,7 @@ function validatePortsRecord(ports, root) {
     typeof ports.appUrl !== "string" ||
     !ports.appUrl.startsWith("http://127.0.0.1:") ||
     typeof ports.worktreeIdentity !== "string" ||
-    resolve(ports.worktreeIdentity).toLowerCase() !== root.toLowerCase() ||
+    NodePath.resolve(ports.worktreeIdentity).toLowerCase() !== root.toLowerCase() ||
     !ports.seedLogin ||
     ports.seedLogin.cookieName !== "mcode-auth" ||
     typeof ports.seedLogin.token !== "string" ||
