@@ -1,7 +1,7 @@
 /** Tab IPC handlers for BrowserSurfaceHost-owned Preview pages. */
 
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from "electron";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { BROWSER_TAB_INFO_STRING_MAX, type BrowserTabSet } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import {
@@ -183,7 +183,7 @@ function openTab(context: TabContext, input: OpenTabInput): TabIpcResult<{ tabId
   const existingTab = input.requestedTabId ? set.tabs.find((tab) => tab.id === input.requestedTabId) : undefined;
   if (input.requestedTabId && !existingTab) return error("tab-not-found");
   if (existingTab?.backgroundOpenReserved) return error("tab-reserved");
-  const tab = existingTab ?? createBlankTab(context.threadId, randomUUID());
+  const tab = existingTab ?? createBlankTab(context.threadId, NodeCrypto.randomUUID());
   applyInitialAddress(tab, input.initialAddress);
   if (!existingTab) set.tabs.push(tab);
   if (existingTab && !input.activate) tab.backgroundOpenReserved = true;
@@ -283,7 +283,7 @@ function chooseRemainingActiveTab(context: TabContext, index: number, wasActive:
 
 function createFallbackTab(context: TabContext): void {
   const set = ensureThreadTabSet(context.session, context.threadId);
-  const fallback = createBlankTab(context.threadId, randomUUID());
+  const fallback = createBlankTab(context.threadId, NodeCrypto.randomUUID());
   set.tabs.push(fallback);
   activateFallback(context, fallback);
 }

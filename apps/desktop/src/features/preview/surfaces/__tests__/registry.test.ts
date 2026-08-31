@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { dirname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { resolvePreviewGuestPreloadPath } from "../../security/webview-attachment-policy.js";
 
 const ipcHandlers: Record<string, (...args: unknown[]) => unknown> = {};
@@ -8,7 +8,7 @@ const fakeGuests: FakeWebContents[] = [];
 const previewPartition = {};
 const allWindows: FakeWindow[] = [];
 const fixedPreload = resolvePreviewGuestPreloadPath(
-  dirname(fileURLToPath(import.meta.url)),
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
 );
 
 interface FakeWindow {
@@ -272,7 +272,7 @@ describe("preview typed surface bridge", () => {
     expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "initial", address: "https://example.test" } })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "address", address: "file://attacker/share" } })).toMatchObject({ ok: false, error: "sensitive-file" });
-    const localUrl = pathToFileURL(fileURLToPath(import.meta.url)).href;
+    const localUrl = NodeURL.pathToFileURL(NodeURL.fileURLToPath(import.meta.url)).href;
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "restored", address: localUrl } })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "back" } })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "forward" } })).toEqual({ ok: true });

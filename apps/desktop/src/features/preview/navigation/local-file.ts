@@ -3,10 +3,10 @@
  * for serving `file:` URLs in the embedded BrowserSurfaceHost page.
  */
 
-import { lstat, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { isAbsolute, join, normalize, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import { isMcodeWorkspacePreviewUrl } from "@mcode/contracts";
 
@@ -36,7 +36,7 @@ export const SENSITIVE_FILE_PATTERNS = [
  * file or directory pattern (e.g. `.env`, `.git/config`, `.ssh/id_rsa`).
  */
 export function isSensitivePath(filePath: string): boolean {
-  const segments = normalize(filePath).split(sep);
+  const segments = NodePath.normalize(filePath).split(NodePath.sep);
   return segments.some((seg) =>
     SENSITIVE_FILE_PATTERNS.some((pat) => pat.test(seg)),
   );
@@ -47,7 +47,7 @@ export function isSensitivePath(filePath: string): boolean {
  * Keeps `\\?\` and `\\.\` prefixes (local extended/device paths) allowed.
  */
 export function isUncPath(filePath: string): boolean {
-  const n = normalize(filePath);
+  const n = NodePath.normalize(filePath);
   if (!n.startsWith("\\\\")) return false;
   if (n.startsWith("\\\\?\\") || n.startsWith("\\\\.\\")) return false;
   return true;
@@ -114,9 +114,9 @@ function decodeWorkspacePreviewSegment(segment: string): string | null {
 }
 
 function isSafeWorkspaceRelativePath(relativePath: string): boolean {
-  const normalized = normalize(relativePath);
-  if (isAbsolute(normalized) || normalized === "..") return false;
-  return !normalized.startsWith(`..${sep}`) && !normalized.startsWith("../") && !normalized.startsWith("..\\");
+  const normalized = NodePath.normalize(relativePath);
+  if (NodePath.isAbsolute(normalized) || normalized === "..") return false;
+  return !normalized.startsWith(`..${NodePath.sep}`) && !normalized.startsWith("../") && !normalized.startsWith("..\\");
 }
 
 /**
@@ -146,9 +146,9 @@ function resolvePreviewFilePath(
   if (input.startsWith("\\\\")) return { ok: false, error: "sensitive-file" };
   if (/^file:\/\//i.test(input)) return resolveFileUrlPath(input);
   if (input.startsWith("~")) return { ok: true, path: resolveHomePath(input) };
-  if (isAbsolute(input)) return { ok: true, path: normalize(resolve(input)) };
+  if (NodePath.isAbsolute(input)) return { ok: true, path: NodePath.normalize(NodePath.resolve(input)) };
   if (!workspacePath) return { ok: false, error: "no-workspace" };
-  return { ok: true, path: normalize(resolve(workspacePath, input)) };
+  return { ok: true, path: NodePath.normalize(NodePath.resolve(workspacePath, input)) };
 }
 
 function resolveFileUrlPath(input: string): { ok: true; path: string } | { ok: false; error: string } {
@@ -156,7 +156,7 @@ function resolveFileUrlPath(input: string): { ok: true; path: string } | { ok: f
     const url = new URL(input);
     if (url.protocol !== "file:") return { ok: false, error: "invalid-url" };
     if (!isLocalFileHost(url.hostname)) return { ok: false, error: "sensitive-file" };
-    return { ok: true, path: normalize(fileURLToPath(input)) };
+    return { ok: true, path: NodePath.normalize(NodeURL.fileURLToPath(input)) };
   } catch {
     return { ok: false, error: "invalid-url" };
   }
@@ -168,7 +168,7 @@ function isLocalFileHost(hostname: string): boolean {
 
 function resolveHomePath(input: string): string {
   const offset = input.startsWith("~/") || input.startsWith("~\\") ? 2 : 1;
-  return normalize(resolve(homedir(), input.slice(offset)));
+  return NodePath.normalize(NodePath.resolve(NodeOS.homedir(), input.slice(offset)));
 }
 
 async function verifyPreviewFilePath(
@@ -179,30 +179,30 @@ async function verifyPreviewFilePath(
     if (!resolved.ok) return resolved;
     if (resolved.info.isDirectory()) return resolveDirectoryPreviewUrl(resolved.path);
     if (!resolved.info.isFile()) return { ok: false, error: "not-a-file" };
-    return { ok: true, url: pathToFileURL(resolved.path).href };
+    return { ok: true, url: NodeURL.pathToFileURL(resolved.path).href };
   } catch {
     return { ok: false, error: "file-not-found" };
   }
 }
 
 async function resolveSymbolicPreviewFilePath(unresolvedPath: string): Promise<
-  | { ok: true; path: string; info: Awaited<ReturnType<typeof lstat>> }
+  | { ok: true; path: string; info: Awaited<ReturnType<typeof NodeFSPromises.lstat>> }
   | { ok: false; error: "sensitive-file" }
 > {
-  const info = await lstat(unresolvedPath);
+  const info = await NodeFSPromises.lstat(unresolvedPath);
   if (!info.isSymbolicLink()) return { ok: true, path: unresolvedPath, info };
-  const path = await realpath(unresolvedPath);
+  const path = await NodeFSPromises.realpath(unresolvedPath);
   if (isSensitivePath(path)) return { ok: false, error: "sensitive-file" };
-  return { ok: true, path, info: await lstat(path) };
+  return { ok: true, path, info: await NodeFSPromises.lstat(path) };
 }
 
 async function resolveDirectoryPreviewUrl(
   directoryPath: string,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   try {
-    const indexPath = join(directoryPath, "index.html");
-    if (!(await stat(indexPath)).isFile()) return { ok: false, error: "is-directory" };
-    return { ok: true, url: pathToFileURL(indexPath).href };
+    const indexPath = NodePath.join(directoryPath, "index.html");
+    if (!(await NodeFSPromises.stat(indexPath)).isFile()) return { ok: false, error: "is-directory" };
+    return { ok: true, url: NodeURL.pathToFileURL(indexPath).href };
   } catch {
     return { ok: false, error: "is-directory" };
   }
@@ -239,7 +239,7 @@ export async function validateResumeUrl(url: string | null): Promise<string | nu
     if (u.protocol === "file:") {
       const host = u.hostname.toLowerCase();
       if (host !== "" && host !== "localhost") return null;
-      const filePath = fileURLToPath(url);
+      const filePath = NodeURL.fileURLToPath(url);
       const result = await resolveLocalFileUrl(filePath, null);
       return result.ok ? result.url : null;
     }

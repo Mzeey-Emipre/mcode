@@ -1,8 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { lstatSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { AddressInfo } from "node:net";
+import * as NodeCrypto from "node:crypto";
+import * as NodeHTTP from "node:http";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import type * as NodeNet from "node:net";
 import { THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH } from "@mcode/contracts";
 
 /** Controls exposed by the opt-in packaged reliability harness. */
@@ -174,14 +174,14 @@ export class ReliabilityHarnessControlPlane {
   private readonly capabilityPath: string;
   private readonly capability: ReliabilityHarnessCapability;
   private readonly callbacks: ReliabilityHarnessControlPlaneCallbacks;
-  private server: ReturnType<typeof createServer> | null = null;
+  private server: ReturnType<typeof NodeHTTP.createServer> | null = null;
   private rendezvousPath: string | null = null;
 
   /** Construct a control plane from a validated capability file, or remain disabled. */
   constructor(capabilityPath: string, callbacks: ReliabilityHarnessControlPlaneCallbacks) {
     const capability = readReliabilityHarnessCapability(capabilityPath);
     if (!capability) throw new Error("Invalid reliability harness capability");
-    this.capabilityPath = resolve(capabilityPath);
+    this.capabilityPath = NodePath.resolve(capabilityPath);
     this.capability = capability;
     this.callbacks = callbacks;
   }
@@ -189,7 +189,7 @@ export class ReliabilityHarnessControlPlane {
   /** Start on a loopback ephemeral port and publish token-free rendezvous data. */
   async start(): Promise<ReliabilityHarnessRendezvous> {
     if (this.server) throw new Error("Reliability harness control plane already started");
-    const server = createServer((request, response) => {
+    const server = NodeHTTP.createServer((request, response) => {
       void this.handleRequest(request, response);
     });
     this.server = server;
@@ -200,10 +200,10 @@ export class ReliabilityHarnessControlPlane {
         resolvePromise();
       });
     });
-    const address = server.address() as AddressInfo;
+    const address = server.address() as NodeNet.AddressInfo;
     const rendezvous = { version: 1 as const, port: address.port, pid: process.pid };
-    this.rendezvousPath = join(dirname(this.capabilityPath), "desktop-reliability-rendezvous.json");
-    writeFileSync(this.rendezvousPath, JSON.stringify(rendezvous), { mode: 0o600 });
+    this.rendezvousPath = NodePath.join(NodePath.dirname(this.capabilityPath), "desktop-reliability-rendezvous.json");
+    NodeFS.writeFileSync(this.rendezvousPath, JSON.stringify(rendezvous), { mode: 0o600 });
     server.unref();
     return rendezvous;
   }
@@ -217,7 +217,7 @@ export class ReliabilityHarnessControlPlane {
     }
     if (this.rendezvousPath) {
       try {
-        unlinkSync(this.rendezvousPath);
+        NodeFS.unlinkSync(this.rendezvousPath);
       } catch {
         // Cleanup is best effort when the app is exiting.
       }
@@ -225,7 +225,7 @@ export class ReliabilityHarnessControlPlane {
     }
   }
 
-  private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async handleRequest(request: NodeHTTP.IncomingMessage, response: NodeHTTP.ServerResponse): Promise<void> {
     const rejection = this.requestRejection(request);
     if (rejection) return sendReliabilityResponse(response, rejection.status, rejection.body);
     try {
@@ -237,7 +237,7 @@ export class ReliabilityHarnessControlPlane {
     }
   }
 
-  private requestRejection(request: IncomingMessage): { status: number; body: string } | null {
+  private requestRejection(request: NodeHTTP.IncomingMessage): { status: number; body: string } | null {
     if (!isReliabilityRequest(request)) return { status: 404, body: "Not found" };
     if (!isLoopbackAddress(request.socket.remoteAddress)) return { status: 403, body: "Forbidden" };
     if (!safeTokenEqual(reliabilityBearerToken(request), this.capability.token)) {
@@ -258,12 +258,12 @@ export class ReliabilityHarnessControlPlane {
 
 /** Read and validate the opt-in capability document. */
 export function readReliabilityHarnessCapability(capabilityPath: string): ReliabilityHarnessCapability | null {
-  if (!isAbsolute(capabilityPath)) return null;
-  const normalizedPath = resolve(capabilityPath);
+  if (!NodePath.isAbsolute(capabilityPath)) return null;
+  const normalizedPath = NodePath.resolve(capabilityPath);
   try {
-    const stat = lstatSync(normalizedPath);
+    const stat = NodeFS.lstatSync(normalizedPath);
     if (!stat.isFile()) return null;
-    const value = JSON.parse(readFileSync(normalizedPath, "utf8")) as Record<string, unknown>;
+    const value = JSON.parse(NodeFS.readFileSync(normalizedPath, "utf8")) as Record<string, unknown>;
     if (
       value.version !== 1 ||
       typeof value.token !== "string" ||
@@ -277,7 +277,7 @@ export function readReliabilityHarnessCapability(capabilityPath: string): Reliab
   }
 }
 
-async function readCommand(request: IncomingMessage): Promise<ReliabilityHarnessCommand> {
+async function readCommand(request: NodeHTTP.IncomingMessage): Promise<ReliabilityHarnessCommand> {
   const value = parseReliabilityCommand(await readReliabilityCommandBody(request));
   const control = parseReliabilityControl(value.control);
   const durationMs = parseReliabilityDuration(value.durationMs);
@@ -289,7 +289,7 @@ async function readCommand(request: IncomingMessage): Promise<ReliabilityHarness
   };
 }
 
-async function readReliabilityCommandBody(request: IncomingMessage): Promise<Buffer> {
+async function readReliabilityCommandBody(request: NodeHTTP.IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -337,22 +337,22 @@ function parseReliabilityStreamThreadId(
   return value.trim();
 }
 
-function isReliabilityRequest(request: IncomingMessage): boolean {
+function isReliabilityRequest(request: NodeHTTP.IncomingMessage): boolean {
   return request.method === "POST" && new URL(request.url ?? "/", "http://127.0.0.1").pathname === "/__mcode/reliability";
 }
 
-function reliabilityBearerToken(request: IncomingMessage): string {
+function reliabilityBearerToken(request: NodeHTTP.IncomingMessage): string {
   const authorization = request.headers.authorization;
   return typeof authorization === "string" && authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
 }
 
-function sendReliabilityResponse(response: ServerResponse, status: number, body: string): void {
+function sendReliabilityResponse(response: NodeHTTP.ServerResponse, status: number, body: string): void {
   response.writeHead(status);
   response.end(body);
 }
 
 function sendReliabilitySuccess(
-  response: ServerResponse,
+  response: NodeHTTP.ServerResponse,
   command: ReliabilityHarnessCommand,
   result: ReliabilityHarnessForwardResult | void,
 ): void {
@@ -360,14 +360,14 @@ function sendReliabilitySuccess(
   response.end(JSON.stringify({ accepted: true, control: command.control, ...(result?.stream ? { stream: result.stream } : {}) }));
 }
 
-function sendReliabilityFailure(response: ServerResponse, error: unknown): void {
+function sendReliabilityFailure(response: NodeHTTP.ServerResponse, error: unknown): void {
   if (!response.headersSent) response.writeHead(400);
   if (!response.writableEnded) response.end(error instanceof Error ? error.message : "Invalid command");
 }
 
 function safeTokenEqual(left: string, right: string): boolean {
   if (left.length !== right.length) return false;
-  return timingSafeEqual(Buffer.from(left), Buffer.from(right));
+  return NodeCrypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {

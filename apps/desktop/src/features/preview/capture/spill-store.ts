@@ -3,9 +3,9 @@
  * capture payloads stored under the Mcode app data directory.
  */
 
-import { mkdir, writeFile, readdir, stat, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { dirname, join, normalize, resolve } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 import { BrowserWindow, ipcMain } from "electron";
 import {
   isBrowserCaptureSpillAppDataPath,
@@ -37,9 +37,9 @@ function resolveValidatedSpillAbsolutePath(rel: string): string | null {
   const segments = rel.split("/");
   if (segments.length !== 3 || segments[0] !== "browser-capture-spill") return null;
   const [, wsSeg, file] = segments;
-  const base = resolve(getMcodeDir(), "browser-capture-spill", wsSeg);
-  const abs = resolve(base, file);
-  if (normalize(dirname(abs)) !== normalize(base)) return null;
+  const base = NodePath.resolve(getMcodeDir(), "browser-capture-spill", wsSeg);
+  const abs = NodePath.resolve(base, file);
+  if (NodePath.normalize(NodePath.dirname(abs)) !== NodePath.normalize(base)) return null;
   return abs;
 }
 
@@ -49,17 +49,17 @@ function resolveValidatedSpillAbsolutePath(rel: string): string | null {
 async function pruneStaleBrowserCaptureSpills(rootDir: string): Promise<void> {
   try {
     const now = Date.now();
-    const top = await readdir(rootDir, { withFileTypes: true });
+    const top = await NodeFSPromises.readdir(rootDir, { withFileTypes: true });
     for (const ent of top) {
       if (!ent.isDirectory()) continue;
-      const dir = join(rootDir, ent.name);
-      const files = await readdir(dir);
+      const dir = NodePath.join(rootDir, ent.name);
+      const files = await NodeFSPromises.readdir(dir);
       for (const name of files) {
         if (!name.endsWith(".json")) continue;
-        const p = join(dir, name);
-        const st = await stat(p);
+        const p = NodePath.join(dir, name);
+        const st = await NodeFSPromises.stat(p);
         if (now - st.mtimeMs > SPILL_MAX_AGE_MS) {
-          await unlink(p).catch(() => {});
+          await NodeFSPromises.unlink(p).catch(() => {});
         }
       }
     }
@@ -79,7 +79,7 @@ function scheduleGlobalBrowserCaptureSpillPrune(): void {
     const now = Date.now();
     if (now - lastGlobalSpillPruneAt < SPILL_PRUNE_MIN_INTERVAL_MS) return;
     lastGlobalSpillPruneAt = now;
-    void pruneStaleBrowserCaptureSpills(join(getMcodeDir(), "browser-capture-spill"));
+    void pruneStaleBrowserCaptureSpills(NodePath.join(getMcodeDir(), "browser-capture-spill"));
   }, SPILL_PRUNE_DEBOUNCE_MS);
 }
 
@@ -94,10 +94,10 @@ export async function persistBrowserCaptureSpill(
   const wid = workspaceId.trim();
   if (!wid) return null;
   const sub = spillWorkspaceDirSegment(wid);
-  const id = randomUUID();
+  const id = NodeCrypto.randomUUID();
   const fileName = `${id}.json`;
-  const spillRoot = join(getMcodeDir(), "browser-capture-spill", sub);
-  await mkdir(spillRoot, { recursive: true });
+  const spillRoot = NodePath.join(getMcodeDir(), "browser-capture-spill", sub);
+  await NodeFSPromises.mkdir(spillRoot, { recursive: true });
   const fields: Record<string, string> = {};
   if (redacted.htmlExcerpt) fields.htmlExcerpt = redacted.htmlExcerpt;
   if (redacted.visibleTextExcerpt) fields.visibleTextExcerpt = redacted.visibleTextExcerpt;
@@ -113,8 +113,8 @@ export async function persistBrowserCaptureSpill(
     pageTitle: redacted.pageTitle,
     fields,
   };
-  const absolutePath = join(spillRoot, fileName);
-  await writeFile(absolutePath, JSON.stringify(body), "utf8");
+  const absolutePath = NodePath.join(spillRoot, fileName);
+  await NodeFSPromises.writeFile(absolutePath, JSON.stringify(body), "utf8");
   scheduleGlobalBrowserCaptureSpillPrune();
   const appDataPath = `browser-capture-spill/${sub}/${fileName}`;
   return { appDataPath, absolutePath };
@@ -132,12 +132,12 @@ export function registerSpillHandlers(): void {
     for (const p of list) {
       if (typeof p !== "string") continue;
       const abs = resolveValidatedSpillAbsolutePath(p);
-      if (abs) await unlink(abs).catch(() => {});
+      if (abs) await NodeFSPromises.unlink(abs).catch(() => {});
     }
   });
 
   setTimeout(() => {
     lastGlobalSpillPruneAt = Date.now();
-    void pruneStaleBrowserCaptureSpills(join(getMcodeDir(), "browser-capture-spill"));
+    void pruneStaleBrowserCaptureSpills(NodePath.join(getMcodeDir(), "browser-capture-spill"));
   }, SPILL_PRUNE_STARTUP_DELAY_MS);
 }

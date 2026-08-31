@@ -1,20 +1,10 @@
-import { createHash } from "node:crypto";
-import {
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
+import * as NodeModule from "node:module";
 import {
   TerminalArtifactAttestationSchema,
   TerminalReleaseEvidenceManifestSchema,
@@ -41,21 +31,21 @@ const UPDATE_METADATA_FILENAMES = new Set([
   "nightly-linux.yml",
   "nightly-mac.yml",
 ]);
-const requireFromWeb = createRequire(
-  path.resolve(import.meta.dirname, "../../../../web/package.json"),
+const requireFromWeb = NodeModule.createRequire(
+  NodePath.resolve(import.meta.dirname, "../../../../web/package.json"),
 );
 
 function sha256File(filePath) {
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+  return NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(filePath)).digest("hex");
 }
 
 function writeJsonAtomic(filePath, value) {
-  mkdirSync(path.dirname(filePath), { recursive: true });
+  NodeFS.mkdirSync(NodePath.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+  NodeFS.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
     flag: "wx",
   });
-  renameSync(temporaryPath, filePath);
+  NodeFS.renameSync(temporaryPath, filePath);
 }
 
 function artifactKind(fileName) {
@@ -73,7 +63,7 @@ function artifactKind(fileName) {
 }
 
 function listReleaseFiles(releaseDir) {
-  const entries = readdirSync(releaseDir, { withFileTypes: true });
+  const entries = NodeFS.readdirSync(releaseDir, { withFileTypes: true });
   if (entries.length > MAX_DISCOVERED_FILES) {
     throw new Error(
       `Release directory contains more than ${MAX_DISCOVERED_FILES} entries`,
@@ -86,7 +76,7 @@ function listReleaseFiles(releaseDir) {
         entry.name !== "elevate.exe" &&
         artifactKind(entry.name),
     )
-    .map((entry) => path.join(releaseDir, entry.name));
+    .map((entry) => NodePath.join(releaseDir, entry.name));
 }
 
 function assertRequiredKinds(platform, artifacts) {
@@ -101,15 +91,15 @@ function assertRequiredKinds(platform, artifacts) {
 }
 
 function run(command, args) {
-  execFileSync(command, args, { stdio: "pipe", encoding: "utf8" });
+  NodeChildProcess.execFileSync(command, args, { stdio: "pipe", encoding: "utf8" });
 }
 
 function findMacApp(releaseDir, arch) {
   const candidates =
     arch === "arm64" ? ["mac-arm64", "mac"] : ["mac", "mac-x64"];
   for (const directory of candidates) {
-    const appPath = path.join(releaseDir, directory, "Mcode.app");
-    if (existsSync(appPath)) return appPath;
+    const appPath = NodePath.join(releaseDir, directory, "Mcode.app");
+    if (NodeFS.existsSync(appPath)) return appPath;
   }
   throw new Error(`Packaged macOS application is missing for ${arch}`);
 }
@@ -122,30 +112,30 @@ function attestFinalPackage(
   terminalAttester = attestPackagedTerminalArtifacts,
 ) {
   if (platform === "windows") {
-    const resourcesRoot = path.join(releaseDir, "win-unpacked", "resources");
+    const resourcesRoot = NodePath.join(releaseDir, "win-unpacked", "resources");
     return terminalAttester({
       resourcesRoot,
-      runtimePath: path.join(resourcesRoot, "bin", "mcode-server.exe"),
+      runtimePath: NodePath.join(resourcesRoot, "bin", "mcode-server.exe"),
       targetPlatform: "win32",
       targetArch: arch,
     });
   }
   if (platform === "linux") {
-    const resourcesRoot = path.join(releaseDir, "linux-unpacked", "resources");
+    const resourcesRoot = NodePath.join(releaseDir, "linux-unpacked", "resources");
     return terminalAttester({
       resourcesRoot,
-      runtimePath: path.join(resourcesRoot, "bin", "mcode-server"),
+      runtimePath: NodePath.join(resourcesRoot, "bin", "mcode-server"),
       targetPlatform: "linux",
       targetArch: arch,
     });
   }
   const appPath = findMacApp(releaseDir, arch);
-  const resourcesRoot = path.join(appPath, "Contents", "Resources");
+  const resourcesRoot = NodePath.join(appPath, "Contents", "Resources");
   return terminalAttester({
     resourcesRoot,
     runtimePath: signingRequired
-      ? path.join(resourcesRoot, "bin", "mcode-server")
-      : path.join(appPath, "Contents", "MacOS", "Mcode"),
+      ? NodePath.join(resourcesRoot, "bin", "mcode-server")
+      : NodePath.join(appPath, "Contents", "MacOS", "Mcode"),
     targetPlatform: "darwin",
     targetArch: arch,
   });
@@ -153,21 +143,21 @@ function attestFinalPackage(
 
 function signLinuxChecks(releaseDir, signingRequired) {
   const primary = listReleaseFiles(releaseDir);
-  const sumsPath = path.join(releaseDir, "SHA256SUMS");
+  const sumsPath = NodePath.join(releaseDir, "SHA256SUMS");
   const sums = primary
     .sort((left, right) =>
-      path.basename(left).localeCompare(path.basename(right)),
+      NodePath.basename(left).localeCompare(NodePath.basename(right)),
     )
-    .map((filePath) => `${sha256File(filePath)}  ${path.basename(filePath)}`)
+    .map((filePath) => `${sha256File(filePath)}  ${NodePath.basename(filePath)}`)
     .join("\n");
-  writeFileSync(sumsPath, `${sums}\n`, { flag: "w" });
+  NodeFS.writeFileSync(sumsPath, `${sums}\n`, { flag: "w" });
   const signaturePath = `${sumsPath}.sig`;
   if (!signingRequired) {
     return [
       {
         kind: "release-key",
         status: "skipped",
-        subject: path.basename(signaturePath),
+        subject: NodePath.basename(signaturePath),
       },
     ];
   }
@@ -191,7 +181,7 @@ function signLinuxChecks(releaseDir, signingRequired) {
     {
       kind: "release-key",
       status: "passed",
-      subject: path.basename(signaturePath),
+      subject: NodePath.basename(signaturePath),
     },
   ];
 }
@@ -217,12 +207,12 @@ export function verifyTargetSignatures({
   }
   if (platform === "windows") {
     const installers = listReleaseFiles(releaseDir).filter(
-      (filePath) => artifactKind(path.basename(filePath)) === "nsis",
+      (filePath) => artifactKind(NodePath.basename(filePath)) === "nsis",
     );
     const signedExecutables = [
       ...installers,
-      path.join(releaseDir, "win-unpacked", "Mcode.exe"),
-      path.join(
+      NodePath.join(releaseDir, "win-unpacked", "Mcode.exe"),
+      NodePath.join(
         releaseDir,
         "win-unpacked",
         "resources",
@@ -231,7 +221,7 @@ export function verifyTargetSignatures({
       ),
     ];
     for (const executable of signedExecutables) {
-      if (!existsSync(executable))
+      if (!NodeFS.existsSync(executable))
         throw new Error(`Signed Windows executable is missing: ${executable}`);
       run("powershell.exe", [
         "-NoProfile",
@@ -244,12 +234,12 @@ export function verifyTargetSignatures({
     return signedExecutables.map((executable) => ({
       kind: "authenticode",
       status: "passed",
-      subject: path.basename(executable),
+      subject: NodePath.basename(executable),
     }));
   }
   const appPath = findMacApp(releaseDir, arch);
   run("codesign", ["--verify", "--deep", "--strict", appPath]);
-  const serverPath = path.join(
+  const serverPath = NodePath.join(
     appPath,
     "Contents",
     "Resources",
@@ -259,29 +249,29 @@ export function verifyTargetSignatures({
   run("codesign", ["--verify", "--strict", serverPath]);
   run("spctl", ["--assess", "--type", "execute", appPath]);
   const dmgs = listReleaseFiles(releaseDir).filter(
-    (filePath) => artifactKind(path.basename(filePath)) === "dmg",
+    (filePath) => artifactKind(NodePath.basename(filePath)) === "dmg",
   );
   for (const dmg of dmgs) run("xcrun", ["stapler", "validate", dmg]);
   return [
     { kind: "developer-id", status: "passed", subject: "Mcode.app" },
     { kind: "developer-id", status: "passed", subject: "mcode-server" },
-    { kind: "notarization", status: "passed", subject: path.basename(dmgs[0]) },
-    { kind: "staple", status: "passed", subject: path.basename(dmgs[0]) },
+    { kind: "notarization", status: "passed", subject: NodePath.basename(dmgs[0]) },
+    { kind: "staple", status: "passed", subject: NodePath.basename(dmgs[0]) },
     { kind: "gatekeeper", status: "passed", subject: "Mcode.app" },
   ];
 }
 
 function stageArtifacts(releaseDir, stagingDir) {
-  mkdirSync(stagingDir, { recursive: true });
+  NodeFS.mkdirSync(stagingDir, { recursive: true });
   return listReleaseFiles(releaseDir).map((sourcePath) => {
-    if (lstatSync(sourcePath).isSymbolicLink())
+    if (NodeFS.lstatSync(sourcePath).isSymbolicLink())
       throw new Error(
         `Release artifact cannot be a symbolic link: ${sourcePath}`,
       );
-    const name = path.basename(sourcePath);
-    const destinationPath = path.join(stagingDir, name);
-    copyFileSync(sourcePath, destinationPath, 0);
-    const stats = statSync(destinationPath);
+    const name = NodePath.basename(sourcePath);
+    const destinationPath = NodePath.join(stagingDir, name);
+    NodeFS.copyFileSync(sourcePath, destinationPath, 0);
+    const stats = NodeFS.statSync(destinationPath);
     return {
       name,
       kind: artifactKind(name),
@@ -313,7 +303,7 @@ export function createTargetEvidenceManifest({
     throw new Error(`Unsupported release target platform: ${targetPlatform}`);
   const terminal = TerminalArtifactAttestationSchema().parse(
     attestationPath
-      ? JSON.parse(readFileSync(attestationPath, "utf8"))
+      ? JSON.parse(NodeFS.readFileSync(attestationPath, "utf8"))
       : attestFinalPackage(
           releaseDir,
           platform,
@@ -355,15 +345,15 @@ export function createTargetEvidenceManifest({
       platform,
       arch: targetArch,
       runner,
-      osRelease: os.release(),
-      cpuCount: os.cpus().length,
-      memoryBytes: String(os.totalmem()),
+      osRelease: NodeOS.release(),
+      cpuCount: NodeOS.cpus().length,
+      memoryBytes: String(NodeOS.totalmem()),
     },
     versions: {
       electron: terminal.runtime.electron,
       node: terminal.runtime.node,
       xterm: JSON.parse(
-        readFileSync(
+        NodeFS.readFileSync(
           requireFromWeb.resolve("@xterm/xterm/package.json"),
           "utf8",
         ),
@@ -375,19 +365,19 @@ export function createTargetEvidenceManifest({
     artifacts,
     terminal,
   });
-  writeJsonAtomic(path.join(stagingDir, MANIFEST_NAME), manifest);
+  writeJsonAtomic(NodePath.join(stagingDir, MANIFEST_NAME), manifest);
   return manifest;
 }
 
 function findTargetManifests(inputDir) {
   const found = [];
-  for (const entry of readdirSync(inputDir, { withFileTypes: true })) {
+  for (const entry of NodeFS.readdirSync(inputDir, { withFileTypes: true })) {
     const candidate = entry.isDirectory()
-      ? path.join(inputDir, entry.name, MANIFEST_NAME)
+      ? NodePath.join(inputDir, entry.name, MANIFEST_NAME)
       : entry.name === MANIFEST_NAME
-        ? path.join(inputDir, entry.name)
+        ? NodePath.join(inputDir, entry.name)
         : undefined;
-    if (candidate && existsSync(candidate)) found.push(candidate);
+    if (candidate && NodeFS.existsSync(candidate)) found.push(candidate);
   }
   return found;
 }
@@ -399,18 +389,18 @@ function targetId(manifest) {
 /** Validates every staged target and writes the aggregate publication manifest. */
 export function createReleaseEvidenceManifest({
   inputDir,
-  outputPath = path.join(inputDir, AGGREGATE_NAME),
+  outputPath = NodePath.join(inputDir, AGGREGATE_NAME),
   channel,
   generatedAt = new Date().toISOString(),
 }) {
-  const resolvedOutputPath = path.resolve(outputPath);
+  const resolvedOutputPath = NodePath.resolve(outputPath);
   const manifestPaths = findTargetManifests(inputDir);
   if (manifestPaths.length === 0)
     throw new Error("No target evidence manifests were staged");
   const parsed = manifestPaths.map((manifestPath) => ({
     manifestPath,
     manifest: TerminalTargetEvidenceManifestSchema().parse(
-      JSON.parse(readFileSync(manifestPath, "utf8")),
+      JSON.parse(NodeFS.readFileSync(manifestPath, "utf8")),
     ),
   }));
   const first = parsed[0].manifest;
@@ -430,24 +420,24 @@ export function createReleaseEvidenceManifest({
     targets: parsed
       .map(({ manifestPath, manifest }) => ({
         targetId: targetId(manifest),
-        path: path.relative(inputDir, manifestPath).replaceAll(path.sep, "/"),
+        path: NodePath.relative(inputDir, manifestPath).replaceAll(NodePath.sep, "/"),
         sha256: sha256File(manifestPath),
         artifactCount: manifest.artifacts.length,
       }))
       .sort((left, right) => left.targetId.localeCompare(right.targetId)),
-    artifacts: readdirSync(inputDir, { withFileTypes: true })
+    artifacts: NodeFS.readdirSync(inputDir, { withFileTypes: true })
       .filter(
         (entry) =>
           entry.isFile() &&
           artifactKind(entry.name) &&
-          path.resolve(inputDir, entry.name) !== resolvedOutputPath,
+          NodePath.resolve(inputDir, entry.name) !== resolvedOutputPath,
       )
       .map((entry) => {
-        const artifactPath = path.join(inputDir, entry.name);
+        const artifactPath = NodePath.join(inputDir, entry.name);
         return {
           name: entry.name,
           kind: artifactKind(entry.name),
-          bytes: statSync(artifactPath).size,
+          bytes: NodeFS.statSync(artifactPath).size,
           sha256: sha256File(artifactPath),
         };
       }),
@@ -475,8 +465,8 @@ function assertMatchingTargetManifest(manifestPath, manifest, first, channel) {
 
 function assertTargetArtifactHashes(manifestPath, artifacts) {
   for (const artifact of artifacts) {
-    const artifactPath = path.join(path.dirname(manifestPath), artifact.name);
-    if (!existsSync(artifactPath) || sha256File(artifactPath) !== artifact.sha256) {
+    const artifactPath = NodePath.join(NodePath.dirname(manifestPath), artifact.name);
+    if (!NodeFS.existsSync(artifactPath) || sha256File(artifactPath) !== artifact.sha256) {
       throw new Error(`Staged artifact hash mismatch: ${artifactPath}`);
     }
   }
@@ -524,7 +514,7 @@ function requiredBoolean(values, key) {
 
 if (
   process.argv[1] &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+  NodeURL.fileURLToPath(import.meta.url) === NodePath.resolve(process.argv[1])
 ) {
   const { command, values } = parseCli(process.argv.slice(2));
   if (command === "target") {

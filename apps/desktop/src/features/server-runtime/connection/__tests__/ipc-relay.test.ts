@@ -17,7 +17,7 @@ vi.mock("net", () => ({
 }));
 
 import { startIpcRelay } from "../ipc-relay.js";
-import { connect as netConnect } from "net";
+import * as NodeNet from "node:net";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -60,7 +60,7 @@ beforeEach(() => {
     }),
     destroy: vi.fn(),
   };
-  vi.mocked(netConnect).mockReturnValue(mockSocket as unknown as ReturnType<typeof netConnect>);
+  vi.mocked(NodeNet.connect).mockReturnValue(mockSocket as unknown as ReturnType<typeof NodeNet.connect>);
 });
 
 // ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ describe("startIpcRelay", () => {
 
       cleanup(); // must not throw
 
-      expect(netConnect).not.toHaveBeenCalled();
+      expect(NodeNet.connect).not.toHaveBeenCalled();
     });
   });
 
@@ -82,7 +82,7 @@ describe("startIpcRelay", () => {
     it("connects to the given ipcPath", () => {
       startIpcRelay("/tmp/mcode.sock", makeWindow() as never);
 
-      expect(netConnect).toHaveBeenCalledWith("/tmp/mcode.sock");
+      expect(NodeNet.connect).toHaveBeenCalledWith("/tmp/mcode.sock");
     });
 
     it("cleanup destroys the socket", () => {

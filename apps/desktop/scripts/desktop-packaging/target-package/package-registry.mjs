@@ -1,11 +1,6 @@
-import { createHash, timingSafeEqual } from "node:crypto";
-import {
-  existsSync,
-  lstatSync,
-  readFileSync,
-  statSync,
-} from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { resolveClaudeSdkCliSources, resolveCopilotSdkSources } from "../../../../../scripts/build-server-dev-bundle.mjs";
 
 const packageNamePattern =
@@ -15,17 +10,17 @@ const semverPattern =
 
 /** Finds the nearest node_modules directory containing a package graph. */
 export function resolveInstallRoot(entryPath) {
-  let current = resolve(entryPath);
-  while (current !== dirname(current)) {
-    if (basename(current) === "node_modules") return current;
-    current = dirname(current);
+  let current = NodePath.resolve(entryPath);
+  while (current !== NodePath.dirname(current)) {
+    if (NodePath.basename(current) === "node_modules") return current;
+    current = NodePath.dirname(current);
   }
   throw new Error(`[ensure-sdk] Cannot locate install root for ${entryPath}`);
 }
 
 /** Resolves a scoped target package beneath its SDK package graph. */
 export function resolveInstallPackageDestination(entryPath, packageName) {
-  return resolve(resolveInstallRoot(entryPath), dirname(packageName), basename(packageName));
+  return NodePath.resolve(resolveInstallRoot(entryPath), NodePath.dirname(packageName), NodePath.basename(packageName));
 }
 
 /** Validates an npm package name and semantic version before registry access. */
@@ -45,7 +40,7 @@ export function assertPackageSpec(packageName, version) {
 export function readLockPackageRecord(lockfilePath, packageName, version) {
   assertPackageSpec(packageName, version);
   const expectedIdentity = `${packageName}@${version}`;
-  for (const line of readFileSync(lockfilePath, "utf8").split(/\r?\n/)) {
+  for (const line of NodeFS.readFileSync(lockfilePath, "utf8").split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith(`"${packageName}":`)) continue;
     let record;
@@ -72,8 +67,8 @@ export function verifyPackageIntegrity(bytes, integrity) {
     throw new Error("[ensure-sdk] Invalid SHA-512 integrity");
   }
   const expected = Buffer.from(integrity.slice("sha512-".length), "base64");
-  const actual = createHash("sha512").update(bytes).digest();
-  if (expected.length !== actual.length || !timingSafeEqual(actual, expected)) {
+  const actual = NodeCrypto.createHash("sha512").update(bytes).digest();
+  if (expected.length !== actual.length || !NodeCrypto.timingSafeEqual(actual, expected)) {
     throw new Error("[ensure-sdk] Package integrity mismatch");
   }
 }
@@ -116,9 +111,9 @@ export function readPlanTargetMetadata(plan, serverPackageRoot) {
     const source = plan.kind === "claude"
       ? resolveClaudeSdkCliSources(serverPackageRoot, plan.platform, plan.arch)
       : resolveCopilotSdkSources(serverPackageRoot, plan.platform, plan.arch);
-    const packageDir = plan.kind === "claude" ? dirname(source.binSrc) : source.platformPackageDir;
-    const metadata = JSON.parse(readFileSync(resolve(packageDir, "package.json"), "utf8"));
-    return packageMetadataUsable(metadata, plan) && existsSync(resolve(packageDir, plan.executable)) && statSync(resolve(packageDir, plan.executable)).isFile();
+    const packageDir = plan.kind === "claude" ? NodePath.dirname(source.binSrc) : source.platformPackageDir;
+    const metadata = JSON.parse(NodeFS.readFileSync(NodePath.resolve(packageDir, "package.json"), "utf8"));
+    return packageMetadataUsable(metadata, plan) && NodeFS.existsSync(NodePath.resolve(packageDir, plan.executable)) && NodeFS.statSync(NodePath.resolve(packageDir, plan.executable)).isFile();
   } catch {
     return false;
   }
@@ -127,7 +122,7 @@ export function readPlanTargetMetadata(plan, serverPackageRoot) {
 /** Checks whether a path exists without following a missing path error. */
 export function pathExists(target) {
   try {
-    lstatSync(target);
+    NodeFS.lstatSync(target);
     return true;
   } catch {
     return false;
@@ -136,8 +131,8 @@ export function pathExists(target) {
 
 /** Rejects a destination outside the resolved install root. */
 export function assertContained(storeRoot, target) {
-  const root = resolve(storeRoot);
-  const candidate = resolve(target);
+  const root = NodePath.resolve(storeRoot);
+  const candidate = NodePath.resolve(target);
   const separator = root.includes("\\") ? "\\" : "/";
   if (candidate === root || !candidate.startsWith(`${root}${separator}`)) {
     throw new Error(`[ensure-sdk] Destination escapes install root: ${target}`);

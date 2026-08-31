@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import {
   getAttachmentMaxSizeForMime,
   storedAttachmentSuffix,
@@ -32,10 +32,10 @@ export interface TempAttachmentStore {
 export const TEMP_ATTACHMENT_DIRECTORY_NAME = "mcode-attachments";
 
 function resolveContainedPath(directory: string, fileName: string): string {
-  const resolvedDirectory = resolve(directory);
-  const resolvedPath = resolve(resolvedDirectory, fileName);
-  const relativePath = relative(resolvedDirectory, resolvedPath);
-  if (isAbsolute(relativePath) || relativePath.startsWith("..")) {
+  const resolvedDirectory = NodePath.resolve(directory);
+  const resolvedPath = NodePath.resolve(resolvedDirectory, fileName);
+  const relativePath = NodePath.relative(resolvedDirectory, resolvedPath);
+  if (NodePath.isAbsolute(relativePath) || relativePath.startsWith("..")) {
     throw new Error("Temporary attachment path escapes its directory");
   }
   return resolvedPath;
@@ -45,8 +45,8 @@ function resolveContainedPath(directory: string, fileName: string): string {
 export function createTempAttachmentStore(
   dependencies: TempAttachmentStoreDependencies,
 ): TempAttachmentStore {
-  const directory = resolve(
-    join(dependencies.getTempDirectory(), TEMP_ATTACHMENT_DIRECTORY_NAME),
+  const directory = NodePath.resolve(
+    NodePath.join(dependencies.getTempDirectory(), TEMP_ATTACHMENT_DIRECTORY_NAME),
   );
 
   return {
@@ -58,12 +58,12 @@ export function createTempAttachmentStore(
         );
       }
 
-      await mkdir(directory, { recursive: true });
+      await NodeFSPromises.mkdir(directory, { recursive: true });
 
-      const id = randomUUID();
+      const id = NodeCrypto.randomUUID();
       const suffix = storedAttachmentSuffix(mimeType);
       const sourcePath = resolveContainedPath(directory, `${id}${suffix}`);
-      await writeFile(sourcePath, Buffer.from(content), { flag: "wx" });
+      await NodeFSPromises.writeFile(sourcePath, Buffer.from(content), { flag: "wx" });
 
       return {
         id,

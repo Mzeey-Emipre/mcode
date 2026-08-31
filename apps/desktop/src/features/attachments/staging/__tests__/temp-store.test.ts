@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, join, relative } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ATTACHMENT_DOCUMENT_MAX_BYTES,
@@ -17,13 +17,13 @@ import {
 const temporaryDirectories: string[] = [];
 
 async function createTemporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "mcode-attachment-store-"));
+  const directory = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-attachment-store-"));
   temporaryDirectories.push(directory);
   return directory;
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => NodeFSPromises.rm(directory, { recursive: true, force: true })));
 });
 
 describe("temporary attachment store", () => {
@@ -36,12 +36,12 @@ describe("temporary attachment store", () => {
 
     expect(staged.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(staged.sizeBytes).toBe(content.byteLength);
-    expect(await readFile(staged.sourcePath)).toEqual(Buffer.from(content));
-    expect(dirname(staged.sourcePath)).toBe(join(root, TEMP_ATTACHMENT_DIRECTORY_NAME));
-    expect(relative(join(root, TEMP_ATTACHMENT_DIRECTORY_NAME), staged.sourcePath)).not.toMatch(
+    expect(await NodeFSPromises.readFile(staged.sourcePath)).toEqual(Buffer.from(content));
+    expect(NodePath.dirname(staged.sourcePath)).toBe(NodePath.join(root, TEMP_ATTACHMENT_DIRECTORY_NAME));
+    expect(NodePath.relative(NodePath.join(root, TEMP_ATTACHMENT_DIRECTORY_NAME), staged.sourcePath)).not.toMatch(
       /^(\.\.|[\\/])/,
     );
-    expect(basename(staged.sourcePath)).toMatch(/^[0-9a-f-]{36}\.txt$/);
+    expect(NodePath.basename(staged.sourcePath)).toMatch(/^[0-9a-f-]{36}\.txt$/);
   });
 
   it("uses a new cryptographic storage identity for each staged file", async () => {
@@ -52,7 +52,7 @@ describe("temporary attachment store", () => {
     const second = await store.stage(Uint8Array.from([2]), "application/octet-stream");
 
     expect(first.id).not.toBe(second.id);
-    expect(await readdir(join(root, TEMP_ATTACHMENT_DIRECTORY_NAME))).toHaveLength(2);
+    expect(await NodeFSPromises.readdir(NodePath.join(root, TEMP_ATTACHMENT_DIRECTORY_NAME))).toHaveLength(2);
   });
 
   it.each([
@@ -68,7 +68,7 @@ describe("temporary attachment store", () => {
     await expect(store.stage(new Uint8Array(limit + 1), mimeType)).rejects.toThrow(
       `${getAttachmentMaxSizeForMime(mimeType)} byte limit`,
     );
-    await expect(readdir(join(root, TEMP_ATTACHMENT_DIRECTORY_NAME))).rejects.toMatchObject({
+    await expect(NodeFSPromises.readdir(NodePath.join(root, TEMP_ATTACHMENT_DIRECTORY_NAME))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
@@ -89,7 +89,7 @@ describe("temporary attachment store", () => {
     const staged = await store.stage(content, mimeType);
 
     expect(staged.sizeBytes).toBe(limit);
-    expect((await readFile(staged.sourcePath)).byteLength).toBe(limit);
+    expect((await NodeFSPromises.readFile(staged.sourcePath)).byteLength).toBe(limit);
   });
 
   it.each([
@@ -105,16 +105,16 @@ describe("temporary attachment store", () => {
     const staged = await store.stage(new Uint8Array(limit - 1), mimeType);
 
     expect(staged.sizeBytes).toBe(limit - 1);
-    expect((await readFile(staged.sourcePath)).byteLength).toBe(limit - 1);
+    expect((await NodeFSPromises.readFile(staged.sourcePath)).byteLength).toBe(limit - 1);
   });
 
   it("surfaces directory and write failures without manufacturing metadata", async () => {
     const root = await createTemporaryDirectory();
-    await writeFile(join(root, TEMP_ATTACHMENT_DIRECTORY_NAME), "not a directory");
+    await NodeFSPromises.writeFile(NodePath.join(root, TEMP_ATTACHMENT_DIRECTORY_NAME), "not a directory");
     const store = createTempAttachmentStore({ getTempDirectory: () => root });
 
     await expect(store.stage(Uint8Array.from([1, 2, 3]), "text/plain")).rejects.toThrow();
-    expect(await readFile(join(root, TEMP_ATTACHMENT_DIRECTORY_NAME), "utf8")).toBe(
+    expect(await NodeFSPromises.readFile(NodePath.join(root, TEMP_ATTACHMENT_DIRECTORY_NAME), "utf8")).toBe(
       "not a directory",
     );
   });

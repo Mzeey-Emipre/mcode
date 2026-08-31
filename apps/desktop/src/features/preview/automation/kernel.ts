@@ -2,7 +2,7 @@
 /// <reference lib="dom.iterable" />
 
 import { BrowserWindow, nativeImage, type IpcMainInvokeEvent, type WebContents } from "electron";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_AX_NODES,
@@ -680,7 +680,7 @@ export class BrowserAutomationKernel {
         throw new KernelError("INVALID_REQUEST", "Browser request id is already active", false);
       }
       const resolved = this.resolveTarget(event, request.threadId, parsedInput.target);
-      const leaseId = randomUUID();
+      const leaseId = NodeCrypto.randomUUID();
       let resolveReady!: (value: { ok: true; leaseId: string } | { ok: false; response: BrowserAutomationResponse }) => void;
       const ready = new Promise<{ ok: true; leaseId: string } | { ok: false; response: BrowserAutomationResponse }>((resolve) => {
         resolveReady = resolve;
@@ -1385,7 +1385,7 @@ export class BrowserAutomationKernel {
     return {
       operation: request.operation,
       ...this.operationBase(resolved),
-      ...(request.operation === "open" ? { observationRef: randomUUID() } : {}),
+      ...(request.operation === "open" ? { observationRef: NodeCrypto.randomUUID() } : {}),
     };
   }
 
@@ -1811,7 +1811,7 @@ export class BrowserAutomationKernel {
   ): GuestInputAllowanceHandle | null {
     if (state.webContents.isDestroyed()) return null;
     const generation = ++state.guestInputGeneration;
-    const token = randomUUID();
+    const token = NodeCrypto.randomUUID();
     state.webContents.send(PREVIEW_GUEST_AGENT_INPUT_CHANNEL, {
       action: "allow",
       token,
@@ -2473,7 +2473,7 @@ export class BrowserAutomationKernel {
         stage: this.failureStage(mapped),
         effect: this.failureEffect(mapped),
         recovery: mapped.retryable ? "retry" : "manual",
-        correlationId: randomUUID(),
+        correlationId: NodeCrypto.randomUUID(),
       },
     };
   }

@@ -3,9 +3,9 @@
  * for the embedded BrowserSurfaceHost page.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import { BrowserWindow, app, ipcMain, type WebContents } from "electron";
 import {
   clampMcodeBrowserCaptureV2,
@@ -579,12 +579,12 @@ async function persistCapturedPng(webContents: WebContents, prefix: string): Pro
   const image = await webContents.capturePage();
   const buffer = image.toPNG();
   if (buffer.length === 0) return { ok: false, error: "empty-capture" };
-  const id = randomUUID();
+  const id = NodeCrypto.randomUUID();
   const stem = previewCaptureFileStem(webContents.getURL());
-  const tempDir = join(app.getPath("temp"), "mcode-attachments");
-  const tempPath = join(tempDir, `${id}.png`);
-  await mkdir(tempDir, { recursive: true });
-  await writeFile(tempPath, buffer);
+  const tempDir = NodePath.join(app.getPath("temp"), "mcode-attachments");
+  const tempPath = NodePath.join(tempDir, `${id}.png`);
+  await NodeFSPromises.mkdir(tempDir, { recursive: true });
+  await NodeFSPromises.writeFile(tempPath, buffer);
   const size = image.getSize();
   return {
     meta: { id, name: `${prefix}-${stem}-${Date.now()}.png`, mimeType: "image/png", sizeBytes: buffer.length, sourcePath: tempPath },

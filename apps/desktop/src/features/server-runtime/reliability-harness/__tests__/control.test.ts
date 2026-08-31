@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import http from "node:http";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeHTTP from "node:http";
 import {
   ReliabilityHarnessControlPlane,
   readReliabilityHarnessCapability,
@@ -36,10 +36,10 @@ describe("Desktop reliability control plane", () => {
   });
 
   it("accepts only the explicit capability token and omits it from rendezvous", async () => {
-    const root = mkdtempSync(join(tmpdir(), "mcode-reliability-control-"));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-reliability-control-"));
     const token = "a".repeat(64);
-    const capabilityPath = join(root, "capability.json");
-    writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: "run" }), { mode: 0o600 });
+    const capabilityPath = NodePath.join(root, "capability.json");
+    NodeFS.writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: "run" }), { mode: 0o600 });
     const plannedRestart = vi.fn().mockResolvedValue(undefined);
     const serverFault = vi.fn().mockResolvedValue(undefined);
     const plane = new ReliabilityHarnessControlPlane(capabilityPath, { plannedRestart, serverFault });
@@ -47,7 +47,7 @@ describe("Desktop reliability control plane", () => {
       const rendezvous = await plane.start();
       const published = readReliabilityHarnessCapability(capabilityPath);
       expect(published?.token).toBe(token);
-      const rendezvousText = readFileSync(join(root, "desktop-reliability-rendezvous.json"), "utf8");
+      const rendezvousText = NodeFS.readFileSync(NodePath.join(root, "desktop-reliability-rendezvous.json"), "utf8");
       expect(rendezvousText).not.toContain(token);
 
       expect(await post(rendezvous.port, "wrong-token", { control: "planned-restart" })).toBe(401);
@@ -56,15 +56,15 @@ describe("Desktop reliability control plane", () => {
       expect(plannedRestart).toHaveBeenCalledOnce();
     } finally {
       await plane.dispose();
-      rmSync(root, { recursive: true, force: true });
+      NodeFS.rmSync(root, { recursive: true, force: true });
     }
   });
 
   it("forwards each server fault control through one narrow callback", async () => {
-    const root = mkdtempSync(join(tmpdir(), "mcode-reliability-control-"));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-reliability-control-"));
     const token = "b".repeat(64);
-    const capabilityPath = join(root, "capability.json");
-    writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: "run" }), { mode: 0o600 });
+    const capabilityPath = NodePath.join(root, "capability.json");
+    NodeFS.writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: "run" }), { mode: 0o600 });
     const serverFault = vi.fn(async (command: { control: string }) => (
       command.control === "assistant-stream"
         ? {
@@ -117,15 +117,15 @@ describe("Desktop reliability control plane", () => {
       expect(serverFault.mock.calls.at(-1)![0]).toMatchObject({ threadId: "thread-reliability" });
     } finally {
       await plane.dispose();
-      rmSync(root, { recursive: true, force: true });
+      NodeFS.rmSync(root, { recursive: true, force: true });
     }
   });
 
   it("does not acknowledge a command when its callback fails", async () => {
-    const root = mkdtempSync(join(tmpdir(), "mcode-reliability-control-"));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-reliability-control-"));
     const token = "c".repeat(64);
-    const capabilityPath = join(root, "capability.json");
-    writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: "run" }), { mode: 0o600 });
+    const capabilityPath = NodePath.join(root, "capability.json");
+    NodeFS.writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: "run" }), { mode: 0o600 });
     const plane = new ReliabilityHarnessControlPlane(capabilityPath, {
       plannedRestart: vi.fn().mockRejectedValue(new Error("planned restart failed")),
       serverFault: vi.fn().mockResolvedValue(undefined),
@@ -135,14 +135,14 @@ describe("Desktop reliability control plane", () => {
       expect(await post(rendezvous.port, token, { control: "planned-restart" })).toBe(400);
     } finally {
       await plane.dispose();
-      rmSync(root, { recursive: true, force: true });
+      NodeFS.rmSync(root, { recursive: true, force: true });
     }
   });
 });
 
 function post(port: number, token: string, body: unknown): Promise<number> {
   return new Promise((resolve, reject) => {
-    const request = http.request({
+    const request = NodeHTTP.request({
       host: "127.0.0.1",
       port,
       path: "/__mcode/reliability",
@@ -162,7 +162,7 @@ function post(port: number, token: string, body: unknown): Promise<number> {
 
 function postJson(port: number, token: string, body: unknown): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
-    const request = http.request({
+    const request = NodeHTTP.request({
       host: "127.0.0.1",
       port,
       path: "/__mcode/reliability",

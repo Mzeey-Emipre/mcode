@@ -1,15 +1,8 @@
 import { app } from "electron";
-import { execSync, spawn, type ChildProcess } from "child_process";
-import { createRequire } from "module";
-import {
-  createWriteStream,
-  existsSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  type WriteStream,
-} from "fs";
-import { dirname, join, resolve } from "path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { getMcodeDir } from "@mcode/shared";
 import {
   SettingsSchema as BundledSettingsSchema,
@@ -32,15 +25,15 @@ export interface ServerPortBand {
 
 /** Spawned server process and its optional packaged stderr stream. */
 export interface SpawnedServerProcess {
-  child: ChildProcess;
-  stderrStream: WriteStream | undefined;
+  child: NodeChildProcess.ChildProcess;
+  stderrStream: NodeFS.WriteStream | undefined;
 }
 
 /** Server stderr log file path. */
-export const SERVER_LOG_PATH = join(getMcodeDir(), "server-stderr.log");
+export const SERVER_LOG_PATH = NodePath.join(getMcodeDir(), "server-stderr.log");
 
 /** Previous server stderr log file path. */
-export const SERVER_ROTATED_LOG_PATH = join(
+export const SERVER_ROTATED_LOG_PATH = NodePath.join(
   getMcodeDir(),
   "server-stderr.1.log",
 );
@@ -91,9 +84,9 @@ interface ServerPaths {
 
 /** Resolve paths from the packaged app's unpacked resources. */
 function getPackagedServerPaths(): ServerPaths {
-  const unpackedRoot = resolve(process.resourcesPath, "app.asar.unpacked");
-  const entry = resolve(unpackedRoot, "dist", "server", "server.cjs");
-  const nativeBindingPath = resolve(
+  const unpackedRoot = NodePath.resolve(process.resourcesPath, "app.asar.unpacked");
+  const entry = NodePath.resolve(unpackedRoot, "dist", "server", "server.cjs");
+  const nativeBindingPath = NodePath.resolve(
     unpackedRoot,
     "node_modules",
     "better-sqlite3",
@@ -101,36 +94,36 @@ function getPackagedServerPaths(): ServerPaths {
     "Release",
     "better_sqlite3.node",
   );
-  if (!existsSync(nativeBindingPath)) {
+  if (!NodeFS.existsSync(nativeBindingPath)) {
     throw new Error(
       `Packaged better-sqlite3 binding not found: ${nativeBindingPath}`,
     );
   }
-  return { entry, cwd: dirname(entry), nativeBindingPath };
+  return { entry, cwd: NodePath.dirname(entry), nativeBindingPath };
 }
 
 /** Resolve paths from a source checkout or the desktop build output. */
 function getDevelopmentServerPaths(): ServerPaths {
-  const desktopRoot = __dirname.endsWith(join("dist", "main"))
-    ? resolve(__dirname, "..", "..")
-    : resolve(__dirname, "..", "..", "..", "..");
-  const entry = resolve(desktopRoot, "dist", "server", "server.cjs");
-  const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
-  const betterSqliteDir = dirname(
+  const desktopRoot = __dirname.endsWith(NodePath.join("dist", "main"))
+    ? NodePath.resolve(__dirname, "..", "..")
+    : NodePath.resolve(__dirname, "..", "..", "..", "..");
+  const entry = NodePath.resolve(desktopRoot, "dist", "server", "server.cjs");
+  const desktopRequire = NodeModule.createRequire(NodePath.resolve(desktopRoot, "package.json"));
+  const betterSqliteDir = NodePath.dirname(
     desktopRequire.resolve("better-sqlite3/package.json"),
   );
-  const nativeBindingPath = resolve(
+  const nativeBindingPath = NodePath.resolve(
     betterSqliteDir,
     "build",
     "Release",
     "better_sqlite3.electron.node",
   );
-  if (!existsSync(nativeBindingPath)) {
+  if (!NodeFS.existsSync(nativeBindingPath)) {
     throw new Error(
       `Workspace Electron better-sqlite3 binding not found: ${nativeBindingPath}`,
     );
   }
-  return { entry, cwd: dirname(entry), nativeBindingPath };
+  return { entry, cwd: NodePath.dirname(entry), nativeBindingPath };
 }
 
 /** Return the V8 old-space limit for the server process. */
@@ -166,7 +159,7 @@ function isAllowedHeapMb(heapMb: number): boolean {
 /** Read the heap limit from the settings file or use the default. */
 function readSettingsHeapMb(): number {
   try {
-    const raw = readFileSync(join(getMcodeDir(), "settings.json"), "utf-8");
+    const raw = NodeFS.readFileSync(NodePath.join(getMcodeDir(), "settings.json"), "utf-8");
     const settings = SettingsSchema().safeParse(JSON.parse(raw));
     if (settings.success) return settings.data.server.memory.heapMb;
     console.warn(
@@ -255,7 +248,7 @@ function setGitEnvironmentValue(
   }
   if (!isDesktopDev()) return;
   try {
-    const discoveredValue = execSync(`git ${args.join(" ")}`, {
+    const discoveredValue = NodeChildProcess.execSync(`git ${args.join(" ")}`, {
       encoding: "utf-8",
       timeout: 3_000,
       cwd,
@@ -306,19 +299,19 @@ function createServerArgs(entry: string, heapMb: number): string[] {
 }
 
 /** Rotate stderr logs and open the current packaged-server log stream. */
-function createServerStderrStream(): WriteStream | undefined {
+function createServerStderrStream(): NodeFS.WriteStream | undefined {
   if (isDesktopDev()) return undefined;
   rotateServerLog();
-  return createWriteStream(SERVER_LOG_PATH, { flags: "w" });
+  return NodeFS.createWriteStream(SERVER_LOG_PATH, { flags: "w" });
 }
 
 /** Retain one previous packaged-server stderr log for crash diagnosis. */
 function rotateServerLog(): void {
-  if (!existsSync(SERVER_LOG_PATH)) return;
+  if (!NodeFS.existsSync(SERVER_LOG_PATH)) return;
   try {
-    if (existsSync(SERVER_ROTATED_LOG_PATH))
-      unlinkSync(SERVER_ROTATED_LOG_PATH);
-    renameSync(SERVER_LOG_PATH, SERVER_ROTATED_LOG_PATH);
+    if (NodeFS.existsSync(SERVER_ROTATED_LOG_PATH))
+      NodeFS.unlinkSync(SERVER_ROTATED_LOG_PATH);
+    NodeFS.renameSync(SERVER_LOG_PATH, SERVER_ROTATED_LOG_PATH);
   } catch (error) {
     console.warn(
       "[server-manager] Failed to rotate previous server stderr log",
@@ -329,8 +322,8 @@ function rotateServerLog(): void {
 
 /** Stream packaged server stderr into the bounded log file. */
 function pipeServerStderr(
-  child: ChildProcess,
-  stderrStream: WriteStream | undefined,
+  child: NodeChildProcess.ChildProcess,
+  stderrStream: NodeFS.WriteStream | undefined,
 ): void {
   if (stderrStream && child.stderr) child.stderr.pipe(stderrStream);
 }

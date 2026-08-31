@@ -1,14 +1,7 @@
-import {
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmdirSync,
-  unlinkSync,
-  writeFileSync,
-} from "fs";
-import { createServer, type AddressInfo } from "net";
-import { randomUUID } from "crypto";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 import { delay, isProcessAlive, type ServerLock } from "./lock.js";
 
 /** Time to wait for another Electron instance to finish starting the server. */
@@ -113,12 +106,12 @@ export function releaseStartupLock(
   owner: StartupLockOwner,
 ): void {
   try {
-    unlinkSync(startupOwnerPath(sentinelPath, owner));
+    NodeFS.unlinkSync(startupOwnerPath(sentinelPath, owner));
   } catch {
     return;
   }
   try {
-    rmdirSync(sentinelPath);
+    NodeFS.rmdirSync(sentinelPath);
   } catch {
     // A replacement owner creates its own token file before this owner releases.
   }
@@ -126,15 +119,15 @@ export function releaseStartupLock(
 
 /** Try to create an owner-scoped startup sentinel without replacing another owner. */
 function tryCreateStartupLock(sentinelPath: string): StartupLockOwner | null {
-  const owner = { pid: process.pid, token: randomUUID() };
+  const owner = { pid: process.pid, token: NodeCrypto.randomUUID() };
   try {
-    mkdirSync(sentinelPath);
+    NodeFS.mkdirSync(sentinelPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
     throw error;
   }
   try {
-    writeFileSync(
+    NodeFS.writeFileSync(
       startupOwnerPath(sentinelPath, owner),
       JSON.stringify(owner),
       {
@@ -151,10 +144,10 @@ function tryCreateStartupLock(sentinelPath: string): StartupLockOwner | null {
 /** Read the unique owner recorded in a startup sentinel directory. */
 function readStartupLockOwner(sentinelPath: string): StartupLockOwner | null {
   try {
-    const [ownerFile] = readdirSync(sentinelPath);
+    const [ownerFile] = NodeFS.readdirSync(sentinelPath);
     if (!ownerFile) return null;
     const owner: unknown = JSON.parse(
-      readFileSync(join(sentinelPath, ownerFile), "utf-8"),
+      NodeFS.readFileSync(NodePath.join(sentinelPath, ownerFile), "utf-8"),
     );
     return isStartupLockOwner(owner) ? owner : null;
   } catch {
@@ -180,13 +173,13 @@ function startupOwnerPath(
   sentinelPath: string,
   owner: StartupLockOwner,
 ): string {
-  return join(sentinelPath, `${owner.token}.json`);
+  return NodePath.join(sentinelPath, `${owner.token}.json`);
 }
 
 /** Remove a newly created empty sentinel directory after an owner-file write failure. */
 function removeEmptyStartupDirectory(sentinelPath: string): void {
   try {
-    rmdirSync(sentinelPath);
+    NodeFS.rmdirSync(sentinelPath);
   } catch {
     // Another process cannot own this directory until this creator removes it.
   }
@@ -206,10 +199,10 @@ export async function findAvailablePort(
 /** Ask the operating system whether a port is available for the server. */
 async function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const server = createServer();
+    const server = NodeNet.createServer();
     server.once("error", () => resolve(false));
     server.listen(port, "127.0.0.1", () => {
-      const address = server.address() as AddressInfo;
+      const address = server.address() as NodeNet.AddressInfo;
       server.close(() => resolve(address.port === port));
     });
   });

@@ -1,4 +1,4 @@
-import { resolve } from "path";
+import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { LaunchTarget, OpenInAdapter } from "../../contracts/types";
@@ -51,21 +51,21 @@ function createRegistry(): {
 }
 
 function absoluteExistingTarget(): string {
-  return resolve("src/features/open-in/ipc/handlers.ts");
+  return NodePath.resolve("src/features/open-in/ipc/handlers.ts");
 }
 
 describe("registerOpenInHandlers", () => {
   it("registers handlers through the configured feature entry point", () => {
     const { ipcMain, handlers } = createIpc();
 
-    registerConfiguredOpenInHandlers(ipcMain);
+    registerConfiguredOpenInHandlers(ipcMain, "linux");
 
     expect([...handlers.keys()]).toEqual(["list-open-in-apps", "open-in"]);
   });
 
   it("lists every configured app with exact metadata and boolean detection", () => {
     const { ipcMain, handlers } = createIpc();
-    registerConfiguredOpenInHandlers(ipcMain);
+    registerConfiguredOpenInHandlers(ipcMain, "linux");
 
     expect(handlers.get("list-open-in-apps")?.({})).toEqual([
       {
@@ -187,7 +187,7 @@ describe("registerOpenInHandlers", () => {
     const { ipcMain, handlers } = createIpc();
     const { registry, launches } = createRegistry();
     registerHandlers({ ipcMain, registry });
-    const missing = resolve("src/features/open-in/ipc/missing-target.ts");
+    const missing = NodePath.resolve("src/features/open-in/ipc/missing-target.ts");
 
     await expect(
       handlers.get("open-in")?.({}, "code", missing),

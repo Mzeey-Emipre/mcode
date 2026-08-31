@@ -1,10 +1,10 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { defineConfig } from "vitest/config";
 import { createTestDataDir } from "../../scripts/vitest-test-dir";
 
 const testDataDir = createTestDataDir();
-const webSourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../web/src");
+const webSourceRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../web/src");
 
 export default defineConfig({
   resolve: { alias: { "@": webSourceRoot } },

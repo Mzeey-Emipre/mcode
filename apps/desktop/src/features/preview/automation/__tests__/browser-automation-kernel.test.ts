@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationRequest } from "@mcode/contracts";
 import {
@@ -8,7 +8,7 @@ import {
 
 let currentWebContents: FakeWebContents | null = null;
 const adoptedWebContents = new Map<string, FakeWebContents | null>();
-const rendererSender = new EventEmitter() as EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
+const rendererSender = new NodeEvents.EventEmitter() as NodeEvents.EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
 rendererSender.isDestroyed = () => false;
 rendererSender.send = vi.fn();
 const fakeWindow = { id: 7, isDestroyed: () => false, isFocused: () => true, webContents: rendererSender };
@@ -51,7 +51,7 @@ function seedFakeTab(threadId = "thread", tabId = "tab") {
   });
 }
 
-class FakeDebugger extends EventEmitter {
+class FakeDebugger extends NodeEvents.EventEmitter {
   attached = false;
   attachError = false;
   commands: Array<{ method: string; params: unknown }> = [];
@@ -131,7 +131,7 @@ class FakeDebugger extends EventEmitter {
   }
 }
 
-class FakeWebContents extends EventEmitter {
+class FakeWebContents extends NodeEvents.EventEmitter {
   readonly debugger = new FakeDebugger(this);
   destroyed = false;
   hostWebContents = rendererSender;
@@ -296,7 +296,7 @@ describe("BrowserAutomationKernel", () => {
     fakePreviewSession.lastPreviewThreadId = "thread";
     fakePreviewSession.tabsByThread.clear();
     seedFakeTab();
-    kernel = new BrowserAutomationKernel();
+    kernel = new BrowserAutomationKernel("linux");
   });
   afterEach(() => {
     kernel.disposeWindow(fakeWindow.id);
@@ -990,7 +990,7 @@ describe("BrowserAutomationKernel", () => {
     expect(currentWebContents!.openDevTools).toHaveBeenCalledWith({ mode: "detach" });
 
     kernel.disposeWindow(fakeWindow.id);
-    kernel = new BrowserAutomationKernel();
+    kernel = new BrowserAutomationKernel("linux");
     currentWebContents = new FakeWebContents(2);
     currentWebContents.debugger.attached = true;
     await kernel.execute(event(), payload(request("status", {}, { requestId: "external-debugger-state" })));
@@ -1275,7 +1275,7 @@ describe("BrowserAutomationKernel", () => {
   it("cleans listeners and timers through 100 target registration cycles", async () => {
     for (let index = 0; index < 100; index += 1) {
       currentWebContents = new FakeWebContents(index + 1);
-      const cycleKernel = new BrowserAutomationKernel();
+      const cycleKernel = new BrowserAutomationKernel("linux");
       await cycleKernel.execute(event(), payload(request("press", { key: "A", modifiers: [] })));
       cycleKernel.disposeWindow(fakeWindow.id);
       expect(currentWebContents.listenerCount("before-input-event")).toBe(0);

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { spawnMock, execFileSyncMock, existsSyncMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -49,25 +49,23 @@ describe("createExecutableResolver", () => {
   });
 
   it("falls back to the first existing Windows path when not on PATH", () => {
-    setPlatform("win32");
     execFileSyncMock.mockImplementation(() => {
       throw new Error("not found");
     });
     existsSyncMock.mockImplementation((p: string) => p === "C:\\second.exe");
 
-    const resolve = createExecutableResolver("vs", ["C:\\first.exe", "C:\\second.exe"]);
+    const resolve = createExecutableResolver("vs", "win32", ["C:\\first.exe", "C:\\second.exe"]);
 
     expect(resolve()).toBe("C:\\second.exe");
   });
 
   it("returns null and caches it when nothing resolves", () => {
-    setPlatform("win32");
     execFileSyncMock.mockImplementation(() => {
       throw new Error("not found");
     });
     existsSyncMock.mockReturnValue(false);
 
-    const resolve = createExecutableResolver("ghost", ["C:\\missing.exe"]);
+    const resolve = createExecutableResolver("ghost", "win32", ["C:\\missing.exe"]);
 
     expect(resolve()).toBeNull();
     expect(resolve()).toBeNull();
@@ -79,7 +77,6 @@ describe("createExecutableResolver", () => {
 
 describe("spawnDetached", () => {
   it("uses the selected win32 platform for the fixed cmd path", async () => {
-    setPlatform("darwin");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
 
@@ -108,7 +105,6 @@ describe("spawnDetached", () => {
   });
 
   it("uses direct spawning for the selected non-win32 platform", async () => {
-    setPlatform("win32");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
     const target = "C:\\target folder\\%NAME%\\!NAME!&calc^";
@@ -126,13 +122,13 @@ describe("spawnDetached", () => {
   });
 
   it("passes hostile cmd targets through fixed environment slots", async () => {
-    setPlatform("win32");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
 
     const promise = spawnDetached(
       "C:\\Program Files\\Open In Probe\\probe.cmd",
       ["C:\\Open In Probe\\%NAME%\\!NAME!\\target folder&calc^", "-g"],
+      "win32",
     );
     child.emit("spawn");
     await promise;
@@ -162,12 +158,15 @@ describe("spawnDetached", () => {
   });
 
   it("passes hostile arguments directly to a safe Windows executable launch", async () => {
-    setPlatform("win32");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
 
     const target = "C:\\Open In Probe\\%NAME%\\!NAME!\\target folder&calc^";
-    const promise = spawnDetached("C:\\Program Files\\Open In Probe\\probe.exe", [target]);
+    const promise = spawnDetached(
+      "C:\\Program Files\\Open In Probe\\probe.exe",
+      [target],
+      "win32",
+    );
     child.emit("spawn");
     await promise;
 
@@ -179,11 +178,10 @@ describe("spawnDetached", () => {
   });
 
   it("spawns an .exe directly on Windows without a shell", async () => {
-    setPlatform("win32");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
 
-    const promise = spawnDetached("C:\\Program Files\\vs\\devenv.exe", ["C:\\my repo"]);
+    const promise = spawnDetached("C:\\Program Files\\vs\\devenv.exe", ["C:\\my repo"], "win32");
     child.emit("spawn");
     await promise;
 
@@ -197,11 +195,10 @@ describe("spawnDetached", () => {
   });
 
   it("rejects when the child process emits an error", async () => {
-    setPlatform("win32");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
 
-    const promise = spawnDetached("missing.cmd", []);
+    const promise = spawnDetached("missing.cmd", [], "win32");
     child.emit("error", new Error("spawn ENOENT"));
 
     await expect(promise).rejects.toThrow(/spawn ENOENT/);

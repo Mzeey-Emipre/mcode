@@ -4,7 +4,7 @@
  */
 
 import { BrowserWindow, type WebContents } from "electron";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type {
   AttachmentMeta,
   BrowserTabInfo,
@@ -190,7 +190,7 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
   const scopeKey = previewTabScopeKey(workspaceId, threadId);
   let set = getThreadTabSet(s, threadId, workspaceId);
   if (!set) {
-    const tabId = randomUUID();
+    const tabId = NodeCrypto.randomUUID();
     const isActiveThread = s.lastPreviewThreadId === threadId && workspaceId === (s.workspaceId ?? threadId);
     const firstTab: TabState = {
       id: tabId,
@@ -213,7 +213,7 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
   if (!active) {
     // Defensive: ensureThreadTabSet guarantees at least one tab, but TypeScript
     // doesn't know that. Add a synthetic one rather than throwing.
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const tab: TabState = {
       id,
       threadId,

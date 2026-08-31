@@ -1,5 +1,5 @@
 import { app, clipboard, ipcMain, protocol } from "electron";
-import { join } from "node:path";
+import * as NodePath from "node:path";
 import { getMcodeDir } from "@mcode/shared";
 import type { ClipboardIpc, ClipboardReader, ClipboardHandlers } from "./clipboard/handlers.js";
 import { registerClipboardHandlers } from "./clipboard/handlers.js";
@@ -46,7 +46,7 @@ export function registerAttachmentsFeature(
   registerAttachmentProtocol({
     protocol: dependencies.protocol ?? protocol,
     attachmentsDirectory:
-      dependencies.attachmentsDirectory ?? join(getMcodeDir(), "attachments"),
+      dependencies.attachmentsDirectory ?? NodePath.join(getMcodeDir(), "attachments"),
   });
   return clipboardHandlers;
 }

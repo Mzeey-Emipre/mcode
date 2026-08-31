@@ -1,5 +1,5 @@
-import path from "node:path";
-import { existsSync } from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
 
 /** Inputs that determine which binary the server child should use. */
 export interface ResolveServerBinaryInput {

@@ -65,7 +65,7 @@ import { shouldPrintVersion } from "./cli-args.js";
 // before app.whenReady() and any other path-dependent call.
 const harnessUserDataDir = process.env.MCODE_ELECTRON_USER_DATA_DIR?.trim();
 const harnessCapabilityPath = process.env.MCODE_RELIABILITY_CAPABILITY_PATH?.trim();
-if (harnessUserDataDir && harnessCapabilityPath && isAbsolute(harnessUserDataDir)) {
+if (harnessUserDataDir && harnessCapabilityPath && NodePath.isAbsolute(harnessUserDataDir)) {
   app.setPath("userData", harnessUserDataDir);
 } else if (!app.isPackaged) {
   const agentUserDataDir =
@@ -74,7 +74,7 @@ if (harnessUserDataDir && harnessCapabilityPath && isAbsolute(harnessUserDataDir
       : undefined;
   app.setPath(
     "userData",
-    agentUserDataDir || join(app.getPath("appData"), "Mcode-Dev"),
+    agentUserDataDir || NodePath.join(app.getPath("appData"), "Mcode-Dev"),
   );
 }
 
@@ -353,10 +353,10 @@ function registerIpcHandlers(): void {
     defaultContent: string,
   ): Promise<string> {
     const dir = getMcodeDir();
-    const filePath = join(dir, fileName);
-    if (!existsSync(filePath)) {
-      await mkdir(dir, { recursive: true });
-      await writeFile(filePath, defaultContent, "utf8");
+    const filePath = NodePath.join(dir, fileName);
+    if (!NodeFS.existsSync(filePath)) {
+      await NodeFSPromises.mkdir(dir, { recursive: true });
+      await NodeFSPromises.writeFile(filePath, defaultContent, "utf8");
     }
     const err = await shell.openPath(filePath);
     if (err) {

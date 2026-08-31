@@ -12,20 +12,20 @@
  */
 
 import { build } from "esbuild";
-import { execFileSync } from "child_process";
-import { cpSync, existsSync, rmSync } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import {
   buildServerRuntimeBundles,
   compileServerWithSwc,
   copyClaudeSdkCliNextTo,
 } from "../../../scripts/build-server-dev-bundle.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const desktopRoot = resolve(__dirname, "..");
-const serverRoot = resolve(desktopRoot, "..", "server");
-const webRoot = resolve(desktopRoot, "..", "web");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const desktopRoot = NodePath.resolve(__dirname, "..");
+const serverRoot = NodePath.resolve(desktopRoot, "..", "server");
+const webRoot = NodePath.resolve(desktopRoot, "..", "web");
 
 /** Shared esbuild options for both entry points. */
 const shared = {
@@ -84,32 +84,32 @@ compileServerWithSwc(serverRoot);
 // A plain __filename substitution breaks fileURLToPath with ERR_INVALID_URL_SCHEME.
 await buildServerRuntimeBundles({
   serverRoot,
-  serverOutFile: resolve(desktopRoot, "dist/server/server.cjs"),
-  ptyHostOutFile: resolve(desktopRoot, "dist/server/pty-host.cjs"),
+  serverOutFile: NodePath.resolve(desktopRoot, "dist/server/server.cjs"),
+  ptyHostOutFile: NodePath.resolve(desktopRoot, "dist/server/pty-host.cjs"),
   production: true,
 });
 
 console.log("Server bundles complete: dist/server/server.cjs, dist/server/pty-host.cjs");
 
-const drizzleSrc = resolve(serverRoot, "drizzle");
-const drizzleDst = resolve(desktopRoot, "dist/server/drizzle");
-if (existsSync(drizzleSrc)) {
-  if (existsSync(drizzleDst)) rmSync(drizzleDst, { recursive: true, force: true });
-  cpSync(drizzleSrc, drizzleDst, { recursive: true });
+const drizzleSrc = NodePath.resolve(serverRoot, "drizzle");
+const drizzleDst = NodePath.resolve(desktopRoot, "dist/server/drizzle");
+if (NodeFS.existsSync(drizzleSrc)) {
+  if (NodeFS.existsSync(drizzleDst)) NodeFS.rmSync(drizzleDst, { recursive: true, force: true });
+  NodeFS.cpSync(drizzleSrc, drizzleDst, { recursive: true });
   console.log(`Copied Drizzle migrations -> ${drizzleDst}`);
 }
 
 // Stage the Claude Agent SDK's native CLI binary under dist/server/node_modules
 // for local dev and pre-packaging verification. Packaged installs receive the
 // binary via after-pack.mjs because electron-builder excludes nested node_modules.
-copyClaudeSdkCliNextTo(resolve(desktopRoot, "dist/server/server.cjs"), serverRoot);
+copyClaudeSdkCliNextTo(NodePath.resolve(desktopRoot, "dist/server/server.cjs"), serverRoot);
 console.log("Staged SDK native CLI binary -> dist/server/node_modules");
 
 // Step 3: Build web renderer for Electron (cross-platform env var)
-const rendererOutDir = resolve(desktopRoot, "dist", "renderer");
+const rendererOutDir = NodePath.resolve(desktopRoot, "dist", "renderer");
 
 console.log("Building renderer...");
-execFileSync("bun", ["run", "build", "--", "--outDir", rendererOutDir], {
+NodeChildProcess.execFileSync("bun", ["run", "build", "--", "--outDir", rendererOutDir], {
   cwd: webRoot,
   stdio: "inherit",
   env: { ...process.env, ELECTRON_BUILD: "1" },

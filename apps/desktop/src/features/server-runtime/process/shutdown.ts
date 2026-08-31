@@ -1,5 +1,5 @@
-import { execFileSync, type ChildProcess } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import {
   isPortInRange,
   isProcessAlive,
@@ -60,7 +60,7 @@ type ShutdownLockResult =
 
 /** Read a valid in-band lock before any health probe or process action. */
 function readLockForShutdown(options: StopServerOptions): ShutdownLockResult {
-  if (!existsSync(options.lockPath)) {
+  if (!NodeFS.existsSync(options.lockPath)) {
     return { kind: "missing", clearOwnedIdentity: true };
   }
   const parsedLock = readRawLockForShutdown(options.lockPath);
@@ -77,7 +77,7 @@ function readLockForShutdown(options: StopServerOptions): ShutdownLockResult {
 /** Read a raw lock file and preserve meaningful filesystem errors. */
 function readRawLockForShutdown(lockPath: string): unknown {
   try {
-    return JSON.parse(readFileSync(lockPath, "utf-8"));
+    return JSON.parse(NodeFS.readFileSync(lockPath, "utf-8"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
       return null;
@@ -205,7 +205,7 @@ function hasCurrentOwnedLock(
 /** Read a currently valid lock without acting on a replacement or deleted lock. */
 function readCurrentLock(lockPath: string): ServerLock | null {
   try {
-    const lock: unknown = JSON.parse(readFileSync(lockPath, "utf-8"));
+    const lock: unknown = JSON.parse(NodeFS.readFileSync(lockPath, "utf-8"));
     return isServerLock(lock) ? lock : null;
   } catch {
     return null;

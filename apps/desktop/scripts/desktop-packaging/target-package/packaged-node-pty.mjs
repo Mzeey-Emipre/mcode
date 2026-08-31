@@ -1,10 +1,5 @@
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-} from "node:fs";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 const CONPTY_ARCHES = new Set(["x64", "arm64"]);
 const CONPTY_RUNTIME_FILES = ["conpty.dll", "OpenConsole.exe"];
@@ -21,11 +16,11 @@ export function ensurePackagedConptyRuntime({ nodePtyRoot, arch }) {
   }
 
   const bindingDirs = [
-    path.join(nodePtyRoot, "build", "Release"),
-    path.join(nodePtyRoot, "prebuilds", `win32-${arch}`),
+    NodePath.join(nodePtyRoot, "build", "Release"),
+    NodePath.join(nodePtyRoot, "prebuilds", `win32-${arch}`),
   ];
   const bindingDir = bindingDirs.find((candidate) =>
-    existsSync(path.join(candidate, "conpty.node")),
+    NodeFS.existsSync(NodePath.join(candidate, "conpty.node")),
   );
   if (!bindingDir) {
     throw new Error(
@@ -33,24 +28,24 @@ export function ensurePackagedConptyRuntime({ nodePtyRoot, arch }) {
     );
   }
 
-  const destinationDir = path.join(bindingDir, "conpty");
+  const destinationDir = NodePath.join(bindingDir, "conpty");
   const destinationFiles = CONPTY_RUNTIME_FILES.map((file) =>
-    path.join(destinationDir, file),
+    NodePath.join(destinationDir, file),
   );
-  if (destinationFiles.every((file) => existsSync(file))) {
+  if (destinationFiles.every((file) => NodeFS.existsSync(file))) {
     return {
       dllPath: destinationFiles[0],
       openConsolePath: destinationFiles[1],
     };
   }
 
-  const thirdPartyRoot = path.join(nodePtyRoot, "third_party", "conpty");
-  const sourceDirs = existsSync(thirdPartyRoot)
-    ? readdirSync(thirdPartyRoot, { withFileTypes: true })
+  const thirdPartyRoot = NodePath.join(nodePtyRoot, "third_party", "conpty");
+  const sourceDirs = NodeFS.existsSync(thirdPartyRoot)
+    ? NodeFS.readdirSync(thirdPartyRoot, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
-        .map((entry) => path.join(thirdPartyRoot, entry.name, `win10-${arch}`))
+        .map((entry) => NodePath.join(thirdPartyRoot, entry.name, `win10-${arch}`))
         .filter((candidate) =>
-          CONPTY_RUNTIME_FILES.every((file) => existsSync(path.join(candidate, file))),
+          CONPTY_RUNTIME_FILES.every((file) => NodeFS.existsSync(NodePath.join(candidate, file))),
         )
     : [];
 
@@ -60,13 +55,13 @@ export function ensurePackagedConptyRuntime({ nodePtyRoot, arch }) {
     );
   }
 
-  mkdirSync(destinationDir, { recursive: true });
+  NodeFS.mkdirSync(destinationDir, { recursive: true });
   for (const file of CONPTY_RUNTIME_FILES) {
-    copyFileSync(path.join(sourceDirs[0], file), path.join(destinationDir, file));
+    NodeFS.copyFileSync(NodePath.join(sourceDirs[0], file), NodePath.join(destinationDir, file));
   }
 
   return {
-    dllPath: path.join(destinationDir, "conpty.dll"),
-    openConsolePath: path.join(destinationDir, "OpenConsole.exe"),
+    dllPath: NodePath.join(destinationDir, "conpty.dll"),
+    openConsolePath: NodePath.join(destinationDir, "OpenConsole.exe"),
   };
 }

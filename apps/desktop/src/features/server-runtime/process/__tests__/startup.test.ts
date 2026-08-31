@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   acquireStartupLock,
   createStartupLockDependencies,
@@ -41,8 +41,8 @@ describe("acquireStartupLock", () => {
   });
 
   it("does not let a late owner release a sentinel reacquired by another owner", async () => {
-    const tempDirectory = mkdtempSync(join(tmpdir(), "mcode-startup-lock-"));
-    const sentinelPath = join(tempDirectory, "server.starting");
+    const tempDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-startup-lock-"));
+    const sentinelPath = NodePath.join(tempDirectory, "server.starting");
     const dependencies = createStartupLockDependencies(
       sentinelPath,
       async () => null,
@@ -60,10 +60,10 @@ describe("acquireStartupLock", () => {
 
       releaseStartupLock(sentinelPath, first.owner);
 
-      expect(existsSync(sentinelPath)).toBe(true);
+      expect(NodeFS.existsSync(sentinelPath)).toBe(true);
       releaseStartupLock(sentinelPath, second.owner);
     } finally {
-      rmSync(tempDirectory, { force: true, recursive: true });
+      NodeFS.rmSync(tempDirectory, { force: true, recursive: true });
     }
   });
 

@@ -1,6 +1,6 @@
-import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import {
   claudeSdkPlatformPackageCandidates,
   copilotSdkPlatformPackageName,
@@ -169,12 +169,12 @@ export function resolveHostDesktopTarget({
 }
 
 function readPackageVersion(packageDir) {
-  return JSON.parse(readFileSync(resolve(packageDir, "package.json"), "utf8"))
+  return JSON.parse(NodeFS.readFileSync(NodePath.resolve(packageDir, "package.json"), "utf8"))
     .version;
 }
 
 function packageLockPath(serverPackageRoot) {
-  return resolve(serverPackageRoot, "..", "..", "bun.lock");
+  return NodePath.resolve(serverPackageRoot, "..", "..", "bun.lock");
 }
 
 function planLockData(plan, serverPackageRoot) {
@@ -197,10 +197,10 @@ export function resolveClaudeTargetPackagePlan(serverPackageRoot, platform, arch
   const npmPlatform = { windows: "win32", macos: "darwin", linux: "linux" }[
     targetPlatform.platform
   ];
-  const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
+  const serverRequire = NodeModule.createRequire(NodePath.resolve(serverPackageRoot, "package.json"));
   const sdkEntry = serverRequire.resolve("@anthropic-ai/claude-agent-sdk");
   const packageName = claudeSdkPlatformPackageCandidates(npmPlatform, arch)[0];
-  const packageDir = dirname(sdkEntry);
+  const packageDir = NodePath.dirname(sdkEntry);
   return planLockData(
     {
       kind: "claude",
@@ -226,9 +226,9 @@ export function resolveCopilotTargetPackagePlan(serverPackageRoot, platform, arc
   const npmPlatform = { windows: "win32", macos: "darwin", linux: "linux" }[
     targetPlatform.platform
   ];
-  const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
+  const serverRequire = NodeModule.createRequire(NodePath.resolve(serverPackageRoot, "package.json"));
   const sdkEntry = serverRequire.resolve("@github/copilot-sdk");
-  const copilotPackageDir = resolve(dirname(sdkEntry), "..", "..", "..", "copilot");
+  const copilotPackageDir = NodePath.resolve(NodePath.dirname(sdkEntry), "..", "..", "..", "copilot");
   const packageName = copilotSdkPlatformPackageName(npmPlatform, arch);
   return planLockData(
     {

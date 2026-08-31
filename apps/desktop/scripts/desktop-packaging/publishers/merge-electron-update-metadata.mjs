@@ -1,12 +1,12 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 const MAX_METADATA_BYTES = 256 * 1024;
 const MAX_FILE_ENTRIES = 32;
 
 function readBounded(filePath) {
-  const value = readFileSync(filePath, "utf8");
+  const value = NodeFS.readFileSync(filePath, "utf8");
   if (Buffer.byteLength(value) > MAX_METADATA_BYTES) {
     throw new Error(
       `Electron update metadata exceeds ${MAX_METADATA_BYTES} bytes: ${filePath}`,
@@ -89,7 +89,7 @@ export function mergeElectronUpdateMetadata(
     (entry) => !knownUrls.has(entryUrl(entry)),
   );
   if (additions.length === 0) {
-    writeFileSync(outputPath, primary);
+    NodeFS.writeFileSync(outputPath, primary);
     return { added: 0 };
   }
   const lines = primary.split(/\r?\n/);
@@ -104,13 +104,13 @@ export function mergeElectronUpdateMetadata(
     }
   }
   lines.splice(insertAt, 0, ...additions.flatMap((entry) => entry.split("\n")));
-  writeFileSync(outputPath, lines.join("\n"));
+  NodeFS.writeFileSync(outputPath, lines.join("\n"));
   return { added: additions.length };
 }
 
 if (
   process.argv[1] &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+  NodeURL.fileURLToPath(import.meta.url) === NodePath.resolve(process.argv[1])
 ) {
   const [primaryPath, secondaryPath, outputPath] = process.argv.slice(2);
   if (!primaryPath || !secondaryPath || !outputPath) {

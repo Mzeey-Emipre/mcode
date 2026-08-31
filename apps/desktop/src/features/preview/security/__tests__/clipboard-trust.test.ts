@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   recordTrustedPreviewClipboardClick,
@@ -20,7 +20,7 @@ type PermissionRequestHandler = (
   details: { isMainFrame: boolean; requestingUrl: string },
 ) => void;
 
-class FakeWebContents extends EventEmitter {
+class FakeWebContents extends NodeEvents.EventEmitter {
   public destroyed = false;
   public url = "https://example.test/page";
   public readonly mainFrame = {};

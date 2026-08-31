@@ -1,7 +1,7 @@
-import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeEvents from "node:events";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -27,7 +27,7 @@ import {
   type BrowserConformanceSubject,
 } from "@mcode/browser-conformance";
 
-const rendererSender = new EventEmitter() as EventEmitter & {
+const rendererSender = new NodeEvents.EventEmitter() as NodeEvents.EventEmitter & {
   isDestroyed: () => boolean;
   send: ReturnType<typeof vi.fn>;
 };
@@ -68,7 +68,7 @@ let currentWebContents: FakeWebContents;
 const replayRoots: string[] = [];
 const tabsByThread = new Map<string, { threadId: string; activeTabId: string; tabs: Array<{ id: string; threadId: string; view: null }> }>();
 
-class FakeDebugger extends EventEmitter {
+class FakeDebugger extends NodeEvents.EventEmitter {
   attached = false;
   readonly commands: Command[] = [];
   private gate: CommandGate | null = null;
@@ -137,7 +137,7 @@ class FakeDebugger extends EventEmitter {
   }
 }
 
-class FakeWebContents extends EventEmitter {
+class FakeWebContents extends NodeEvents.EventEmitter {
   readonly debugger = new FakeDebugger(this);
   readonly send = vi.fn();
   readonly stop = vi.fn();
@@ -513,14 +513,14 @@ describe("BrowserAutomationKernel race conformance", () => {
     tabsByThread.clear();
     seedTab();
     nextRequestId = 0;
-    kernel = new BrowserAutomationKernel();
+    kernel = new BrowserAutomationKernel("linux");
   });
 
   afterEach(async () => {
     vi.useRealTimers();
     kernel.disposeWindow(fakeWindow.id);
     tabsByThread.clear();
-    await Promise.all(replayRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+    await Promise.all(replayRoots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
   });
 
   it("trusted takeover stops a deferred mutation and cancellation releases held input", async () => {
@@ -694,7 +694,7 @@ describe("BrowserAutomationKernel race conformance", () => {
   });
 
   it("executes every seeded revision schedule through the real Electron kernel with replay hooks", async () => {
-    const replayRoot = await mkdtemp(join(tmpdir(), "mcode-kernel-conformance-"));
+    const replayRoot = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-kernel-conformance-"));
     replayRoots.push(replayRoot);
     const generated = createBrowserConformanceRevisionRaceSchedules({
       seed: "electron-kernel-revision-races",
@@ -708,7 +708,7 @@ describe("BrowserAutomationKernel race conformance", () => {
       currentWebContents = new FakeWebContents(1);
       tabsByThread.clear();
       seedTab();
-      const seededKernel = new BrowserAutomationKernel();
+      const seededKernel = new BrowserAutomationKernel("linux");
       const revisions = { host: 1, document: 0, control: 0, capability: 1, observation: 0 };
       const liveTargets = new Map([["tab", kernelTarget()]]);
       const electronAdapter = new ElectronBrowserSessionAdapter((dispatchValue) => seededKernel.execute(event(), dispatchValue));
@@ -764,14 +764,14 @@ describe("BrowserAutomationKernel race conformance", () => {
   });
 
   it("executes every named catalogue race through the real Electron adapter with replay hooks", async () => {
-    const replayRoot = await mkdtemp(join(tmpdir(), "mcode-kernel-catalogue-"));
+    const replayRoot = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-kernel-catalogue-"));
     replayRoots.push(replayRoot);
     const exercisedRaceIds = new Set<string>();
     for (const race of BROWSER_CONFORMANCE_RACE_CATALOGUE) {
       currentWebContents = new FakeWebContents(1);
       tabsByThread.clear();
       seedTab();
-      const seededKernel = new BrowserAutomationKernel();
+      const seededKernel = new BrowserAutomationKernel("linux");
       const revisions = { host: 1, document: 0, control: 0, capability: 1, observation: 0 };
       const liveTargets = new Map([["tab", kernelTarget()]]);
       const electronAdapter = new ElectronBrowserSessionAdapter((dispatchValue) => seededKernel.execute(event(), dispatchValue));

@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import { describe, it, expect, vi } from "vitest";
 import {
   buildTerminalArgs,
@@ -28,7 +28,7 @@ function fakeDeps(overrides: Partial<TerminalAdapterDeps> = {}): {
     (cmd: string, args: readonly string[], options: Record<string, unknown>) => {
       spawns.push({ cmd, args });
       spawnOptions.push(options);
-      const child = new EventEmitter() as EventEmitter & { unref(): void };
+      const child = new NodeEvents.EventEmitter() as NodeEvents.EventEmitter & { unref(): void };
       child.unref = () => {};
       queueMicrotask(() => child.emit("spawn"));
       return child;
@@ -59,7 +59,7 @@ describe("buildTerminalArgs", () => {
 describe("createTerminalAdapter detection", () => {
   it("detects when the command is on PATH", () => {
     const { deps } = fakeDeps({ commandOnPath: (c) => c === "wt" });
-    expect(createTerminalAdapter(WT_CONFIG, deps).detect()).toBe(true);
+    expect(createTerminalAdapter(WT_CONFIG, "win32", deps).detect()).toBe(true);
   });
 
   it("falls back to a Windows install path when not on PATH", () => {
@@ -98,7 +98,7 @@ describe("createTerminalAdapter detection", () => {
 describe("createTerminalAdapter launch", () => {
   it("spawns the resolved command with directory args", async () => {
     const { deps, spawns, spawnOptions } = fakeDeps({ commandOnPath: (c) => c === "wt" });
-    await createTerminalAdapter(WT_CONFIG, deps).launch({ path: "C:\\repo" });
+    await createTerminalAdapter(WT_CONFIG, "win32", deps).launch({ path: "C:\\repo" });
 
     expect(spawns).toEqual([
       {
@@ -130,7 +130,7 @@ describe("createTerminalAdapter launch", () => {
       commandOnPath: () => false,
       fileExists: (p) => p === "C:\\fallback\\wt.exe",
     });
-    await createTerminalAdapter(WT_CONFIG, deps).launch({ path: "C:\\repo" });
+    await createTerminalAdapter(WT_CONFIG, "win32", deps).launch({ path: "C:\\repo" });
 
     expect(spawns[0]?.cmd).toBe("C:\\fallback\\wt.exe");
   });
@@ -149,6 +149,7 @@ describe("createTerminalAdapter launch", () => {
         command: "git-bash",
         windowsPaths: [gitBashPath],
       },
+      "win32",
       deps,
     ).launch({ path: "C:\\repo" });
 
@@ -161,7 +162,7 @@ describe("createTerminalAdapter launch", () => {
   it("keeps hostile terminal targets literal in the shared Windows launch slots", async () => {
     const { deps, spawns, spawnOptions } = fakeDeps({ commandOnPath: (c) => c === "wt" });
     const target = "C:\\Open In Probe\\%NAME%\\!NAME!\\target folder&calc^";
-    await createTerminalAdapter(WT_CONFIG, deps).launch({ path: target });
+    await createTerminalAdapter(WT_CONFIG, "win32", deps).launch({ path: target });
 
     expect(spawns[0]).toEqual({
       cmd: "cmd.exe",
@@ -186,7 +187,7 @@ describe("createTerminalAdapter launch", () => {
 
   it("preserves the terminal argument shape for a spaced target", async () => {
     const { deps, spawns } = fakeDeps({ commandOnPath: (c) => c === "wt" });
-    await createTerminalAdapter(WT_CONFIG, deps).launch({
+    await createTerminalAdapter(WT_CONFIG, "win32", deps).launch({
       path: "C:\\Users\\John Doe\\repo",
     });
 
@@ -202,14 +203,14 @@ describe("createTerminalAdapter launch", () => {
   it("rejects when the terminal is not detected", async () => {
     const { deps, spawns } = fakeDeps();
     await expect(
-      createTerminalAdapter(WT_CONFIG, deps).launch({ path: "C:\\repo" }),
+      createTerminalAdapter(WT_CONFIG, "win32", deps).launch({ path: "C:\\repo" }),
     ).rejects.toThrow(/Terminal not detected: windows-terminal/);
     expect(spawns).toEqual([]);
   });
 
   it("exposes terminal-kind metadata to the registry", () => {
     const { deps } = fakeDeps();
-    const adapter = createTerminalAdapter(WT_CONFIG, deps);
+    const adapter = createTerminalAdapter(WT_CONFIG, "win32", deps);
     expect(adapter.kind).toBe("terminal");
     expect(adapter.id).toBe("windows-terminal");
     expect(adapter.iconKey).toBe("windows-terminal");

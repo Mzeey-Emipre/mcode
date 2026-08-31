@@ -2,9 +2,9 @@
  * In-page region drag and element-pick capture helpers for an adopted Preview guest.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import { BrowserWindow, app, ipcMain, type WebContents } from "electron";
 import {
   PREVIEW_ANNOTATION_STRING_MAX,
@@ -1516,14 +1516,14 @@ async function persistOverlayPng(
   buffer: Buffer,
   namePrefix: "region" | "element",
 ): Promise<AttachmentMeta | null> {
-  const id = randomUUID();
+  const id = NodeCrypto.randomUUID();
   const stem = previewCaptureFileStem(pending.webContents.getURL());
-  const tempDir = join(app.getPath("temp"), "mcode-attachments");
+  const tempDir = NodePath.join(app.getPath("temp"), "mcode-attachments");
   if (!overlaySessionStillCurrent(s, pending)) return null;
-  await mkdir(tempDir, { recursive: true });
+  await NodeFSPromises.mkdir(tempDir, { recursive: true });
   if (!overlaySessionStillCurrent(s, pending)) return null;
-  const sourcePath = join(tempDir, `${id}.png`);
-  await writeFile(sourcePath, buffer);
+  const sourcePath = NodePath.join(tempDir, `${id}.png`);
+  await NodeFSPromises.writeFile(sourcePath, buffer);
   if (!overlaySessionStillCurrent(s, pending)) return null;
   return {
     id,

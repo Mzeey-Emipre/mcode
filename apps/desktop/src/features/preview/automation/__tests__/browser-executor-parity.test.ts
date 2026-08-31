@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { EventEmitter } from "node:events";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeEvents from "node:events";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BROWSER_AUTOMATION_CONTRACT_VERSION, BrowserAutomationResponseSchema, type BrowserAutomationHostDispatch, type BrowserAutomationResponse } from "@mcode/contracts";
 import {
@@ -38,10 +38,10 @@ vi.mock("../../../../../../web/src/features/preview/automation/web-browser-autom
   })),
 }));
 
-const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../../../");
+const workspaceRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../../../../../../../");
 
 let currentWebContents: FakeWebContents;
-const rendererSender = new EventEmitter() as EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
+const rendererSender = new NodeEvents.EventEmitter() as NodeEvents.EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
 rendererSender.isDestroyed = () => false;
 rendererSender.send = vi.fn();
 const fakeWindow = { id: 7, isDestroyed: () => false, isFocused: () => true, webContents: rendererSender };
@@ -50,7 +50,7 @@ const fakePreviewSession = {
   tabsByThread: new Map<string, { threadId: string; activeTabId: string; tabs: Array<{ id: string; threadId: string; view: null }> }>(),
 };
 
-class FakeDebugger extends EventEmitter {
+class FakeDebugger extends NodeEvents.EventEmitter {
   attached = false;
   commands: Array<{ method: string; params: unknown }> = [];
   constructor(private readonly owner: FakeWebContents) { super(); }
@@ -84,7 +84,7 @@ class FakeDebugger extends EventEmitter {
   }
 }
 
-class FakeWebContents extends EventEmitter {
+class FakeWebContents extends NodeEvents.EventEmitter {
   readonly debugger = new FakeDebugger(this);
   readonly id = 1;
   readonly hostWebContents = rendererSender;
@@ -317,12 +317,12 @@ describe("Electron Browser executor parity at BrowserSessionDriver", () => {
       electron: { execute: async () => ({ ok: true, result: { operation: "inspect" } } as never) },
       isElectron: () => false,
     });
-    await expect(new ElectronExecutorSubject(malformed, new BrowserAutomationKernel()).dispatch({ id: "malformed", operation: "inspect" }))
+    await expect(new ElectronExecutorSubject(malformed, new BrowserAutomationKernel("linux")).dispatch({ id: "malformed", operation: "inspect" }))
       .rejects.toThrow();
   });
 
   let kernel: BrowserAutomationKernel;
-  beforeEach(() => { currentWebContents = new FakeWebContents(); fakePreviewSession.tabsByThread.clear(); seedTarget(); kernel = new BrowserAutomationKernel(); });
+  beforeEach(() => { currentWebContents = new FakeWebContents(); fakePreviewSession.tabsByThread.clear(); seedTarget(); kernel = new BrowserAutomationKernel("linux"); });
   afterEach(() => { kernel.disposeWindow(fakeWindow.id); });
 
   it("executes the shared scenario through the real Electron kernel and matches canonical outcomes", async () => {
@@ -373,7 +373,7 @@ describe("Electron Browser executor parity at BrowserSessionDriver", () => {
       supportedActOperations: ["click", "type", "navigate"],
       webTabs: { list: async () => [...webTargets.values()], close: async (closedTarget) => { webTargets.delete(closedTarget.tabId); } },
     });
-    const electronKernel = new BrowserAutomationKernel();
+    const electronKernel = new BrowserAutomationKernel("linux");
     const electronTargets = new Map([["tab", target()]]);
     const electronDriver = new BrowserSessionDriver({
       web: new ElectronBrowserSessionAdapter((dispatch) => electronKernel.execute({ sender: rendererSender } as never, dispatch)),

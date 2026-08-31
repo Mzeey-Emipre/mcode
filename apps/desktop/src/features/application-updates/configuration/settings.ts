@@ -1,6 +1,6 @@
 import { app } from "electron";
-import { readFileSync } from "fs";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { getMcodeDir } from "@mcode/shared";
 import { SettingsSchema as BundledSettingsSchema } from "@mcode/contracts";
 
@@ -57,7 +57,7 @@ function updaterSettingsDefaults(applicationVersion: string): UpdaterSettings {
 /** Read valid persisted settings, or return null after the existing diagnostic. */
 function readPersistedUpdaterSettings(defaults: UpdaterSettings): UpdaterSettings | null {
   try {
-    const raw = readFileSync(join(getMcodeDir(), "settings.json"), "utf-8");
+    const raw = NodeFS.readFileSync(NodePath.join(getMcodeDir(), "settings.json"), "utf-8");
     const parsed = JSON.parse(raw);
     const result = SettingsSchema().safeParse(parsed);
     if (result.success) return mergeUpdaterSettings(parsed, result.data.updates, defaults);

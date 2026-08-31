@@ -7,7 +7,7 @@ describe("createEditorAdapter", () => {
       id: "vs",
       label: "Visual Studio",
       iconKey: "visualstudio",
-    });
+    }, "linux");
 
     expect(adapter.id).toBe("vs");
     expect(adapter.label).toBe("Visual Studio");

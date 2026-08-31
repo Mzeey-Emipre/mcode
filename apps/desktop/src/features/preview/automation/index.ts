@@ -39,10 +39,16 @@ export function registerBrowserAutomationHandlers(platform: NodeJS.Platform): vo
 
 /** Disposes browser automation resources owned by one closing BrowserWindow. */
 export function disposeBrowserAutomationForWindow(windowId: number): void {
-  kernel.disposeWindow(windowId);
+  getBrowserAutomationKernel().disposeWindow(windowId);
 }
 
 /** Returns bounded automation counters for diagnostics and stress tests. */
 export function getBrowserAutomationCounters(): ReturnType<BrowserAutomationKernel["getCounters"]> {
-  return kernel.getCounters();
+  return getBrowserAutomationKernel().getCounters();
+}
+
+/** Return the configured kernel after the Electron composition root registered it. */
+function getBrowserAutomationKernel(): BrowserAutomationKernel {
+  if (kernel === null) throw new Error("Browser automation handlers are not registered");
+  return kernel;
 }

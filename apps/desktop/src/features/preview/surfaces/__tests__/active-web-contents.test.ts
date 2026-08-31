@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getSession,
@@ -35,7 +35,7 @@ interface FakeHostWebContents {
   send: ReturnType<typeof vi.fn>;
 }
 
-class FakeGuest extends EventEmitter {
+class FakeGuest extends NodeEvents.EventEmitter {
   public destroyed = false;
   public url: string;
   public readonly hostWebContents: FakeHostWebContents;

@@ -61,8 +61,8 @@ function quoteForWindowsCommand(token: string): string {
 function spawnWindowsCommand(
   cmd: string,
   args: string[],
-  spawnProcess: typeof spawn,
-): ChildProcess {
+  spawnProcess: typeof NodeChildProcess.spawn,
+): NodeChildProcess.ChildProcess {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     [WINDOWS_COMMAND_SLOT]: quoteForWindowsCommand(cmd),

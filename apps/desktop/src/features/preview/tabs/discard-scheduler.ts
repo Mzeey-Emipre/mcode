@@ -9,8 +9,8 @@
  */
 
 import { BrowserWindow } from "electron";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { getMcodeDir, logger } from "@mcode/shared";
 import { SettingsSchema as BundledSettingsSchema } from "@mcode/contracts";
 import {
@@ -49,7 +49,7 @@ const SWEEP_INTERVAL_FLOOR_MS = 15_000;
 /** Reads `preview.memorySaver.*` from settings.json, falling back to defaults. */
 export function readMemorySaverConfig(): DiscardConfig {
   try {
-    const raw = readFileSync(join(getMcodeDir(), "settings.json"), "utf-8");
+    const raw = NodeFS.readFileSync(NodePath.join(getMcodeDir(), "settings.json"), "utf-8");
     const parsed = SettingsSchema().safeParse(JSON.parse(raw));
     if (parsed.success) {
       const ms = parsed.data.preview.memorySaver;

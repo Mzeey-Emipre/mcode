@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import * as NodePath from "node:path";
 import { PREVIEW_PARTITION } from "./electron-session-policy.js";
 
 /** Mutable web preferences received with Electron's will-attach-webview event. */
@@ -19,7 +19,7 @@ export interface PreviewWebviewAttachParams {
 
 /** Resolves the only preload that preview webviews may execute. */
 export function resolvePreviewGuestPreloadPath(mainBundleDirectory: string): string {
-  return join(mainBundleDirectory, "..", "preload", "preview-guest-preload.cjs");
+  return NodePath.join(mainBundleDirectory, "..", "preload", "preview-guest-preload.cjs");
 }
 
 /** Applies the fixed sandbox and preload policy to an attaching preview webview. */

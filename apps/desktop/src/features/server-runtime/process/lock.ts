@@ -1,7 +1,7 @@
-import { existsSync, linkSync, readFileSync, renameSync, unlinkSync } from "fs";
-import { readFile } from "fs/promises";
-import { randomUUID } from "crypto";
-import { basename, dirname, join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 /** Maximum wait for an existing server health endpoint. */
 const EXISTING_SERVER_HEALTH_TIMEOUT_MS = 3_000;
@@ -25,7 +25,7 @@ export interface OwnedServerIdentity {
 
 /** Return the server lock file path for a Mcode data directory. */
 export function lockFilePath(dataDir: string): string {
-  return join(dataDir, "server.lock");
+  return NodePath.join(dataDir, "server.lock");
 }
 
 /** Test whether a value has the complete server lock file shape. */
@@ -64,7 +64,7 @@ export function isPortInRange(port: number, min: number, max: number): boolean {
 /** Read and validate a server lock file, returning null when it is unavailable. */
 export function readServerLock(lockPath: string): ServerLock | null {
   try {
-    const lock: unknown = JSON.parse(readFileSync(lockPath, "utf-8"));
+    const lock: unknown = JSON.parse(NodeFS.readFileSync(lockPath, "utf-8"));
     return isServerLock(lock) ? lock : null;
   } catch {
     return null;
@@ -208,7 +208,7 @@ export function removeServerLockIfUnchanged(
 ): boolean {
   const quarantinePath = createLockQuarantinePath(lockPath);
   try {
-    renameSync(lockPath, quarantinePath);
+    NodeFS.renameSync(lockPath, quarantinePath);
   } catch {
     return false;
   }
@@ -221,7 +221,7 @@ export function removeServerLockIfUnchanged(
     return false;
   }
   try {
-    unlinkSync(quarantinePath);
+    NodeFS.unlinkSync(quarantinePath);
     return true;
   } catch {
     restoreQuarantinedLock(quarantinePath, lockPath);
@@ -231,9 +231,9 @@ export function removeServerLockIfUnchanged(
 
 /** Create a same-directory quarantine path for one atomic lock removal attempt. */
 function createLockQuarantinePath(lockPath: string): string {
-  return join(
-    dirname(lockPath),
-    `.${basename(lockPath)}.${randomUUID()}.removing`,
+  return NodePath.join(
+    NodePath.dirname(lockPath),
+    `.${NodePath.basename(lockPath)}.${NodeCrypto.randomUUID()}.removing`,
   );
 }
 
@@ -243,8 +243,8 @@ function restoreQuarantinedLock(
   lockPath: string,
 ): void {
   try {
-    linkSync(quarantinePath, lockPath);
-    unlinkSync(quarantinePath);
+    NodeFS.linkSync(quarantinePath, lockPath);
+    NodeFS.unlinkSync(quarantinePath);
   } catch {
     // A replacement lock must win over a stale quarantine restoration.
   }
@@ -269,7 +269,7 @@ async function readServerLockAsync(
   lockPath: string,
 ): Promise<ServerLock | null> {
   try {
-    const lock: unknown = JSON.parse(await readFile(lockPath, "utf-8"));
+    const lock: unknown = JSON.parse(await NodeFSPromises.readFile(lockPath, "utf-8"));
     return isServerLock(lock) ? lock : null;
   } catch {
     return null;
@@ -287,7 +287,7 @@ export function readPreferredPort(
   portMin: number,
   portMax: number,
 ): number | null {
-  if (!existsSync(lockPath)) return null;
+  if (!NodeFS.existsSync(lockPath)) return null;
   const lock = readServerLock(lockPath);
   if (!lock || !isPortInRange(lock.port, portMin, portMax)) return null;
   return lock.port;

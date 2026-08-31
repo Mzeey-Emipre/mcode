@@ -6,7 +6,7 @@
  * that does not have access to the Node.js `net` module.
  */
 
-import { connect as netConnect } from "net";
+import * as NodeNet from "node:net";
 
 /** Maximum permitted frame body size (8 MiB). Frames larger than this indicate
  *  a corrupt or malicious length prefix; the socket is destroyed immediately. */
@@ -34,7 +34,7 @@ interface RelayWindow {
 export function startIpcRelay(ipcPath: string, window: RelayWindow): () => void {
   if (!ipcPath) return () => { /* no-op: no socket was opened */ };
 
-  const socket = netConnect(ipcPath);
+  const socket = NodeNet.connect(ipcPath);
   const chunks: Buffer[] = [];
   let totalLen = 0;
 

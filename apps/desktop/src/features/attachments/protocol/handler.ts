@@ -1,7 +1,7 @@
-import { createReadStream } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
-import { Readable } from "node:stream";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeStream from "node:stream";
 import { getAttachmentMimeType } from "./mime-types.js";
 
 /** Scheme used to render durable attachment files in the desktop renderer. */
@@ -40,8 +40,8 @@ interface ParsedAttachmentUrl {
 }
 
 function isContainedPath(parent: string, candidate: string): boolean {
-  const relativePath = relative(parent, candidate);
-  return relativePath.length > 0 && !isAbsolute(relativePath) && !relativePath.startsWith("..");
+  const relativePath = NodePath.relative(parent, candidate);
+  return relativePath.length > 0 && !NodePath.isAbsolute(relativePath) && !relativePath.startsWith("..");
 }
 
 function parseAttachmentUrl(requestUrl: unknown): ParsedAttachmentUrl | null {
@@ -81,9 +81,9 @@ async function resolveAttachmentFile(
   attachmentsDirectory: string,
   parsed: ParsedAttachmentUrl,
 ): Promise<string | null> {
-  const rootDirectory = resolve(attachmentsDirectory);
-  const threadDirectory = resolve(rootDirectory, parsed.threadId);
-  const candidatePath = resolve(threadDirectory, parsed.fileName);
+  const rootDirectory = NodePath.resolve(attachmentsDirectory);
+  const threadDirectory = NodePath.resolve(rootDirectory, parsed.threadId);
+  const candidatePath = NodePath.resolve(threadDirectory, parsed.fileName);
   if (
     !isContainedPath(rootDirectory, threadDirectory) ||
     !isContainedPath(threadDirectory, candidatePath)
@@ -93,9 +93,9 @@ async function resolveAttachmentFile(
 
   try {
     const [realRootDirectory, realThreadDirectory, realCandidatePath] = await Promise.all([
-      realpath(rootDirectory),
-      realpath(threadDirectory),
-      realpath(candidatePath),
+      NodeFSPromises.realpath(rootDirectory),
+      NodeFSPromises.realpath(threadDirectory),
+      NodeFSPromises.realpath(candidatePath),
     ]);
     if (
       !isContainedPath(realRootDirectory, realThreadDirectory) ||
@@ -104,7 +104,7 @@ async function resolveAttachmentFile(
       return null;
     }
 
-    const fileStat = await stat(realCandidatePath);
+    const fileStat = await NodeFSPromises.stat(realCandidatePath);
     return fileStat.isFile() ? realCandidatePath : null;
   } catch {
     return null;
@@ -122,8 +122,8 @@ export function createAttachmentProtocolHandler(
     const filePath = await resolveAttachmentFile(dependencies.attachmentsDirectory, parsed);
     if (!filePath) return new Response("Not found", { status: 404 });
 
-    const nodeStream = createReadStream(filePath);
-    const webStream = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
+    const nodeStream = NodeFS.createReadStream(filePath);
+    const webStream = NodeStream.Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
     return new Response(webStream, {
       headers: {
         "Content-Type": getAttachmentMimeType(parsed.extension),

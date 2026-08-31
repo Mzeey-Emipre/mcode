@@ -7,17 +7,17 @@
  * The test intentionally sends no mutation after the restart.
  */
 
-import { spawn } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, resolve, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeOS from "node:os";
 import { killPidTree, killProcessTree } from "../../../../../scripts/kill-process-tree.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const desktopRoot = resolve(__dirname, "..", "..", "..");
-const releaseDir = resolve(desktopRoot, "release");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const desktopRoot = NodePath.resolve(__dirname, "..", "..", "..");
+const releaseDir = NodePath.resolve(desktopRoot, "release");
 const STARTUP_TIMEOUT_MS = 30_000;
 const RECOVERY_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 100;
@@ -25,12 +25,12 @@ const POLL_INTERVAL_MS = 100;
 /** Locate a packaged Desktop executable in the standard electron-builder output paths. */
 export function findPackagedDesktop() {
   const candidates = [
-    resolve(releaseDir, "win-unpacked/Mcode.exe"),
-    resolve(releaseDir, "linux-unpacked/mcode-desktop"),
-    resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
-    resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
+    NodePath.resolve(releaseDir, "win-unpacked/Mcode.exe"),
+    NodePath.resolve(releaseDir, "linux-unpacked/mcode-desktop"),
+    NodePath.resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
+    NodePath.resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
   ];
-  const desktop = candidates.find((candidate) => existsSync(candidate));
+  const desktop = candidates.find((candidate) => NodeFS.existsSync(candidate));
   return desktop ? { desktop } : null;
 }
 
@@ -60,20 +60,20 @@ export async function runPackagedReliabilityScenario() {
 }
 
 function createReliabilityRun(desktop) {
-  const runRoot = resolve(tmpdir(), `mcode-reliability-${randomUUID()}`);
-  const dataDir = join(runRoot, "data");
-  const userDataDir = join(runRoot, "user-data");
-  const capabilityPath = join(runRoot, "reliability-capability.json");
-  const token = randomBytes(32).toString("hex");
-  mkdirSync(dataDir, { recursive: true });
-  mkdirSync(userDataDir, { recursive: true });
-  writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: randomUUID() }), { mode: 0o600 });
+  const runRoot = NodePath.resolve(NodeOS.tmpdir(), `mcode-reliability-${NodeCrypto.randomUUID()}`);
+  const dataDir = NodePath.join(runRoot, "data");
+  const userDataDir = NodePath.join(runRoot, "user-data");
+  const capabilityPath = NodePath.join(runRoot, "reliability-capability.json");
+  const token = NodeCrypto.randomBytes(32).toString("hex");
+  NodeFS.mkdirSync(dataDir, { recursive: true });
+  NodeFS.mkdirSync(userDataDir, { recursive: true });
+  NodeFS.writeFileSync(capabilityPath, JSON.stringify({ version: 1, token, runId: NodeCrypto.randomUUID() }), { mode: 0o600 });
   return { desktop, runRoot, dataDir, userDataDir, capabilityPath, token };
 }
 
 function startReliabilityDesktop(run) {
-  const child = spawn(run.desktop, reliabilityDesktopArguments(), {
-    cwd: dirname(run.desktop),
+  const child = NodeChildProcess.spawn(run.desktop, reliabilityDesktopArguments(), {
+    cwd: NodePath.dirname(run.desktop),
     env: reliabilityDesktopEnvironment(run),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -192,7 +192,7 @@ function reliabilityEvidence(initialLock, recoveredLock, persisted, thread, stre
 
 async function waitForServerLock(dataDir, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  const lockPath = join(dataDir, "server.lock");
+  const lockPath = NodePath.join(dataDir, "server.lock");
   while (Date.now() < deadline) {
     const lock = readJson(lockPath);
     if (isServerLock(lock)) return lock;
@@ -203,7 +203,7 @@ async function waitForServerLock(dataDir, timeoutMs) {
 
 async function waitForDesktopRendezvous(runRoot, desktopPid, token, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  const rendezvousPath = join(runRoot, "desktop-reliability-rendezvous.json");
+  const rendezvousPath = NodePath.join(runRoot, "desktop-reliability-rendezvous.json");
   while (Date.now() < deadline) {
     const rendezvous = readJson(rendezvousPath);
     if (rendezvous && rendezvous.version === 1 && Number.isSafeInteger(rendezvous.port) && rendezvous.port > 0 && rendezvous.pid === desktopPid) {
@@ -217,7 +217,7 @@ async function waitForDesktopRendezvous(runRoot, desktopPid, token, timeoutMs) {
 
 async function waitForChangedServerLock(dataDir, previous, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  const lockPath = join(dataDir, "server.lock");
+  const lockPath = NodePath.join(dataDir, "server.lock");
   while (Date.now() < deadline) {
     const lock = readJson(lockPath);
     if (isServerLock(lock) && (lock.pid !== previous.pid || lock.startedAt !== previous.startedAt)) return lock;
@@ -256,7 +256,7 @@ async function postDesktopFault(port, token, command) {
 
 async function observeAgentText(lock, threadId) {
   return new Promise((resolvePromise, reject) => {
-    const subscriptionId = randomUUID();
+    const subscriptionId = NodeCrypto.randomUUID();
     const ws = new WebSocket(`ws://127.0.0.1:${lock.port}/?token=${lock.authToken}`);
     let resolved = false;
     let receiveText;
@@ -308,7 +308,7 @@ async function observeAgentText(lock, threadId) {
 
 function rpc(lock, method, params, onMutation = () => undefined) {
   return new Promise((resolvePromise, reject) => {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const ws = new WebSocket(`ws://127.0.0.1:${lock.port}/?token=${lock.authToken}`);
     const timeout = setTimeout(() => {
       ws.close();
@@ -344,7 +344,7 @@ export async function cleanupOwnedRun(child, dataDir, runRoot, overrides = {}) {
     readLock: readJson,
     readAuthSecret: (target) => {
       try {
-        return readFileSync(target, "utf8").trim();
+        return NodeFS.readFileSync(target, "utf8").trim();
       } catch {
         return null;
       }
@@ -353,8 +353,8 @@ export async function cleanupOwnedRun(child, dataDir, runRoot, overrides = {}) {
     killPidTree,
     killProcessTree,
     waitForProcessExit,
-    removeRunRoot: (target) => rmSync(target, { recursive: true, force: true }),
-    pathExists: existsSync,
+    removeRunRoot: (target) => NodeFS.rmSync(target, { recursive: true, force: true }),
+    pathExists: NodeFS.existsSync,
     platform: process.platform,
     ...overrides,
   };
@@ -383,10 +383,10 @@ export async function cleanupOwnedRun(child, dataDir, runRoot, overrides = {}) {
 }
 
 async function cleanupOwnedServer(dataDir, operations) {
-  const lockPath = join(dataDir, "server.lock");
+  const lockPath = NodePath.join(dataDir, "server.lock");
   let lock = operations.readLock(lockPath);
   if (!isServerLock(lock)) return;
-  const expectedAuthToken = operations.expectedServerAuthToken ?? operations.readAuthSecret(join(dataDir, "auth-secret"));
+  const expectedAuthToken = operations.expectedServerAuthToken ?? operations.readAuthSecret(NodePath.join(dataDir, "auth-secret"));
   assertOwnedServerLock(lock, expectedAuthToken);
 
   for (let attempt = 0; attempt < 4 && lock; attempt += 1) {
@@ -499,7 +499,7 @@ function processExitError(error) {
 
 function readJson(filePath) {
   try {
-    return JSON.parse(readFileSync(filePath, "utf8"));
+    return JSON.parse(NodeFS.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }

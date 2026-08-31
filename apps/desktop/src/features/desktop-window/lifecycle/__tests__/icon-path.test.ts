@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { join } from "path";
+import * as NodePath from "node:path";
 
 const iconPathTest = vi.hoisted(() => ({
   app: {

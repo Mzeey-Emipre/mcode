@@ -9,10 +9,10 @@
  * leaf spawn is a thin fire-and-forget shim matching the editor adapters.
  */
 
-import { execFileSync, spawn } from "child_process";
-import { existsSync } from "fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import type { LaunchTarget, OpenInAdapter } from "../contracts/types.js";
-import { spawnDetached } from "../launch/spawn-launch.js";
+import { commandOnPath, spawnDetached } from "../launch/spawn-launch.js";
 
 /** IDs of the external terminals we detect and can launch. */
 export type TerminalId = "windows-terminal" | "git-bash" | "wsl";

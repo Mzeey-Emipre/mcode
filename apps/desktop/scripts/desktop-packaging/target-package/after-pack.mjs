@@ -12,9 +12,9 @@
  */
 
 import { flipFuses, FuseVersion, FuseV1Options } from "@electron/fuses";
-import { copyFileSync, existsSync } from "fs";
-import { resolve, join, dirname } from "path";
-import { fileURLToPath } from "url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import {
   buildServerBinary,
 } from "./build-server-binary.mjs";
@@ -33,8 +33,8 @@ import { retainTargetTerminalNativeArtifacts } from "../package-validation/termi
  */
 export default async function afterPack(context) {
   const { electronPlatformName, appOutDir } = context;
-  const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-  const snapshotFile = resolve(
+  const desktopRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..", "..", "..");
+  const snapshotFile = NodePath.resolve(
     desktopRoot,
     "dist/snapshot/browser_v8_context_snapshot.bin",
   );
@@ -58,7 +58,7 @@ export default async function afterPack(context) {
   const companyName = context.packager.appInfo.companyName ?? "Mcode";
   // Stamp the app favicon onto the win32 server binary so Task Manager shows it
   // instead of a generic icon. resedit ignores this on non-win32 platforms.
-  const winIconPath = resolve(desktopRoot, "build", "icon.ico");
+  const winIconPath = NodePath.resolve(desktopRoot, "build", "icon.ico");
 
   // The renamed copy at Contents/Resources/bin/mcode-server is co-signed by
   // electron-builder via the `mac.binaries` entry in package.json, so it
@@ -70,7 +70,7 @@ export default async function afterPack(context) {
     executableName: context.packager.executableName,
     appVersion,
     companyName,
-    iconPath: existsSync(winIconPath) ? winIconPath : undefined,
+    iconPath: NodeFS.existsSync(winIconPath) ? winIconPath : undefined,
   });
 
   console.log("[after-pack] Built renamed server binary");
@@ -82,9 +82,9 @@ export default async function afterPack(context) {
   // -------------------------------------------------------------------------
 
   const sourceRepoRoot = process.env.MCODE_PACKAGING_SOURCE_ROOT
-    ? resolve(process.env.MCODE_PACKAGING_SOURCE_ROOT)
-    : resolve(desktopRoot, "..", "..");
-  const serverPackageRoot = resolve(sourceRepoRoot, "apps", "server");
+    ? NodePath.resolve(process.env.MCODE_PACKAGING_SOURCE_ROOT)
+    : NodePath.resolve(desktopRoot, "..", "..");
+  const serverPackageRoot = NodePath.resolve(sourceRepoRoot, "apps", "server");
   const npmPlatform = electronPlatformToNpm(electronPlatformName);
   const npmArch = electronArchToNpm(context.arch);
   const packagedServerDir = resolvePackagedServerDir({
@@ -109,7 +109,7 @@ export default async function afterPack(context) {
   console.log(`[after-pack] Copied Copilot SDK packages (${copilotPlatformPkg}) to ${copilotDst}`);
 
   if (npmPlatform === "win32") {
-    const nodePtyRoot = resolve(
+    const nodePtyRoot = NodePath.resolve(
       packagedServerDir,
       "..",
       "..",
@@ -126,7 +126,7 @@ export default async function afterPack(context) {
   }
 
   retainTargetTerminalNativeArtifacts({
-    resourcesRoot: resolve(packagedServerDir, "../../.."),
+    resourcesRoot: NodePath.resolve(packagedServerDir, "../../.."),
     targetPlatform: npmPlatform,
     targetArch: npmArch,
   });
@@ -154,12 +154,12 @@ function toWindowsVersion(rawVersion) {
 }
 
 async function configureBrowserSnapshotAndFuses(context, snapshotFile) {
-  const hasSnapshot = existsSync(snapshotFile);
+  const hasSnapshot = NodeFS.existsSync(snapshotFile);
   const electronBinary = packagedElectronBinary(context);
   if (hasSnapshot) {
     const snapshotDest = packagedSnapshotPath(context);
     console.log(`[after-pack] Copying snapshot to ${snapshotDest}`);
-    copyFileSync(snapshotFile, snapshotDest);
+    NodeFS.copyFileSync(snapshotFile, snapshotDest);
   } else {
     console.log("[after-pack] No snapshot found, skipping snapshot copy");
   }
@@ -180,14 +180,14 @@ function isMacPlatform(platform) {
 function packagedElectronBinary(context) {
   const { electronPlatformName, appOutDir, packager } = context;
   const productFilename = packager.appInfo.productFilename;
-  if (isMacPlatform(electronPlatformName)) return join(appOutDir, `${productFilename}.app`, "Contents", "MacOS", productFilename);
-  if (electronPlatformName === "win32") return join(appOutDir, `${productFilename}.exe`);
-  return join(appOutDir, packager.executableName);
+  if (isMacPlatform(electronPlatformName)) return NodePath.join(appOutDir, `${productFilename}.app`, "Contents", "MacOS", productFilename);
+  if (electronPlatformName === "win32") return NodePath.join(appOutDir, `${productFilename}.exe`);
+  return NodePath.join(appOutDir, packager.executableName);
 }
 
 function packagedSnapshotPath(context) {
   const { electronPlatformName, appOutDir, packager } = context;
-  if (!isMacPlatform(electronPlatformName)) return join(appOutDir, "browser_v8_context_snapshot.bin");
-  const frameworkDir = join(appOutDir, `${packager.appInfo.productFilename}.app`, "Contents/Frameworks/Electron Framework.framework/Resources");
-  return join(frameworkDir, "browser_v8_context_snapshot.bin");
+  if (!isMacPlatform(electronPlatformName)) return NodePath.join(appOutDir, "browser_v8_context_snapshot.bin");
+  const frameworkDir = NodePath.join(appOutDir, `${packager.appInfo.productFilename}.app`, "Contents/Frameworks/Electron Framework.framework/Resources");
+  return NodePath.join(frameworkDir, "browser_v8_context_snapshot.bin");
 }

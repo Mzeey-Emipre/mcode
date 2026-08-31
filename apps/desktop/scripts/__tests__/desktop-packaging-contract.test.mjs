@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import {
   assertDesktopWorkflowMatrices,
   SUPPORTED_DESKTOP_TARGETS,
@@ -12,7 +12,7 @@ import {
   runElectronBuilderWithRetry,
 } from "../desktop-packaging/target-package/ci-package.mjs";
 
-const repoRoot = path.resolve(import.meta.dirname, "../../../..");
+const repoRoot = NodePath.resolve(import.meta.dirname, "../../../..");
 
 describe("desktop packaging target inventory", () => {
   it("covers every target used by the package matrix", () => {
@@ -27,7 +27,7 @@ describe("desktop packaging target inventory", () => {
         target,
       );
       const plans = resolveDesktopTargetPackagePlans(
-        path.join(repoRoot, "apps/server"),
+        NodePath.join(repoRoot, "apps/server"),
         target.platform,
         target.arch,
       );
@@ -152,11 +152,11 @@ describe("desktop packaging workflow contract", () => {
       ".github/workflows/build-release.yml",
       ".github/workflows/desktop-package-dry-run.yml",
     ]) {
-      const source = readFileSync(path.join(repoRoot, workflow), "utf8");
+      const source = NodeFS.readFileSync(NodePath.join(repoRoot, workflow), "utf8");
       expect(source).toContain("./.github/workflows/desktop-package-target.yml");
     }
-    const nightly = readFileSync(
-      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+    const nightly = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
     expect(nightly).not.toMatch(/bun (run --cwd apps\/desktop build|apps\/desktop\/scripts\/(ci-package|smoke-test|ensure-sdk))/);
@@ -166,16 +166,16 @@ describe("desktop packaging workflow contract", () => {
 
   it("keeps every channel matrix equal to the canonical target inventory", () => {
     const matrices = assertDesktopWorkflowMatrices({
-      nightly: readFileSync(
-        path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+      nightly: NodeFS.readFileSync(
+        NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
         "utf8",
       ),
-      stable: readFileSync(
-        path.join(repoRoot, ".github/workflows/build-release.yml"),
+      stable: NodeFS.readFileSync(
+        NodePath.join(repoRoot, ".github/workflows/build-release.yml"),
         "utf8",
       ),
-      "pull-request": readFileSync(
-        path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
+      "pull-request": NodeFS.readFileSync(
+        NodePath.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
         "utf8",
       ),
     });
@@ -187,8 +187,8 @@ describe("desktop packaging workflow contract", () => {
   });
 
   it("skips same-commit Nightly only when all release manifests exist", () => {
-    const nightly = readFileSync(
-      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+    const nightly = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
     expect(nightly).toContain(
@@ -197,8 +197,8 @@ describe("desktop packaging workflow contract", () => {
   });
 
   it("keeps the Nightly tag jq regex escaped for gh", () => {
-    const nightly = readFileSync(
-      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+    const nightly = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
     expect(nightly).toContain(String.raw`test("^v.*-nightly\\.")`);
@@ -206,8 +206,8 @@ describe("desktop packaging workflow contract", () => {
   });
 
   it("passes the Nightly channel and prerelease version to every target", () => {
-    const nightly = readFileSync(
-      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+    const nightly = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
     expect(nightly).toContain("compute-nightly-version.mjs");
@@ -237,8 +237,8 @@ describe("desktop packaging workflow contract", () => {
   });
 
   it("keeps unsigned packaging isolated from signing secrets", () => {
-    const workflow = readFileSync(
-      path.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
       "utf8",
     );
     const unsignedBlock = workflow.match(
@@ -278,8 +278,8 @@ describe("desktop packaging workflow contract", () => {
   });
 
   it("requires the complete four-target matrix in PR dry-run", () => {
-    const source = readFileSync(
-      path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
+    const source = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
       "utf8",
     );
     for (const target of ["windows-x64", "linux-x64", "macos-arm64", "macos-x64"]) {
@@ -290,8 +290,8 @@ describe("desktop packaging workflow contract", () => {
   });
 
   it("uses store for Windows PR and gzip for Linux PR", () => {
-    const source = readFileSync(
-      path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
+    const source = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
       "utf8",
     );
     const buildArgsFor = (targetId) => {
@@ -313,14 +313,14 @@ describe("desktop packaging workflow contract", () => {
       ".github/workflows/nightly-desktop.yml",
       ".github/workflows/build-release.yml",
     ]) {
-      const releaseSource = readFileSync(path.join(repoRoot, workflow), "utf8");
+      const releaseSource = NodeFS.readFileSync(NodePath.join(repoRoot, workflow), "utf8");
       expect(releaseSource).not.toContain("--config.compression=store");
     }
   });
 
   it("keeps Terminal attestation out of afterPack", () => {
-    const afterPack = readFileSync(
-      path.join(repoRoot, "apps/desktop/scripts/desktop-packaging/target-package/after-pack.mjs"),
+    const afterPack = NodeFS.readFileSync(
+      NodePath.join(repoRoot, "apps/desktop/scripts/desktop-packaging/target-package/after-pack.mjs"),
       "utf8",
     );
     expect(afterPack).not.toContain("MCODE" + "_SKIP_TERMINAL_ATTESTATION");

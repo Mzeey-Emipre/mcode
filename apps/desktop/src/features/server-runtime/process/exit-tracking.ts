@@ -1,11 +1,11 @@
-import type { ChildProcess } from "child_process";
-import type { WriteStream } from "fs";
+import type * as NodeChildProcess from "node:child_process";
+import type * as NodeFS from "node:fs";
 
 /** Inputs that register server child exit handling. */
 export interface ServerExitHandlerOptions {
-  child: ChildProcess;
-  stderrStream: WriteStream | undefined;
-  plannedExitProcesses: Set<ChildProcess>;
+  child: NodeChildProcess.ChildProcess;
+  stderrStream: NodeFS.WriteStream | undefined;
+  plannedExitProcesses: Set<NodeChildProcess.ChildProcess>;
   isCurrentProcess: () => boolean;
   clearCurrentProcess: () => void;
   onChildExit: () => void;
@@ -34,8 +34,8 @@ export class PlannedRestartCoordinator {
   /** Run one planned restart and return any concurrent caller to the same work. */
   restart(
     isReusedExisting: boolean,
-    currentProcess: ChildProcess | null,
-    plannedExitProcesses: Set<ChildProcess>,
+    currentProcess: NodeChildProcess.ChildProcess | null,
+    plannedExitProcesses: Set<NodeChildProcess.ChildProcess>,
     runRestart: () => Promise<void>,
   ): Promise<void> {
     if (isReusedExisting) {
@@ -55,8 +55,8 @@ export class PlannedRestartCoordinator {
 
   /** Clear the planned exit mark if the restart did not replace its child. */
   private runRestart(
-    oldProcess: ChildProcess | null,
-    plannedExitProcesses: Set<ChildProcess>,
+    oldProcess: NodeChildProcess.ChildProcess | null,
+    plannedExitProcesses: Set<NodeChildProcess.ChildProcess>,
     runRestart: () => Promise<void>,
   ): Promise<void> {
     let restartPromise: Promise<void>;
