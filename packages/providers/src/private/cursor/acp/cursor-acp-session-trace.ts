@@ -20,33 +20,32 @@ const MAX_SUMMARY_DEPTH = 8;
  */
 export function sanitizeCursorTraceValue(value: unknown, depth = 0): unknown {
   if (depth >= MAX_SUMMARY_DEPTH) return "[max-depth]";
-  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
-
-  if (typeof value === "string") {
-    if (value.length <= MAX_TRACE_CHARS) return value;
-    return `${value.slice(0, MAX_TRACE_CHARS)}... (${value.length} chars total)`;
-  }
-
-  if (Array.isArray(value)) {
-    if (value.length > MAX_TRACE_ARRAY_ITEMS) {
-      return {
-        head: value.slice(0, MAX_TRACE_ARRAY_ITEMS).map((x) =>
-          sanitizeCursorTraceValue(x, depth + 1),
-        ),
-        omitted: value.length - MAX_TRACE_ARRAY_ITEMS,
-      };
-    }
-    return value.map((x) => sanitizeCursorTraceValue(x, depth + 1));
-  }
-
-  if (typeof value === "object") {
-    const o = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(o)) out[k] = sanitizeCursorTraceValue(v, depth + 1);
-    return out;
-  }
-
+  const scalar = sanitizeCursorTraceScalar(value);
+  if (scalar.handled) return scalar.value;
+  if (Array.isArray(value)) return sanitizeCursorTraceArray(value, depth);
+  if (typeof value === "object") return sanitizeCursorTraceRecord(value as Record<string, unknown>, depth);
   return String(value);
+}
+
+function sanitizeCursorTraceScalar(value: unknown): { handled: boolean; value: unknown } {
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return { handled: true, value };
+  }
+  if (typeof value !== "string") return { handled: false, value: undefined };
+  if (value.length <= MAX_TRACE_CHARS) return { handled: true, value };
+  return { handled: true, value: `${value.slice(0, MAX_TRACE_CHARS)}... (${value.length} chars total)` };
+}
+
+function sanitizeCursorTraceArray(value: unknown[], depth: number): unknown {
+  const head = value.slice(0, MAX_TRACE_ARRAY_ITEMS).map((item) => sanitizeCursorTraceValue(item, depth + 1));
+  if (value.length <= MAX_TRACE_ARRAY_ITEMS) return head;
+  return { head, omitted: value.length - MAX_TRACE_ARRAY_ITEMS };
+}
+
+function sanitizeCursorTraceRecord(value: Record<string, unknown>, depth: number): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) sanitized[key] = sanitizeCursorTraceValue(entry, depth + 1);
+  return sanitized;
 }
 
 /**
@@ -70,71 +69,87 @@ export function summarizeCursorSessionNotification(
  * @param events Events already mapped for the websocket pipeline.
  */
 export function summarizeEmittedAgentEventsForTrace(events: AgentEvent[]): Record<string, unknown>[] {
-  return events.map((ev) => {
-    switch (ev.type) {
-      case AgentEventType.ToolUse:
-        return {
-          type: ev.type,
-          toolCallId: ev.toolCallId,
-          toolName: ev.toolName,
-          parentToolCallId: ev.parentToolCallId,
-          toolInputKeys: Object.keys(ev.toolInput ?? {}).slice(0, 48),
-          toolInputSize: Object.keys(ev.toolInput ?? {}).length,
-        };
-      case AgentEventType.ToolResult:
-        return {
-          type: ev.type,
-          toolCallId: ev.toolCallId,
-          isError: ev.isError,
-          outputChars: typeof ev.output === "string" ? ev.output.length : 0,
-        };
-      case AgentEventType.System:
-        return { type: ev.type, subtype: ev.subtype };
-      case AgentEventType.TextDelta:
-        return { type: ev.type, deltaChars: ev.delta?.length ?? 0 };
-      case AgentEventType.ToolInputDelta:
-        return {
-          type: ev.type,
-          partialChars: typeof ev.partialJson === "string" ? ev.partialJson.length : 0,
-        };
-      case AgentEventType.ToolProgress:
-        return {
-          type: ev.type,
-          toolCallId: ev.toolCallId,
-          toolName: ev.toolName,
-          elapsedSeconds: ev.elapsedSeconds,
-        };
-      case AgentEventType.Message:
-        return {
-          type: ev.type,
-          contentChars: typeof ev.content === "string" ? ev.content.length : 0,
-          tokens: ev.tokens ?? null,
-        };
-      case AgentEventType.ContextEstimate:
-        return { type: ev.type, tokensIn: ev.tokensIn, contextWindow: ev.contextWindow };
-      case AgentEventType.CompactSummary:
-        return {
-          type: ev.type,
-          summaryChars: typeof ev.summary === "string" ? ev.summary.length : 0,
-        };
-      case AgentEventType.TurnStarted:
-      case AgentEventType.TurnComplete:
-      case AgentEventType.Ended:
-      case AgentEventType.Error:
-      case AgentEventType.Compacting:
-      case AgentEventType.ModelFallback:
-      case AgentEventType.QuotaUpdate:
-      case AgentEventType.ProviderUnavailable:
-      case AgentEventType.RateLimited:
-      case AgentEventType.ApiRetry:
-      case AgentEventType.HookStarted:
-      case AgentEventType.HookProgress:
-      case AgentEventType.HookCompleted:
-        return { type: ev.type };
-      default:
-        return { type: (ev as { type?: string }).type ?? "unknown" };
-    }
-  });
+  return events.map(summarizeCursorTraceEvent);
+}
+
+const TRACE_EVENT_SUMMARIZERS: Record<string, (event: AgentEvent) => Record<string, unknown>> = {
+  [AgentEventType.ToolUse]: summarizeTraceToolUse,
+  [AgentEventType.ToolResult]: summarizeTraceToolResult,
+  [AgentEventType.System]: summarizeTraceSystem,
+  [AgentEventType.TextDelta]: summarizeTraceTextDelta,
+  [AgentEventType.ToolInputDelta]: summarizeTraceToolInputDelta,
+  [AgentEventType.ToolProgress]: summarizeTraceToolProgress,
+  [AgentEventType.Message]: summarizeTraceMessage,
+  [AgentEventType.ContextEstimate]: summarizeTraceContextEstimate,
+  [AgentEventType.CompactSummary]: summarizeTraceCompactSummary,
+  [AgentEventType.TurnStarted]: summarizeTraceEventType,
+  [AgentEventType.TurnComplete]: summarizeTraceEventType,
+  [AgentEventType.Ended]: summarizeTraceEventType,
+  [AgentEventType.Error]: summarizeTraceEventType,
+  [AgentEventType.Compacting]: summarizeTraceEventType,
+  [AgentEventType.ModelFallback]: summarizeTraceEventType,
+  [AgentEventType.QuotaUpdate]: summarizeTraceEventType,
+  [AgentEventType.ProviderUnavailable]: summarizeTraceEventType,
+  [AgentEventType.RateLimited]: summarizeTraceEventType,
+  [AgentEventType.ApiRetry]: summarizeTraceEventType,
+  [AgentEventType.HookStarted]: summarizeTraceEventType,
+  [AgentEventType.HookProgress]: summarizeTraceEventType,
+  [AgentEventType.HookCompleted]: summarizeTraceEventType,
+};
+
+function summarizeCursorTraceEvent(event: AgentEvent): Record<string, unknown> {
+  const summarize = TRACE_EVENT_SUMMARIZERS[event.type];
+  return summarize ? summarize(event) : { type: event.type ?? "unknown" };
+}
+
+function summarizeTraceToolUse(event: AgentEvent): Record<string, unknown> {
+  const toolUse = event as Extract<AgentEvent, { type: typeof AgentEventType.ToolUse }>;
+  const toolInput = toolUse.toolInput ?? {};
+  return { type: toolUse.type, toolCallId: toolUse.toolCallId, toolName: toolUse.toolName, parentToolCallId: toolUse.parentToolCallId, toolInputKeys: Object.keys(toolInput).slice(0, 48), toolInputSize: Object.keys(toolInput).length };
+}
+
+function summarizeTraceToolResult(event: AgentEvent): Record<string, unknown> {
+  const toolResult = event as Extract<AgentEvent, { type: typeof AgentEventType.ToolResult }>;
+  return { type: toolResult.type, toolCallId: toolResult.toolCallId, isError: toolResult.isError, outputChars: typeof toolResult.output === "string" ? toolResult.output.length : 0 };
+}
+
+function summarizeTraceSystem(event: AgentEvent): Record<string, unknown> {
+  const system = event as Extract<AgentEvent, { type: typeof AgentEventType.System }>;
+  return { type: system.type, subtype: system.subtype };
+}
+
+function summarizeTraceTextDelta(event: AgentEvent): Record<string, unknown> {
+  const delta = event as Extract<AgentEvent, { type: typeof AgentEventType.TextDelta }>;
+  return { type: delta.type, deltaChars: delta.delta?.length ?? 0 };
+}
+
+function summarizeTraceToolInputDelta(event: AgentEvent): Record<string, unknown> {
+  const delta = event as Extract<AgentEvent, { type: typeof AgentEventType.ToolInputDelta }>;
+  return { type: delta.type, partialChars: typeof delta.partialJson === "string" ? delta.partialJson.length : 0 };
+}
+
+function summarizeTraceToolProgress(event: AgentEvent): Record<string, unknown> {
+  const progress = event as Extract<AgentEvent, { type: typeof AgentEventType.ToolProgress }>;
+  return { type: progress.type, toolCallId: progress.toolCallId, toolName: progress.toolName, elapsedSeconds: progress.elapsedSeconds };
+}
+
+function summarizeTraceMessage(event: AgentEvent): Record<string, unknown> {
+  const message = event as Extract<AgentEvent, { type: typeof AgentEventType.Message }>;
+  return { type: message.type, contentChars: typeof message.content === "string" ? message.content.length : 0, tokens: message.tokens ?? null };
+}
+
+function summarizeTraceContextEstimate(event: AgentEvent): Record<string, unknown> {
+  const estimate = event as Extract<AgentEvent, { type: typeof AgentEventType.ContextEstimate }>;
+  return { type: estimate.type, tokensIn: estimate.tokensIn, contextWindow: estimate.contextWindow };
+}
+
+function summarizeTraceCompactSummary(event: AgentEvent): Record<string, unknown> {
+  const summary = event as Extract<AgentEvent, { type: typeof AgentEventType.CompactSummary }>;
+  return { type: summary.type, summaryChars: typeof summary.summary === "string" ? summary.summary.length : 0 };
+}
+
+function summarizeTraceEventType(event: AgentEvent): Record<string, unknown> {
+  return { type: event.type };
 }
 
 /**

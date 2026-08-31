@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import type { ProviderProcessPort } from "../host-ports.js";
 
 const DEFAULT_IDLE_TTL_MS = 10 * 60 * 1_000;
@@ -127,7 +127,8 @@ export class SessionRuntime<TState> {
   async evictNonBusy(reason: string): Promise<{ before: number; after: number; evicted: string[] }> {
     const before = this.sessions.size;
     const evicted: string[] = [];
-    for (const [sessionId, entry] of [...this.sessions]) {
+    const sessions = Array.from(this.sessions);
+    for (const [sessionId, entry] of sessions) {
       if (this.adapter.isBusy(entry.state)) continue;
       evicted.push(sessionId);
       this.deps.logger?.info("SessionRuntime evicting non-busy session", { sessionId, reason });
@@ -198,7 +199,8 @@ export class SessionRuntime<TState> {
 
   private async evictIdle(): Promise<void> {
     const now = Date.now();
-    for (const [sessionId, entry] of [...this.sessions]) {
+    const sessions = Array.from(this.sessions);
+    for (const [sessionId, entry] of sessions) {
       if (now - entry.lastUsedAt > this.idleTtlMs && !this.adapter.isBusy(entry.state)) {
         this.deps.logger?.info("SessionRuntime evicting idle session", { sessionId });
         await this.stop(sessionId);
@@ -226,8 +228,8 @@ export class SessionRuntime<TState> {
       return;
     }
     await Promise.all(pids.map((pid) => new Promise<void>((resolve) => {
-      if (process.platform === "win32") {
-        execFile("taskkill", ["/T", "/F", "/PID", String(pid)], (error) => {
+      if (this.deps.jobObject.isWindowsJob) {
+        NodeChildProcess.execFile("taskkill", ["/T", "/F", "/PID", String(pid)], (error) => {
           if (error) this.deps.logger?.debug("taskkill failed (process may have exited)", { pid, error: errorMessage(error) });
           resolve();
         });

@@ -4,6 +4,14 @@
  */
 
 const COMPOSER_PATTERN = /^composer-(\d+(?:\.\d+)?)(?:-(.+))?$/;
+const NATIVE_CLAUDE_MODEL_PATTERN = /^claude-(opus|sonnet|haiku)-\d+-\d+-\d{6,}/;
+const CURSOR_CLI_MODEL_PATTERNS = [
+  /^claude-(opus|sonnet|haiku)-\d+-\d+/,
+  /^claude-\d+\.\d+-(opus|sonnet|haiku)-/,
+  /^claude-\d+-\d+-(opus|sonnet|haiku)-/,
+  /^claude-\d+-(opus|sonnet|haiku)/,
+  /^(auto|composer-|gpt-|grok-|gemini-|kimi-)/,
+] as const;
 
 const TOKEN_LABELS: Record<string, string> = {
   low: "Low",
@@ -61,13 +69,79 @@ function formatTailSegments(tail: string): string[] {
 
 /** Returns true when the id uses Cursor CLI naming (not native Mcode Claude ids). */
 export function isCursorCliModelId(modelId: string): boolean {
-  if (/^claude-(opus|sonnet|haiku)-\d+-\d+-\d{6,}/.test(modelId)) return false;
-  if (/^claude-(opus|sonnet|haiku)-\d+-\d+/.test(modelId)) return true;
-  if (/^claude-\d+\.\d+-(opus|sonnet|haiku)-/.test(modelId)) return true;
-  if (/^claude-\d+-\d+-(opus|sonnet|haiku)-/.test(modelId)) return true;
-  if (/^claude-\d+-(opus|sonnet|haiku)/.test(modelId)) return true;
-  return /^(auto|composer-|gpt-|grok-|gemini-|kimi-)/.test(modelId);
+  if (NATIVE_CLAUDE_MODEL_PATTERN.test(modelId)) return false;
+  return CURSOR_CLI_MODEL_PATTERNS.some((pattern) => pattern.test(modelId));
 }
+
+function formatAutoCursorModelId(id: string): string | null {
+  return id === "auto" ? "Auto" : null;
+}
+
+function formatComposerCursorModelId(id: string): string | null {
+  const match = id.match(COMPOSER_PATTERN);
+  if (!match) return null;
+  const [, version, tier] = match;
+  return tier ? `Composer ${version} ${titleCaseWord(tier)}` : `Composer ${version}`;
+}
+
+function formatClaude46DotModelId(id: string): string | null {
+  const match = id.match(/^claude-(\d+)\.(\d+)-(opus|sonnet|haiku)-(.+)$/);
+  if (!match) return null;
+  const [, major, minor, tier, tail] = match;
+  const base = `${titleCaseWord(tier)} ${major}.${minor}`;
+  const oneM = id.includes("-medium") ? ["1M"] : [];
+  return [base, ...oneM, ...formatClaudeTailSegments(tail)].join(" ");
+}
+
+function formatClaude46ModelId(id: string): string | null {
+  const match = id.match(/^claude-(\d+)-(\d+)-(opus|sonnet|haiku)-(.+)$/);
+  if (!match) return null;
+  const [, major, minor, tier, tail] = match;
+  const base = `${titleCaseWord(tier)} ${major}.${minor}`;
+  const oneM = id.includes("-medium") ? ["1M"] : [];
+  return [base, ...oneM, ...formatClaudeTailSegments(tail)].join(" ");
+}
+
+function formatClaude47ModelId(id: string): string | null {
+  const match = id.match(/^claude-(opus|sonnet|haiku)-(\d+)-(\d+)(?:-(.+))?$/);
+  if (!match) return null;
+  const [, tier, major, minor, tail] = match;
+  const base = `${titleCaseWord(tier)} ${major}.${minor}`;
+  const oneM = major === "4" && minor === "7" && tier === "opus" ? ["1M"] : [];
+  return [base, ...oneM, ...(tail ? formatClaudeTailSegments(tail) : [])].join(" ");
+}
+
+function formatClaude4ModelId(id: string): string | null {
+  const match = id.match(/^claude-(\d+)-(opus|sonnet|haiku)(?:-(.+))?$/);
+  if (!match) return null;
+  const [, major, tier, tail] = match;
+  const base = `${titleCaseWord(tier)} ${major}`;
+  return [base, ...(tail ? formatTailSegments(tail) : [])].join(" ");
+}
+
+function formatProviderModelId(
+  id: string,
+  prefix: "grok-" | "gemini-" | "kimi-",
+  label: string,
+): string | null {
+  if (!id.startsWith(prefix)) return null;
+  const tail = id.slice(prefix.length);
+  if (prefix === "kimi-") return id.split("-").map(titleCaseWord).join(" ");
+  return `${label} ${formatTailSegments(tail).join(" ")}`.trim();
+}
+
+const CURSOR_MODEL_FORMATTERS = [
+  formatAutoCursorModelId,
+  formatComposerCursorModelId,
+  formatClaude46DotModelId,
+  formatClaude46ModelId,
+  formatClaude47ModelId,
+  formatClaude4ModelId,
+  (id: string) => (id.startsWith("gpt-") ? formatGptCursorModelId(id) : null),
+  (id: string) => formatProviderModelId(id, "grok-", "Grok"),
+  (id: string) => formatProviderModelId(id, "gemini-", "Gemini"),
+  (id: string) => formatProviderModelId(id, "kimi-", "Kimi"),
+] as const;
 
 /**
  * Formats a Cursor CLI model id into a display label, or null if the id is not recognized.
@@ -75,71 +149,9 @@ export function isCursorCliModelId(modelId: string): boolean {
 export function formatCursorCliModelId(modelId: string): string | null {
   const id = modelId.trim();
   if (!id) return null;
-
-  if (id === "auto") return "Auto";
-
-  const composerMatch = id.match(COMPOSER_PATTERN);
-  if (composerMatch) {
-    const [, version, tier] = composerMatch;
-    if (tier) return `Composer ${version} ${titleCaseWord(tier)}`;
-    return `Composer ${version}`;
-  }
-
-  const claude46dot = id.match(/^claude-(\d+)\.(\d+)-(opus|sonnet|haiku)-(.+)$/);
-  if (claude46dot) {
-    const [, major, minor, tier, tail] = claude46dot;
-    const base = `${titleCaseWord(tier)} ${major}.${minor}`;
-    const oneM = id.includes("-medium") ? ["1M"] : [];
-    return [base, ...oneM, ...formatClaudeTailSegments(tail)].join(" ");
-  }
-
-  const claude46 = id.match(/^claude-(\d+)-(\d+)-(opus|sonnet|haiku)-(.+)$/);
-  if (claude46) {
-    const [, major, minor, tier, tail] = claude46;
-    const base = `${titleCaseWord(tier)} ${major}.${minor}`;
-    const oneM = id.includes("-medium") ? ["1M"] : [];
-    return [base, ...oneM, ...formatClaudeTailSegments(tail)].join(" ");
-  }
-
-  const claude47 = id.match(/^claude-(opus|sonnet|haiku)-(\d+)-(\d+)(?:-(.+))?$/);
-  if (claude47) {
-    const [, tier, major, minor, tail] = claude47;
-    const base = `${titleCaseWord(tier)} ${major}.${minor}`;
-    const oneM = major === "4" && minor === "7" && tier === "opus" ? ["1M"] : [];
-    const tailWords = tail ? formatClaudeTailSegments(tail) : [];
-    return [base, ...oneM, ...tailWords].join(" ");
-  }
-
-  const claude4 = id.match(/^claude-(\d+)-(opus|sonnet|haiku)(?:-(.+))?$/);
-  if (claude4) {
-    const [, major, tier, tail] = claude4;
-    const base = `${titleCaseWord(tier)} ${major}`;
-    const tailWords = tail ? formatTailSegments(tail) : [];
-    return [base, ...tailWords].join(" ");
-  }
-
-  if (id.startsWith("gpt-")) {
-    return formatGptCursorModelId(id);
-  }
-
-  if (id.startsWith("grok-")) {
-    const tail = id.slice(5);
-    return `Grok ${formatTailSegments(tail).join(" ")}`.trim();
-  }
-
-  if (id.startsWith("gemini-")) {
-    const tail = id.slice(7);
-    return `Gemini ${formatTailSegments(tail).join(" ")}`.trim();
-  }
-
-  if (id.startsWith("kimi-")) {
-    return id
-      .split("-")
-      .map(titleCaseWord)
-      .join(" ");
-  }
-
-  return null;
+  return CURSOR_MODEL_FORMATTERS
+    .map((formatter) => formatter(id))
+    .find((label): label is string => label !== null) ?? null;
 }
 
 /**

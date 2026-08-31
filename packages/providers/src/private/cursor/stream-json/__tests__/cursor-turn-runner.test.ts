@@ -18,16 +18,41 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import * as NodeEvents from "node:events";
+import * as NodeStream from "node:stream";
 import {
-  buildCursorTurnArgs,
-  runCursorTurn,
+  buildCursorTurnArgs as buildCursorTurnArgsForPlatform,
+  runCursorTurn as runCursorTurnForPlatform,
   type SpawnLike,
 } from "../cursor-turn-runner.js";
 import { createCursorTodoSnapshot } from "../../events/cursor-todo-snapshot.js";
 import type { AgentEvent } from "@mcode/contracts";
-import type { ChildProcess } from "node:child_process";
+import type * as NodeChildProcess from "node:child_process";
+
+type CursorTurnArgsInput = Parameters<typeof buildCursorTurnArgsForPlatform>[0];
+type CursorTurnInput = Parameters<typeof runCursorTurnForPlatform>[0];
+
+function buildCursorTurnArgs(
+  options: Omit<CursorTurnArgsInput, "platform"> & { platform?: NodeJS.Platform },
+): string[] {
+  return buildCursorTurnArgsForPlatform({ platform: "linux", ...options });
+}
+
+function runCursorTurn(
+  options: Omit<CursorTurnInput, "platform"> & { platform?: NodeJS.Platform },
+  onEvent: Parameters<typeof runCursorTurnForPlatform>[1],
+  todoSnapshot: Parameters<typeof runCursorTurnForPlatform>[2],
+  abortSignal?: Parameters<typeof runCursorTurnForPlatform>[3],
+  deps?: Parameters<typeof runCursorTurnForPlatform>[4],
+) {
+  return runCursorTurnForPlatform(
+    { platform: "linux", ...options },
+    onEvent,
+    todoSnapshot,
+    abortSignal,
+    deps,
+  );
+}
 
 // ── buildCursorTurnArgs ───────────────────────────────────────────────────
 
@@ -164,10 +189,10 @@ describe("buildCursorTurnArgs", () => {
 
 // ── runCursorTurn (mocked child) ──────────────────────────────────────────
 
-class FakeChild extends EventEmitter {
-  stdin = new PassThrough();
-  stdout = new PassThrough();
-  stderr = new PassThrough();
+class FakeChild extends NodeEvents.EventEmitter {
+  stdin = new NodeStream.PassThrough();
+  stdout = new NodeStream.PassThrough();
+  stderr = new NodeStream.PassThrough();
   pid: number | undefined = 12345;
   killed = false;
   kill = vi.fn((_signal?: string) => {
@@ -189,7 +214,7 @@ function fakeSpawn(): FakeSpawnHarness {
     calls.push({ command, args });
     // The "spawn" event is what node would emit asynchronously after fork.
     queueMicrotask(() => child.emit("spawn"));
-    return child as unknown as ChildProcess;
+    return child as unknown as NodeChildProcess.ChildProcess;
   };
   return { spawn, child, calls };
 }

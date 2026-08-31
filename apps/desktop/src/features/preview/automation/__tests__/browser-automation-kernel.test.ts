@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationRequest } from "@mcode/contracts";
 import {
@@ -8,7 +8,7 @@ import {
 
 let currentWebContents: FakeWebContents | null = null;
 const adoptedWebContents = new Map<string, FakeWebContents | null>();
-const rendererSender = new EventEmitter() as EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
+const rendererSender = new NodeEvents.EventEmitter() as NodeEvents.EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
 rendererSender.isDestroyed = () => false;
 rendererSender.send = vi.fn();
 const fakeWindow = { id: 7, isDestroyed: () => false, isFocused: () => true, webContents: rendererSender };
@@ -18,6 +18,12 @@ type FakeNativeImage = {
   getSize: () => { width: number; height: number };
   resize: (input: { width: number; quality?: string }) => FakeNativeImage;
   toPNG: () => Buffer;
+};
+
+type RuntimeCallFunctionInput = {
+  functionDeclaration?: string;
+  arguments?: Array<{ value?: unknown }>;
+  returnByValue?: boolean;
 };
 
 function makeFakeNativeImage(buffer: Buffer, width = 1, height = 1): FakeNativeImage {
@@ -45,7 +51,7 @@ function seedFakeTab(threadId = "thread", tabId = "tab") {
   });
 }
 
-class FakeDebugger extends EventEmitter {
+class FakeDebugger extends NodeEvents.EventEmitter {
   attached = false;
   attachError = false;
   commands: Array<{ method: string; params: unknown }> = [];
@@ -63,22 +69,33 @@ class FakeDebugger extends EventEmitter {
   detach() { this.attached = false; }
   async sendCommand(method: string, params?: unknown) {
     this.commands.push({ method, params });
-    if (
-      this.failMousePressed && method === "Input.dispatchMouseEvent" &&
-      (params as { type?: string } | undefined)?.type === "mousePressed"
-    ) {
-      this.failMousePressed = false;
-      throw new Error("mouse dispatch failed");
-    }
-    if (
-      method === "Input.dispatchKeyEvent" &&
-      (params as { type?: string; key?: string } | undefined)?.type === "keyUp" &&
-      (params as { key?: string } | undefined)?.key === this.failKeyUpFor
-    ) {
-      this.failKeyUpFor = null;
-      throw new Error("key up failed");
-    }
+    this.throwForConfiguredInputFailure(method, params);
     if (method === "Input.dispatchKeyEvent") this.owner.emit("before-input-event", {});
+    return this.commandResult(method, params);
+  }
+  private throwForConfiguredInputFailure(method: string, params: unknown) {
+    this.throwForMousePressFailure(method, params);
+    this.throwForKeyUpFailure(method, params);
+  }
+  private throwForMousePressFailure(method: string, params: unknown) {
+    const event = params as { type?: string } | undefined;
+    if (!this.failMousePressed || method !== "Input.dispatchMouseEvent" || event?.type !== "mousePressed") return;
+    this.failMousePressed = false;
+    throw new Error("mouse dispatch failed");
+  }
+  private throwForKeyUpFailure(method: string, params: unknown) {
+    const event = params as { type?: string; key?: string } | undefined;
+    if (method !== "Input.dispatchKeyEvent" || event?.type !== "keyUp" || event?.key !== this.failKeyUpFor) return;
+    this.failKeyUpFor = null;
+    throw new Error("key up failed");
+  }
+  private commandResult(method: string, params: unknown) {
+    const staticResult = this.staticCommandResult(method);
+    if (staticResult) return staticResult;
+    if (method === "Runtime.callFunctionOn") return this.callFunctionResult(params as RuntimeCallFunctionInput);
+    return {};
+  }
+  private staticCommandResult(method: string) {
     if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main-frame" } } };
     if (method === "Page.createIsolatedWorld") return { executionContextId: 42 };
     if (method === "DOM.getDocument") return { root: { backendNodeId: 1 } };
@@ -86,48 +103,35 @@ class FakeDebugger extends EventEmitter {
     if (method === "Accessibility.getPartialAXTree") return { nodes: this.axNodes };
     if (method === "Performance.getMetrics") return { metrics: this.performanceMetrics };
     if (method === "Page.captureScreenshot") return { data: SMALL_PNG_BASE64 };
-    if (method === "Runtime.callFunctionOn") {
-      const input = params as {
-        functionDeclaration?: string;
-        arguments?: Array<{ value?: unknown }>;
-        returnByValue?: boolean;
-      };
-      const source = input.functionDeclaration ?? "";
-      const argument = input.arguments?.[0]?.value as Record<string, unknown> | undefined;
-      if (input.returnByValue === false) return { result: { objectId: "remote-element-1" } };
-      if (source.includes("snapshotPage")) {
-        return {
-          result: {
-            value: this.owner.snapshotValue,
-          },
-        };
-      }
-      if (source.includes("inspectPageTarget")) {
-        const target = argument?.target as Record<string, unknown> | undefined;
-        if (target?.semanticId) {
-          const semantic = this.owner.semanticElements.get(String(target.semanticId));
-          return { result: { value: semantic ?? { attached: false, visible: false } } };
-        }
-        return { result: { value: { attached: true, visible: true, x: 10, y: 20 } } };
-      }
-      if (source.includes("evaluateIsolatedExpression")) {
-        const expression = String(argument?.expression ?? "null");
-        if (expression === "never") return new Promise(() => undefined);
-        if (expression === "huge") return { result: { value: { ok: false, tooLarge: true } } };
-        if (expression === "cyclic") return { result: { value: { ok: true, valueJson: '{"self":"[Circular]"}' } } };
-        if (expression.includes("__mcodeEvalMarker")) this.isolatedMarker = 1;
-        return { result: { value: { ok: true, valueJson: expression === "1" ? "1" : "null" } } };
-      }
-      if (source.includes("capturePagePerformance")) {
-        return { result: { value: this.owner.performanceTiming } };
-      }
-      return { result: { value: false } };
-    }
-    return {};
+    return null;
+  }
+  private callFunctionResult(input: RuntimeCallFunctionInput) {
+    const source = input.functionDeclaration ?? "";
+    const argument = input.arguments?.[0]?.value as Record<string, unknown> | undefined;
+    if (input.returnByValue === false) return { result: { objectId: "remote-element-1" } };
+    if (source.includes("snapshotPage")) return { result: { value: this.owner.snapshotValue } };
+    if (source.includes("inspectPageTarget")) return this.inspectPageTarget(argument);
+    if (source.includes("evaluateIsolatedExpression")) return this.evaluateIsolatedExpression(argument);
+    if (source.includes("capturePagePerformance")) return { result: { value: this.owner.performanceTiming } };
+    return { result: { value: false } };
+  }
+  private inspectPageTarget(argument: Record<string, unknown> | undefined) {
+    const target = argument?.target as Record<string, unknown> | undefined;
+    if (!target?.semanticId) return { result: { value: { attached: true, visible: true, x: 10, y: 20 } } };
+    const semantic = this.owner.semanticElements.get(String(target.semanticId));
+    return { result: { value: semantic ?? { attached: false, visible: false } } };
+  }
+  private evaluateIsolatedExpression(argument: Record<string, unknown> | undefined) {
+    const expression = String(argument?.expression ?? "null");
+    if (expression === "never") return new Promise(() => undefined);
+    if (expression === "huge") return { result: { value: { ok: false, tooLarge: true } } };
+    if (expression === "cyclic") return { result: { value: { ok: true, valueJson: '{"self":"[Circular]"}' } } };
+    if (expression.includes("__mcodeEvalMarker")) this.isolatedMarker = 1;
+    return { result: { value: { ok: true, valueJson: expression === "1" ? "1" : "null" } } };
   }
 }
 
-class FakeWebContents extends EventEmitter {
+class FakeWebContents extends NodeEvents.EventEmitter {
   readonly debugger = new FakeDebugger(this);
   destroyed = false;
   hostWebContents = rendererSender;
@@ -292,7 +296,7 @@ describe("BrowserAutomationKernel", () => {
     fakePreviewSession.lastPreviewThreadId = "thread";
     fakePreviewSession.tabsByThread.clear();
     seedFakeTab();
-    kernel = new BrowserAutomationKernel();
+    kernel = new BrowserAutomationKernel("linux");
   });
   afterEach(() => {
     kernel.disposeWindow(fakeWindow.id);
@@ -986,7 +990,7 @@ describe("BrowserAutomationKernel", () => {
     expect(currentWebContents!.openDevTools).toHaveBeenCalledWith({ mode: "detach" });
 
     kernel.disposeWindow(fakeWindow.id);
-    kernel = new BrowserAutomationKernel();
+    kernel = new BrowserAutomationKernel("linux");
     currentWebContents = new FakeWebContents(2);
     currentWebContents.debugger.attached = true;
     await kernel.execute(event(), payload(request("status", {}, { requestId: "external-debugger-state" })));
@@ -1246,10 +1250,32 @@ describe("BrowserAutomationKernel", () => {
     });
   });
 
+  it("preserves fractional total blocking time while flooring integer performance fields", async () => {
+    currentWebContents!.performanceTiming = {
+      navigation: null,
+      resources: { count: 2.9, transferBytes: 10.8, decodedBodyBytes: 20.4 },
+      longTasks: { count: 1.8, totalBlockingTimeMs: 12.5 },
+      jsHeapLimitBytes: 0,
+    };
+
+    await expect(kernel.execute(
+      event(),
+      payload(request("performance", { includeMemory: false }, { requestId: "fractional-performance" })),
+    )).resolves.toMatchObject({
+      ok: true,
+      result: {
+        metrics: {
+          resources: { count: 2, transferBytes: 10, decodedBodyBytes: 20 },
+          responsiveness: { longTaskCount: 1, totalBlockingTimeMs: 12.5 },
+        },
+      },
+    });
+  });
+
   it("cleans listeners and timers through 100 target registration cycles", async () => {
     for (let index = 0; index < 100; index += 1) {
       currentWebContents = new FakeWebContents(index + 1);
-      const cycleKernel = new BrowserAutomationKernel();
+      const cycleKernel = new BrowserAutomationKernel("linux");
       await cycleKernel.execute(event(), payload(request("press", { key: "A", modifiers: [] })));
       cycleKernel.disposeWindow(fakeWindow.id);
       expect(currentWebContents.listenerCount("before-input-event")).toBe(0);

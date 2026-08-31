@@ -1,12 +1,10 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Thread, IProviderRegistry } from "@mcode/contracts";
-import { AgentService } from "../agent-service.js";
 import { supportsInternalThreadControl } from "../../turns/turn-admission-dispatch-coordinator.js";
 import { createAgentServiceForTest } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 import { ProviderDisabledError } from "../../../providers/availability/provider-availability-errors.js";
@@ -19,10 +17,9 @@ import type { ToolCallRecordRepo } from "../../tools/persistence/tool-call-recor
 import type { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
-import type { TaskRepo } from "../persistence/task-repo.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 
 // Mock the broadcast transport so we can assert agent.event emissions
 // without a real WebSocket server.
@@ -124,7 +121,7 @@ function buildService({
     persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
   } as unknown as AttachmentService;
 
-  const providerStub = Object.assign(new EventEmitter(), {
+  const providerStub = Object.assign(new NodeEvents.EventEmitter(), {
     id: "codex" as const,
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,
@@ -163,10 +160,6 @@ function buildService({
     onPressureChange: vi.fn(),
   } as unknown as MemoryPressureService;
 
-  const taskRepo = {
-    get: vi.fn(() => []),
-    upsert: vi.fn(),
-  } as unknown as TaskRepo;
 
   const settingsService = {
     get: vi.fn(() => ({

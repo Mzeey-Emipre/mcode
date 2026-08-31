@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ExternalLink, GitPullRequest, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /** Props for {@link PrSplitButton}. */
@@ -110,21 +111,27 @@ export function PrSplitButton({
         />
         <PopoverContent align="start" side="left" sideOffset={12} className="w-72 p-0">
           <div data-testid="thread-overview-pr-popover" className="animate-popover-enter space-y-1 p-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              data-testid={openActionTestId}
-              title={prStateTitle(pr)}
-              className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
-              onClick={(event) => {
-                setMenuOpen(false);
-                onOpenPr(pr.url, event);
-              }}
-            >
-              <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="font-medium">{openPrLabel(pr)}</span>
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    data-testid={openActionTestId}
+                    className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+                    onClick={(event) => {
+                      setMenuOpen(false);
+                      onOpenPr(pr.url, event);
+                    }}
+                  >
+                    <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="font-medium">{openPrLabel(pr)}</span>
+                  </Button>
+                }
+              />
+              <TooltipContent>{prStateTitle(pr)}</TooltipContent>
+            </Tooltip>
             <Button
               variant="ghost"
               size="sm"

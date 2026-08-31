@@ -119,53 +119,111 @@ function createRevisionRaceSchedule(
   revisions: readonly BrowserConformanceRevisionKey[],
   options: BrowserConformanceRevisionRaceScheduleOptions,
 ): BrowserConformanceRevisionRaceSchedule {
-  const seed = typeof options.seed === "string" ? hashBrowserConformanceSeed(options.seed) : normalizeSeed(options.seed);
-  const maxEvents = bound(options.maxEvents ?? Math.max(8, revisions.length));
-  const maxCommands = bound(options.maxCommands ?? 4);
-  const maxCheckpoints = bound(options.maxCheckpoints ?? revisions.length);
-  const maxTick = bound(options.maxTick ?? Math.max(8, revisions.length * 2));
+  const seed = normalizeRaceSeed(options.seed);
+  const bounds = createRaceBounds(revisions, options);
   const random = createBrowserConformanceRandom(seed);
-  const selectedRevisions = revisions.slice(0, maxEvents);
-  const itemCount = selectedRevisions.length + Math.min(selectedRevisions.length, maxCheckpoints);
+  const selectedRevisions = revisions.slice(0, bounds.maxEvents);
+  const slots = createRaceSlots(selectedRevisions.length, bounds.maxCheckpoints, random);
+  const events = createRaceEvents(selectedRevisions, slots, bounds.maxTick);
+  const checkpoints = createRaceCheckpoints(selectedRevisions, slots, bounds.maxCheckpoints, bounds.maxTick);
+  populateExpectedRevisions(events, checkpoints);
+  return {
+    id: revisions.join("+"),
+    revisions: events.map((event) => event.revision),
+    schedule: {
+      version: BROWSER_CONFORMANCE_SCENARIO_VERSION,
+      generatorVersion: BROWSER_CONFORMANCE_GENERATOR_VERSION,
+      seed,
+      bounds,
+      events,
+      checkpoints,
+    },
+  };
+}
+
+function normalizeRaceSeed(seed: number | string): number {
+  return typeof seed === "string" ? hashBrowserConformanceSeed(seed) : normalizeSeed(seed);
+}
+
+function createRaceBounds(
+  revisions: readonly BrowserConformanceRevisionKey[],
+  options: BrowserConformanceRevisionRaceScheduleOptions,
+): BrowserConformanceSchedule["bounds"] {
+  return {
+    maxEvents: bound(options.maxEvents ?? Math.max(8, revisions.length)),
+    maxCommands: bound(options.maxCommands ?? 4),
+    maxCheckpoints: bound(options.maxCheckpoints ?? revisions.length),
+    maxTick: bound(options.maxTick ?? Math.max(8, revisions.length * 2)),
+  };
+}
+
+function createRaceSlots(
+  revisionCount: number,
+  maxCheckpoints: number,
+  random: ReturnType<typeof createBrowserConformanceRandom>,
+): number[] {
+  const itemCount = revisionCount + Math.min(revisionCount, maxCheckpoints);
   const slots = Array.from({ length: itemCount }, (_, index) => index);
   for (let index = slots.length - 1; index > 0; index -= 1) {
     const swap = random.integer(index + 1);
     [slots[index], slots[swap]] = [slots[swap]!, slots[index]!];
   }
-  const events = selectedRevisions.map((revision, index) => ({
-    order: { tick: maxTick === 0 ? 0 : slots[index]! % (maxTick + 1), ordinal: index },
+  return slots;
+}
+
+function createRaceEvents(
+  revisions: readonly BrowserConformanceRevisionKey[],
+  slots: readonly number[],
+  maxTick: number,
+) {
+  const events = revisions.map((revision, index) => ({
+    order: { tick: raceTick(slots[index]!, maxTick), ordinal: index },
     kind: revisionEventKind(revision),
     revision,
   }));
-  const checkpoints = selectedRevisions.slice(0, maxCheckpoints).map((revision, index) => ({
+  events.sort(compareRaceOrder);
+  return events;
+}
+
+function createRaceCheckpoints(
+  revisions: readonly BrowserConformanceRevisionKey[],
+  slots: readonly number[],
+  maxCheckpoints: number,
+  maxTick: number,
+) {
+  const checkpoints = revisions.slice(0, maxCheckpoints).map((revision, index) => ({
     id: `revision-${revision}`,
-    order: { tick: maxTick === 0 ? 0 : slots[selectedRevisions.length + index]! % (maxTick + 1), ordinal: selectedRevisions.length + index },
+    order: { tick: raceTick(slots[revisions.length + index]!, maxTick), ordinal: revisions.length + index },
     label: `${revision} revision checkpoint`,
     expectedRevisions: createBrowserConformanceRevisionVector(),
   }));
-  const id = revisions.join("+");
-  events.sort((left, right) => left.order.tick - right.order.tick || left.order.ordinal - right.order.ordinal);
-  checkpoints.sort((left, right) => left.order.tick - right.order.tick || left.order.ordinal - right.order.ordinal);
+  checkpoints.sort(compareRaceOrder);
+  return checkpoints;
+}
+
+function raceTick(slot: number, maxTick: number): number {
+  return maxTick === 0 ? 0 : slot % (maxTick + 1);
+}
+
+function compareRaceOrder(
+  left: { readonly order: { readonly tick: number; readonly ordinal: number } },
+  right: { readonly order: { readonly tick: number; readonly ordinal: number } },
+): number {
+  return left.order.tick - right.order.tick || left.order.ordinal - right.order.ordinal;
+}
+
+function populateExpectedRevisions(
+  events: readonly { readonly order: { readonly tick: number; readonly ordinal: number }; readonly revision: BrowserConformanceRevisionKey }[],
+  checkpoints: readonly { readonly order: { readonly tick: number; readonly ordinal: number }; expectedRevisions: ReturnType<typeof createBrowserConformanceRevisionVector> }[],
+): void {
   for (const checkpoint of checkpoints) {
     const counts: Partial<Record<BrowserConformanceRevisionKey, number>> = {};
     for (const event of events) {
       if (event.order.tick > checkpoint.order.tick || (event.order.tick === checkpoint.order.tick && event.order.ordinal >= checkpoint.order.ordinal)) break;
       if (event.revision) counts[event.revision] = (counts[event.revision] ?? 0) + 1;
     }
-    (checkpoint as { expectedRevisions: ReturnType<typeof createBrowserConformanceRevisionVector> }).expectedRevisions = createBrowserConformanceRevisionVector(counts);
+    checkpoint.expectedRevisions = createBrowserConformanceRevisionVector(counts);
   }
-  return {
-    id,
-    revisions: events.map((event) => event.revision),
-    schedule: {
-      version: BROWSER_CONFORMANCE_SCENARIO_VERSION,
-      generatorVersion: BROWSER_CONFORMANCE_GENERATOR_VERSION,
-      seed,
-      bounds: { maxCommands, maxEvents, maxCheckpoints, maxTick },
-      events,
-      checkpoints,
-    },
-  };
 }
 
 function revisionEventKind(revision: BrowserConformanceRevisionKey): BrowserConformanceEventKind {

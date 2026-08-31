@@ -85,28 +85,29 @@ export const CanonicalAgentEventSchema = z.discriminatedUnion("type", [
 /** Semantic event payload that records one canonical model entity. */
 export type CanonicalAgentEvent = z.infer<typeof CanonicalAgentEventSchema>;
 
+const AgentEventEnvelopeBaseSchema = z
+  .object({
+    eventId: AgentEventIdSchema,
+    routing: AgentEventRoutingSchema,
+    sourceProviderId: ProviderIdSchema,
+    sourceIdentities: z.array(ProviderIdentitySchema).max(16),
+    sourceSequence: z.number().int().nonnegative().optional(),
+    acceptedSequence: z.number().int().positive(),
+    durableRevision: z.number().int().nonnegative(),
+    rosterRevision: z.number().int().nonnegative().optional(),
+    providerTimestamp: CanonicalTimestampSchema.optional(),
+    serverTimestamps: z
+      .object({
+        acceptedAt: CanonicalTimestampSchema,
+        persistedAt: CanonicalTimestampSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 /** Validated canonical envelope for one semantic event payload schema. */
 export function AgentEventEnvelopeSchema<TSchema extends z.ZodTypeAny>(payloadSchema: TSchema) {
-  return z
-    .object({
-      eventId: AgentEventIdSchema,
-      routing: AgentEventRoutingSchema,
-      sourceProviderId: ProviderIdSchema,
-      sourceIdentities: z.array(ProviderIdentitySchema).max(16),
-      sourceSequence: z.number().int().nonnegative().optional(),
-      acceptedSequence: z.number().int().positive(),
-      durableRevision: z.number().int().nonnegative(),
-      rosterRevision: z.number().int().nonnegative().optional(),
-      providerTimestamp: CanonicalTimestampSchema.optional(),
-      serverTimestamps: z
-        .object({
-          acceptedAt: CanonicalTimestampSchema,
-          persistedAt: CanonicalTimestampSchema.optional(),
-        })
-        .strict(),
-      payload: payloadSchema,
-    })
-    .strict();
+  return AgentEventEnvelopeBaseSchema.extend({ payload: payloadSchema });
 }
 
 /** Canonical event envelope with independent source, accepted, and durable ordering. */

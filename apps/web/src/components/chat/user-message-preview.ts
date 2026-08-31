@@ -47,6 +47,29 @@ export function isStickyPreviewExpandable(preview: string): boolean {
   return preview.length > 140;
 }
 
+function pluralAttachmentLabel(count: number, noun: "image" | "file"): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function imageAttachmentPreview(images: NonNullable<Message["attachments"]>): string | null {
+  if (images.length === 1) return "[Image attachment]";
+  return images.length > 1 ? pluralAttachmentLabel(images.length, "image") : null;
+}
+
+function fileAttachmentPreview(files: NonNullable<Message["attachments"]>): string | null {
+  if (files.length === 1) return files[0]?.name ?? "[File attachment]";
+  return files.length > 1 ? pluralAttachmentLabel(files.length, "file") : null;
+}
+
+function resolveAttachmentPreview(attachments: NonNullable<Message["attachments"]>): string | null {
+  const images = attachments.filter((attachment) => attachment.mimeType.startsWith("image/"));
+  const files = attachments.filter((attachment) => !attachment.mimeType.startsWith("image/"));
+  if (images.length > 0 && files.length > 0) {
+    return `${pluralAttachmentLabel(images.length, "image")}, ${pluralAttachmentLabel(files.length, "file")}`;
+  }
+  return imageAttachmentPreview(images) ?? fileAttachmentPreview(files);
+}
+
 /**
  * Resolves plain-text preview copy for the sticky last-user-message chip.
  * Returns null when the message renders nothing user-visible in the transcript.
@@ -75,14 +98,5 @@ export function resolveUserMessagePreview(message: Message): string | null {
 
   if (!hasAttachments) return null;
 
-  const images = attachments.filter((a) => a.mimeType.startsWith("image/"));
-  const files = attachments.filter((a) => !a.mimeType.startsWith("image/"));
-  if (images.length > 0 && files.length > 0) {
-    return `${images.length} image${images.length === 1 ? "" : "s"}, ${files.length} file${files.length === 1 ? "" : "s"}`;
-  }
-  if (images.length === 1) return "[Image attachment]";
-  if (images.length > 1) return `${images.length} images`;
-  if (files.length === 1) return files[0]?.name ?? "[File attachment]";
-  if (files.length > 1) return `${files.length} files`;
-  return null;
+  return resolveAttachmentPreview(attachments);
 }

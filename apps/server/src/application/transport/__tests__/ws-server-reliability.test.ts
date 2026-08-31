@@ -1,11 +1,11 @@
 import "reflect-metadata";
 import { afterEach, describe, expect, it } from "vitest";
-import http from "node:http";
+import * as NodeHTTP from "node:http";
 import type { WebSocketServer } from "ws";
 import { createWsServer } from "../ws-server.js";
 
 describe("reliability harness route", () => {
-  let server: http.Server | undefined;
+  let server: NodeHTTP.Server | undefined;
   let websocketServer: WebSocketServer | undefined;
 
   afterEach(async () => {
@@ -35,7 +35,7 @@ describe("reliability harness route", () => {
 
 function requestStatus(port: number): Promise<number> {
   return new Promise((resolve, reject) => {
-    const request = http.get({ host: "127.0.0.1", port, path: "/__mcode/reliability" }, (response) => {
+    const request = NodeHTTP.get({ host: "127.0.0.1", port, path: "/__mcode/reliability" }, (response) => {
       response.resume();
       response.once("end", () => resolve(response.statusCode ?? 0));
     });

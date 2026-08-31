@@ -11,8 +11,8 @@
  * suggestion. A missing name falls back to the filename. Rejected files produce
  * source-scoped diagnostics without exposing absolute paths, while valid siblings remain available.
  */
-import { open, opendir } from "fs/promises";
-import { basename, join } from "path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { parse } from "smol-toml";
 import {
   PROVIDER_CATALOG_MAX_CODEX_AGENT_FILE_BYTES,
@@ -60,7 +60,7 @@ export type CodexAgentFileReadResult =
 export interface DiscoverCodexStandaloneAgentsInput {
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly cwd?: string;
-  readonly platform?: NodeJS.Platform;
+  readonly platform: NodeJS.Platform;
   readonly limits?: CodexAgentDiscoveryLimits;
   readonly readFile?: (path: string, maxBytes: number) => Promise<CodexAgentFileReadResult>;
   readonly openDirectory?: (path: string) => Promise<AsyncIterable<CodexAgentDirectoryEntry>>;
@@ -86,8 +86,8 @@ function nonEmptyEnvironmentPath(value: string | undefined): string | undefined 
 /** Resolves the global and project roots from the Codex spawn context. */
 export function resolveCodexAgentDiscoveryRoots(
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
   cwd?: string,
-  platform: NodeJS.Platform = process.platform,
 ): CodexAgentDiscoveryRoot[] {
   const codexHome = nonEmptyEnvironmentPath(environment.CODEX_HOME)
     ?? (() => {
@@ -96,14 +96,14 @@ export function resolveCodexAgentDiscoveryRoots(
           ?? nonEmptyEnvironmentPath(environment.HOME)
         : nonEmptyEnvironmentPath(environment.HOME)
           ?? nonEmptyEnvironmentPath(environment.USERPROFILE);
-      return home ? join(home, ".codex") : undefined;
+      return home ? NodePath.join(home, ".codex") : undefined;
     })();
   const roots: CodexAgentDiscoveryRoot[] = [];
   if (codexHome) {
-    roots.push({ scope: "global", directory: join(codexHome, CODEX_GLOBAL_AGENT_DIRECTORY) });
+    roots.push({ scope: "global", directory: NodePath.join(codexHome, CODEX_GLOBAL_AGENT_DIRECTORY) });
   }
   if (cwd) {
-    roots.push({ scope: "project", directory: join(cwd, ...CODEX_PROJECT_AGENT_DIRECTORY) });
+    roots.push({ scope: "project", directory: NodePath.join(cwd, ...CODEX_PROJECT_AGENT_DIRECTORY) });
   }
   return roots.filter((root, index) => (
     roots.findIndex((candidate) => candidate.directory === root.directory) === index
@@ -111,7 +111,7 @@ export function resolveCodexAgentDiscoveryRoots(
 }
 
 function diagnosticSource(path: string): string {
-  return basename(path)
+  return NodePath.basename(path)
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .trim()
     .slice(0, DIAGNOSTIC_SOURCE_MAX_CHARS) || "unknown agent source";
@@ -149,7 +149,7 @@ async function readBoundedAgentFile(
 ): Promise<CodexAgentFileReadResult> {
   let file;
   try {
-    file = await open(path, "r");
+    file = await NodeFSPromises.open(path, "r");
     const buffer = Buffer.allocUnsafe(maxBytes + 1);
     let totalBytesRead = 0;
     while (totalBytesRead < buffer.length) {
@@ -236,7 +236,7 @@ async function directTomlFiles(
       excessiveFiles = true;
       break;
     }
-    files.push(join(root.directory, entry.name));
+    files.push(NodePath.join(root.directory, entry.name));
   }
   files.sort((left, right) => left.localeCompare(right));
   return { files, excessiveFiles, excessiveEntries };
@@ -246,76 +246,112 @@ async function directTomlFiles(
 export async function discoverCodexStandaloneAgents(
   input: DiscoverCodexStandaloneAgentsInput,
 ): Promise<CodexStandaloneAgentDiscovery> {
-  const limits = input.limits ?? DEFAULT_LIMITS;
-  const readFile = input.readFile ?? readBoundedAgentFile;
-  const byName = new Map<string, SelectableProviderAgent>();
-  const diagnostics: ProviderCatalogSourceDiagnostic[] = [];
-  let inspectedFiles = 0;
-  const maxDirectoryEntriesPerRoot = input.limits?.maxDirectoryEntriesPerRoot
-    ?? DEFAULT_LIMITS.maxFiles;
-  const openDirectory = input.openDirectory ?? opendir;
-
-  for (const root of resolveCodexAgentDiscoveryRoots(
-    input.environment,
-    input.cwd,
-    input.platform,
-  )) {
-    const listed = await directTomlFiles(
-      root,
-      Math.max(0, limits.maxFiles - inspectedFiles),
-      maxDirectoryEntriesPerRoot,
-      openDirectory,
-    );
-    if (listed.diagnostic) diagnostics.push(listed.diagnostic);
-    for (const path of listed.files) {
-      inspectedFiles += 1;
-      const file = await readFile(path, limits.maxFileBytes).catch(
-        (): CodexAgentFileReadResult => ({ status: "unreadable" }),
-      );
-      if (file.status === "unreadable") {
-        diagnostics.push(discoveryDiagnostic(
-          diagnosticSource(path),
-          `Codex ${root.scope} agent file could not be read.`,
-        ));
-        continue;
-      }
-      if (file.status === "oversized") {
-        diagnostics.push(partialDiagnostic(
-          diagnosticSource(path),
-          `Codex ${root.scope} agent file exceeded ${limits.maxFileBytes} bytes and was omitted.`,
-        ));
-        continue;
-      }
-      const fallbackName = path.split(/[\\/]/).at(-1)?.replace(/\.toml$/i, "") ?? "";
-      try {
-        const agent = parseAgent(file.body, path, fallbackName);
-        if (!agent) throw new Error("invalid agent metadata");
-        byName.set(agent.name, agent);
-      } catch {
-        diagnostics.push(discoveryDiagnostic(
-          diagnosticSource(path),
-          `Codex ${root.scope} agent file contained invalid TOML or agent metadata.`,
-        ));
-      }
-    }
-    if (listed.excessiveEntries) {
-      diagnostics.push(partialDiagnostic(
-        `${root.scope} agents`,
-        `Codex ${root.scope} agent directory was capped at ${maxDirectoryEntriesPerRoot} direct directory ${maxDirectoryEntriesPerRoot === 1 ? "entry" : "entries"}.`,
-      ));
-      continue;
-    }
-    if (listed.excessiveFiles) {
-      diagnostics.push(partialDiagnostic(
-        `${root.scope} agents`,
-        `Codex ${root.scope} agent directory was capped at ${limits.maxFiles} direct TOML ${limits.maxFiles === 1 ? "file" : "files"}.`,
-      ));
-      break;
-    }
+  const scan = createCodexAgentScan(input);
+  const roots = resolveCodexAgentDiscoveryRoots(input.environment, input.platform, input.cwd);
+  for (const root of roots) {
+    const outcome = await scanCodexAgentRoot(root, scan);
+    if (outcome === "stop") break;
   }
-
   return {
-    agents: [...byName.values()].sort((left, right) => left.name.localeCompare(right.name)),
-    diagnostics,
+    agents: [...scan.byName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    diagnostics: scan.diagnostics,
   };
+}
+
+type CodexAgentScan = {
+  limits: CodexAgentDiscoveryLimits;
+  readFile: (path: string, maxBytes: number) => Promise<CodexAgentFileReadResult>;
+  openDirectory: (path: string) => Promise<AsyncIterable<CodexAgentDirectoryEntry>>;
+  maxDirectoryEntriesPerRoot: number;
+  byName: Map<string, SelectableProviderAgent>;
+  diagnostics: ProviderCatalogSourceDiagnostic[];
+  inspectedFiles: number;
+};
+
+function createCodexAgentScan(input: DiscoverCodexStandaloneAgentsInput): CodexAgentScan {
+  return {
+    limits: input.limits ?? DEFAULT_LIMITS,
+    readFile: input.readFile ?? readBoundedAgentFile,
+    openDirectory: input.openDirectory ?? NodeFSPromises.opendir,
+    maxDirectoryEntriesPerRoot: input.limits?.maxDirectoryEntriesPerRoot ?? DEFAULT_LIMITS.maxFiles,
+    byName: new Map<string, SelectableProviderAgent>(),
+    diagnostics: [],
+    inspectedFiles: 0,
+  };
+}
+
+async function scanCodexAgentRoot(
+  root: CodexAgentDiscoveryRoot,
+  scan: CodexAgentScan,
+): Promise<"next" | "stop"> {
+  const listed = await directTomlFiles(
+    root,
+    Math.max(0, scan.limits.maxFiles - scan.inspectedFiles),
+    scan.maxDirectoryEntriesPerRoot,
+    scan.openDirectory,
+  );
+  if (listed.diagnostic) scan.diagnostics.push(listed.diagnostic);
+  for (const path of listed.files) await scanCodexAgentFile(root, path, scan);
+  if (listed.excessiveEntries) {
+    scan.diagnostics.push(partialDiagnostic(
+      `${root.scope} agents`,
+      `Codex ${root.scope} agent directory was capped at ${scan.maxDirectoryEntriesPerRoot} direct directory ${scan.maxDirectoryEntriesPerRoot === 1 ? "entry" : "entries"}.`,
+    ));
+    return "next";
+  }
+  if (!listed.excessiveFiles) return "next";
+  scan.diagnostics.push(partialDiagnostic(
+    `${root.scope} agents`,
+    `Codex ${root.scope} agent directory was capped at ${scan.limits.maxFiles} direct TOML ${scan.limits.maxFiles === 1 ? "file" : "files"}.`,
+  ));
+  return "stop";
+}
+
+async function scanCodexAgentFile(
+  root: CodexAgentDiscoveryRoot,
+  path: string,
+  scan: CodexAgentScan,
+): Promise<void> {
+  scan.inspectedFiles += 1;
+  const file = await scan.readFile(path, scan.limits.maxFileBytes).catch(
+    (): CodexAgentFileReadResult => ({ status: "unreadable" }),
+  );
+  if (file.status !== "ok") {
+    reportUnreadableCodexAgentFile(root, path, file.status, scan);
+    return;
+  }
+  addParsedCodexAgent(root, path, file.body, scan);
+}
+
+function reportUnreadableCodexAgentFile(
+  root: CodexAgentDiscoveryRoot,
+  path: string,
+  status: Exclude<CodexAgentFileReadResult["status"], "ok">,
+  scan: CodexAgentScan,
+): void {
+  const source = diagnosticSource(path);
+  if (status === "unreadable") {
+    scan.diagnostics.push(discoveryDiagnostic(source, `Codex ${root.scope} agent file could not be read.`));
+    return;
+  }
+  scan.diagnostics.push(partialDiagnostic(source, `Codex ${root.scope} agent file exceeded ${scan.limits.maxFileBytes} bytes and was omitted.`));
+}
+
+function addParsedCodexAgent(
+  root: CodexAgentDiscoveryRoot,
+  path: string,
+  body: string,
+  scan: CodexAgentScan,
+): void {
+  const fallbackName = path.split(/[\\/]/).at(-1)?.replace(/\.toml$/i, "") ?? "";
+  try {
+    const agent = parseAgent(body, path, fallbackName);
+    if (!agent) throw new Error("invalid agent metadata");
+    scan.byName.set(agent.name, agent);
+  } catch {
+    scan.diagnostics.push(discoveryDiagnostic(
+      diagnosticSource(path),
+      `Codex ${root.scope} agent file contained invalid TOML or agent metadata.`,
+    ));
+  }
 }

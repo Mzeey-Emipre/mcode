@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 /**
  * Subscribes to a CSS media query and returns whether it currently matches.
@@ -8,19 +8,12 @@ import { useEffect, useState } from "react";
  * during the first render, then syncs to the real value on mount.
  */
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia(query).matches;
-  });
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mql = window.matchMedia(query);
-    const handler = (e: MediaQueryListEvent) => setMatches(e.matches);
-    setMatches(mql.matches);
-    mql.addEventListener("change", handler);
-    return () => mql.removeEventListener("change", handler);
+  const subscribe = useCallback((notify: () => void) => {
+    const mediaQueryList = window.matchMedia(query);
+    mediaQueryList.addEventListener("change", notify);
+    return () => mediaQueryList.removeEventListener("change", notify);
   }, [query]);
+  const getSnapshot = useCallback(() => window.matchMedia(query).matches, [query]);
 
-  return matches;
+  return useSyncExternalStore(subscribe, getSnapshot, () => false);
 }

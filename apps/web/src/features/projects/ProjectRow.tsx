@@ -1,5 +1,6 @@
 import { Pin, GitBranch, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PathLabel } from "./PathLabel";
 import { useProjectSelectorStore } from "./state/projectSelectorStore";
 
@@ -82,101 +83,127 @@ export function ProjectRow({ workspace, isActive, onSelect, onPin, onRemove, hom
       )}
       onClick={() => onSelect(workspace.id)}
     >
-      {/* Left: name + path */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate font-medium">{workspace.name}</span>
-          {/* Pin toggle — always visible when pinned (filled), shown on hover otherwise (outline).
-              Lucide Pin icon keeps visual language consistent with the rest of the picker. */}
-          <button
-            data-testid="project-row-pin"
-            className="ml-1 inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 text-primary/80 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[pinned=true]:opacity-100"
-            data-pinned={workspace.pinned}
-            onClick={(e) => {
-              e.stopPropagation();
-              onPin(workspace.id, !workspace.pinned);
-            }}
-            aria-label={workspace.pinned ? "Unpin" : "Pin"}
-            title={workspace.pinned ? "Unpin project" : "Pin project"}
-          >
-            <Pin
-              size={11}
-              strokeWidth={2}
-              className={workspace.pinned ? "fill-primary/80" : ""}
-            />
-          </button>
-        </div>
-        <PathLabel path={workspace.path} home={home} />
-      </div>
-
-      {/* Right: meta strip — branch, status dot, thread count, relative timestamp.
-          Cap the column fraction so the project title + path keep priority; inner
-          layout uses a grid so the branch absorbs remaining width inside that cap
-          instead of an arbitrary 10rem clip (impeccable: information-dense, mono meta). */}
-      <div className="flex shrink-0 min-w-0 max-w-[52%] flex-col items-end gap-0.5 font-mono text-[11px] text-muted-foreground/60 max-[520px]:max-w-none max-[520px]:flex-row max-[520px]:items-center max-[520px]:justify-between">
-        {enrichment ? (
-          <>
-            <div className="grid w-full min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-1.5">
-              {enrichment.isGit ? (
-                <>
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                      enrichment.isClean ? "bg-green-600/70" : "bg-amber-600/70",
-                    )}
-                    aria-label={enrichment.isClean ? "Clean working tree" : "Uncommitted changes"}
-                    title={enrichment.isClean ? "Clean working tree" : "Uncommitted changes"}
-                  />
-                  <GitBranch size={10} strokeWidth={2} className="shrink-0 opacity-70" aria-hidden />
-                  <span
-                    className="min-w-0 truncate text-right"
-                    title={enrichment.branch ?? "detached"}
-                  >
-                    {enrichment.branch ?? "detached"}
-                  </span>
-                  {enrichment.threadCount > 0 ? (
-                    <span
-                      className="shrink-0 tabular-nums"
-                      title={`${enrichment.threadCount} thread${enrichment.threadCount === 1 ? "" : "s"}`}
-                    >
-                      · {enrichment.threadCount}
-                    </span>
-                  ) : null}
-                </>
-              ) : (
-                <span className="col-span-4 truncate justify-self-end text-muted-foreground/40">
-                  not a git repo
-                </span>
-              )}
-            </div>
-            {lastOpenedLabel && (
-              <span className="whitespace-nowrap tabular-nums">{lastOpenedLabel}</span>
-            )}
-          </>
-        ) : (
-          // Show timestamp as skeleton while enrichment is loading
-          lastOpenedLabel && (
-            <span className="whitespace-nowrap tabular-nums">{lastOpenedLabel}</span>
-          )
-        )}
-      </div>
-
-      {/* Remove from recents — only shown when handler is provided. Hidden until row hover so
-          the right rail stays calm; lucide X keeps the icon set consistent. */}
-      {onRemove && (
-        <button
-          data-testid="project-row-remove"
-          className="inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 text-muted-foreground/40 opacity-0 transition-opacity hover:bg-accent/60 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove(workspace.id);
-          }}
-          aria-label="Remove from recents"
-          title="Remove from recents (Ctrl+Backspace)"
-        >
-          <X size={11} strokeWidth={2.25} aria-hidden />
-        </button>
-      )}
+      <ProjectRowIdentity workspace={workspace} home={home} onPin={onPin} />
+      <ProjectRowMetadata enrichment={enrichment} lastOpenedLabel={lastOpenedLabel} />
+      <ProjectRowRemoveAction workspaceId={workspace.id} onRemove={onRemove} />
     </div>
+  );
+}
+
+function ProjectRowIdentity({
+  workspace,
+  home,
+  onPin,
+}: Pick<Props, "workspace" | "home" | "onPin">) {
+  const pinLabel = workspace.pinned ? "Unpin" : "Pin";
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center gap-1.5">
+        <span className="truncate font-medium">{workspace.name}</span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                data-testid="project-row-pin"
+                className="ml-1 inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 text-primary/80 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[pinned=true]:opacity-100"
+                data-pinned={workspace.pinned}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPin(workspace.id, !workspace.pinned);
+                }}
+                aria-label={pinLabel}
+              >
+                <Pin size={11} strokeWidth={2} className={workspace.pinned ? "fill-primary/80" : ""} />
+              </button>
+            }
+          />
+          <TooltipContent>{`${pinLabel} project`}</TooltipContent>
+        </Tooltip>
+      </div>
+      <PathLabel path={workspace.path} home={home} />
+    </div>
+  );
+}
+
+function ProjectRowMetadata({
+  enrichment,
+  lastOpenedLabel,
+}: {
+  enrichment: ReturnType<typeof useProjectSelectorStore.getState>["enrichmentCache"] extends Map<string, infer Value> ? Value | undefined : never;
+  lastOpenedLabel: string | null;
+}) {
+  return (
+    <div className="flex shrink-0 min-w-0 max-w-[52%] flex-col items-end gap-0.5 font-mono text-[11px] text-muted-foreground/60 max-[520px]:max-w-none max-[520px]:flex-row max-[520px]:items-center max-[520px]:justify-between">
+      {enrichment ? <ProjectRowEnrichment enrichment={enrichment} /> : null}
+      {lastOpenedLabel ? <span className="whitespace-nowrap tabular-nums">{lastOpenedLabel}</span> : null}
+    </div>
+  );
+}
+
+function ProjectRowEnrichment({
+  enrichment,
+}: {
+  enrichment: NonNullable<ReturnType<typeof useProjectSelectorStore.getState>["enrichmentCache"] extends Map<string, infer Value> ? Value : never>;
+}) {
+  if (!enrichment.isGit) {
+    return <span className="col-span-4 truncate justify-self-end text-muted-foreground/40">not a git repo</span>;
+  }
+  const branch = enrichment.branch ?? "detached";
+  const workingTreeLabel = enrichment.isClean ? "Clean working tree" : "Uncommitted changes";
+  return (
+    <div className="grid w-full min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-1.5">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              className={cn("h-1.5 w-1.5 shrink-0 rounded-full", enrichment.isClean ? "bg-green-600/70" : "bg-amber-600/70")}
+              aria-label={workingTreeLabel}
+            />
+          }
+        />
+        <TooltipContent>{workingTreeLabel}</TooltipContent>
+      </Tooltip>
+      <GitBranch size={10} strokeWidth={2} className="shrink-0 opacity-70" aria-hidden />
+      <Tooltip>
+        <TooltipTrigger render={<span className="min-w-0 truncate text-right">{branch}</span>} />
+        <TooltipContent>{branch}</TooltipContent>
+      </Tooltip>
+      <ProjectRowThreadCount count={enrichment.threadCount} />
+    </div>
+  );
+}
+
+function ProjectRowThreadCount({ count }: { count: number }) {
+  if (count === 0) return null;
+  const label = `${count} thread${count === 1 ? "" : "s"}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="shrink-0 tabular-nums">· {count}</span>} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ProjectRowRemoveAction({ workspaceId, onRemove }: Pick<Props, "onRemove"> & { workspaceId: string }) {
+  if (!onRemove) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            data-testid="project-row-remove"
+            className="inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 text-muted-foreground/40 opacity-0 transition-opacity hover:bg-accent/60 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove(workspaceId);
+            }}
+            aria-label="Remove from recents"
+          >
+            <X size={11} strokeWidth={2.25} aria-hidden />
+          </button>
+        }
+      />
+      <TooltipContent>Remove from recents (Ctrl+Backspace)</TooltipContent>
+    </Tooltip>
   );
 }

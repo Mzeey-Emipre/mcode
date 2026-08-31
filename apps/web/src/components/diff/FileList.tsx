@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useVirtualizer, type VirtualItem, type Virtualizer } from "@tanstack/react-virtual";
 import {
   FileSearch,
   WrapText,
@@ -37,6 +37,40 @@ import { DIFF_FILE_LIST_PADDING } from "./diff-surface";
 const FILE_ROW_ESTIMATE_PX = 260;
 const FILE_ROW_OVERSCAN = 4;
 const FILE_LIST_VIRTUALIZE_THRESHOLD = 30;
+
+function getFileVirtualItems({
+  fallbackAnchorIndex,
+  scrollElement,
+  shouldVirtualize,
+  sortedFiles,
+  virtualItems,
+}: {
+  fallbackAnchorIndex: number;
+  scrollElement: HTMLElement | null;
+  shouldVirtualize: boolean;
+  sortedFiles: string[];
+  virtualItems: VirtualItem[];
+}): VirtualItem[] {
+  if (!shouldVirtualize) return [];
+  if (virtualItems.length > 0) return virtualItems;
+
+  const visibleCount = Math.min(
+    sortedFiles.length,
+    Math.max(1, Math.ceil((scrollElement?.clientHeight ?? 0) / FILE_ROW_ESTIMATE_PX) + FILE_ROW_OVERSCAN * 2),
+  );
+  const firstIndex = Math.min(fallbackAnchorIndex, Math.max(0, sortedFiles.length - visibleCount));
+  return Array.from({ length: visibleCount }, (_, offset) => {
+    const index = firstIndex + offset;
+    return {
+      index,
+      key: sortedFiles[index] ?? String(index),
+      start: index * FILE_ROW_ESTIMATE_PX,
+      size: FILE_ROW_ESTIMATE_PX,
+      end: (index + 1) * FILE_ROW_ESTIMATE_PX,
+      lane: 0,
+    };
+  });
+}
 
 /** Props for FileList. */
 interface FileListProps {
@@ -133,28 +167,14 @@ export function FileList({
     scrollMargin,
     useFlushSync: false,
   });
-  const virtualItems = shouldVirtualize ? virtualizer.getVirtualItems() : [];
-  const fileVirtualItems = useMemo(() => {
-    if (!shouldVirtualize) return [];
-    if (virtualItems.length > 0) return virtualItems;
-
-    const visibleCount = Math.min(
-      sortedFiles.length,
-      Math.max(1, Math.ceil((scrollElement?.clientHeight ?? 0) / FILE_ROW_ESTIMATE_PX) + FILE_ROW_OVERSCAN * 2),
-    );
-    const firstIndex = Math.min(
-      fallbackAnchorIndex,
-      Math.max(0, sortedFiles.length - visibleCount),
-    );
-    return Array.from({ length: visibleCount }, (_, offset) => {
-      const index = firstIndex + offset;
-      return {
-        index,
-        key: sortedFiles[index] ?? String(index),
-        start: index * FILE_ROW_ESTIMATE_PX,
-      };
-    });
-  }, [fallbackAnchorIndex, scrollElement?.clientHeight, shouldVirtualize, sortedFiles, virtualItems]);
+  const virtualItems: VirtualItem[] = shouldVirtualize ? virtualizer.getVirtualItems() : [];
+  const fileVirtualItems = getFileVirtualItems({
+    fallbackAnchorIndex,
+    scrollElement,
+    shouldVirtualize,
+    sortedFiles,
+    virtualItems,
+  });
 
   // The parent lifecycle owns refresh so the diff and Files publish together.
   const refreshInProgress = refreshing;
@@ -203,211 +223,440 @@ export function FileList({
 
   return (
     <div className="flex flex-col">
-      <div className="sticky top-0 z-20 flex items-center gap-0.5 bg-background/95 px-2 py-1.5 shadow-[0_8px_12px_-12px_oklch(0_0_0/0.35)] backdrop-blur-sm">
-        {/* Diff-display controls: review-options menu, jump, split toggle. The
-            changed-file count lives on the toolbar's view switcher, so this bar
-            carries only the controls; `ml-auto` keeps the group at the right. */}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            aria-label="Review options"
-            data-testid="review-options-menu"
-            className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/50 outline-none transition-colors hover:bg-muted/40 hover:text-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            <MoreHorizontal size={13} />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={6} className="min-w-[190px]">
-            {refreshable ? (
-              <DropdownMenuItem
-                onClick={onRefresh}
-                disabled={refreshInProgress}
-                data-testid="review-option-refresh"
-                className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs"
-              >
-                <RefreshCw size={13} className={cn("text-muted-foreground", refreshInProgress && "animate-spin")} />
-                {refreshInProgress ? "Refreshing" : "Refresh"}
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem
-              disabled={!activeThreadId}
-              onClick={() => {
-                if (activeThreadId) toggleLineWrap(activeThreadId);
-              }}
-              data-testid="review-option-word-wrap"
-              className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs data-disabled:cursor-not-allowed"
-            >
-              <WrapText size={13} className="text-muted-foreground" />
-              {lineWrap ? "Disable word wrap" : "Enable word wrap"}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => setBulkDiffExpand(!allExpanded)}
-              data-testid="review-option-toggle-all"
-              className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs"
-            >
-              {allExpanded ? (
-                <ChevronsDownUp size={13} className="text-muted-foreground" />
-              ) : (
-                <ChevronsUpDown size={13} className="text-muted-foreground" />
-              )}
-              {allExpanded ? "Collapse all" : "Expand all"}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+      <FileListToolbar
+        activeThreadId={activeThreadId}
+        refreshable={refreshable}
+        refreshInProgress={refreshInProgress}
+        onRefresh={onRefresh}
+        lineWrap={lineWrap}
+        toggleLineWrap={toggleLineWrap}
+        allExpanded={allExpanded}
+        onToggleAll={() => setBulkDiffExpand(!allExpanded)}
+        jumpOpen={jumpOpen}
+        onJumpOpenChange={setJumpOpen}
+        sortedFiles={sortedFiles}
+        onJumpToFile={jumpToFile}
+        renderMode={renderMode}
+        onToggleRenderMode={() =>
+          setRenderMode(renderMode === "unified" ? "side-by-side" : "unified")
+        }
+      />
+      <FileListEntries
+        listRef={listRef}
+        shouldVirtualize={shouldVirtualize}
+        virtualizer={virtualizer}
+        fileVirtualItems={fileVirtualItems}
+        scrollMargin={scrollMargin}
+        sortedFiles={sortedFiles}
+        source={source}
+        id={id}
+        threadId={threadId}
+        defaultFilesExpanded={defaultFilesExpanded}
+        cacheVersion={cacheVersion}
+        jumpTarget={jumpTarget}
+        onJumpSettled={clearJumpTarget}
+        highlightTarget={highlightTarget}
+      />
+    </div>
+  );
+}
 
-        {refreshInProgress ? (
-          <span
-            role="status"
-            aria-label="Refreshing comparison"
-            data-testid="review-refresh-progress"
-            className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground/55"
+/** Props for the persistent controls above a changed-file list. */
+interface FileListToolbarProps {
+  activeThreadId: string | null;
+  refreshable: boolean;
+  refreshInProgress: boolean;
+  onRefresh?: () => void;
+  lineWrap: boolean;
+  toggleLineWrap: (threadId: string) => void;
+  allExpanded: boolean;
+  onToggleAll: () => void;
+  jumpOpen: boolean;
+  onJumpOpenChange: (open: boolean) => void;
+  sortedFiles: string[];
+  onJumpToFile: (path: string) => void;
+  renderMode: "unified" | "side-by-side";
+  onToggleRenderMode: () => void;
+}
+
+/** Renders the controls for review display, navigation, and refresh. */
+function FileListToolbar({
+  activeThreadId,
+  refreshable,
+  refreshInProgress,
+  onRefresh,
+  lineWrap,
+  toggleLineWrap,
+  allExpanded,
+  onToggleAll,
+  jumpOpen,
+  onJumpOpenChange,
+  sortedFiles,
+  onJumpToFile,
+  renderMode,
+  onToggleRenderMode,
+}: FileListToolbarProps) {
+  return (
+    <div className="sticky top-0 z-20 flex items-center gap-0.5 bg-background/95 px-2 py-1.5 shadow-[0_8px_12px_-12px_oklch(0_0_0/0.35)] backdrop-blur-sm">
+      <ReviewOptionsMenu
+        activeThreadId={activeThreadId}
+        refreshable={refreshable}
+        refreshInProgress={refreshInProgress}
+        onRefresh={onRefresh}
+        lineWrap={lineWrap}
+        toggleLineWrap={toggleLineWrap}
+        allExpanded={allExpanded}
+        onToggleAll={onToggleAll}
+      />
+      {refreshInProgress ? (
+        <span
+          role="status"
+          aria-label="Refreshing comparison"
+          data-testid="review-refresh-progress"
+          className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground/55"
+        >
+          <RefreshCw size={12} className="animate-spin" aria-hidden="true" />
+        </span>
+      ) : null}
+      <FileJumpPopover
+        open={jumpOpen}
+        onOpenChange={onJumpOpenChange}
+        files={sortedFiles}
+        onJumpToFile={onJumpToFile}
+      />
+      <RenderModeToggle renderMode={renderMode} onToggle={onToggleRenderMode} />
+    </div>
+  );
+}
+
+/** Props for the review-options menu. */
+interface ReviewOptionsMenuProps {
+  activeThreadId: string | null;
+  refreshable: boolean;
+  refreshInProgress: boolean;
+  onRefresh?: () => void;
+  lineWrap: boolean;
+  toggleLineWrap: (threadId: string) => void;
+  allExpanded: boolean;
+  onToggleAll: () => void;
+}
+
+/** Renders the options that change how the current review appears. */
+function ReviewOptionsMenu({
+  activeThreadId,
+  refreshable,
+  refreshInProgress,
+  onRefresh,
+  lineWrap,
+  toggleLineWrap,
+  allExpanded,
+  onToggleAll,
+}: ReviewOptionsMenuProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Review options"
+        data-testid="review-options-menu"
+        className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/50 outline-none transition-colors hover:bg-muted/40 hover:text-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <MoreHorizontal size={13} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={6} className="min-w-[190px]">
+        {refreshable ? (
+          <DropdownMenuItem
+            onClick={onRefresh}
+            disabled={refreshInProgress}
+            data-testid="review-option-refresh"
+            className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs"
           >
-            <RefreshCw size={12} className="animate-spin" aria-hidden="true" />
-          </span>
+            <RefreshCw size={13} className={cn("text-muted-foreground", refreshInProgress && "animate-spin")} />
+            {refreshInProgress ? "Refreshing" : "Refresh"}
+          </DropdownMenuItem>
         ) : null}
+        <DropdownMenuItem
+          disabled={!activeThreadId}
+          onClick={() => {
+            if (activeThreadId) toggleLineWrap(activeThreadId);
+          }}
+          data-testid="review-option-word-wrap"
+          className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs data-disabled:cursor-not-allowed"
+        >
+          <WrapText size={13} className="text-muted-foreground" />
+          {lineWrap ? "Disable word wrap" : "Enable word wrap"}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={onToggleAll}
+          data-testid="review-option-toggle-all"
+          className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs"
+        >
+          {allExpanded ? (
+            <ChevronsDownUp size={13} className="text-muted-foreground" />
+          ) : (
+            <ChevronsUpDown size={13} className="text-muted-foreground" />
+          )}
+          {allExpanded ? "Collapse all" : "Expand all"}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
-        <Popover open={jumpOpen} onOpenChange={setJumpOpen}>
-          {/* Icon-only trigger; the tooltip carries the description on hover. */}
-          <Tooltip>
-            <TooltipTrigger render={<span className="inline-flex" />}>
-              <PopoverTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="Jump to file"
-                    data-testid="review-file-jump-trigger"
-                    className="h-6 w-6 text-muted-foreground/60 hover:bg-foreground/10 hover:text-foreground"
-                  >
-                    <FileSearch size={13} aria-hidden="true" />
-                  </Button>
-                }
-              />
-            </TooltipTrigger>
-            <TooltipContent side="left" className="text-xs">
-              Jump to file
-            </TooltipContent>
-          </Tooltip>
-          <PopoverContent align="end" sideOffset={6} className="w-[min(360px,calc(100vw-2rem))] p-0">
-            <Command className="rounded-lg">
-              <CommandInput
-                autoFocus
-                placeholder="Jump to file"
-                aria-label="Jump to file"
-                data-testid="review-file-filter"
-                className="h-9 font-mono text-[11px]"
-              />
-              <CommandList className="max-h-72">
-                <CommandEmpty>No files found</CommandEmpty>
-                <CommandGroup heading="Changed files">
-                  {sortedFiles.map((file) => {
-                    const basename = getFileBasename(file);
-                    const parent = getParentPath(file);
-                    return (
-                      <CommandItem
-                        key={file}
-                        value={file}
-                        data-testid={`review-file-jump-item-${file}`}
-                        onSelect={() => jumpToFile(file)}
-                        className="items-start gap-2 px-2 py-2"
-                      >
-                        <FileTypeIcon filePath={file} size={14} className="mt-0.5" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-mono text-[11px] text-foreground/85">
-                            {basename}
-                          </span>
-                          {parent && (
-                            <span className="block truncate font-mono text-[10px] text-muted-foreground/65">
-                              {parent}/
-                            </span>
-                          )}
-                        </span>
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
+/** Props for the changed-file jump popover. */
+interface FileJumpPopoverProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  files: string[];
+  onJumpToFile: (path: string) => void;
+}
 
-        <Tooltip>
-          <TooltipTrigger
+/** Renders the searchable changed-file jump control. */
+function FileJumpPopover({ open, onOpenChange, files, onJumpToFile }: FileJumpPopoverProps) {
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <PopoverTrigger
             render={
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                onClick={() => setRenderMode(renderMode === "unified" ? "side-by-side" : "unified")}
-                aria-pressed={renderMode === "side-by-side"}
-                aria-label={renderMode === "unified" ? "Switch to split view" : "Switch to unified view"}
-                className={cn(
-                  "h-6 w-6 transition-colors",
-                  renderMode === "side-by-side"
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground/50 hover:bg-muted/40 hover:text-foreground/70",
-                )}
+                aria-label="Jump to file"
+                data-testid="review-file-jump-trigger"
+                className="h-6 w-6 text-muted-foreground/60 hover:bg-foreground/10 hover:text-foreground"
               >
-                <Columns2 size={13} />
+                <FileSearch size={13} aria-hidden="true" />
               </Button>
             }
           />
-          <TooltipContent side="bottom" className="text-xs">
-            {renderMode === "unified" ? "Switch to split view" : "Switch to unified view"}
-          </TooltipContent>
-        </Tooltip>
-      </div>
-      <div
-        ref={listRef}
-        className={
-          shouldVirtualize
-            ? `${DIFF_FILE_LIST_PADDING} relative`
-            : `flex flex-col gap-2 ${DIFF_FILE_LIST_PADDING}`
+        </TooltipTrigger>
+        <TooltipContent side="left" className="text-xs">
+          Jump to file
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent align="end" sideOffset={6} className="w-[min(360px,calc(100vw-2rem))] p-0">
+        <Command className="rounded-lg">
+          <CommandInput
+            autoFocus
+            placeholder="Jump to file"
+            aria-label="Jump to file"
+            data-testid="review-file-filter"
+            className="h-9 font-mono text-[11px]"
+          />
+          <CommandList className="max-h-72">
+            <CommandEmpty>No files found</CommandEmpty>
+            <CommandGroup heading="Changed files">
+              {files.map((file) => (
+                <FileJumpItem key={file} filePath={file} onSelect={onJumpToFile} />
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Props for one changed-file jump result. */
+interface FileJumpItemProps {
+  filePath: string;
+  onSelect: (path: string) => void;
+}
+
+/** Renders a changed-file jump result. */
+function FileJumpItem({ filePath, onSelect }: FileJumpItemProps) {
+  const basename = getFileBasename(filePath);
+  const parent = getParentPath(filePath);
+
+  return (
+    <CommandItem
+      value={filePath}
+      data-testid={`review-file-jump-item-${filePath}`}
+      onSelect={() => onSelect(filePath)}
+      className="items-start gap-2 px-2 py-2"
+    >
+      <FileTypeIcon filePath={filePath} size={14} className="mt-0.5" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-mono text-[11px] text-foreground/85">{basename}</span>
+        {parent && (
+          <span className="block truncate font-mono text-[10px] text-muted-foreground/65">
+            {parent}/
+          </span>
+        )}
+      </span>
+    </CommandItem>
+  );
+}
+
+/** Props for the unified/split render-mode control. */
+interface RenderModeToggleProps {
+  renderMode: "unified" | "side-by-side";
+  onToggle: () => void;
+}
+
+/** Renders the unified/split render-mode control. */
+function RenderModeToggle({ renderMode, onToggle }: RenderModeToggleProps) {
+  const isSideBySide = renderMode === "side-by-side";
+  const label = isSideBySide ? "Switch to unified view" : "Switch to split view";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onClick={onToggle}
+            aria-pressed={isSideBySide}
+            aria-label={label}
+            className={cn(
+              "h-6 w-6 transition-colors",
+              isSideBySide
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground/50 hover:bg-muted/40 hover:text-foreground/70",
+            )}
+          >
+            <Columns2 size={13} />
+          </Button>
         }
-        style={shouldVirtualize ? { height: virtualizer.getTotalSize() } : undefined}
-      >
-        {shouldVirtualize
-          ? fileVirtualItems.map((virtualItem) => {
-              const file = sortedFiles[virtualItem.index];
-              if (!file) return null;
-              return (
-                <div
-                  key={virtualItem.key}
-                  ref={virtualizer.measureElement}
-                  data-index={virtualItem.index}
-                  className="absolute left-0 w-full pb-2"
-                  style={{ transform: `translateY(${virtualItem.start - scrollMargin}px)` }}
-                >
-                  <FileEntry
-                    filePath={file}
-                    source={source}
-                    id={id}
-                    threadId={threadId}
-                    defaultExpanded={defaultFilesExpanded}
-                    cacheVersion={cacheVersion}
-                    jumpToken={jumpTarget?.path === file ? jumpTarget.token : undefined}
-                    onJumpSettled={clearJumpTarget}
-                    highlightToken={highlightTarget?.path === file ? highlightTarget.token : undefined}
-                  />
-                </div>
-              );
-            })
-          : sortedFiles.map((file) => (
-              <FileEntry
-                key={file}
+      />
+      <TooltipContent side="bottom" className="text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Props for the rendered file-entry list. */
+interface FileListEntriesProps {
+  listRef: RefObject<HTMLDivElement | null>;
+  shouldVirtualize: boolean;
+  virtualizer: Virtualizer<HTMLElement, Element>;
+  fileVirtualItems: VirtualItem[];
+  scrollMargin: number;
+  sortedFiles: string[];
+  source: SelectedFile["source"];
+  id: string;
+  threadId: string;
+  defaultFilesExpanded: boolean;
+  cacheVersion: string | number;
+  jumpTarget: { path: string; token: number } | null;
+  onJumpSettled: (token: number) => void;
+  highlightTarget: { path: string; token: number } | null;
+}
+
+/** Renders virtualized or static file entries for the current comparison. */
+function FileListEntries({
+  listRef,
+  shouldVirtualize,
+  virtualizer,
+  fileVirtualItems,
+  scrollMargin,
+  sortedFiles,
+  source,
+  id,
+  threadId,
+  defaultFilesExpanded,
+  cacheVersion,
+  jumpTarget,
+  onJumpSettled,
+  highlightTarget,
+}: FileListEntriesProps) {
+  return (
+    <div
+      ref={listRef}
+      className={
+        shouldVirtualize
+          ? `${DIFF_FILE_LIST_PADDING} relative`
+          : `flex flex-col gap-2 ${DIFF_FILE_LIST_PADDING}`
+      }
+      style={shouldVirtualize ? { height: virtualizer.getTotalSize() } : undefined}
+    >
+      {shouldVirtualize ? (
+        fileVirtualItems.map((virtualItem) => {
+          const file = sortedFiles[virtualItem.index];
+          if (!file) return null;
+          return (
+            <div
+              key={virtualItem.key}
+              ref={virtualizer.measureElement}
+              data-index={virtualItem.index}
+              className="absolute left-0 w-full pb-2"
+              style={{ transform: `translateY(${virtualItem.start - scrollMargin}px)` }}
+            >
+              <FileListEntry
                 filePath={file}
                 source={source}
                 id={id}
                 threadId={threadId}
-                defaultExpanded={defaultFilesExpanded}
+                defaultFilesExpanded={defaultFilesExpanded}
                 cacheVersion={cacheVersion}
-                jumpToken={jumpTarget?.path === file ? jumpTarget.token : undefined}
-                onJumpSettled={clearJumpTarget}
-                highlightToken={highlightTarget?.path === file ? highlightTarget.token : undefined}
+                jumpTarget={jumpTarget}
+                onJumpSettled={onJumpSettled}
+                highlightTarget={highlightTarget}
               />
-            ))}
-      </div>
+            </div>
+          );
+        })
+      ) : (
+        sortedFiles.map((file) => (
+          <FileListEntry
+            key={file}
+            filePath={file}
+            source={source}
+            id={id}
+            threadId={threadId}
+            defaultFilesExpanded={defaultFilesExpanded}
+            cacheVersion={cacheVersion}
+            jumpTarget={jumpTarget}
+            onJumpSettled={onJumpSettled}
+            highlightTarget={highlightTarget}
+          />
+        ))
+      )}
     </div>
+  );
+}
+
+/** Props forwarded from a file list to a single file entry. */
+interface FileListEntryProps {
+  filePath: string;
+  source: SelectedFile["source"];
+  id: string;
+  threadId: string;
+  defaultFilesExpanded: boolean;
+  cacheVersion: string | number;
+  jumpTarget: { path: string; token: number } | null;
+  onJumpSettled: (token: number) => void;
+  highlightTarget: { path: string; token: number } | null;
+}
+
+/** Renders a single file entry with any active jump state. */
+function FileListEntry({
+  filePath,
+  source,
+  id,
+  threadId,
+  defaultFilesExpanded,
+  cacheVersion,
+  jumpTarget,
+  onJumpSettled,
+  highlightTarget,
+}: FileListEntryProps) {
+  return (
+    <FileEntry
+      filePath={filePath}
+      source={source}
+      id={id}
+      threadId={threadId}
+      defaultExpanded={defaultFilesExpanded}
+      cacheVersion={cacheVersion}
+      jumpToken={jumpTarget?.path === filePath ? jumpTarget.token : undefined}
+      onJumpSettled={onJumpSettled}
+      highlightToken={highlightTarget?.path === filePath ? highlightTarget.token : undefined}
+    />
   );
 }
 

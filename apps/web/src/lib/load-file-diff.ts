@@ -2,6 +2,29 @@ import type { McodeTransport } from "@/transport/types";
 import type { SelectedFile } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
+async function loadBranchFileDiff(
+  transport: McodeTransport,
+  id: string,
+  filePath: string,
+  threadId: string | undefined,
+): Promise<string> {
+  const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+  if (!workspaceId) return "";
+  const separator = id.indexOf("...");
+  const base = separator >= 0 ? id.slice(0, separator) : undefined;
+  const target = separator >= 0 ? id.slice(separator + 3) : undefined;
+  return transport.getBranchDiff(workspaceId, base, target, filePath, undefined, threadId);
+}
+
+async function loadCommitFileDiff(
+  transport: McodeTransport,
+  id: string,
+  filePath: string,
+): Promise<string> {
+  const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+  return workspaceId ? transport.getCommitDiff(workspaceId, id, filePath) : "";
+}
+
 /**
  * Fetch the unified diff for a single file in a Review view. Centralizes the
  * per-source routing shared by the inline file rows and the selected-file pane,
@@ -28,19 +51,11 @@ export async function loadFileDiff(
       return transport.getWorkingTreeDiff(id, false, filePath, undefined, threadId);
     case "staged":
       return transport.getWorkingTreeDiff(id, true, filePath, undefined, threadId);
-    case "branch": {
+    case "branch":
       // For branch, `id` is the comparison range `base...target` (git refnames
       // can't contain ".."), so the cache key and per-file fetch vary by pair.
-      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-      if (!workspaceId) return "";
-      const sep = id.indexOf("...");
-      const base = sep >= 0 ? id.slice(0, sep) : undefined;
-      const target = sep >= 0 ? id.slice(sep + 3) : undefined;
-      return transport.getBranchDiff(workspaceId, base, target, filePath, undefined, threadId);
-    }
-    case "commit": {
-      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
-      return workspaceId ? transport.getCommitDiff(workspaceId, id, filePath) : "";
-    }
+      return loadBranchFileDiff(transport, id, filePath, threadId);
+    case "commit":
+      return loadCommitFileDiff(transport, id, filePath);
   }
 }

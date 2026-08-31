@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { mkdtempSync } from "node:fs";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   compareSQLiteProfileReports,
   openSQLiteProfileDatabase,
@@ -37,15 +37,15 @@ if (options.help) {
     throw new Error("SQLite certification requires --baseline <path>.");
   }
   const baselinePath = options.baselinePath
-    ? resolve(options.baselinePath)
+    ? NodePath.resolve(options.baselinePath)
     : undefined;
   const baseline = baselinePath ? readBaseline(baselinePath) : undefined;
-  const profileDirectory = mkdtempSync(join(tmpdir(), "mcode-sqlite-profile-"));
+  const profileDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-sqlite-profile-"));
   try {
     const report = await runSQLiteProfile(options.samples, (workload, sample) => {
-      const dbPath = join(profileDirectory, `${sample}-${workload}.sqlite`);
+      const dbPath = NodePath.join(profileDirectory, `${sample}-${workload}.sqlite`);
       return openSQLiteProfileDatabase(dbPath);
-    });
+    }, hostRuntime);
 
     if (baseline && baselinePath) {
       report.comparison = compareSQLiteProfileReports(
@@ -59,8 +59,8 @@ if (options.help) {
     const output = options.certify
       ? createSQLiteCertificationReport(
         report,
-        runSQLiteRecoveryCertification(join(profileDirectory, "recovery")),
-        runSQLiteCacheBudgetCertification(join(profileDirectory, "cache-budget")),
+        runSQLiteRecoveryCertification(NodePath.join(profileDirectory, "recovery")),
+        runSQLiteCacheBudgetCertification(NodePath.join(profileDirectory, "cache-budget")),
       )
       : report;
     writeReport(output, options.outputPath);
@@ -71,17 +71,17 @@ if (options.help) {
       process.exitCode = 1;
     }
   } finally {
-    rmSync(profileDirectory, { recursive: true, force: true });
+    NodeFS.rmSync(profileDirectory, { recursive: true, force: true });
   }
 }
 
 function readBaseline(
   baselinePath: string,
 ): ReturnType<typeof parseSQLiteProfileBaseline> {
-  if (!existsSync(baselinePath)) {
+  if (!NodeFS.existsSync(baselinePath)) {
     throw new Error(`Baseline report not found: ${baselinePath}`);
   }
-  const baselineBytes = readFileSync(baselinePath);
+  const baselineBytes = NodeFS.readFileSync(baselinePath);
   if (baselineBytes.byteLength > MAX_BASELINE_BYTES) {
     throw new Error(`Baseline report exceeds ${MAX_BASELINE_BYTES} bytes.`);
   }
@@ -94,9 +94,9 @@ function writeReport(
 ): void {
   const json = `${JSON.stringify(report, null, 2)}\n`;
   if (outputPath) {
-    const resolvedOutputPath = resolve(outputPath);
-    mkdirSync(dirname(resolvedOutputPath), { recursive: true });
-    writeFileSync(resolvedOutputPath, json, { encoding: "utf8", flag: "w" });
+    const resolvedOutputPath = NodePath.resolve(outputPath);
+    NodeFS.mkdirSync(NodePath.dirname(resolvedOutputPath), { recursive: true });
+    NodeFS.writeFileSync(resolvedOutputPath, json, { encoding: "utf8", flag: "w" });
   }
   process.stdout.write(json);
 }

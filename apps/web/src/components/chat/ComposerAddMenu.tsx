@@ -7,6 +7,7 @@ import {
 } from "react";
 import { Check, FilePlus2, Goal, ListChecks, Network, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 import type {
   ComposerCapabilityId,
@@ -146,24 +147,32 @@ export function ComposerAddMenu({
     buttons[nextIndex]?.focus();
   }, []);
 
+  const addButton = (
+    <Button
+      ref={triggerRef}
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label="Add to composer"
+      aria-expanded={open}
+      aria-haspopup="menu"
+      data-testid="composer-add"
+      disabled={disabled}
+      onClick={toggleMenu}
+      className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+    >
+      <Plus size={16} aria-hidden />
+    </Button>
+  );
+
   return (
     <>
-      <Button
-        ref={triggerRef}
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label="Add to composer"
-        title="Add to composer"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        data-testid="composer-add"
-        disabled={disabled}
-        onClick={toggleMenu}
-        className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-      >
-        <Plus size={16} aria-hidden />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={disabled ? <span className="inline-flex">{addButton}</span> : addButton}
+        />
+        <TooltipContent>Add to composer</TooltipContent>
+      </Tooltip>
       {open && anchorRect ? (
         <ComposerOverlaySurface
           data-testid="composer-add-menu"

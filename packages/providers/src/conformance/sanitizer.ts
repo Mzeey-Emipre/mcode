@@ -1,5 +1,5 @@
-import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { createProviderFixtureManifest } from "./fixture-safety.js";
 import type {
   FixtureExpectedSemantics,
@@ -34,16 +34,16 @@ export function sanitizeProviderFixtureFile(input: {
   outputFile: string;
   metadata: ProviderFixtureSanitizerMetadata;
 }): ProviderFixtureManifest {
-  const rawFile = requireContainedPath(input.rawFile, resolve(".conformance-raw"), "raw capture");
+  const rawFile = requireContainedPath(input.rawFile, NodePath.resolve(".conformance-raw"), "raw capture");
   const outputFile = requireContainedPath(
     input.outputFile,
-    resolve("src/conformance/fixtures"),
+    NodePath.resolve("src/conformance/fixtures"),
     "fixture output",
   );
-  if (statSync(rawFile).size > MAX_RAW_CAPTURE_BYTES) {
+  if (NodeFS.statSync(rawFile).size > MAX_RAW_CAPTURE_BYTES) {
     throw new TypeError("Provider raw capture exceeds the size limit");
   }
-  const rows = readFileSync(rawFile, "utf8")
+  const rows = NodeFS.readFileSync(rawFile, "utf8")
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0)
     .map((line, index) => sanitizeRawRow(JSON.parse(line) as unknown, index + 1));
@@ -58,32 +58,49 @@ export function sanitizeProviderFixtureFile(input: {
     },
     input: { events: rows },
   });
-  writeFileSync(outputFile, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  NodeFS.writeFileSync(outputFile, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
   return manifest;
 }
 
 function sanitizeRawRow(value: unknown, sequence: number): SanitizedTraceEvent {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError(`Provider raw capture row ${sequence} is invalid`);
-  }
-  const row = value as Record<string, unknown>;
-  if (typeof row.kind !== "string" || !EVENT_KINDS.has(row.kind as SanitizedTraceEvent["kind"])) {
+  const row = requireSanitizableRawRow(value, sequence);
+  const event: SanitizedTraceEvent = { kind: requireSanitizedEventKind(row.kind, sequence), sequence };
+  addSanitizedAlias(event, "nativeId", row.nativeId, "NATIVE");
+  addSanitizedAlias(event, "pairId", row.pairId, "PAIR");
+  addSanitizedSize(event, row.size);
+  addSanitizedStatus(event, row.status);
+  return event;
+}
+
+function requireSanitizableRawRow(value: unknown, sequence: number): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`Provider raw capture row ${sequence} is invalid`);
+  return value as Record<string, unknown>;
+}
+
+function requireSanitizedEventKind(value: unknown, sequence: number): SanitizedTraceEvent["kind"] {
+  if (typeof value !== "string" || !EVENT_KINDS.has(value as SanitizedTraceEvent["kind"])) {
     throw new TypeError(`Provider raw capture row ${sequence} kind is invalid`);
   }
-  const event: SanitizedTraceEvent = { kind: row.kind as SanitizedTraceEvent["kind"], sequence };
-  if (typeof row.nativeId === "string" && row.nativeId.length > 0 && row.nativeId.length <= 256) {
-    event.nativeId = normalizeAlias(row.nativeId, "NATIVE");
+  return value as SanitizedTraceEvent["kind"];
+}
+
+function addSanitizedAlias(
+  event: SanitizedTraceEvent,
+  key: "nativeId" | "pairId",
+  value: unknown,
+  prefix: string,
+): void {
+  if (typeof value === "string" && value.length > 0 && value.length <= 256) event[key] = normalizeAlias(value, prefix);
+}
+
+function addSanitizedSize(event: SanitizedTraceEvent, value: unknown): void {
+  if (Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 100_000_000) event.size = Number(value);
+}
+
+function addSanitizedStatus(event: SanitizedTraceEvent, value: unknown): void {
+  if (typeof value === "string" && EVENT_STATUSES.has(value as NonNullable<SanitizedTraceEvent["status"]>)) {
+    event.status = value as NonNullable<SanitizedTraceEvent["status"]>;
   }
-  if (typeof row.pairId === "string" && row.pairId.length > 0 && row.pairId.length <= 256) {
-    event.pairId = normalizeAlias(row.pairId, "PAIR");
-  }
-  if (Number.isSafeInteger(row.size) && Number(row.size) >= 0 && Number(row.size) <= 100_000_000) {
-    event.size = Number(row.size);
-  }
-  if (typeof row.status === "string" && EVENT_STATUSES.has(row.status as NonNullable<SanitizedTraceEvent["status"]>)) {
-    event.status = row.status as NonNullable<SanitizedTraceEvent["status"]>;
-  }
-  return event;
 }
 
 function normalizeAlias(value: string, prefix: string): string {
@@ -96,9 +113,9 @@ function normalizeAlias(value: string, prefix: string): string {
 }
 
 function requireContainedPath(filePath: string, directory: string, label: string): string {
-  const resolved = resolve(filePath);
-  const relativePath = relative(directory, resolved);
-  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(relativePath)) {
+  const resolved = NodePath.resolve(filePath);
+  const relativePath = NodePath.relative(directory, resolved);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${NodePath.sep}`) || NodePath.isAbsolute(relativePath)) {
     throw new TypeError(`Provider ${label} must stay under ${directory}`);
   }
   return resolved;

@@ -110,28 +110,33 @@ function validBoundedId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_SURFACE_ID_LENGTH;
 }
 
+function validSurfaceGeneration(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+function validateSurfaceScope(value: unknown): PreviewSurfaceIdentity["scope"] | null {
+  if (typeof value !== "object" || value === null) return null;
+  const scope = value as Partial<PreviewSurfaceIdentity["scope"]>;
+  if (scope.kind !== "thread" && scope.kind !== "workspace") return null;
+  if (!validBoundedId(scope.id)) return null;
+  return { kind: scope.kind, id: scope.id.trim() };
+}
+
+function validateSurfaceIdentity(value: unknown): PreviewSurfaceIdentity | null {
+  if (typeof value !== "object" || value === null) return null;
+  const identity = value as Partial<PreviewSurfaceIdentity>;
+  const scope = validateSurfaceScope(identity.scope);
+  if (!validBoundedId(identity.workspaceId) || !validBoundedId(identity.tabId) || !scope) return null;
+  return { workspaceId: identity.workspaceId.trim(), scope, tabId: identity.tabId.trim() };
+}
+
 function validateSurface(value: unknown): PreviewSurfaceRef | null {
   if (typeof value !== "object" || value === null) return null;
   const candidate = value as Partial<PreviewSurfaceRef>;
-  const identity = candidate.identity;
-  if (typeof candidate.generation !== "number" || !Number.isSafeInteger(candidate.generation) || candidate.generation < 1) return null;
-  if (typeof identity !== "object" || identity === null) return null;
-  const typedIdentity = identity as Partial<PreviewSurfaceIdentity>;
-  const scope = typedIdentity.scope;
-  if (
-    !validBoundedId(typedIdentity.workspaceId) ||
-    typeof scope !== "object" ||
-    scope === null ||
-    (scope.kind !== "thread" && scope.kind !== "workspace") ||
-    !validBoundedId(scope.id) ||
-    !validBoundedId(typedIdentity.tabId)
-  ) return null;
+  const identity = validateSurfaceIdentity(candidate.identity);
+  if (!validSurfaceGeneration(candidate.generation) || !identity) return null;
   return {
-    identity: {
-      workspaceId: typedIdentity.workspaceId.trim(),
-      scope: { kind: scope.kind, id: scope.id.trim() },
-      tabId: typedIdentity.tabId.trim(),
-    },
+    identity,
     generation: candidate.generation,
   };
 }
@@ -215,6 +220,14 @@ function errorResult(error: string, errorCode?: string | number): PreviewSurface
 
 function staleGenerationResult(currentGeneration: number): PreviewSurfaceResult {
   return { ok: false, error: "stale-generation", nextGeneration: currentGeneration + 1 };
+}
+
+function isSurfaceResult(value: unknown): value is PreviewSurfaceResult {
+  return typeof value === "object" && value !== null && "ok" in value;
+}
+
+function asPrepareInput(value: unknown): Partial<PreviewSurfacePrepareInput> {
+  return typeof value === "object" && value !== null ? value as Partial<PreviewSurfacePrepareInput> : {};
 }
 
 function validateSenderAndSurface(
@@ -322,63 +335,85 @@ export function requestRendererSurfaceDiscard(
 /** Releases all adopted and pending surfaces owned by one closing renderer window. */
 export function disposePreviewSurfacesForWindow(windowId: number): void {
   const adopted = adoptedByWindow.get(windowId);
-  for (const key of [...(adopted?.keys() ?? [])]) {
+  for (const key of Array.from(adopted?.keys() ?? [])) {
     dropAdoption(windowId, key);
   }
   pendingByWindow.delete(windowId);
   generationByWindow.delete(windowId);
 }
 
-function prepareSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSurfaceResult {
-  const input = typeof inputValue === "object" && inputValue !== null ? inputValue as Partial<PreviewSurfacePrepareInput> : {};
-  if (!validAdoptionToken(input.adoptionToken)) return errorResult("invalid-adoption-token");
-  const validated = validateSenderAndSurface(event, input.surface);
-  if ("ok" in validated) return validated;
-  const { win, surface } = validated;
+function adoptionTokenExists(records: Iterable<Map<string, { adoptionToken: string }>>, token: string): boolean {
+  for (const entries of records) {
+    for (const candidate of entries.values()) {
+      if (candidate.adoptionToken === token) return true;
+    }
+  }
+  return false;
+}
+
+function hasExistingToken(token: string): boolean {
+  return adoptionTokenExists(pendingByWindow.values(), token) || adoptionTokenExists(adoptedByWindow.values(), token);
+}
+
+function prepareGeneration(win: BrowserWindow, surface: PreviewSurfaceRef): PreviewSurfaceResult | { key: string; adopted: AdoptionRecord | undefined; pending: PreviewSurfacePrepareInput | undefined } {
   const key = surfaceKey(surface.identity);
   const adopted = adoptedByWindow.get(win.id)?.get(key);
   if (adopted?.surface.generation === surface.generation) return errorResult("duplicate-adoption");
   const pending = pendingByWindow.get(win.id)?.get(key);
   if (pending?.surface.generation === surface.generation) return errorResult("duplicate-adoption");
   const currentGeneration = generationByWindow.get(win.id)?.get(key);
-  if (currentGeneration !== undefined && surface.generation <= currentGeneration) {
-    return staleGenerationResult(currentGeneration);
-  }
-  for (const records of pendingByWindow.values()) {
-    for (const candidate of records.values()) {
-      if (candidate.adoptionToken === input.adoptionToken) return errorResult("duplicate-adoption-token");
-    }
-  }
-  for (const records of adoptedByWindow.values()) {
-    for (const candidate of records.values()) {
-      if (candidate.adoptionToken === input.adoptionToken) return errorResult("duplicate-adoption-token");
-    }
-  }
-  if (adopted) dropAdoption(win.id, key);
-  if (pending) dropPending(win.id, key);
-  windowMap(generationByWindow, win.id).set(key, surface.generation);
-  windowMap(pendingByWindow, win.id).set(key, { surface, adoptionToken: input.adoptionToken });
+  if (currentGeneration !== undefined && surface.generation <= currentGeneration) return staleGenerationResult(currentGeneration);
+  return { key, adopted, pending };
+}
+
+function replacePreparedSurface(windowId: number, key: string, adopted: AdoptionRecord | undefined, pending: PreviewSurfacePrepareInput | undefined): void {
+  if (adopted) dropAdoption(windowId, key);
+  if (pending) dropPending(windowId, key);
+}
+
+function prepareSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSurfaceResult {
+  const input = asPrepareInput(inputValue);
+  if (!validAdoptionToken(input.adoptionToken)) return errorResult("invalid-adoption-token");
+  const validated = validateSenderAndSurface(event, input.surface);
+  if (isSurfaceResult(validated)) return validated;
+  const { win, surface } = validated;
+  const generation = prepareGeneration(win, surface);
+  if (isSurfaceResult(generation)) return generation;
+  if (hasExistingToken(input.adoptionToken)) return errorResult("duplicate-adoption-token");
+  replacePreparedSurface(win.id, generation.key, generation.adopted, generation.pending);
+  windowMap(generationByWindow, win.id).set(generation.key, surface.generation);
+  windowMap(pendingByWindow, win.id).set(generation.key, { surface, adoptionToken: input.adoptionToken });
   return { ok: true };
 }
 
-function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSurfaceResult {
-  const input = typeof inputValue === "object" && inputValue !== null ? inputValue as Partial<PreviewSurfaceAdoptInput> : {};
-  if (!validAdoptionToken(input.adoptionToken)) return errorResult("invalid-adoption-token");
-  const validated = validateSenderAndSurface(event, input.surface);
-  if ("ok" in validated) return validated;
-  const { win, surface, owner } = validated;
-  const key = surfaceKey(surface.identity);
-  const currentGeneration = generationByWindow.get(win.id)?.get(key);
-  if (currentGeneration !== surface.generation) return errorResult("stale-generation");
+function validateAdoptionSlot(
+  win: BrowserWindow,
+  surface: PreviewSurfaceRef,
+  adoptionToken: string,
+  key: string,
+): PreviewSurfaceResult | null {
+  if (generationByWindow.get(win.id)?.get(key) !== surface.generation) return errorResult("stale-generation");
   const pending = pendingForWindow(win.id, surface);
-  if (!pending || pending.adoptionToken !== input.adoptionToken) return errorResult("adoption-not-prepared");
-  if (adoptedByWindow.get(win.id)?.has(key)) return errorResult("duplicate-adoption");
-  const guest = findPendingGuest(event.sender, input.adoptionToken);
-  if (!guest) {
-    const matches = electronWebContents.getAllWebContents().filter((candidate) =>
-      candidate.getURL() === `about:blank#${input.adoptionToken}` && candidate.hostWebContents === event.sender);
-    return errorResult(matches.length > 1 ? "non-unique-adoption" : "guest-not-found");
-  }
+  if (!pending || pending.adoptionToken !== adoptionToken) return errorResult("adoption-not-prepared");
+  return adoptedByWindow.get(win.id)?.has(key) ? errorResult("duplicate-adoption") : null;
+}
+
+function guestForAdoption(sender: WebContents, adoptionToken: string): WebContents | PreviewSurfaceResult {
+  const guest = findPendingGuest(sender, adoptionToken);
+  if (guest) return guest;
+  const matches = electronWebContents.getAllWebContents().filter((candidate) =>
+    candidate.getURL() === `about:blank#${adoptionToken}` && candidate.hostWebContents === sender);
+  return errorResult(matches.length > 1 ? "non-unique-adoption" : "guest-not-found");
+}
+
+function registerAdoptedGuest(
+  event: IpcMainInvokeEvent,
+  win: BrowserWindow,
+  surface: PreviewSurfaceRef,
+  owner: { threadId: string; tabId: string; tab: TabState },
+  key: string,
+  guest: WebContents,
+): AdoptionRecord {
   const onDestroyed = () => {
     dropAdoption(win.id, key);
     setRendererResidency(win, owner, null);
@@ -386,23 +421,44 @@ function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSu
   guest.once("destroyed", onDestroyed);
   const disposePopup = previewSessionAdapter.bindGuestPopup(guest, {
     sourceSurface: surface,
-    emitPopup: (request) => {
-      if (!win.isDestroyed() && !event.sender.isDestroyed()) {
-        event.sender.send(PREVIEW_POPUP_REQUESTED_CHANNEL, request);
-      }
-    },
+    emitPopup: (request) => emitPreviewPopup(event.sender, win, request),
     isAgentOperationActive: isBrowserAutomationAgentOperationActive,
   });
-  registerPreviewClipboardGuest(guest, () => {
-    if (win.isDestroyed() || !win.isFocused()) return false;
-    const record = adoptedByWindow.get(win.id)?.get(key);
-    return record?.webContents === guest && record?.surface.generation === surface.generation;
-  });
-  const dispose = () => {
-    guest.removeListener("destroyed", onDestroyed);
-    disposePopup();
+  registerPreviewClipboardGuest(guest, () => ownsFocusedAdoptedGuest(win, key, guest, surface));
+  return {
+    surface,
+    adoptionToken: "",
+    webContents: guest,
+    dispose: () => {
+      guest.removeListener("destroyed", onDestroyed);
+      disposePopup();
+    },
   };
-  windowMap(adoptedByWindow, win.id).set(key, { surface, adoptionToken: input.adoptionToken, webContents: guest, dispose });
+}
+
+function emitPreviewPopup(sender: WebContents, win: BrowserWindow, request: unknown): void {
+  if (!win.isDestroyed() && !sender.isDestroyed()) sender.send(PREVIEW_POPUP_REQUESTED_CHANNEL, request);
+}
+
+function ownsFocusedAdoptedGuest(win: BrowserWindow, key: string, guest: WebContents, surface: PreviewSurfaceRef): boolean {
+  if (win.isDestroyed() || !win.isFocused()) return false;
+  const record = adoptedByWindow.get(win.id)?.get(key);
+  return record?.webContents === guest && record?.surface.generation === surface.generation;
+}
+
+function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSurfaceResult {
+  const input = asPrepareInput(inputValue);
+  if (!validAdoptionToken(input.adoptionToken)) return errorResult("invalid-adoption-token");
+  const validated = validateSenderAndSurface(event, input.surface);
+  if (isSurfaceResult(validated)) return validated;
+  const { win, surface, owner } = validated;
+  const key = surfaceKey(surface.identity);
+  const slotError = validateAdoptionSlot(win, surface, input.adoptionToken, key);
+  if (slotError) return slotError;
+  const guest = guestForAdoption(event.sender, input.adoptionToken);
+  if (isSurfaceResult(guest)) return guest;
+  const record = registerAdoptedGuest(event, win, surface, owner, key, guest);
+  windowMap(adoptedByWindow, win.id).set(key, { ...record, adoptionToken: input.adoptionToken });
   dropPending(win.id, key);
   setRendererResidency(win, owner, surface.generation);
   logger.info("Preview: adopted typed webview surface", {
@@ -414,8 +470,40 @@ function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSu
   return { ok: true };
 }
 
+function asReleaseInput(value: unknown): Partial<PreviewSurfaceReleaseInput> {
+  return typeof value === "object" && value !== null ? value as Partial<PreviewSurfaceReleaseInput> : {};
+}
+
+function releaseRecordForSender(win: BrowserWindow, sender: WebContents, key: string): PreviewSurfaceResult | null {
+  const record = adoptedByWindow.get(win.id)?.get(key);
+  if (!record) return null;
+  if (record.webContents.hostWebContents !== sender) return errorResult("webcontents-owner-mismatch");
+  dropAdoption(win.id, key);
+  return null;
+}
+
+function applyDiscardRelease(win: BrowserWindow, owner: { threadId: string; tabId: string; tab: TabState }, surface: PreviewSurfaceRef): void {
+  const session = getSession(win);
+  const activeTabId = getThreadTabSet(session, owner.threadId, surface.identity.workspaceId)?.activeTabId;
+  if (session.lastPreviewThreadId === owner.threadId && activeTabId === owner.tabId) {
+    applyPageStatus(win, session, { type: "discard" });
+  }
+  bumpPerf("inactiveTabBudgetEvictions");
+}
+
+function clearReleasedResidency(
+  win: BrowserWindow,
+  owner: { threadId: string; tabId: string; tab: TabState } | null,
+  surface: PreviewSurfaceRef,
+  reason: PreviewSurfaceReleaseInput["reason"],
+): void {
+  if (!owner) return;
+  setRendererResidency(win, owner, null);
+  if (reason === "discard") applyDiscardRelease(win, owner, surface);
+}
+
 function releaseSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSurfaceResult {
-  const input = typeof inputValue === "object" && inputValue !== null ? inputValue as Partial<PreviewSurfaceReleaseInput> : {};
+  const input = asReleaseInput(inputValue);
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || win.isDestroyed()) return errorResult("no-window");
   const surface = validateSurface(input.surface);
@@ -425,80 +513,86 @@ function releaseSurface(event: IpcMainInvokeEvent, inputValue: unknown): Preview
   const owner = findOwnedTab(win, surface.identity);
   const currentGeneration = generationByWindow.get(win.id)?.get(key);
   if (currentGeneration !== surface.generation) return errorResult("stale-generation");
-  const record = adoptedByWindow.get(win.id)?.get(key);
-  if (record) {
-    if (record.webContents.hostWebContents !== event.sender) return errorResult("webcontents-owner-mismatch");
-    dropAdoption(win.id, key);
-  }
+  const recordError = releaseRecordForSender(win, event.sender, key);
+  if (recordError) return recordError;
   dropPending(win.id, key);
-  if (owner) {
-    setRendererResidency(win, owner, null);
-    if (input.reason === "discard") {
-      const session = getSession(win);
-      const activeTabId = getThreadTabSet(
-        session,
-        owner.threadId,
-        surface.identity.workspaceId,
-      )?.activeTabId;
-      if (session.lastPreviewThreadId === owner.threadId && activeTabId === owner.tabId) {
-        applyPageStatus(win, session, { type: "discard" });
-      }
-      bumpPerf("inactiveTabBudgetEvictions");
-    }
-  }
+  clearReleasedResidency(win, owner, surface, input.reason);
   return { ok: true };
 }
+
+interface NavigationContext {
+  readonly win: BrowserWindow;
+  readonly surface: PreviewSurfaceRef;
+  readonly sender: WebContents;
+  readonly guest: WebContents;
+}
+
+interface NavigationInput {
+  readonly kind: string;
+  readonly address?: unknown;
+}
+
+function asNavigationInput(value: unknown): NavigationInput | null {
+  if (typeof value !== "object" || value === null) return null;
+  const input = value as { kind?: unknown; address?: unknown };
+  return typeof input.kind === "string" ? { kind: input.kind, address: input.address } : null;
+}
+
+function isCurrentNavigationGuest(context: NavigationContext): boolean {
+  const current = resolveAdoptedPreviewSurfaceForWindow(context.win.id, context.surface, context.sender);
+  return current?.webContents === context.guest;
+}
+
+async function navigateToAddress(context: NavigationContext, navigation: NavigationInput): Promise<PreviewSurfaceResult> {
+  const address = typeof navigation.address === "string" ? navigation.address.trim() : "";
+  if (navigation.kind === "initial" && !address) return { ok: true };
+  const resolved = await resolvePreviewNavigationTarget(address);
+  if (!resolved.ok) return errorResult(resolved.error);
+  if (!isCurrentNavigationGuest(context)) return errorResult("stale-generation");
+  trustMainProcessFileNavigation(getSession(context.win), resolved.url);
+  const result = await loadPreviewGuestUrl(context.guest, resolved.url);
+  return result.status === "committed" ? { ok: true } : errorResult("navigation-failed", result.errorCode ?? result.errorNumber);
+}
+
+function navigateHistory(context: NavigationContext, direction: "back" | "forward"): PreviewSurfaceResult {
+  const canNavigate = direction === "back" ? context.guest.canGoBack() : context.guest.canGoForward();
+  if (!canNavigate) return errorResult("history-unavailable");
+  if (!isCurrentNavigationGuest(context)) return errorResult("stale-generation");
+  if (direction === "back") context.guest.goBack();
+  else context.guest.goForward();
+  return { ok: true };
+}
+
+function reloadNavigation(context: NavigationContext, ignoreCache: boolean): PreviewSurfaceResult {
+  if (!isCurrentNavigationGuest(context)) return errorResult("stale-generation");
+  if (ignoreCache) context.guest.reloadIgnoringCache();
+  else context.guest.reload();
+  return { ok: true };
+}
+
+const navigationHandlers: Record<string, (context: NavigationContext, navigation: NavigationInput) => PreviewSurfaceResult | Promise<PreviewSurfaceResult>> = {
+  initial: navigateToAddress,
+  restored: navigateToAddress,
+  address: navigateToAddress,
+  back: (context) => navigateHistory(context, "back"),
+  forward: (context) => navigateHistory(context, "forward"),
+  reload: (context) => reloadNavigation(context, false),
+  "force-reload": (context) => reloadNavigation(context, true),
+};
 
 async function navigateSurface(event: IpcMainInvokeEvent, inputValue: unknown): Promise<PreviewSurfaceResult> {
   const input = typeof inputValue === "object" && inputValue !== null ? inputValue as Partial<PreviewSurfaceNavigateInput> : {};
   const validated = validateSenderAndSurface(event, input.surface);
-  if ("ok" in validated) return validated;
+  if (isSurfaceResult(validated)) return validated;
   const { win, surface } = validated;
-  const navigation = input.navigation;
-  if (typeof navigation !== "object" || navigation === null || typeof navigation.kind !== "string") return errorResult("invalid-navigation");
-  // Resolve immediately before the side effect. A replacement or release that
-  // raced validation must not inherit the prior guest's authority.
+  const navigation = asNavigationInput(input.navigation);
+  if (!navigation) return errorResult("invalid-navigation");
   const record = resolveAdoptedPreviewSurfaceForWindow(win.id, surface, event.sender);
   if (!record) return errorResult("stale-generation");
-  const guest = record.webContents;
+  if (!Object.hasOwn(navigationHandlers, navigation.kind)) return errorResult("invalid-navigation");
+  const handler = navigationHandlers[navigation.kind];
   try {
-    switch (navigation.kind) {
-      case "initial":
-      case "restored":
-      case "address": {
-        const address = typeof navigation.address === "string" ? navigation.address.trim() : "";
-        if (navigation.kind === "initial" && !address) return { ok: true };
-        const resolved = await resolvePreviewNavigationTarget(address);
-        if (!resolved.ok) return errorResult(resolved.error);
-        const current = resolveAdoptedPreviewSurfaceForWindow(win.id, surface, event.sender);
-        if (!current || current.webContents !== guest) return errorResult("stale-generation");
-        trustMainProcessFileNavigation(getSession(win), resolved.url);
-        const result = await loadPreviewGuestUrl(guest, resolved.url);
-        return result.status === "committed"
-          ? { ok: true }
-          : errorResult("navigation-failed", result.errorCode ?? result.errorNumber);
-      }
-      case "back":
-        if (!guest.canGoBack()) return errorResult("history-unavailable");
-        if (!resolveAdoptedPreviewSurfaceForWindow(win.id, surface, event.sender)) return errorResult("stale-generation");
-        guest.goBack();
-        return { ok: true };
-      case "forward":
-        if (!guest.canGoForward()) return errorResult("history-unavailable");
-        if (!resolveAdoptedPreviewSurfaceForWindow(win.id, surface, event.sender)) return errorResult("stale-generation");
-        guest.goForward();
-        return { ok: true };
-      case "reload":
-        if (!resolveAdoptedPreviewSurfaceForWindow(win.id, surface, event.sender)) return errorResult("stale-generation");
-        guest.reload();
-        return { ok: true };
-      case "force-reload":
-        if (!resolveAdoptedPreviewSurfaceForWindow(win.id, surface, event.sender)) return errorResult("stale-generation");
-        guest.reloadIgnoringCache();
-        return { ok: true };
-      default:
-        return errorResult("invalid-navigation");
-    }
+    return await handler({ win, surface, sender: event.sender, guest: record.webContents }, navigation);
   } catch {
     return errorResult("navigation-failed");
   }

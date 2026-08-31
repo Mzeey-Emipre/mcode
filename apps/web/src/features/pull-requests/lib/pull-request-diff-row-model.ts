@@ -332,112 +332,143 @@ export function getPullRequestDiffCell(
   };
 }
 
+interface PatchRowBuilder {
+  rows: Array<PullRequestDiffHunkRow | PullRequestDiffLineRow>;
+  hunkIndex: number;
+  pairOrdinal: number;
+  index: number;
+}
+
+function appendPatchHunk(
+  builder: PatchRowBuilder,
+  snapshotToken: string,
+  path: string,
+  fileToken: string,
+  line: ParsedDiffLine,
+): void {
+  if (line.content.startsWith("@@")) {
+    builder.hunkIndex += 1;
+    builder.pairOrdinal = 0;
+    builder.rows.push({
+      kind: "hunk",
+      key: `pr-h:${fileToken}:${builder.hunkIndex}`,
+      snapshotKey: snapshotToken,
+      path,
+      hunkIndex: builder.hunkIndex,
+      label: line.content,
+      hiddenLineCount: line.hiddenLineCount ?? 0,
+    });
+  }
+  builder.index += 1;
+}
+
+function appendPatchLine(
+  builder: PatchRowBuilder,
+  path: string,
+  fileToken: string,
+  left: PullRequestDiffCell,
+  right: PullRequestDiffCell,
+): void {
+  builder.rows.push(lineRow(path, fileToken, builder.hunkIndex, builder.pairOrdinal, left, right));
+  builder.pairOrdinal += 1;
+}
+
+function appendRemovalRun(
+  builder: PatchRowBuilder,
+  path: string,
+  fileToken: string,
+  lines: readonly ParsedDiffLine[],
+): void {
+  const removals: ParsedDiffLine[] = [];
+  const additions: ParsedDiffLine[] = [];
+  while (builder.index < lines.length && lines[builder.index]?.type === "remove") {
+    removals.push(lines[builder.index]!);
+    builder.index += 1;
+  }
+  while (builder.index < lines.length && lines[builder.index]?.type === "add") {
+    additions.push(lines[builder.index]!);
+    builder.index += 1;
+  }
+  for (let offset = 0; offset < Math.max(removals.length, additions.length); offset += 1) {
+    const left = removals[offset]
+      ? cellFromLine(fileToken, builder.hunkIndex, "left", removals[offset], builder.pairOrdinal)
+      : emptyCell(fileToken, builder.hunkIndex, "left", builder.pairOrdinal);
+    const right = additions[offset]
+      ? cellFromLine(fileToken, builder.hunkIndex, "right", additions[offset], builder.pairOrdinal)
+      : emptyCell(fileToken, builder.hunkIndex, "right", builder.pairOrdinal);
+    appendPatchLine(builder, path, fileToken, left, right);
+  }
+}
+
+function appendSinglePatchLine(
+  builder: PatchRowBuilder,
+  path: string,
+  fileToken: string,
+  line: ParsedDiffLine,
+): void {
+  const left = line.type === "add"
+    ? emptyCell(fileToken, builder.hunkIndex, "left", builder.pairOrdinal)
+    : cellFromLine(fileToken, builder.hunkIndex, "left", line, builder.pairOrdinal);
+  const right = line.type === "add"
+    ? cellFromLine(fileToken, builder.hunkIndex, "right", line, builder.pairOrdinal)
+    : cellFromLine(fileToken, builder.hunkIndex, "right", line, builder.pairOrdinal);
+  appendPatchLine(builder, path, fileToken, left, right);
+  builder.index += 1;
+}
+
+function appendPatchRow(
+  builder: PatchRowBuilder,
+  snapshotToken: string,
+  path: string,
+  fileToken: string,
+  lines: readonly ParsedDiffLine[],
+): void {
+  const current = lines[builder.index]!;
+  if (current.type === "header") return appendPatchHunk(builder, snapshotToken, path, fileToken, current);
+  if (builder.hunkIndex < 0) builder.hunkIndex = 0;
+  if (current.type === "remove") return appendRemovalRun(builder, path, fileToken, lines);
+  appendSinglePatchLine(builder, path, fileToken, current);
+}
+
 function buildPatchRows(
   snapshotToken: string,
   path: string,
   fileToken: string,
   lines: readonly ParsedDiffLine[],
 ): Array<PullRequestDiffHunkRow | PullRequestDiffLineRow> {
-  const rows: Array<PullRequestDiffHunkRow | PullRequestDiffLineRow> = [];
-  let hunkIndex = -1;
-  let pairOrdinal = 0;
-  let index = 0;
-
-  while (index < lines.length) {
-    const current = lines[index];
-    if (current.type === "header") {
-      if (current.content.startsWith("@@")) {
-        hunkIndex += 1;
-        pairOrdinal = 0;
-        rows.push({
-          kind: "hunk",
-          key: `pr-h:${fileToken}:${hunkIndex}`,
-          snapshotKey: snapshotToken,
-          path,
-          hunkIndex,
-          label: current.content,
-          hiddenLineCount: current.hiddenLineCount ?? 0,
-        });
-      }
-      index += 1;
-      continue;
-    }
-
-    if (hunkIndex < 0) hunkIndex = 0;
-    if (current.type === "remove") {
-      const removals: ParsedDiffLine[] = [];
-      const additions: ParsedDiffLine[] = [];
-      while (index < lines.length && lines[index].type === "remove") {
-        removals.push(lines[index]);
-        index += 1;
-      }
-      while (index < lines.length && lines[index].type === "add") {
-        additions.push(lines[index]);
-        index += 1;
-      }
-      const count = Math.max(removals.length, additions.length);
-      for (let offset = 0; offset < count; offset += 1) {
-        const left = removals[offset]
-          ? cellFromLine(fileToken, hunkIndex, "left", removals[offset], pairOrdinal)
-          : emptyCell(fileToken, hunkIndex, "left", pairOrdinal);
-        const right = additions[offset]
-          ? cellFromLine(fileToken, hunkIndex, "right", additions[offset], pairOrdinal)
-          : emptyCell(fileToken, hunkIndex, "right", pairOrdinal);
-        rows.push(
-          lineRow(
-            path,
-            fileToken,
-            hunkIndex,
-            pairOrdinal,
-            left,
-            right,
-          ),
-        );
-        pairOrdinal += 1;
-      }
-      continue;
-    }
-
-    if (current.type === "add") {
-      const left = emptyCell(fileToken, hunkIndex, "left", pairOrdinal);
-      const right = cellFromLine(fileToken, hunkIndex, "right", current, pairOrdinal);
-      rows.push(
-        lineRow(
-          path,
-          fileToken,
-          hunkIndex,
-          pairOrdinal,
-          left,
-          right,
-        ),
-      );
-      pairOrdinal += 1;
-      index += 1;
-      continue;
-    }
-
-    const left = cellFromLine(fileToken, hunkIndex, "left", current, pairOrdinal);
-    const right = cellFromLine(fileToken, hunkIndex, "right", current, pairOrdinal);
-    rows.push(
-      lineRow(
-        path,
-        fileToken,
-        hunkIndex,
-        pairOrdinal,
-        left,
-        right,
-      ),
-    );
-    pairOrdinal += 1;
-    index += 1;
-  }
-
-  return rows;
+  const builder: PatchRowBuilder = { rows: [], hunkIndex: -1, pairOrdinal: 0, index: 0 };
+  while (builder.index < lines.length) appendPatchRow(builder, snapshotToken, path, fileToken, lines);
+  return builder.rows;
 }
 
 interface IndexedLineAnchor {
   rowKey: string;
   cellKey: string;
+}
+
+function indexLineAnchor(
+  index: Map<string, IndexedLineAnchor>,
+  requestedKeys: ReadonlySet<string>,
+  row: PullRequestDiffLineRow,
+  side: "left" | "right",
+): void {
+  const lineNumber = side === "left" ? row.leftLineNumber : row.rightLineNumber;
+  const type = side === "left" ? row.leftType : row.rightType;
+  if (lineNumber === null || type === "empty") return;
+  const key = `${side}:${lineNumber}`;
+  if (requestedKeys.has(key) && !index.has(key)) {
+    index.set(key, { rowKey: row.key, cellKey: getPullRequestDiffCellKey(row, side) });
+  }
+}
+
+function indexLineRowAnchors(
+  index: Map<string, IndexedLineAnchor>,
+  requestedKeys: ReadonlySet<string>,
+  row: PullRequestDiffRow,
+): void {
+  if (row.kind !== "line") return;
+  indexLineAnchor(index, requestedKeys, row, "left");
+  indexLineAnchor(index, requestedKeys, row, "right");
 }
 
 function lineAnchorIndex(
@@ -447,17 +478,7 @@ function lineAnchorIndex(
   const index = new Map<string, IndexedLineAnchor>();
   if (requestedKeys.size === 0) return index;
   for (const row of rows) {
-    if (row.kind !== "line") continue;
-    for (const side of ["left", "right"] as const) {
-      const lineNumber = side === "left" ? row.leftLineNumber : row.rightLineNumber;
-      const type = side === "left" ? row.leftType : row.rightType;
-      const cellKey = getPullRequestDiffCellKey(row, side);
-      if (lineNumber === null || type === "empty") continue;
-      const key = `${side}:${lineNumber}`;
-      if (requestedKeys.has(key) && !index.has(key)) {
-        index.set(key, { rowKey: row.key, cellKey });
-      }
-    }
+    indexLineRowAnchors(index, requestedKeys, row);
     if (index.size === requestedKeys.size) break;
   }
   return index;
@@ -501,6 +522,126 @@ interface InlinePlacement {
   row: PullRequestDiffInlineRow;
 }
 
+type InlineContent =
+  | {
+      kind: "thread";
+      stableId: string;
+      coordinate: PullRequestDiffCoordinate | null;
+      outdated: boolean;
+      headOid: string;
+      value: PullRequestReviewThread;
+    }
+  | {
+      kind: "draft";
+      stableId: string;
+      coordinate: PullRequestDiffCoordinate | null;
+      outdated: boolean;
+      headOid: string | null;
+      value: PullRequestDiffDraftLike;
+    };
+
+interface InlinePlacementContext {
+  snapshotKey: string;
+  snapshotToken: string;
+  path: string;
+  fileRowKey: string;
+  grouped: Map<string, InlinePlacement>;
+}
+
+function inlineContents(
+  threads: readonly PullRequestReviewThread[],
+  drafts: readonly PullRequestDiffDraftLike[],
+): InlineContent[] {
+  return [
+    ...threads.map((thread) => ({
+      kind: "thread" as const,
+      stableId: thread.providerNodeId,
+      coordinate: getPullRequestThreadCoordinate(thread),
+      outdated: thread.isOutdated,
+      headOid: thread.headOid,
+      value: thread,
+    })),
+    ...drafts.map((draft) => ({
+      kind: "draft" as const,
+      stableId: draft.localId,
+      coordinate: draft.coordinate,
+      outdated: draft.outdated,
+      headOid: draft.coordinate?.headOid ?? null,
+      value: draft,
+    })),
+  ];
+}
+
+function hasCurrentAnchor(content: InlineContent, headOid: string): boolean {
+  return content.coordinate !== null && !content.outdated && content.headOid === headOid;
+}
+
+function addCurrentAnchorKey(
+  keys: Set<string>,
+  content: InlineContent,
+  headOid: string,
+): void {
+  if (hasCurrentAnchor(content, headOid)) addRequestedLineAnchorKeys(keys, content.coordinate!);
+}
+
+function ensureInlinePlacement(
+  context: InlinePlacementContext,
+  coordinate: PullRequestDiffCoordinate | null,
+  placement: PullRequestDiffInlineRow["placement"],
+  afterKey: string | null,
+  anchorLineKey: string | null,
+  stableId: string,
+): InlinePlacement {
+  const coordinateKey = coordinate
+    ? getPullRequestCoordinateKey(context.snapshotKey, context.path, coordinate)
+    : `file:${stablePart(context.snapshotKey)}:${stablePart(context.path)}`;
+  const groupKey = `${placement}:${afterKey ?? "tail"}:${coordinateKey}`;
+  const existing = context.grouped.get(groupKey);
+  if (existing) return existing;
+  const next: InlinePlacement = {
+    afterKey,
+    row: {
+      kind: "inline",
+      key: `pr-inline:${groupKey}:${stablePart(stableId)}`,
+      snapshotKey: context.snapshotToken,
+      path: context.path,
+      coordinate,
+      placement,
+      anchorLineKey,
+      threads: [],
+      drafts: [],
+    },
+  };
+  context.grouped.set(groupKey, next);
+  return next;
+}
+
+function inlinePlacementForContent(
+  context: InlinePlacementContext,
+  anchorIndex: ReadonlyMap<string, IndexedLineAnchor>,
+  content: InlineContent,
+  headOid: string,
+): InlinePlacement {
+  const coordinate = content.coordinate;
+  if (coordinate === null || coordinate.subjectType === "file") {
+    return ensureInlinePlacement(context, coordinate, "file", context.fileRowKey, null, content.stableId);
+  }
+  const exact = hasCurrentAnchor(content, headOid)
+    ? findThreadAnchor(anchorIndex, coordinate)
+    : null;
+  return exact
+    ? ensureInlinePlacement(context, coordinate, exact.placement, exact.rowKey, exact.cellKey, content.stableId)
+    : ensureInlinePlacement(context, coordinate, "outdated", null, null, content.stableId);
+}
+
+function attachInlineContent(placement: InlinePlacement, content: InlineContent): void {
+  if (content.kind === "thread") {
+    placement.row = { ...placement.row, threads: [...placement.row.threads, content.value] };
+    return;
+  }
+  placement.row = { ...placement.row, drafts: [...placement.row.drafts, content.value] };
+}
+
 function buildInlinePlacements(
   snapshotKey: string,
   snapshotToken: string,
@@ -511,91 +652,21 @@ function buildInlinePlacements(
   threads: readonly PullRequestReviewThread[],
   drafts: readonly PullRequestDiffDraftLike[],
 ): InlinePlacement[] {
-  const grouped = new Map<string, InlinePlacement>();
+  const contents = inlineContents(threads, drafts);
   const requestedAnchorKeys = new Set<string>();
-  for (const thread of threads) {
-    if (!thread.isOutdated && thread.headOid === headOid) {
-      addRequestedLineAnchorKeys(
-        requestedAnchorKeys,
-        getPullRequestThreadCoordinate(thread),
-      );
-    }
-  }
-  for (const draft of drafts) {
-    if (
-      !draft.outdated &&
-      draft.coordinate !== null &&
-      draft.coordinate.headOid === headOid
-    ) {
-      addRequestedLineAnchorKeys(requestedAnchorKeys, draft.coordinate);
-    }
-  }
+  for (const content of contents) addCurrentAnchorKey(requestedAnchorKeys, content, headOid);
   const anchorIndex = lineAnchorIndex(anchorRows, requestedAnchorKeys);
-
-  const ensure = (
-    coordinate: PullRequestDiffCoordinate | null,
-    placement: PullRequestDiffInlineRow["placement"],
-    afterKey: string | null,
-    anchorLineKey: string | null,
-    stableId: string,
-  ): InlinePlacement => {
-    const coordinateKey = coordinate
-      ? getPullRequestCoordinateKey(snapshotKey, path, coordinate)
-      : `file:${stablePart(snapshotKey)}:${stablePart(path)}`;
-    const groupKey = `${placement}:${afterKey ?? "tail"}:${coordinateKey}`;
-    const existing = grouped.get(groupKey);
-    if (existing) return existing;
-    const next: InlinePlacement = {
-      afterKey,
-      row: {
-        kind: "inline",
-        key: `pr-inline:${groupKey}:${stablePart(stableId)}`,
-        snapshotKey: snapshotToken,
-        path,
-        coordinate,
-        placement,
-        anchorLineKey,
-        threads: [],
-        drafts: [],
-      },
-    };
-    grouped.set(groupKey, next);
-    return next;
+  const context: InlinePlacementContext = {
+    snapshotKey,
+    snapshotToken,
+    path,
+    fileRowKey,
+    grouped: new Map(),
   };
-
-  for (const thread of threads) {
-    const coordinate = getPullRequestThreadCoordinate(thread);
-    if (coordinate.subjectType === "file") {
-      const placement = ensure(coordinate, "file", fileRowKey, null, thread.providerNodeId);
-      placement.row = { ...placement.row, threads: [...placement.row.threads, thread] };
-      continue;
-    }
-    const exact = !thread.isOutdated && thread.headOid === headOid
-      ? findThreadAnchor(anchorIndex, coordinate)
-      : null;
-    const placement = exact
-      ? ensure(coordinate, exact.placement, exact.rowKey, exact.cellKey, thread.providerNodeId)
-      : ensure(coordinate, "outdated", null, null, thread.providerNodeId);
-    placement.row = { ...placement.row, threads: [...placement.row.threads, thread] };
+  for (const content of contents) {
+    attachInlineContent(inlinePlacementForContent(context, anchorIndex, content, headOid), content);
   }
-
-  for (const draft of drafts) {
-    const coordinate = draft.coordinate;
-    if (coordinate === null || coordinate.subjectType === "file") {
-      const placement = ensure(coordinate, "file", fileRowKey, null, draft.localId);
-      placement.row = { ...placement.row, drafts: [...placement.row.drafts, draft] };
-      continue;
-    }
-    const exact = !draft.outdated && coordinate.headOid === headOid
-      ? findThreadAnchor(anchorIndex, coordinate)
-      : null;
-    const placement = exact
-      ? ensure(coordinate, exact.placement, exact.rowKey, exact.cellKey, draft.localId)
-      : ensure(coordinate, "outdated", null, null, draft.localId);
-    placement.row = { ...placement.row, drafts: [...placement.row.drafts, draft] };
-  }
-
-  return [...grouped.values()];
+  return [...context.grouped.values()];
 }
 
 function insertInlinePlacements(
@@ -730,6 +801,97 @@ function budgetDeferredPatchRows(
   };
 }
 
+function cachedRowsWithinBudget(
+  cached: CachedPatchRows,
+  maxParsedBytes: number,
+  intrinsicMaxParsedBytes: number,
+): boolean {
+  return cached.parsedBytes <= maxParsedBytes && cached.parsedBytes <= intrinsicMaxParsedBytes;
+}
+
+function boundedCachedRows(
+  snapshotToken: string,
+  fileToken: string,
+  path: string,
+  cached: CachedPatchRows,
+  intrinsicMaxParsedBytes: number,
+): CachedPatchRows {
+  return cached.parsedBytes > intrinsicMaxParsedBytes
+    ? budgetRejectedPatchRows(snapshotToken, fileToken, path)
+    : budgetDeferredPatchRows(snapshotToken, fileToken, path, cached.parsedBytes);
+}
+
+function parseFailurePatchRows(
+  snapshotToken: string,
+  fileToken: string,
+  path: string,
+  reason: Extract<PullRequestPatchParseResult, { ok: false }>['reason'],
+  maxParsedBytes: number,
+): CachedPatchRows {
+  const rows: CachedPatchRow[] = [{
+    kind: "notice",
+    key: `pr-n:${fileToken}:rejected:${reason}`,
+    snapshotKey: snapshotToken,
+    path,
+    state: "too_large",
+    message: noticeMessage("too_large"),
+  }];
+  const built: CachedPatchRows = {
+    rows,
+    parsedBytes: retainedPatchRowsBytes(rows),
+    rejected: true,
+    deferred: false,
+  };
+  return built.parsedBytes > maxParsedBytes
+    ? budgetRejectedPatchRows(snapshotToken, fileToken, path)
+    : built;
+}
+
+function parsedPatchRows(
+  snapshotToken: string,
+  fileToken: string,
+  file: PullRequestFile,
+  parsed: Extract<PullRequestPatchParseResult, { ok: true }>,
+  maxParsedBytes: number,
+  intrinsicMaxParsedBytes: number,
+): CachedPatchRows {
+  if (parsed.parsedBytes > intrinsicMaxParsedBytes)
+    return budgetRejectedPatchRows(snapshotToken, fileToken, file.path);
+  if (parsed.parsedBytes > maxParsedBytes)
+    return budgetDeferredPatchRows(snapshotToken, fileToken, file.path, parsed.parsedBytes);
+  const rows: CachedPatchRow[] = buildPatchRows(snapshotToken, file.path, fileToken, parsed.lines);
+  if (rows.length === 0) {
+    rows.push({
+      kind: "notice",
+      key: `pr-n:${fileToken}:empty`,
+      snapshotKey: snapshotToken,
+      path: file.path,
+      state: "empty",
+      message: noticeMessage("empty"),
+    });
+  }
+  const parsedBytes = retainedPatchRowsBytes(rows);
+  if (parsedBytes > intrinsicMaxParsedBytes)
+    return budgetRejectedPatchRows(snapshotToken, fileToken, file.path);
+  if (parsedBytes > maxParsedBytes)
+    return budgetDeferredPatchRows(snapshotToken, fileToken, file.path, parsedBytes);
+  return { rows, parsedBytes, rejected: false, deferred: false };
+}
+
+function builtPatchRows(
+  snapshotToken: string,
+  fileToken: string,
+  file: PullRequestFile,
+  result: AvailablePatchResult,
+  maxParsedBytes: number,
+  intrinsicMaxParsedBytes: number,
+): CachedPatchRows {
+  const parsed = parseBoundedPullRequestPatch(result.patch, result.parsedLineCount);
+  return parsed.ok
+    ? parsedPatchRows(snapshotToken, fileToken, file, parsed, maxParsedBytes, intrinsicMaxParsedBytes)
+    : parseFailurePatchRows(snapshotToken, fileToken, file.path, parsed.reason, maxParsedBytes);
+}
+
 function cachedPatchRows(
   snapshotToken: string,
   fileToken: string,
@@ -740,86 +902,18 @@ function cachedPatchRows(
 ): CachedPatchRows {
   const cached = PATCH_ROW_CACHE.get(result);
   if (cached) {
-    if (
-      cached.parsedBytes <= maxParsedBytes &&
-      cached.parsedBytes <= intrinsicMaxParsedBytes
-    ) {
-      return cached;
-    }
+    if (cachedRowsWithinBudget(cached, maxParsedBytes, intrinsicMaxParsedBytes)) return cached;
     PATCH_ROW_CACHE.delete(result);
-    return cached.parsedBytes > intrinsicMaxParsedBytes
-      ? budgetRejectedPatchRows(snapshotToken, fileToken, file.path)
-      : budgetDeferredPatchRows(
-          snapshotToken,
-          fileToken,
-          file.path,
-          cached.parsedBytes,
-        );
+    return boundedCachedRows(snapshotToken, fileToken, file.path, cached, intrinsicMaxParsedBytes);
   }
-  const parsed = parseBoundedPullRequestPatch(result.patch, result.parsedLineCount);
-  let built: CachedPatchRows;
-  if (!parsed.ok) {
-    const rows: CachedPatchRow[] = [
-      {
-        kind: "notice",
-        key: `pr-n:${fileToken}:rejected:${parsed.reason}`,
-        snapshotKey: snapshotToken,
-        path: file.path,
-        state: "too_large",
-        message: noticeMessage("too_large"),
-      },
-    ];
-    built = {
-      rows,
-      parsedBytes: retainedPatchRowsBytes(rows),
-      rejected: true,
-      deferred: false,
-    };
-    if (built.parsedBytes > maxParsedBytes) {
-      return budgetRejectedPatchRows(snapshotToken, fileToken, file.path);
-    }
-  } else {
-    if (parsed.parsedBytes > intrinsicMaxParsedBytes) {
-      return budgetRejectedPatchRows(snapshotToken, fileToken, file.path);
-    }
-    if (parsed.parsedBytes > maxParsedBytes) {
-      return budgetDeferredPatchRows(
-        snapshotToken,
-        fileToken,
-        file.path,
-        parsed.parsedBytes,
-      );
-    }
-    const rows: CachedPatchRow[] = buildPatchRows(
-      snapshotToken,
-      file.path,
-      fileToken,
-      parsed.lines,
-    );
-    if (rows.length === 0) {
-      rows.push({
-        kind: "notice",
-        key: `pr-n:${fileToken}:empty`,
-        snapshotKey: snapshotToken,
-        path: file.path,
-        state: "empty",
-        message: noticeMessage("empty"),
-      });
-    }
-    const parsedBytes = retainedPatchRowsBytes(rows);
-    if (parsedBytes > intrinsicMaxParsedBytes) {
-      return budgetRejectedPatchRows(snapshotToken, fileToken, file.path);
-    }
-    if (parsedBytes > maxParsedBytes) {
-      return budgetDeferredPatchRows(
-        snapshotToken,
-        fileToken,
-        file.path,
-        parsedBytes,
-      );
-    }
-    built = { rows, parsedBytes, rejected: false, deferred: false };
-  }
+  const built = builtPatchRows(
+    snapshotToken,
+    fileToken,
+    file,
+    result,
+    maxParsedBytes,
+    intrinsicMaxParsedBytes,
+  );
   PATCH_ROW_CACHE.set(result, built);
   return built;
 }
@@ -827,6 +921,76 @@ function cachedPatchRows(
 /** Releases cached immutable rows when their store accounting is cleared. */
 export function releasePullRequestPatchRows(result: PullRequestPatchResult | null): void {
   if (result?.ok) PATCH_ROW_CACHE.delete(result);
+}
+
+function patchFileToken(snapshotKey: string, file: PullRequestFile): string {
+  const snapshotToken = compactToken(snapshotKey);
+  return [
+    snapshotToken,
+    compactToken(`${file.locator}\0${file.path}`),
+    compactToken(`${file.path}\0${file.locator}`),
+  ].join(":");
+}
+
+function patchFileRow(
+  snapshotToken: string,
+  fileToken: string,
+  input: PullRequestDiffFileInput,
+): PullRequestDiffFileRow {
+  return {
+    kind: "file",
+    key: `pr-f:${fileToken}`,
+    snapshotKey: snapshotToken,
+    file: input.file,
+    expanded: input.expanded,
+    patchState: input.patchState,
+    threadCount: input.threads.length,
+    draftCount: input.drafts.length,
+  };
+}
+
+function isAvailablePatchResult(
+  result: PullRequestPatchResult | null,
+): result is AvailablePatchResult {
+  return result?.ok === true && (result.status === "available" || result.status === "generated");
+}
+
+function noticePatchState(input: PullRequestDiffFileInput): PullRequestDiffNoticeRow["state"] {
+  const state = input.patchResult?.ok === true ? input.patchResult.status : input.patchState;
+  return state === "available" || state === "generated" ? "error" : state;
+}
+
+function patchRowsForFile(
+  snapshotToken: string,
+  fileToken: string,
+  input: PullRequestDiffFileInput,
+  maxParsedBytes: number,
+  intrinsicMaxParsedBytes: number,
+): CachedPatchRows {
+  if (isAvailablePatchResult(input.patchResult)) {
+    return cachedPatchRows(
+      snapshotToken,
+      fileToken,
+      input.file,
+      input.patchResult,
+      maxParsedBytes,
+      intrinsicMaxParsedBytes,
+    );
+  }
+  const state = noticePatchState(input);
+  return {
+    rows: [{
+      kind: "notice",
+      key: `pr-n:${fileToken}:state:${state}`,
+      snapshotKey: snapshotToken,
+      path: input.file.path,
+      state,
+      message: noticeMessage(state, input.errorMessage),
+    }],
+    parsedBytes: 0,
+    rejected: false,
+    deferred: false,
+  };
 }
 
 function buildFileRows(
@@ -843,82 +1007,55 @@ function buildFileRows(
 } {
   const { file } = input;
   const snapshotToken = compactToken(snapshotKey);
-  const fileToken = [
-    snapshotToken,
-    compactToken(`${file.locator}\0${file.path}`),
-    compactToken(`${file.path}\0${file.locator}`),
-  ].join(":");
-  const fileRow: PullRequestDiffFileRow = {
-    kind: "file",
-    key: `pr-f:${fileToken}`,
-    snapshotKey: snapshotToken,
-    file,
-    expanded: input.expanded,
-    patchState: input.patchState,
-    threadCount: input.threads.length,
-    draftCount: input.drafts.length,
-  };
+  const fileToken = patchFileToken(snapshotKey, file);
+  const fileRow = patchFileRow(snapshotToken, fileToken, input);
   if (!input.expanded) {
     return { rows: [fileRow], parsedBytes: 0, rejected: false, deferred: false };
   }
-
-  let codeRows: readonly PullRequestDiffRow[];
-  let parsedBytes = 0;
-  let rejected = false;
-  let deferred = false;
-
-  const result = input.patchResult;
-  if (
-    result?.ok === true &&
-    (result.status === "available" || result.status === "generated")
-  ) {
-    const cached = cachedPatchRows(
-      snapshotToken,
-      fileToken,
-      file,
-      result,
-      maxParsedBytes,
-      intrinsicMaxParsedBytes,
-    );
-    codeRows = cached.rows;
-    parsedBytes = cached.parsedBytes;
-    rejected = cached.rejected;
-    deferred = cached.deferred;
-  } else {
-    let state: PullRequestDiffNoticeRow["state"];
-    if (result?.ok === true) {
-      state =
-        result.status === "available" || result.status === "generated"
-          ? "error"
-          : result.status;
-    } else {
-      state =
-        input.patchState === "available" || input.patchState === "generated"
-          ? "error"
-          : input.patchState;
-    }
-    codeRows = [{
-      kind: "notice",
-      key: `pr-n:${fileToken}:state:${state}`,
-      snapshotKey: snapshotToken,
-      path: file.path,
-      state,
-      message: noticeMessage(state, input.errorMessage),
-    }];
-  }
-
+  const patchRows = patchRowsForFile(
+    snapshotToken,
+    fileToken,
+    input,
+    maxParsedBytes,
+    intrinsicMaxParsedBytes,
+  );
   const placements = buildInlinePlacements(
     snapshotKey,
     snapshotToken,
     headOid,
     file.path,
-    codeRows,
+    patchRows.rows,
     fileRow.key,
     input.threads,
     input.drafts,
   );
-  const rows = insertInlinePlacements([fileRow, ...codeRows], placements);
-  return { rows, parsedBytes, rejected, deferred };
+  const rows = insertInlinePlacements([fileRow, ...patchRows.rows], placements);
+  return { ...patchRows, rows };
+}
+
+function fileBudget(
+  input: Parameters<typeof buildPullRequestDiffRowModel>[0],
+  file: PullRequestDiffFileInput,
+  parsedByteBudget: number,
+): { reservedBytes: number; maxParsedBytes: number; intrinsicMaxParsedBytes: number } {
+  const reservedBytes = Math.max(0, input.reservedParsedBytesByLocator?.get(file.file.locator) ?? 0);
+  return {
+    reservedBytes,
+    maxParsedBytes: reservedBytes + parsedByteBudget,
+    intrinsicMaxParsedBytes: Math.max(
+      0,
+      input.intrinsicParsedBytesByLocator?.get(file.file.locator) ?? Number.POSITIVE_INFINITY,
+    ),
+  };
+}
+
+function remainingParsedBudget(
+  parsedByteBudget: number,
+  built: ReturnType<typeof buildFileRows>,
+  reservedBytes: number,
+): number {
+  if (built.rejected || built.deferred) return parsedByteBudget;
+  return parsedByteBudget - Math.max(0, built.parsedBytes - reservedBytes);
 }
 
 /** Builds the stable, row-major sequence consumed by both unified and split views. */
@@ -936,28 +1073,19 @@ export function buildPullRequestDiffRowModel(input: {
   const deferredPatchLocators = new Set<string>();
   let parsedByteBudget = Math.max(0, input.parsedByteBudget ?? Number.POSITIVE_INFINITY);
   for (const file of input.files) {
-    const reservedBytes = Math.max(
-      0,
-      input.reservedParsedBytesByLocator?.get(file.file.locator) ?? 0,
-    );
+    const budget = fileBudget(input, file, parsedByteBudget);
     const built = buildFileRows(
       input.snapshotKey,
       input.headOid,
       file,
-      reservedBytes + parsedByteBudget,
-      Math.max(
-        0,
-        input.intrinsicParsedBytesByLocator?.get(file.file.locator)
-          ?? Number.POSITIVE_INFINITY,
-      ),
+      budget.maxParsedBytes,
+      budget.intrinsicMaxParsedBytes,
     );
     rows.push(...built.rows);
     parsedBytesByLocator.set(file.file.locator, built.parsedBytes);
     if (built.rejected) rejectedPatchLocators.add(file.file.locator);
     if (built.deferred) deferredPatchLocators.add(file.file.locator);
-    if (!built.rejected && !built.deferred) {
-      parsedByteBudget -= Math.max(0, built.parsedBytes - reservedBytes);
-    }
+    parsedByteBudget = remainingParsedBudget(parsedByteBudget, built, budget.reservedBytes);
   }
   return {
     rows,

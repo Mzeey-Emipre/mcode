@@ -1,4 +1,4 @@
-import { readFile, stat } from "fs/promises";
+import * as NodeFSPromises from "node:fs/promises";
 import type { SkillInfo } from "@mcode/contracts";
 
 const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
@@ -60,33 +60,46 @@ function tokenizePromptArguments(raw: string): string[] {
   let current = "";
   let quote: "'" | "\"" | null = null;
 
-  for (let i = 0; i < raw.length; i += 1) {
-    const ch = raw[i];
-    if (ch === "\\" && i + 1 < raw.length) {
-      current += raw[i + 1];
-      i += 1;
+  for (let index = 0; index < raw.length; index += 1) {
+    const escaped = escapedPromptCharacter(raw, index);
+    if (escaped) {
+      current += escaped.value;
+      index = escaped.nextIndex;
       continue;
     }
-    if ((ch === "'" || ch === "\"") && quote === null) {
-      quote = ch;
+    const character = raw[index]!;
+    const transition = promptQuoteTransition(quote, character);
+    quote = transition.quote;
+    if (transition.handled) {
       continue;
     }
-    if (ch === quote) {
-      quote = null;
-      continue;
-    }
-    if (quote === null && /\s/.test(ch)) {
+    if (quote === null && /\s/.test(character)) {
       if (current) {
         tokens.push(current);
         current = "";
       }
       continue;
     }
-    current += ch;
+    current += character;
   }
 
   if (current) tokens.push(current);
   return tokens;
+}
+
+function escapedPromptCharacter(raw: string, index: number): { value: string; nextIndex: number } | undefined {
+  if (raw[index] !== "\\" || index + 1 >= raw.length) return undefined;
+  return { value: raw[index + 1]!, nextIndex: index + 1 };
+}
+
+function promptQuoteTransition(
+  quote: "'" | "\"" | null,
+  character: string,
+): { quote: "'" | "\"" | null; handled: boolean } {
+  if (character !== "'" && character !== "\"") return { quote, handled: false };
+  if (quote === null) return { quote: character, handled: true };
+  if (quote === character) return { quote: null, handled: true };
+  return { quote, handled: false };
 }
 
 function parsePromptArguments(raw: string): ParsedPromptArguments {
@@ -107,7 +120,7 @@ function parsePromptArguments(raw: string): ParsedPromptArguments {
 }
 
 async function readCodexPromptTemplate(path: string): Promise<string> {
-  const templateStats = await stat(path);
+  const templateStats = await NodeFSPromises.stat(path);
   if (templateStats.size > MAX_PROMPT_TEMPLATE_BYTES) {
     throw new Error(`Codex prompt template is too large: ${path}`);
   }
@@ -123,7 +136,7 @@ async function readCodexPromptTemplate(path: string): Promise<string> {
     return cached.template;
   }
 
-  const template = stripFrontmatter(await readFile(path, "utf8"));
+  const template = stripFrontmatter(await NodeFSPromises.readFile(path, "utf8"));
   promptTemplateCache.set(path, {
     size: templateStats.size,
     mtimeMs: templateStats.mtimeMs,

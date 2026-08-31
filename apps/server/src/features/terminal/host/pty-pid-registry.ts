@@ -1,5 +1,5 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 /**
  * Describes a single PTY process entry persisted in the registry.
@@ -33,7 +33,7 @@ export class PtyPidRegistry {
    */
   constructor(dataDir: string) {
     this.entries = new Map();
-    this.filePath = path.join(dataDir, "pty-pids.json");
+    this.filePath = NodePath.join(dataDir, "pty-pids.json");
   }
 
   /**
@@ -75,9 +75,9 @@ export class PtyPidRegistry {
    */
   loadStale(): PtyPidEntry[] {
     try {
-      const raw = fs.readFileSync(this.filePath, "utf-8");
+      const raw = NodeFS.readFileSync(this.filePath, "utf-8");
       const parsed: unknown = JSON.parse(raw);
-      fs.unlinkSync(this.filePath);
+      NodeFS.unlinkSync(this.filePath);
       if (!Array.isArray(parsed)) return [];
       // Runtime shape guard: drop malformed entries rather than crashing the
       // reaper or passing garbage PIDs to process.kill.
@@ -105,7 +105,7 @@ export class PtyPidRegistry {
   clear(): void {
     this.entries.clear();
     try {
-      fs.unlinkSync(this.filePath);
+      NodeFS.unlinkSync(this.filePath);
     } catch {
       /* file may not exist - that is fine */
     }
@@ -118,7 +118,7 @@ export class PtyPidRegistry {
   private _flush(): void {
     const tmpPath = `${this.filePath}.tmp`;
     const data = JSON.stringify(Array.from(this.entries.values()), null, 2);
-    fs.writeFileSync(tmpPath, data, { encoding: "utf-8" });
-    fs.renameSync(tmpPath, this.filePath);
+    NodeFS.writeFileSync(tmpPath, data, { encoding: "utf-8" });
+    NodeFS.renameSync(tmpPath, this.filePath);
   }
 }

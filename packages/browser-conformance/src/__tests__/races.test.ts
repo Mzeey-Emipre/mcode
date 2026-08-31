@@ -1,8 +1,8 @@
-import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import * as NodeEvents from "node:events";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_CONFORMANCE_EVENT_KINDS,
   BROWSER_CONFORMANCE_FAULT_CONTROL_KINDS,
@@ -30,7 +30,7 @@ import {
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(temporaryRoots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
 });
 
 describe("Browser conformance named races", () => {
@@ -125,7 +125,7 @@ describe("Browser conformance named races", () => {
   });
 
   it("writes a bounded sanitized replay for each thrown scenario invariant", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-browser-race-replay-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-browser-race-replay-"));
     temporaryRoots.push(root);
     const race = BROWSER_CONFORMANCE_RACE_CATALOGUE.find((entry) => entry.id === "cleanup-late-response")!;
     const subject = new RecordingSubject(true);
@@ -148,14 +148,14 @@ describe("Browser conformance named races", () => {
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe("race invariant failed");
     expect(subject.disposeCount).toBe(1);
-    const replayPath = join(root, ".dev", "verification", "browser-conformance", `replay-${scenario.seed}.json`);
-    const replay = JSON.parse(await readFile(replayPath, "utf8")) as { seed: number; failingInvariant: string };
+    const replayPath = NodePath.join(root, ".dev", "verification", "browser-conformance", `replay-${scenario.seed}.json`);
+    const replay = JSON.parse(await NodeFSPromises.readFile(replayPath, "utf8")) as { seed: number; failingInvariant: string };
     expect(replay.seed).toBe(scenario.seed);
     expect(replay.failingInvariant).toBe(failingInvariant);
   });
 
   it("writes a failed replay even when the subject cannot snapshot its run", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-browser-snapshot-replay-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-browser-snapshot-replay-"));
     temporaryRoots.push(root);
     const scenario = createBrowserConformanceScenario({
       id: "snapshot-failure",
@@ -168,14 +168,14 @@ describe("Browser conformance named races", () => {
       workspaceRoot: root,
       failingInvariant: "snapshot remains available for replay",
     })).rejects.toThrow("snapshot unavailable");
-    const replayPath = join(root, ".dev", "verification", "browser-conformance", `replay-${scenario.seed}.json`);
-    const replay = JSON.parse(await readFile(replayPath, "utf8")) as { failingInvariant: string; run: { outcome: { status: string } } };
+    const replayPath = NodePath.join(root, ".dev", "verification", "browser-conformance", `replay-${scenario.seed}.json`);
+    const replay = JSON.parse(await NodeFSPromises.readFile(replayPath, "utf8")) as { failingInvariant: string; run: { outcome: { status: string } } };
     expect(replay.failingInvariant).toBe("snapshot remains available for replay");
     expect(replay.run.outcome.status).toBe("failed");
   });
 
   it("uses the replay runner around the shared executor scenario failure path", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-browser-executor-replay-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-browser-executor-replay-"));
     temporaryRoots.push(root);
     const parity = createBrowserExecutorParityScenario();
     const subject = new RecordingSubject(true);
@@ -183,10 +183,23 @@ describe("Browser conformance named races", () => {
       workspaceRoot: root,
       failingInvariant: "shared executor invariant",
     })).rejects.toThrow("race invariant failed");
-    const replayPath = join(root, ".dev", "verification", "browser-conformance", `replay-${parity.scenario.seed}.json`);
-    const replay = JSON.parse(await readFile(replayPath, "utf8")) as { scenarioId: string; failingInvariant: string };
+    const replayPath = NodePath.join(root, ".dev", "verification", "browser-conformance", `replay-${parity.scenario.seed}.json`);
+    const replay = JSON.parse(await NodeFSPromises.readFile(replayPath, "utf8")) as { scenarioId: string; failingInvariant: string };
     expect(replay.scenarioId).toBe(parity.scenario.id);
     expect(replay.failingInvariant).toBe("shared executor invariant");
+  });
+
+  it("preserves the scenario failure when observational failure reporting rejects", async () => {
+    const parity = createBrowserExecutorParityScenario();
+    const subject = new RecordingSubject(true);
+    const onFailure = vi.fn(async () => {
+      throw new Error("evidence sink unavailable");
+    });
+
+    await expect(runBrowserConformanceExecutorScenario(parity.scenario, subject, { onFailure }))
+      .rejects.toThrow("race invariant failed");
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }));
+    expect(subject.disposeCount).toBe(1);
   });
 
   it("injects each scheduled event once and validates checkpoints in the shared runner", async () => {
@@ -337,7 +350,7 @@ describe("Browser conformance named races", () => {
     ["growth", createBrowserConformanceResourceSnapshot({ identities: { targets: [{ id: "target-a", generation: 1 }, { id: "target-b", generation: 1 }] } }), "targets"],
     ["identity", createBrowserConformanceResourceSnapshot({ identities: { targets: [{ id: "target-a", generation: 2 }] } }), "targets"],
   ] as const)("turns cleanup %s into a replayable scenario failure", async (_kind, final, resource) => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-browser-cleanup-replay-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-browser-cleanup-replay-"));
     temporaryRoots.push(root);
     const baseline = createBrowserConformanceResourceSnapshot({ identities: { targets: [{ id: "target-a", generation: 1 }] } });
     const scenario = createBrowserConformanceScenario({
@@ -352,8 +365,8 @@ describe("Browser conformance named races", () => {
       failingInvariant: "cleanup resources must be released",
     })).rejects.toThrow(new RegExp(`cleanup failed: ${resource}`));
     expect(subject.disposeCount).toBe(1);
-    const replayPath = join(root, ".dev", "verification", "browser-conformance", `replay-${scenario.seed}.json`);
-    const replay = JSON.parse(await readFile(replayPath, "utf8")) as { cleanup: { comparison?: { violations?: Array<{ resource: string }> } } };
+    const replayPath = NodePath.join(root, ".dev", "verification", "browser-conformance", `replay-${scenario.seed}.json`);
+    const replay = JSON.parse(await NodeFSPromises.readFile(replayPath, "utf8")) as { cleanup: { comparison?: { violations?: Array<{ resource: string }> } } };
     expect(replay.cleanup.comparison?.violations?.map((violation) => violation.resource)).toContain(resource);
   });
 });
@@ -429,7 +442,7 @@ class CleanupSubject implements BrowserConformanceSubject {
 }
 
 class LifecycleResourceSubject implements BrowserConformanceSubject {
-  private readonly emitter = new EventEmitter();
+  private readonly emitter = new NodeEvents.EventEmitter();
   private readonly requests = new Map<string, BrowserConformanceCommand>();
   private readonly queues: BrowserConformanceScheduledEvent[] = [];
   private readonly timers = new Set<number>();

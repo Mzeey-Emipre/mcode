@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { container } from "tsyringe";
 import type Database from "better-sqlite3";
@@ -32,9 +32,9 @@ describe("Terminal diagnostics container wiring", () => {
 
   beforeEach(() => {
     container.reset();
-    temporaryDirectory = mkdtempSync(join(tmpdir(), "mcode-terminal-diagnostics-"));
+    temporaryDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-terminal-diagnostics-"));
     process.env.MCODE_TERMINAL_BACKEND = "modern";
-    process.env.MCODE_DB_PATH = join(temporaryDirectory, "mcode.db");
+    process.env.MCODE_DB_PATH = NodePath.join(temporaryDirectory, "mcode.db");
     setupContainer(temporaryDirectory);
     database = container.resolve<Database.Database>("Database");
 
@@ -72,7 +72,7 @@ describe("Terminal diagnostics container wiring", () => {
     else process.env.MCODE_TERMINAL_BACKEND = previousBackend;
     if (previousDatabasePath === undefined) delete process.env.MCODE_DB_PATH;
     else process.env.MCODE_DB_PATH = previousDatabasePath;
-    if (temporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true });
+    if (temporaryDirectory) NodeFS.rmSync(temporaryDirectory, { recursive: true, force: true });
     temporaryDirectory = undefined;
   });
 

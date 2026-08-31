@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ATTACHMENT_PROTOCOL_SCHEME,
@@ -19,10 +19,10 @@ async function createProtocolHandler(): Promise<{
   threadDirectory: string;
   handler: ProtocolHandler;
 }> {
-  const root = await mkdtemp(join(tmpdir(), "mcode-attachment-protocol-"));
+  const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-attachment-protocol-"));
   temporaryDirectories.push(root);
-  const threadDirectory = join(root, THREAD_ID);
-  await mkdir(threadDirectory, { recursive: true });
+  const threadDirectory = NodePath.join(root, THREAD_ID);
+  await NodeFSPromises.mkdir(threadDirectory, { recursive: true });
 
   let handler: ProtocolHandler | undefined;
   registerAttachmentProtocol({
@@ -43,7 +43,7 @@ async function request(handler: ProtocolHandler, url: string): Promise<Response>
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => NodeFSPromises.rm(directory, { recursive: true, force: true })));
 });
 
 describe("durable attachment protocol", () => {
@@ -61,7 +61,7 @@ describe("durable attachment protocol", () => {
     const bytes = Uint8Array.from([0, 1, 2, 127, 128, 254, 255]);
 
     for (const [extension, mimeType] of mappings) {
-      await writeFile(join(threadDirectory, `${ATTACHMENT_ID}.${extension}`), bytes);
+      await NodeFSPromises.writeFile(NodePath.join(threadDirectory, `${ATTACHMENT_ID}.${extension}`), bytes);
       const response = await request(
         handler,
         `mcode-attachment://${THREAD_ID}/${ATTACHMENT_ID}.${extension}`,
@@ -81,7 +81,7 @@ describe("durable attachment protocol", () => {
   it("uses the existing binary fallback for unknown extensions", async () => {
     const { threadDirectory, handler } = await createProtocolHandler();
     const bytes = Uint8Array.from([9, 8, 7]);
-    await writeFile(join(threadDirectory, `${ATTACHMENT_ID}.bin`), bytes);
+    await NodeFSPromises.writeFile(NodePath.join(threadDirectory, `${ATTACHMENT_ID}.bin`), bytes);
 
     const response = await request(
       handler,
@@ -96,7 +96,7 @@ describe("durable attachment protocol", () => {
   it("ignores cache-busting queries while serving the contained attachment", async () => {
     const { threadDirectory, handler } = await createProtocolHandler();
     const bytes = Uint8Array.from([3, 1, 4, 1, 5]);
-    await writeFile(join(threadDirectory, `${ATTACHMENT_ID}.jpg`), bytes);
+    await NodeFSPromises.writeFile(NodePath.join(threadDirectory, `${ATTACHMENT_ID}.jpg`), bytes);
 
     const response = await request(
       handler,
@@ -134,8 +134,8 @@ describe("durable attachment protocol", () => {
 
   it("returns 404 for missing files and directory targets", async () => {
     const { threadDirectory, handler } = await createProtocolHandler();
-    const directoryTarget = join(threadDirectory, `${ATTACHMENT_ID}.txt`);
-    await mkdir(directoryTarget);
+    const directoryTarget = NodePath.join(threadDirectory, `${ATTACHMENT_ID}.txt`);
+    await NodeFSPromises.mkdir(directoryTarget);
 
     const missingResponse = await request(
       handler,
@@ -152,13 +152,13 @@ describe("durable attachment protocol", () => {
 
   it("returns 404 when a thread directory resolves outside the attachment root", async () => {
     const { root, handler } = await createProtocolHandler();
-    const outsideRoot = await mkdtemp(join(tmpdir(), "mcode-attachment-outside-"));
+    const outsideRoot = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-attachment-outside-"));
     temporaryDirectories.push(outsideRoot);
-    const outsideThread = join(outsideRoot, THREAD_ID);
-    await mkdir(outsideThread, { recursive: true });
-    await writeFile(join(outsideThread, `${ATTACHMENT_ID}.txt`), "outside");
-    await rm(join(root, THREAD_ID), { recursive: true, force: true });
-    await symlink(outsideThread, join(root, THREAD_ID), "junction");
+    const outsideThread = NodePath.join(outsideRoot, THREAD_ID);
+    await NodeFSPromises.mkdir(outsideThread, { recursive: true });
+    await NodeFSPromises.writeFile(NodePath.join(outsideThread, `${ATTACHMENT_ID}.txt`), "outside");
+    await NodeFSPromises.rm(NodePath.join(root, THREAD_ID), { recursive: true, force: true });
+    await NodeFSPromises.symlink(outsideThread, NodePath.join(root, THREAD_ID), "junction");
 
     const response = await request(
       handler,

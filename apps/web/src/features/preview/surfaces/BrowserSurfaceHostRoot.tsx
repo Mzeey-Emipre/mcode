@@ -149,7 +149,7 @@ export function BrowserSurfaceHostRoot() {
 
   useEffect(() => {
     const releases = new Map<string, { generation: number; release: () => void }>();
-    const synchronizeOperations = (
+    const releaseInactiveOperations = (
       state: ReturnType<typeof useBrowserAutomationStore.getState>,
     ): void => {
       for (const [requestKey, pinned] of releases) {
@@ -157,26 +157,40 @@ export function BrowserSurfaceHostRoot() {
         pinned.release();
         releases.delete(requestKey);
       }
+    };
+    const operationCapturesSurface = (
+      active: ReturnType<typeof useBrowserAutomationStore.getState>["activeRequests"] extends ReadonlyMap<string, infer Value> ? Value : never,
+    ): boolean => {
+      const operation = active.dispatch.request.operation;
+      return operation === "snapshot" || operation === "screenshot" ||
+        operation === "inspect" && active.dispatch.request.args.includeScreenshot;
+    };
+    const pinActiveOperation = (
+      requestKey: string,
+      active: ReturnType<typeof useBrowserAutomationStore.getState>["activeRequests"] extends ReadonlyMap<string, infer Value> ? Value : never,
+    ): void => {
+      const identity: BrowserSurfaceIdentity = {
+        workspaceId: active.dispatch.scope.workspaceId,
+        scope: { kind: "thread", id: active.dispatch.target.threadId },
+        tabId: active.dispatch.target.tabId,
+      };
+      const metadata = browserSurfaceHost.inspect(identity);
+      if (!metadata) return;
+      const generation = browserSurfaceHost.getSnapshot(identity)?.generation ?? browserSurfaceHost.ensure(identity).generation;
+      const existing = releases.get(requestKey);
+      if (existing?.generation === generation) return;
+      existing?.release();
+      const release = operationCapturesSurface(active)
+        ? browserSurfaceHost.pinCapture(identity, generation)
+        : browserSurfaceHost.pinOperation(identity, generation);
+      releases.set(requestKey, { generation, release });
+    };
+    const synchronizeOperations = (
+      state: ReturnType<typeof useBrowserAutomationStore.getState>,
+    ): void => {
+      releaseInactiveOperations(state);
       for (const [requestKey, active] of state.activeRequests) {
-        const identity: BrowserSurfaceIdentity = {
-          workspaceId: active.dispatch.scope.workspaceId,
-          scope: { kind: "thread", id: active.dispatch.target.threadId },
-          tabId: active.dispatch.target.tabId,
-        };
-        const metadata = browserSurfaceHost.inspect(identity);
-        if (!metadata) continue;
-        const generation = browserSurfaceHost.getSnapshot(identity)?.generation ??
-          browserSurfaceHost.ensure(identity).generation;
-        const existing = releases.get(requestKey);
-        if (existing?.generation === generation) continue;
-        existing?.release();
-        const operation = active.dispatch.request.operation;
-        const capturesSurface = operation === "snapshot" || operation === "screenshot" ||
-          operation === "inspect" && active.dispatch.request.args.includeScreenshot;
-        const release = capturesSurface
-          ? browserSurfaceHost.pinCapture(identity, generation)
-          : browserSurfaceHost.pinOperation(identity, generation);
-        releases.set(requestKey, { generation, release });
+        pinActiveOperation(requestKey, active);
       }
     };
     synchronizeOperations(useBrowserAutomationStore.getState());

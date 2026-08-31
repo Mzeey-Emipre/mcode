@@ -1,18 +1,19 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import {
   runConversationResidencyCertification,
+  type ConversationCertificationRuntime,
 } from "../src/performance/conversation-residency-certification.js";
 
 const MAX_OUTPUT_PATH_LENGTH = 2_048;
 const options = parseOptions(process.argv.slice(2));
-const report = runConversationResidencyCertification(options.samples);
+const report = runConversationResidencyCertification(readCertificationRuntime(), options.samples);
 const json = `${JSON.stringify(report, null, 2)}\n`;
 
 if (options.outputPath) {
-  const outputPath = resolve(options.outputPath);
-  mkdirSync(dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, json, { encoding: "utf8", flag: "w" });
+  const outputPath = NodePath.resolve(options.outputPath);
+  NodeFS.mkdirSync(NodePath.dirname(outputPath), { recursive: true });
+  NodeFS.writeFileSync(outputPath, json, { encoding: "utf8", flag: "w" });
 }
 process.stdout.write(json);
 if (report.status === "fail") process.exitCode = 1;
@@ -20,6 +21,16 @@ if (report.status === "fail") process.exitCode = 1;
 interface CertificationOptions {
   samples: number;
   outputPath?: string;
+}
+
+/** Read runtime facts at the Node runner boundary before renderer-safe profiling starts. */
+function readCertificationRuntime(): ConversationCertificationRuntime {
+  return {
+    platform: process.platform,
+    architecture: process.arch,
+    nodeVersion: process.version,
+    electronVersion: process.versions.electron ?? null,
+  };
 }
 
 function parseOptions(args: string[]): CertificationOptions {

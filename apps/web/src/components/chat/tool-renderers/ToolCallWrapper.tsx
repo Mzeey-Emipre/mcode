@@ -41,6 +41,22 @@ class ToolCallErrorBoundary extends Component<
   }
 }
 
+function getWrapperClass(isActive: boolean): string {
+  return `transition-colors rounded-sm ${isActive ? "bg-primary/5" : "hover:bg-muted/20"}`;
+}
+
+function getTriggerClass(hasContent: boolean): string {
+  return `flex w-full flex-col gap-0.5 pl-3 pr-1 py-1.5 text-left text-sm ${hasContent ? "cursor-pointer hover:bg-muted/30" : "cursor-default"}`;
+}
+
+function getToolIconClass(isActive: boolean): string {
+  return `shrink-0 ${isActive ? "animate-spin text-primary/80" : "text-muted-foreground/60"}`;
+}
+
+function getToolLabelClass(isActive: boolean): string {
+  return `font-medium ${isActive ? "text-foreground font-medium" : "text-foreground/70"}`;
+}
+
 /** Cardless tool call row with left-accent gutter. */
 function ToolCallWrapperInner({
   icon: Icon,
@@ -54,32 +70,20 @@ function ToolCallWrapperInner({
   const hasContent = !!children;
 
   return (
-    <div
-      className={`transition-colors rounded-sm ${
-        isActive
-          ? "bg-primary/5"
-          : "hover:bg-muted/20"
-      }`}
-    >
+    <div className={getWrapperClass(isActive)}>
       <button
         type="button"
         onClick={() => hasContent && setExpanded((p) => !p)}
-        className={`flex w-full flex-col gap-0.5 pl-3 pr-1 py-1.5 text-left text-sm ${
-          hasContent ? "cursor-pointer hover:bg-muted/30" : "cursor-default"
-        }`}
+        className={getTriggerClass(hasContent)}
       >
         <div className="flex w-full items-center gap-2">
           <Icon
             size={13}
-            className={`shrink-0 ${
-              isActive ? "animate-spin text-primary/80" : "text-muted-foreground/60"
-            }`}
+            className={getToolIconClass(isActive)}
             style={isActive ? SLOW_SPIN_STYLE : undefined}
           />
           <span
-            className={`font-medium ${
-              isActive ? "text-foreground font-medium" : "text-foreground/70"
-            }`}
+            className={getToolLabelClass(isActive)}
           >
             {label}
           </span>

@@ -3,7 +3,7 @@
  * Provides creation and retrieval operations for git turn snapshots in SQLite.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import {
@@ -101,7 +101,7 @@ export class TurnSnapshotRepo {
 
   /** Create a new turn snapshot and return the fully-populated record. */
   create(input: CreateTurnSnapshotInput): TurnSnapshot {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const now = new Date().toISOString();
     const filesChangedJson = JSON.stringify(input.filesChanged);
     const fileEffects = TurnFileEffectSummarySchema().parse(input.fileEffects ?? {

@@ -67,45 +67,77 @@ export const ConversationOlderPageSchema = lazySchema(() =>
     nextCursor: ConversationOlderPageCursorSchema().nullable(),
     answeredPlanMessageIds: z.array(z.string()).max(CONVERSATION_HISTORY_PAGE_MAX_MESSAGES).optional(),
     narrativeByMessage: z.record(ConversationNarrativeBatchSchema()),
-  }).strict().superRefine((page, context) => {
-    if (page.hasMore !== (page.nextCursor !== null)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Older conversation page continuation does not match hasMore",
-      });
-    }
-    const messageIds = new Set<string>();
-    let previousSequence = 0;
-    for (const message of page.messages) {
-      if (
-        message.thread_id !== page.identity.threadId
-        || message.sequence >= page.identity.cursor.beforeSequence
-        || message.sequence <= previousSequence
-        || messageIds.has(message.id)
-      ) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Older conversation page messages must be unique and strictly sequence ordered",
-        });
-        break;
-      }
-      messageIds.add(message.id);
-      previousSequence = message.sequence;
-    }
-    if (page.nextCursor && page.nextCursor.beforeSequence !== page.messages[0]?.sequence) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Older conversation page cursor must continue before its first message",
-      });
-    }
-    if (conversationHistoryPageBytes(page) > CONVERSATION_HISTORY_PAGE_MAX_BYTES) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Older conversation page exceeds ${CONVERSATION_HISTORY_PAGE_MAX_BYTES} bytes`,
-      });
-    }
-  }),
+  }).strict().superRefine(validateConversationOlderPage),
 );
+
+type ConversationOlderPageValidationInput = {
+  readonly identity: { readonly threadId: string; readonly cursor: { readonly beforeSequence: number } };
+  readonly messages: readonly { readonly id: string; readonly thread_id: string; readonly sequence: number }[];
+  readonly hasMore: boolean;
+  readonly nextCursor: { readonly beforeSequence: number } | null;
+};
+
+function validateConversationOlderPage(
+  page: ConversationOlderPageValidationInput,
+  context: z.RefinementCtx,
+): void {
+  validateOlderPageContinuation(page, context);
+  validateOlderPageMessages(page, context);
+  validateOlderPageCursor(page, context);
+  validateOlderPageSize(page, context);
+}
+
+function validateOlderPageContinuation(page: ConversationOlderPageValidationInput, context: z.RefinementCtx): void {
+  if (page.hasMore === (page.nextCursor !== null)) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: "Older conversation page continuation does not match hasMore",
+  });
+}
+
+function validateOlderPageMessages(page: ConversationOlderPageValidationInput, context: z.RefinementCtx): void {
+  const messageIds = new Set<string>();
+  let previousSequence = 0;
+  for (const message of page.messages) {
+    if (hasInvalidOlderPageMessage(message, page.identity, previousSequence, messageIds)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Older conversation page messages must be unique and strictly sequence ordered",
+      });
+      return;
+    }
+    messageIds.add(message.id);
+    previousSequence = message.sequence;
+  }
+}
+
+function hasInvalidOlderPageMessage(
+  message: ConversationOlderPageValidationInput["messages"][number],
+  identity: ConversationOlderPageValidationInput["identity"],
+  previousSequence: number,
+  messageIds: ReadonlySet<string>,
+): boolean {
+  return message.thread_id !== identity.threadId
+    || message.sequence >= identity.cursor.beforeSequence
+    || message.sequence <= previousSequence
+    || messageIds.has(message.id);
+}
+
+function validateOlderPageCursor(page: ConversationOlderPageValidationInput, context: z.RefinementCtx): void {
+  if (!page.nextCursor || page.nextCursor.beforeSequence === page.messages[0]?.sequence) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: "Older conversation page cursor must continue before its first message",
+  });
+}
+
+function validateOlderPageSize(page: ConversationOlderPageValidationInput, context: z.RefinementCtx): void {
+  if (conversationHistoryPageBytes(page) <= CONVERSATION_HISTORY_PAGE_MAX_BYTES) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: `Older conversation page exceeds ${CONVERSATION_HISTORY_PAGE_MAX_BYTES} bytes`,
+  });
+}
 
 /** Versioned cursor for older conversation history. */
 export type ConversationOlderPageCursor = z.infer<ReturnType<typeof ConversationOlderPageCursorSchema>>;

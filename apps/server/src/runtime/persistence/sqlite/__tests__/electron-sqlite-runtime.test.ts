@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "fs";
-import { tmpdir } from "os";
-import { dirname, join, resolve } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase, resolveElectronNativeBinding } from "../database.js";
 import { openElectronMemoryDatabase } from "./electron-sqlite.js";
@@ -16,8 +16,8 @@ describe("Electron SQLite test runtime", () => {
   function createPackagedBinding(bindingName: string): string {
     if (!binding) throw new Error("BETTER_SQLITE3_BINDING is required for Electron SQLite tests");
 
-    temporaryResourcesPath = mkdtempSync(join(tmpdir(), "mcode-sqlite-"));
-    const packagedBinding = resolve(
+    temporaryResourcesPath = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-sqlite-"));
+    const packagedBinding = NodePath.resolve(
       temporaryResourcesPath,
       "app.asar.unpacked",
       "node_modules",
@@ -26,11 +26,11 @@ describe("Electron SQLite test runtime", () => {
       "Release",
       bindingName,
     );
-    mkdirSync(dirname(packagedBinding), { recursive: true });
-    copyFileSync(binding, packagedBinding);
+    NodeFS.mkdirSync(NodePath.dirname(packagedBinding), { recursive: true });
+    NodeFS.copyFileSync(binding, packagedBinding);
     process.env.MCODE_PACKAGED_RESOURCES_ROOT = temporaryResourcesPath;
     Object.defineProperty(process, "resourcesPath", {
-      value: join(temporaryResourcesPath, "bin"),
+      value: NodePath.join(temporaryResourcesPath, "bin"),
       configurable: true,
     });
     return packagedBinding;
@@ -45,7 +45,7 @@ describe("Electron SQLite test runtime", () => {
     else process.env.MCODE_PACKAGED_RESOURCES_ROOT = packagedResourcesRoot;
     if (resourcesPathDescriptor) Object.defineProperty(process, "resourcesPath", resourcesPathDescriptor);
     else delete (process as Record<string, unknown>).resourcesPath;
-    if (temporaryResourcesPath) rmSync(temporaryResourcesPath, { recursive: true, force: true });
+    if (temporaryResourcesPath) NodeFS.rmSync(temporaryResourcesPath, { recursive: true, force: true });
     temporaryResourcesPath = undefined;
   });
 
@@ -73,7 +73,7 @@ describe("Electron SQLite test runtime", () => {
     const packagedBinding = createPackagedBinding("better_sqlite3.node");
     process.env.BETTER_SQLITE3_BINDING = packagedBinding;
 
-    expect(resolveElectronNativeBinding()).toBe(realpathSync(packagedBinding));
+    expect(resolveElectronNativeBinding()).toBe(NodeFS.realpathSync(packagedBinding));
   });
 
   it("rejects a packaged binding without an authoritative resources root", () => {
@@ -94,23 +94,23 @@ describe("Electron SQLite test runtime", () => {
 
   it("rejects an existing generic binding outside packaged resources", () => {
     createPackagedBinding("placeholder.node");
-    const outsideBinding = resolve(tmpdir(), `mcode-sqlite-outside-${Date.now()}.node`);
+    const outsideBinding = NodePath.resolve(NodeOS.tmpdir(), `mcode-sqlite-outside-${Date.now()}.node`);
     if (!binding) throw new Error("BETTER_SQLITE3_BINDING is required for Electron SQLite tests");
-    copyFileSync(binding, outsideBinding);
+    NodeFS.copyFileSync(binding, outsideBinding);
     process.env.BETTER_SQLITE3_BINDING = outsideBinding;
 
     try {
       expect(() => resolveElectronNativeBinding()).toThrow("packaged binding");
     } finally {
-      rmSync(outsideBinding, { force: true });
+      NodeFS.rmSync(outsideBinding, { force: true });
     }
   });
 
   it("rejects a packaged binding symlink that escapes the release directory", () => {
     const placeholder = createPackagedBinding("placeholder.node");
-    const escapedBinding = join(dirname(placeholder), "better_sqlite3.node");
+    const escapedBinding = NodePath.join(NodePath.dirname(placeholder), "better_sqlite3.node");
     if (!binding) throw new Error("BETTER_SQLITE3_BINDING is required for Electron SQLite tests");
-    symlinkSync(binding, escapedBinding, "file");
+    NodeFS.symlinkSync(binding, escapedBinding, "file");
     process.env.BETTER_SQLITE3_BINDING = escapedBinding;
 
     expect(() => resolveElectronNativeBinding()).toThrow("packaged binding");
@@ -118,22 +118,22 @@ describe("Electron SQLite test runtime", () => {
 
   it("rejects a packaged release directory symlink that escapes resources", () => {
     const placeholder = createPackagedBinding("placeholder.node");
-    const releaseDir = dirname(placeholder);
-    const escapedReleaseDir = mkdtempSync(join(tmpdir(), "mcode-sqlite-release-"));
+    const releaseDir = NodePath.dirname(placeholder);
+    const escapedReleaseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-sqlite-release-"));
     if (!binding) throw new Error("BETTER_SQLITE3_BINDING is required for Electron SQLite tests");
-    copyFileSync(binding, join(escapedReleaseDir, "better_sqlite3.node"));
-    rmSync(releaseDir, { recursive: true, force: true });
-    symlinkSync(
+    NodeFS.copyFileSync(binding, NodePath.join(escapedReleaseDir, "better_sqlite3.node"));
+    NodeFS.rmSync(releaseDir, { recursive: true, force: true });
+    NodeFS.symlinkSync(
       escapedReleaseDir,
       releaseDir,
       process.platform === "win32" ? "junction" : "dir",
     );
-    process.env.BETTER_SQLITE3_BINDING = join(releaseDir, "better_sqlite3.node");
+    process.env.BETTER_SQLITE3_BINDING = NodePath.join(releaseDir, "better_sqlite3.node");
 
     try {
       expect(() => resolveElectronNativeBinding()).toThrow("packaged binding");
     } finally {
-      rmSync(escapedReleaseDir, { recursive: true, force: true });
+      NodeFS.rmSync(escapedReleaseDir, { recursive: true, force: true });
     }
   });
 

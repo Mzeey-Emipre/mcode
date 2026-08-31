@@ -45,23 +45,15 @@ function boundedEntries(entries: Record<string, ProjectionEntry>, key: string): 
 }
 
 /** Shared renderer authority for coordination projections. */
-export const useThreadControlStore = create<ThreadControlState>((set, get) => ({
-  entries: {},
-  load: async (identity, options) => {
-    const key = threadControlKey(identity);
-    const current = get().entries[key];
-    if (current?.loading) {
-      if (options?.force) {
-        set((state) => ({
-          entries: {
-            ...state.entries,
-            [key]: { ...current, refreshQueued: true },
-          },
-        }));
-      }
-      return;
+export const useThreadControlStore = create<ThreadControlState>((set, get) => {
+  const queueRefresh = (key: string, current: ProjectionEntry, force: boolean | undefined): boolean => {
+    if (!current.loading) return false;
+    if (force) {
+      set((state) => ({ entries: { ...state.entries, [key]: { ...current, refreshQueued: true } } }));
     }
-    if (current?.projection && !options?.force) return;
+    return true;
+  };
+  const startLoad = (key: string, current: ProjectionEntry | undefined): number => {
     const epoch = ++nextRequestEpoch;
     set((state) => ({
       entries: boundedEntries({
@@ -69,34 +61,45 @@ export const useThreadControlStore = create<ThreadControlState>((set, get) => ({
         [key]: { projection: current?.projection ?? null, loading: true, error: null, epoch, refreshQueued: false },
       }, key),
     }));
-    const runQueuedRefresh = (): void => {
-      const latest = get().entries[key];
-      if (!latest?.refreshQueued) return;
-      set((state) => ({
-        entries: {
-          ...state.entries,
-          [key]: { ...latest, refreshQueued: false },
-        },
-      }));
-      void get().load(identity, { force: true });
-    };
+    return epoch;
+  };
+  const commitResponse = (key: string, epoch: number, result: Awaited<ReturnType<ReturnType<typeof getTransport>["readThreadControl"]>>): void => {
+    const latest = get().entries[key];
+    if (!latest || latest.epoch !== epoch) return;
+    if (result.status === "found" && threadControlKey(result.projection.identity) === key) {
+      set((state) => ({ entries: { ...state.entries, [key]: { projection: result.projection, loading: false, error: null, epoch, refreshQueued: latest.refreshQueued } } }));
+    } else if (result.status === "rejected") {
+      set((state) => ({ entries: { ...state.entries, [key]: { projection: null, loading: false, error: result.error.message, epoch, refreshQueued: latest.refreshQueued } } }));
+    }
+  };
+  const commitFailure = (key: string, epoch: number, error: unknown): void => {
+    const latest = get().entries[key];
+    if (!latest || latest.epoch !== epoch) return;
+    set((state) => ({ entries: { ...state.entries, [key]: { ...latest, loading: false, error: error instanceof Error ? error.message : String(error) } } }));
+  };
+  const runQueuedRefresh = (key: string, identity: ThreadControlIdentity): void => {
+    const latest = get().entries[key];
+    if (!latest?.refreshQueued) return;
+    set((state) => ({ entries: { ...state.entries, [key]: { ...latest, refreshQueued: false } } }));
+    void load(identity, { force: true });
+  };
+  const load = async (identity: ThreadControlIdentity, options?: { force?: boolean }): Promise<void> => {
+    const key = threadControlKey(identity);
+    const current = get().entries[key];
+    if (current && queueRefresh(key, current, options?.force)) return;
+    if (current?.projection && !options?.force) return;
+    const epoch = startLoad(key, current);
     try {
       const result = await getTransport().readThreadControl(identity);
-      const latest = get().entries[key];
-      if (!latest || latest.epoch !== epoch) return;
-      if (result.status === "found" && threadControlKey(result.projection.identity) === key) {
-        set((state) => ({ entries: { ...state.entries, [key]: { projection: result.projection, loading: false, error: null, epoch, refreshQueued: latest.refreshQueued } } }));
-      } else if (result.status === "rejected") {
-        set((state) => ({ entries: { ...state.entries, [key]: { projection: null, loading: false, error: result.error.message, epoch, refreshQueued: latest.refreshQueued } } }));
-      }
-      runQueuedRefresh();
+      commitResponse(key, epoch, result);
     } catch (error) {
-      const latest = get().entries[key];
-      if (!latest || latest.epoch !== epoch) return;
-      set((state) => ({ entries: { ...state.entries, [key]: { ...latest, loading: false, error: error instanceof Error ? error.message : String(error) } } }));
-      runQueuedRefresh();
+      commitFailure(key, epoch, error);
     }
-  },
+    runQueuedRefresh(key, identity);
+  };
+  return {
+  entries: {},
+  load,
   rehydrate: async () => {
     const identities = Object.keys(get().entries).map((key) => {
       try {
@@ -129,7 +132,8 @@ export const useThreadControlStore = create<ThreadControlState>((set, get) => ({
     delete next[threadControlKey(identity)];
     return { entries: next };
   }),
-}));
+};
+});
 
 /** Read one projection entry without subscribing a component. */
 export function getThreadControlEntry(identity: ThreadControlIdentity): ProjectionEntry | undefined {

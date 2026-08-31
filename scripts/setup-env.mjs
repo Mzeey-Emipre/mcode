@@ -3,12 +3,12 @@
  * Cross-platform setup script for bootstrapping a fresh clone.
  * Replaces scripts/setup-env.sh with Node.js so it works on Windows/PowerShell.
  */
-import { existsSync, copyFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import * as NodeFS from 'node:fs';
+import * as NodePath from 'node:path';
+import * as NodeURL from 'node:url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = resolve(__dirname, '..');
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const root = NodePath.resolve(__dirname, '..');
 
 /**
  * Run a setup step, printing a ✓/✗ status line.
@@ -30,10 +30,10 @@ function step(label, fn) {
 console.log('Setting up mcode...\n');
 
 step('Create .env from .env.example', () => {
-  const envPath = resolve(root, '.env');
-  const examplePath = resolve(root, '.env.example');
-  if (existsSync(envPath)) return 'already exists, skipped';
-  copyFileSync(examplePath, envPath);
+  const envPath = NodePath.resolve(root, '.env');
+  const examplePath = NodePath.resolve(root, '.env.example');
+  if (NodeFS.existsSync(envPath)) return 'already exists, skipped';
+  NodeFS.copyFileSync(examplePath, envPath);
   return 'created';
 });
 

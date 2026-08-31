@@ -6,29 +6,12 @@ export function RetryBanner({ threadId }: { threadId: string }) {
 
   if (!rateLimit && !apiRetry) return null;
 
-  let label: string;
-  if (rateLimit) {
-    if (rateLimit.retryAfterMs && rateLimit.retryAfterMs > 0) {
-      const seconds = Math.ceil(rateLimit.retryAfterMs / 1000);
-      label = `Rate limited - retrying in ${formatDuration(seconds)}`;
-    } else {
-      label = "Rate limited - waiting for capacity...";
-    }
-  } else if (apiRetry) {
-    const parts: string[] = ["Retrying"];
-    if (apiRetry.attempt != null && apiRetry.maxRetries != null) {
-      parts.push(`(${apiRetry.attempt}/${apiRetry.maxRetries})`);
-    } else if (apiRetry.attempt != null) {
-      parts.push(`(attempt ${apiRetry.attempt})`);
-    }
-    if (apiRetry.delayMs != null && apiRetry.delayMs > 0) {
-      const seconds = Math.ceil(apiRetry.delayMs / 1000);
-      parts.push(`in ${formatDuration(seconds)}`);
-    }
-    label = parts.join(" ") + "...";
-  } else {
-    return null;
-  }
+  const label = rateLimit
+    ? formatRateLimitLabel(rateLimit.retryAfterMs)
+    : apiRetry
+      ? formatApiRetryLabel(apiRetry)
+      : null;
+  if (!label) return null;
 
   return (
     <div role="status" aria-live="polite" className="flex items-center gap-2 px-3 py-2 border-t border-border/20">
@@ -39,6 +22,27 @@ export function RetryBanner({ threadId }: { threadId: string }) {
       <span className="text-xs text-muted-foreground">{label}</span>
     </div>
   );
+}
+
+function formatRateLimitLabel(retryAfterMs: number | null | undefined): string {
+  if (!retryAfterMs || retryAfterMs <= 0) return "Rate limited - waiting for capacity...";
+  return `Rate limited - retrying in ${formatDuration(Math.ceil(retryAfterMs / 1000))}`;
+}
+
+function formatApiRetryLabel(retry: { attempt?: number | null; maxRetries?: number | null; delayMs?: number | null }): string {
+  return ["Retrying", formatRetryAttempt(retry), formatRetryDelay(retry.delayMs)]
+    .filter(Boolean)
+    .join(" ") + "...";
+}
+
+function formatRetryAttempt(retry: { attempt?: number | null; maxRetries?: number | null }): string | null {
+  if (retry.attempt == null) return null;
+  return retry.maxRetries == null ? `(attempt ${retry.attempt})` : `(${retry.attempt}/${retry.maxRetries})`;
+}
+
+function formatRetryDelay(delayMs: number | null | undefined): string | null {
+  if (!delayMs || delayMs <= 0) return null;
+  return `in ${formatDuration(Math.ceil(delayMs / 1000))}`;
 }
 
 /** Format seconds into a compact human-readable duration (e.g. "12s", "2m 30s"). */

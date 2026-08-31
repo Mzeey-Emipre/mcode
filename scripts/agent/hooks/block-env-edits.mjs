@@ -3,7 +3,7 @@
  * Blocks direct edits to `.env` files from agent tool hooks.
  */
 
-import { pathToFileURL } from "node:url";
+import * as NodeURL from "node:url";
 
 const CODEX_FLAG = "--codex";
 
@@ -64,7 +64,7 @@ function main() {
 }
 
 const invokedDirectly =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+  process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) {
   main();
 }

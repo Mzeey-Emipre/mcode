@@ -1,5 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { Readable, Writable } from "node:stream";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeStream from "node:stream";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -19,7 +19,7 @@ import { createAcpClientHandlers } from "./acp-client-handlers.js";
 
 /** Result of opening package-private ACP transport before protocol negotiation. */
 export type AcpTransport = {
-  child: ChildProcess;
+  child: NodeChildProcess.ChildProcess;
   connection: ClientSideConnection;
 };
 
@@ -92,27 +92,13 @@ export class AcpSessionRuntime {
     transport: AcpTransport,
     options: AcpSessionRuntimeOptions,
   ) {
-    this.state = {
-      child: transport.child,
-      connection: transport.connection,
-      sessionId: "",
-      agentCapabilities: undefined,
-      activePrompt: null,
-    };
+    this.state = createAcpSessionState(transport);
     this.selectAuthMethod = options.selectAuthMethod ?? ((methods) => methods[0]?.id);
-    this.clientCapabilities = options.clientCapabilities ?? {
-      fs: { readTextFile: true, writeTextFile: true },
-    };
+    this.clientCapabilities = options.clientCapabilities ?? defaultAcpClientCapabilities();
     this.clientInfo = options.clientInfo ?? { name: "mcode", title: "Mcode", version: "0.0.1" };
     this.ignoreAuthenticationErrors = options.ignoreAuthenticationErrors ?? false;
     this.processes = options.processes;
-    const configuredTimeout = options.recoveryInactivityTimeoutMs
-      ?? options.replayGateTimeoutMs
-      ?? options.sessionLoadTimeoutMs;
-    this.sessionLoadTimeoutMs =
-      typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0
-        ? configuredTimeout
-        : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
+    this.sessionLoadTimeoutMs = resolveAcpSessionLoadTimeout(options);
     this.recoveryFailurePolicy = options.recoveryFailurePolicy ?? "fallback-to-new";
     this.onSessionOperation = options.onSessionOperation;
   }
@@ -143,19 +129,19 @@ export class AcpSessionRuntime {
       );
       return runtimeRef;
     }
-    let child: ChildProcess | undefined;
+    let child: NodeChildProcess.ChildProcess | undefined;
     try {
-      child = spawn(options.spawnSpec.command, [...options.spawnSpec.args], {
+      child = NodeChildProcess.spawn(options.spawnSpec.command, [...options.spawnSpec.args], {
         stdio: ["pipe", "pipe", "pipe"],
         cwd: options.spawnSpec.cwd,
         env: options.spawnSpec.env,
-        shell: process.platform === "win32",
+        shell: options.spawnSpec.shell,
       });
       if (!child.stdin || !child.stdout) throw new Error("ACP stdio pipes unavailable");
       const client: Client = (options.clientFactory ?? createAcpClientHandlers)(callbacks);
       const stream = ndJsonStream(
-        Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+        NodeStream.Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+        NodeStream.Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
       );
       const connection = new ClientSideConnection(() => client, stream);
       runtimeRef = new AcpSessionRuntime({ child, connection }, options);
@@ -368,28 +354,44 @@ export function validateAcpSessionUpdate(value: unknown): AcpSessionUpdate {
 }
 
 function validateAgentCapabilities(capabilities: Record<string, unknown>): void {
-  if (capabilities.loadSession !== undefined && typeof capabilities.loadSession !== "boolean") {
+  validateOptionalAcpBoolean(capabilities.loadSession);
+  validateAcpSessionCapabilities(capabilities.sessionCapabilities);
+  validateAcpMcpCapabilities(capabilities.mcpCapabilities);
+}
+
+function createAcpSessionState(transport: AcpTransport): AcpSessionState {
+  return { child: transport.child, connection: transport.connection, sessionId: "", agentCapabilities: undefined, activePrompt: null };
+}
+
+function defaultAcpClientCapabilities(): Record<string, unknown> {
+  return { fs: { readTextFile: true, writeTextFile: true } };
+}
+
+function resolveAcpSessionLoadTimeout(options: AcpSessionRuntimeOptions): number {
+  const configuredTimeout = options.recoveryInactivityTimeoutMs ?? options.replayGateTimeoutMs ?? options.sessionLoadTimeoutMs;
+  return typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout
+    : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
+}
+
+function validateOptionalAcpBoolean(value: unknown): void {
+  if (value !== undefined && typeof value !== "boolean") throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+}
+
+function validateAcpSessionCapabilities(value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+  const resume = value.resume;
+  if (resume !== undefined && resume !== null && !isRecord(resume)) {
     throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
   }
-  const sessionCapabilities = capabilities.sessionCapabilities;
-  if (sessionCapabilities !== undefined) {
-    if (!isRecord(sessionCapabilities)) {
-      throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-    }
-    const resume = sessionCapabilities.resume;
-    if (resume !== undefined && resume !== null && !isRecord(resume)) {
-      throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-    }
-  }
-  const mcpCapabilities = capabilities.mcpCapabilities;
-  if (mcpCapabilities === undefined) return;
-  if (!isRecord(mcpCapabilities)) throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-  if (mcpCapabilities.http !== undefined && typeof mcpCapabilities.http !== "boolean") {
-    throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-  }
-  if (mcpCapabilities.sse !== undefined && typeof mcpCapabilities.sse !== "boolean") {
-    throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-  }
+}
+
+function validateAcpMcpCapabilities(value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+  validateOptionalAcpBoolean(value.http);
+  validateOptionalAcpBoolean(value.sse);
 }
 
 function validateSessionUpdate(update: Record<string, unknown>): void {
@@ -462,7 +464,7 @@ function invalidAcpPayload(message: string): TypeError & { code: "INVALID_ACP_PA
   return Object.assign(new TypeError(message), { code: "INVALID_ACP_PAYLOAD" as const });
 }
 
-async function terminateAcpChild(processes: ProviderProcessPort, child: ChildProcess | undefined): Promise<void> {
+async function terminateAcpChild(processes: ProviderProcessPort, child: NodeChildProcess.ChildProcess | undefined): Promise<void> {
   if (child?.pid === undefined) return;
   await processes.terminateTree(child.pid).catch(() => undefined);
 }

@@ -23,6 +23,7 @@ import { providerSupportsSendNow } from "@/lib/model-registry";
 import { stripPreviewAnnotationFence } from "@/features/preview/capture/preview-annotation-append";
 import { cn } from "@/lib/utils";
 import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
@@ -218,10 +219,6 @@ const QueueRow = memo(function QueueRow({
   void role;
   void tabIndex;
 
-  const previewText = stripPreviewAnnotationFence(msg.displayContent || msg.content);
-  const hasAttachments = msg.attachments.length > 0;
-  const hasAnnotations = (msg.previewAnnotations?.annotations.length ?? 0) > 0;
-
   return (
     <div
       ref={setNodeRef}
@@ -235,81 +232,115 @@ const QueueRow = memo(function QueueRow({
       )}
     >
       <DragGrip listeners={listeners} />
+      <QueueRowPreview msg={msg} onEdit={onEdit} />
+      <QueueRowMetadata msg={msg} />
+      <QueueRowActions
+        index={index}
+        canSendNow={canSendNow}
+        onSendNow={onSendNow}
+        onEdit={onEdit}
+        onRemove={onRemove}
+      />
+    </div>
+  );
+});
 
-      {/* Row body acts as a secondary click target. The labelled edit
-          affordance is the pencil button in the action cluster - this
-          element has no aria-label so screen readers don't see two
-          identically-named "Edit" buttons. */}
-      <button
-        type="button"
-        onClick={onEdit}
-        aria-label={previewText ? undefined : "Edit queued annotation"}
-        title="Edit in composer"
-        className="min-w-0 flex-1 cursor-text text-left"
-      >
-        {previewText ? (
-          <span className="block truncate text-xs leading-snug text-foreground/90">
-            {previewText}
-          </span>
-        ) : hasAnnotations ? (
-          <span className="sr-only">Preview annotation</span>
-        ) : (
-          <span className="sr-only">Empty queued message</span>
-        )}
-      </button>
+/** The editable text preview for a queued Composer message. */
+function QueueRowPreview({ msg, onEdit }: Pick<QueueRowProps, "msg" | "onEdit">) {
+  const previewText = stripPreviewAnnotationFence(msg.displayContent || msg.content);
+  const emptyMessageLabel = hasPreviewAnnotations(msg)
+    ? "Preview annotation"
+    : "Empty queued message";
 
-      {hasAnnotations && msg.previewAnnotations ? (
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onEdit}
+            aria-label={previewText ? undefined : "Edit queued annotation"}
+            className="min-w-0 flex-1 cursor-text text-left"
+          >
+            {previewText
+              ? <span className="block truncate text-xs leading-snug text-foreground/90">{previewText}</span>
+              : <span className="sr-only">{emptyMessageLabel}</span>}
+          </button>
+        }
+      />
+      <TooltipContent>Edit in composer</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Returns whether a queued message includes captured preview annotations. */
+function hasPreviewAnnotations(msg: QueuedMessage): boolean {
+  return (msg.previewAnnotations?.annotations.length ?? 0) > 0;
+}
+
+/** Displays a queued message's annotation and attachment metadata. */
+function QueueRowMetadata({ msg }: Pick<QueueRowProps, "msg">) {
+  return (
+    <>
+      {hasPreviewAnnotations(msg) && msg.previewAnnotations ? (
         <PreviewAnnotationBundleChip
           bundle={msg.previewAnnotations}
           testId="queue-annotation-bundle"
           className="shrink-0 rounded-md px-1.5 py-0.5 text-xs"
         />
       ) : null}
+      <QueueAttachmentCount attachments={msg.attachments} />
+    </>
+  );
+}
 
-      {hasAttachments && (
-        <span
-          className="flex shrink-0 items-center gap-0.5 font-mono text-xs tabular-nums text-muted-foreground/55"
-          aria-label={`${msg.attachments.length} attachment${msg.attachments.length === 1 ? "" : "s"}`}
-        >
-          <Paperclip size={9} strokeWidth={1.75} />
-          {msg.attachments.length}
-        </span>
-      )}
+/** Displays the attachment count only when the queued message has attachments. */
+function QueueAttachmentCount({ attachments }: Pick<QueuedMessage, "attachments">) {
+  if (attachments.length === 0) return null;
+  const attachmentLabel = attachments.length === 1 ? "attachment" : "attachments";
 
-      {/* Action cluster: hover-revealed (focus-within keeps it open during
-          keyboard nav). Edit is the labelled affordance; clicking the row
-          body is a secondary shortcut to the same action. */}
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        {canSendNow && onSendNow && (
-          <RowAction
-            label={`Send queued message ${index + 1} now`}
-            hint="Send now (queued next)"
-            tone="primary"
-            onClick={onSendNow}
-          >
-            <Zap size={11} strokeWidth={1.75} />
-          </RowAction>
-        )}
-        <RowAction
-          label={`Edit queued message ${index + 1}`}
-          hint="Edit in composer"
-          tone="muted"
-          onClick={onEdit}
-        >
-          <Pencil size={11} strokeWidth={1.75} />
-        </RowAction>
-        <RowAction
-          label={`Remove queued message ${index + 1}`}
-          hint="Remove"
-          tone="destructive"
-          onClick={onRemove}
-        >
-          <X size={11} strokeWidth={1.75} />
-        </RowAction>
-      </div>
+  return (
+    <span
+      className="flex shrink-0 items-center gap-0.5 font-mono text-xs tabular-nums text-muted-foreground/55"
+      aria-label={`${attachments.length} ${attachmentLabel}`}
+    >
+      <Paperclip size={9} strokeWidth={1.75} />
+      {attachments.length}
+    </span>
+  );
+}
+
+/** Hover-revealed actions for a queued Composer message. */
+function QueueRowActions({
+  index,
+  canSendNow,
+  onSendNow,
+  onEdit,
+  onRemove,
+}: Omit<QueueRowProps, "msg">) {
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      {canSendNow && onSendNow ? <QueueSendNowAction index={index} onSendNow={onSendNow} /> : null}
+      <RowAction label={`Edit queued message ${index + 1}`} hint="Edit in composer" tone="muted" onClick={onEdit}>
+        <Pencil size={11} strokeWidth={1.75} />
+      </RowAction>
+      <RowAction label={`Remove queued message ${index + 1}`} hint="Remove" tone="destructive" onClick={onRemove}>
+        <X size={11} strokeWidth={1.75} />
+      </RowAction>
     </div>
   );
-});
+}
+
+/** Sends a queued message before the active agent turn finishes. */
+function QueueSendNowAction({ index, onSendNow }: Pick<QueueRowProps, "index" | "onSendNow">) {
+  if (!onSendNow) return null;
+
+  return (
+    <RowAction label={`Send queued message ${index + 1} now`} hint="Send now (queued next)" tone="primary" onClick={onSendNow}>
+      <Zap size={11} strokeWidth={1.75} />
+    </RowAction>
+  );
+}
 
 /** Grip glyph that activates dnd-kit drag and keyboard reorder. */
 function DragGrip({ listeners }: { listeners: DraggableSyntheticListeners }) {
@@ -342,17 +373,23 @@ function RowAction({ label, hint, tone, onClick, children }: RowActionProps) {
         ? "hover:bg-destructive/10 hover:text-destructive"
         : "hover:bg-muted hover:text-foreground";
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={hint}
-      className={cn(
-        "rounded-sm p-1 text-muted-foreground/60 transition-colors",
-        toneClass,
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onClick}
+            aria-label={label}
+            className={cn(
+              "rounded-sm p-1 text-muted-foreground/60 transition-colors",
+              toneClass,
+            )}
+          >
+            {children}
+          </button>
+        }
+      />
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
   );
 }

@@ -4,7 +4,7 @@
  * attachments, and user-scope instructions (same sources as {@link buildCursorPrompt}).
  */
 
-import { readFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 import type { AttachmentMeta } from "@mcode/contracts";
 import { isVirtualBrowserContextAttachment } from "@mcode/contracts";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
@@ -41,7 +41,7 @@ export function buildCursorAcpPromptBlocks(
     if (isVirtualBrowserContextAttachment(att.mimeType)) continue;
     if (!att.mimeType.startsWith("image/")) continue;
     try {
-      const buf = readFileSync(att.sourcePath);
+      const buf = NodeFS.readFileSync(att.sourcePath);
       blocks.push({
         type: "image",
         mimeType: att.mimeType,

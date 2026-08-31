@@ -618,37 +618,63 @@ export const PullRequestPatchResultSchema = lazySchema(() => {
     fetchedAt: z.string().datetime({ offset: true }),
     staleAt: z.string().datetime({ offset: true }),
   };
-  const withPatch = (status: "available" | "generated") =>
-    z
-      .object({
-        ...common,
-        status: z.literal(status),
-        patch: boundedPullRequestPatchSchema,
-        parsedLineCount: z.number().int().min(0).max(PULL_REQUEST_PATCH_MAX_LINES),
-      })
-      .superRefine((result, context) => {
-        if (pullRequestPatchLineCount(result.patch) !== result.parsedLineCount) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["parsedLineCount"],
-            message: "Parsed line count must match the patch",
-          });
-        }
-      });
-  const withoutPatch = (status: "binary" | "unavailable" | "too_large") =>
-    z.object({
+  const availablePatch = z
+    .object({
       ...common,
-      status: z.literal(status),
-      patch: z.null(),
-      parsedLineCount: z.null(),
+      status: z.literal("available"),
+      patch: boundedPullRequestPatchSchema,
+      parsedLineCount: z.number().int().min(0).max(PULL_REQUEST_PATCH_MAX_LINES),
+    })
+    .superRefine((result, context) => {
+      if (pullRequestPatchLineCount(result.patch) !== result.parsedLineCount) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["parsedLineCount"],
+          message: "Parsed line count must match the patch",
+        });
+      }
     });
+  const generatedPatch = z
+    .object({
+      ...common,
+      status: z.literal("generated"),
+      patch: boundedPullRequestPatchSchema,
+      parsedLineCount: z.number().int().min(0).max(PULL_REQUEST_PATCH_MAX_LINES),
+    })
+    .superRefine((result, context) => {
+      if (pullRequestPatchLineCount(result.patch) !== result.parsedLineCount) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["parsedLineCount"],
+          message: "Parsed line count must match the patch",
+        });
+      }
+    });
+  const binaryPatch = z.object({
+    ...common,
+    status: z.literal("binary"),
+    patch: z.null(),
+    parsedLineCount: z.null(),
+  });
+  const unavailablePatch = z.object({
+    ...common,
+    status: z.literal("unavailable"),
+    patch: z.null(),
+    parsedLineCount: z.null(),
+  });
+  const oversizedPatch = z.object({
+    ...common,
+    status: z.literal("too_large"),
+    patch: z.null(),
+    parsedLineCount: z.null(),
+  });
   return z
     .union([
-      withPatch("available"),
-      withPatch("generated"),
-      withoutPatch("binary"),
-      withoutPatch("unavailable"),
-      withoutPatch("too_large"),
+      availablePatch,
+      generatedPatch,
+      binaryPatch,
+      unavailablePatch,
+      oversizedPatch,
       z.object({ ok: z.literal(false), error: PullRequestErrorSchema() }),
     ])
     .superRefine((result, context) => {

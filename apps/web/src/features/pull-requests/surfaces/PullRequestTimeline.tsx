@@ -3,7 +3,7 @@ import type {
   PullRequestReviewerTarget,
   PullRequestTimelineItem,
 } from "@mcode/contracts";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { type Virtualizer, useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertCircle,
   CheckCircle2,
@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format-relative";
 import { cn } from "@/lib/utils";
 import { RemoteMarkdown } from "./RemoteMarkdown";
@@ -79,34 +80,51 @@ function reviewerTargetLabel(target: PullRequestReviewerTarget): string {
   return `${target.organization}/${target.slug}`;
 }
 
+type DynamicTimelineEventKind =
+  | "review"
+  | "readiness"
+  | "review_requested"
+  | "review_request_removed";
+
+type StaticTimelineEvent = Exclude<
+  PullRequestTimelineItem,
+  { kind: DynamicTimelineEventKind }
+>;
+
+const STATIC_EVENT_TITLES: Record<StaticTimelineEvent["kind"], string> = {
+  opened: "Opened the pull request",
+  commit: "Pushed a commit",
+  issue_comment: "Commented",
+  review_thread: "Started a review thread",
+  checks: "Current check snapshot",
+  merged: "Merged the pull request",
+  closed: "Closed the pull request",
+  reopened: "Reopened the pull request",
+};
+
+function isStaticTimelineEvent(
+  item: PullRequestTimelineItem,
+): item is StaticTimelineEvent {
+  return item.kind in STATIC_EVENT_TITLES;
+}
+
+function unsupportedTimelineEvent(item: never): never {
+  throw new Error(`Unsupported pull request timeline event: ${String(item)}`);
+}
+
 function eventTitle(item: PullRequestTimelineItem): string {
+  if (isStaticTimelineEvent(item)) return STATIC_EVENT_TITLES[item.kind];
   switch (item.kind) {
-    case "opened":
-      return "Opened the pull request";
-    case "commit":
-      return "Pushed a commit";
     case "review":
       return `${titleCase(item.state)} review`;
-    case "issue_comment":
-      return "Commented";
-    case "review_thread":
-      return "Started a review thread";
     case "readiness":
-      return item.readiness === "ready"
-        ? "Marked ready for review"
-        : "Converted to draft";
+      return item.readiness === "ready" ? "Marked ready for review" : "Converted to draft";
     case "review_requested":
       return `Requested review from ${reviewerTargetLabel(item.reviewer)}`;
     case "review_request_removed":
       return `Removed review request for ${reviewerTargetLabel(item.reviewer)}`;
-    case "checks":
-      return "Current check snapshot";
-    case "merged":
-      return "Merged the pull request";
-    case "closed":
-      return "Closed the pull request";
-    case "reopened":
-      return "Reopened the pull request";
+    default:
+      return unsupportedTimelineEvent(item);
   }
 }
 
@@ -123,112 +141,145 @@ function EventGlyph({ kind }: { kind: PullRequestTimelineItem["kind"] }) {
   return <CircleDot aria-hidden className={className} />;
 }
 
+type TimelineEventOfKind<Kind extends PullRequestTimelineItem["kind"]> =
+  Extract<PullRequestTimelineItem, { kind: Kind }>;
+
+type TimelineEventBodyRenderer = (item: PullRequestTimelineItem) => ReactNode;
+
+function CommitEventBody({ item }: { item: TimelineEventOfKind<"commit"> }) {
+  return (
+    <div className="mt-1.5 flex min-w-0 items-baseline gap-2 text-xs">
+      <code className="shrink-0 font-mono text-primary/90">
+        {item.oid.slice(0, 8)}
+      </code>
+      <span className="truncate text-foreground/80">{item.messageHeadline}</span>
+    </div>
+  );
+}
+
+function ReviewEventBody({ item }: { item: TimelineEventOfKind<"review"> }) {
+  if (!item.body) return null;
+  return <RemoteMarkdown content={item.body} className="mt-2" />;
+}
+
+function IssueCommentEventBody({
+  item,
+}: {
+  item: TimelineEventOfKind<"issue_comment">;
+}) {
+  return <RemoteMarkdown content={item.body} className="mt-2" />;
+}
+
+function ReviewThreadEventBody({
+  item,
+}: {
+  item: TimelineEventOfKind<"review_thread">;
+}) {
+  const location = `${item.path}${item.line === null ? "" : `:${item.line}`}`;
+
+  return (
+    <div className="mt-2 bg-page/45 px-3 py-2.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+        <span className="truncate font-mono text-foreground/85">{location}</span>
+        <Badge variant="ghost" size="sm" className="text-muted-foreground">
+          {item.isResolved ? "Resolved" : "Unresolved"}
+        </Badge>
+        {item.isOutdated && (
+          <Badge variant="ghost" size="sm" className="text-muted-foreground">
+            Outdated
+          </Badge>
+        )}
+      </div>
+      <div className="mt-2 space-y-2.5">
+        {item.comments.map((comment) => (
+          <div key={comment.providerNodeId} className="pl-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="text-foreground/75">
+                {comment.author?.login ?? "Unknown actor"}
+              </span>
+              <time dateTime={comment.createdAt} className="font-mono tabular-nums">
+                {formatRelative(comment.createdAt)}
+              </time>
+            </div>
+            <RemoteMarkdown content={comment.body} className="mt-1" />
+          </div>
+        ))}
+      </div>
+      {item.totalCount > item.comments.length && (
+        <p className="mt-2 font-mono text-xs text-muted-foreground">
+          Showing {item.comments.length} of {item.totalCount} thread comments.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ReadinessEventBody({
+  item,
+}: {
+  item: TimelineEventOfKind<"readiness">;
+}) {
+  return (
+    <p className="mt-1.5 text-xs text-muted-foreground">
+      Readiness is now {item.readiness === "ready" ? "ready for review" : "draft"}.
+    </p>
+  );
+}
+
+function ChecksEventBody({ item }: { item: TimelineEventOfKind<"checks"> }) {
+  return (
+    <p className="mt-1.5 text-xs text-muted-foreground">
+      {titleCase(item.checks.state)}, {item.totalCount} checks at head{" "}
+      <code className="font-mono text-foreground/75">
+        {item.headOid.slice(0, 8)}
+      </code>
+    </p>
+  );
+}
+
+function MergedEventBody({ item }: { item: TimelineEventOfKind<"merged"> }) {
+  if (!item.commitOid && !item.refName) return null;
+
+  return (
+    <p className="mt-1.5 text-xs text-muted-foreground">
+      {item.refName ? `Into ${item.refName}` : "Merge commit"}
+      {item.commitOid ? (
+        <code className="ml-2 font-mono text-foreground/75">
+          {item.commitOid.slice(0, 8)}
+        </code>
+      ) : null}
+    </p>
+  );
+}
+
+function timelineEventBodyRenderer<
+  Kind extends PullRequestTimelineItem["kind"],
+>(
+  Body: (props: { item: TimelineEventOfKind<Kind> }) => ReactNode,
+): TimelineEventBodyRenderer {
+  return (item) => <Body item={item as TimelineEventOfKind<Kind>} />;
+}
+
+const TIMELINE_EVENT_BODY_RENDERERS: Partial<
+  Record<PullRequestTimelineItem["kind"], TimelineEventBodyRenderer>
+> = {
+  commit: timelineEventBodyRenderer(CommitEventBody),
+  review: timelineEventBodyRenderer(ReviewEventBody),
+  issue_comment: timelineEventBodyRenderer(IssueCommentEventBody),
+  review_thread: timelineEventBodyRenderer(ReviewThreadEventBody),
+  readiness: timelineEventBodyRenderer(ReadinessEventBody),
+  checks: timelineEventBodyRenderer(ChecksEventBody),
+  merged: timelineEventBodyRenderer(MergedEventBody),
+};
+
 function TimelineEventBody({
   item,
 }: {
   item: PullRequestTimelineItem;
 }): ReactNode {
-  switch (item.kind) {
-    case "opened":
-    case "closed":
-    case "reopened":
-      return null;
-    case "commit":
-      return (
-        <div className="mt-1.5 flex min-w-0 items-baseline gap-2 text-xs">
-          <code className="shrink-0 font-mono text-primary/90">
-            {item.oid.slice(0, 8)}
-          </code>
-          <span className="truncate text-foreground/80">
-            {item.messageHeadline}
-          </span>
-        </div>
-      );
-    case "review":
-      return item.body ? (
-        <RemoteMarkdown content={item.body} className="mt-2" />
-      ) : null;
-    case "issue_comment":
-      return <RemoteMarkdown content={item.body} className="mt-2" />;
-    case "review_thread": {
-      const location = `${item.path}${item.line === null ? "" : `:${item.line}`}`;
-      return (
-        <div className="mt-2 bg-page/45 px-3 py-2.5">
-          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
-            <span className="truncate font-mono text-foreground/85">
-              {location}
-            </span>
-            <Badge variant="ghost" size="sm" className="text-muted-foreground">
-              {item.isResolved ? "Resolved" : "Unresolved"}
-            </Badge>
-            {item.isOutdated && (
-              <Badge
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-              >
-                Outdated
-              </Badge>
-            )}
-          </div>
-          <div className="mt-2 space-y-2.5">
-            {item.comments.map((comment) => (
-              <div key={comment.providerNodeId} className="pl-3">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span className="text-foreground/75">
-                    {comment.author?.login ?? "Unknown actor"}
-                  </span>
-                  <time
-                    dateTime={comment.createdAt}
-                    className="font-mono tabular-nums"
-                  >
-                    {formatRelative(comment.createdAt)}
-                  </time>
-                </div>
-                <RemoteMarkdown content={comment.body} className="mt-1" />
-              </div>
-            ))}
-          </div>
-          {item.totalCount > item.comments.length && (
-            <p className="mt-2 font-mono text-xs text-muted-foreground">
-              Showing {item.comments.length} of {item.totalCount} thread
-              comments.
-            </p>
-          )}
-        </div>
-      );
-    }
-    case "readiness":
-      return (
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          Readiness is now{" "}
-          {item.readiness === "ready" ? "ready for review" : "draft"}.
-        </p>
-      );
-    case "review_requested":
-    case "review_request_removed":
-      return null;
-    case "checks":
-      return (
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          {titleCase(item.checks.state)}, {item.totalCount} checks at head{" "}
-          <code className="font-mono text-foreground/75">
-            {item.headOid.slice(0, 8)}
-          </code>
-        </p>
-      );
-    case "merged":
-      return item.commitOid || item.refName ? (
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          {item.refName ? `Into ${item.refName}` : "Merge commit"}
-          {item.commitOid ? (
-            <code className="ml-2 font-mono text-foreground/75">
-              {item.commitOid.slice(0, 8)}
-            </code>
-          ) : null}
-        </p>
-      ) : null;
-  }
+  const renderBody = TIMELINE_EVENT_BODY_RENDERERS[item.kind];
+  if (!renderBody) return null;
+  return renderBody(item);
 }
 
 function boundedMessage(marker: PullRequestBoundedDataMarker): string {
@@ -312,20 +363,26 @@ const TimelineRow = memo(
                 </time>
               </div>
               {eventUrl && (
-                <a
-                  href={eventUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Open event"
-                  title="Open event"
-                  className="-mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] duration-150 hover:bg-muted/50 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
-                  onClick={(event) => {
-                    if (!item.url || !safePullRequestHttpUrl(item.url))
-                      event.preventDefault();
-                  }}
-                >
-                  <ExternalLink aria-hidden className="size-3.5" />
-                </a>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <a
+                        href={eventUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Open event"
+                        className="-mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] duration-150 hover:bg-muted/50 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
+                        onClick={(event) => {
+                          if (!item.url || !safePullRequestHttpUrl(item.url))
+                            event.preventDefault();
+                        }}
+                      >
+                        <ExternalLink aria-hidden className="size-3.5" />
+                      </a>
+                    }
+                  />
+                  <TooltipContent>Open event</TooltipContent>
+                </Tooltip>
               )}
             </div>
             <TimelineEventBody item={item} />
@@ -344,19 +401,211 @@ const TimelineRow = memo(
 
 TimelineRow.displayName = "TimelineRow";
 
-function PullRequestTimelineComponent({
-  items,
-  hasMoreOlder = false,
-  hasMoreNewer = false,
-  boundedData = null,
-  stale = false,
-  initialLoading = false,
-  initialFailed = false,
-  loadingOlder = false,
-  loadingNewer = false,
+function TimelineStaleNotice({ stale }: { stale: boolean }) {
+  if (!stale) return null;
+
+  return (
+    <p
+      role="status"
+      className="flex items-center gap-2 bg-primary/8 px-4 py-2 text-xs text-muted-foreground"
+    >
+      <AlertCircle size={13} aria-hidden className="shrink-0 text-primary/80" />
+      Stale data. Showing the last successful Timeline.
+    </p>
+  );
+}
+
+function TimelineOlderActivityControl({
+  hasMoreOlder,
+  loadingOlder,
   onLoadOlder,
+  onLoad,
+}: {
+  hasMoreOlder: boolean;
+  loadingOlder: boolean;
+  onLoadOlder: PullRequestTimelineProps["onLoadOlder"];
+  onLoad: () => Promise<void>;
+}) {
+  if (!hasMoreOlder || !onLoadOlder) return null;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="mx-4 my-2 text-xs text-muted-foreground"
+      disabled={loadingOlder}
+      onClick={onLoad}
+    >
+      {loadingOlder ? "Loading older activity" : "Load older activity"}
+    </Button>
+  );
+}
+
+function TimelineEmptyState({
+  initialLoading,
+  initialFailed,
+}: {
+  initialLoading: boolean;
+  initialFailed: boolean;
+}) {
+  if (initialLoading) {
+    return (
+      <div className="flex items-center justify-center gap-2 px-4 py-12 text-xs text-muted-foreground">
+        <Spinner size="xs" aria-hidden />
+        <span role="status">Loading Timeline activity</span>
+      </div>
+    );
+  }
+  if (initialFailed) {
+    return (
+      <div className="px-4 py-12 text-center">
+        <AlertCircle aria-hidden className="mx-auto size-4 text-destructive/70" />
+        <p className="mt-2 text-xs text-muted-foreground">
+          Timeline activity is unavailable.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="px-4 py-12 text-center">
+      <span aria-hidden className="font-mono text-lg text-muted-foreground/45">
+        ∅
+      </span>
+      <p className="mt-1 text-xs text-muted-foreground">No remote activity</p>
+    </div>
+  );
+}
+
+function TimelineList({
+  items,
+  virtualized,
+  virtualizer,
+  initialLoading,
+  initialFailed,
+}: {
+  items: readonly PullRequestTimelineItem[];
+  virtualized: boolean;
+  virtualizer: Virtualizer<HTMLDivElement, HTMLLIElement>;
+  initialLoading: boolean;
+  initialFailed: boolean;
+}) {
+  if (items.length === 0) {
+    return (
+      <TimelineEmptyState
+        initialLoading={initialLoading}
+        initialFailed={initialFailed}
+      />
+    );
+  }
+  if (!virtualized) {
+    return (
+      <ol
+        aria-label="Pull request timeline"
+        className="mx-auto w-full max-w-5xl list-none p-0"
+      >
+        {items.map((item, index) => (
+          <TimelineRow
+            key={item.providerNodeId}
+            item={item}
+            index={index}
+            total={items.length}
+          />
+        ))}
+      </ol>
+    );
+  }
+  return (
+    <ol
+      aria-label="Pull request timeline"
+      className="relative mx-auto w-full max-w-5xl list-none p-0"
+      style={{
+        height: virtualizer.getTotalSize(),
+        contain: "layout paint style",
+      }}
+    >
+      {virtualizer.getVirtualItems().map((virtualItem) => {
+        const item = items[virtualItem.index];
+        if (!item) return null;
+        return (
+          <TimelineRow
+            key={virtualItem.key}
+            item={item}
+            index={virtualItem.index}
+            total={items.length}
+            className="absolute left-0 top-0 w-full"
+            style={{ transform: `translateY(${virtualItem.start}px)` }}
+            measureRef={(element) => {
+              if (element) virtualizer.measureElement(element);
+            }}
+          />
+        );
+      })}
+    </ol>
+  );
+}
+
+function TimelineNewerActivityNotice({
+  hasMoreNewer,
+  loadingNewer,
   onLoadNewer,
-}: PullRequestTimelineProps) {
+}: {
+  hasMoreNewer: boolean;
+  loadingNewer: boolean;
+  onLoadNewer: (() => void) | undefined;
+}) {
+  if (!hasMoreNewer) return null;
+
+  return (
+    <div className="mx-4 mb-2 bg-page/55 px-3 py-2.5">
+      <p className="text-xs text-muted-foreground">Newer activity remains.</p>
+      {onLoadNewer && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-1 w-full text-xs text-muted-foreground"
+          disabled={loadingNewer}
+          onClick={onLoadNewer}
+        >
+          {loadingNewer ? "Loading newer activity" : "Load newer activity"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function TimelineBoundedDataNotice({
+  boundedData,
+}: {
+  boundedData: PullRequestBoundedDataMarker | null;
+}) {
+  if (!boundedData) return null;
+
+  return (
+    <p
+      role="status"
+      data-bounded-reason={boundedData.reason}
+      className="mx-4 mb-2 flex items-start gap-2 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+    >
+      <AlertCircle
+        size={13}
+        aria-hidden
+        className="mt-0.5 shrink-0 text-primary/80"
+      />
+      {boundedMessage(boundedData)}
+    </p>
+  );
+}
+
+function useTimelineVirtualization(
+  items: readonly PullRequestTimelineItem[],
+): {
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+  sortedItems: readonly PullRequestTimelineItem[];
+  virtualized: boolean;
+  virtualizer: Virtualizer<HTMLDivElement, HTMLLIElement>;
+} {
   const viewportRef = useRef<HTMLDivElement>(null);
   const sortedItems = useMemo(
     () =>
@@ -379,6 +628,21 @@ function PullRequestTimelineComponent({
     overscan: TIMELINE_OVERSCAN,
     useFlushSync: false,
   });
+
+  return { viewportRef, sortedItems, virtualized, virtualizer };
+}
+
+function useTimelinePrependLoader({
+  viewportRef,
+  sortedItems,
+  virtualizer,
+  onLoadOlder,
+}: {
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+  sortedItems: readonly PullRequestTimelineItem[];
+  virtualizer: Virtualizer<HTMLDivElement, HTMLLIElement>;
+  onLoadOlder: PullRequestTimelineProps["onLoadOlder"];
+}): () => Promise<void> {
   const sortedItemsRef = useRef(sortedItems);
   const virtualizerRef = useRef(virtualizer);
   sortedItemsRef.current = sortedItems;
@@ -467,155 +731,69 @@ function PullRequestTimelineComponent({
     scheduleRead();
   };
 
-  const handleLoadOlder = async (): Promise<void> => {
+  return async (): Promise<void> => {
     if (!onLoadOlder) return;
     const anchor = capturePrependAnchor();
     await onLoadOlder(anchor);
     if (anchor) restorePrependAnchor(anchor);
   };
+}
+
+function PullRequestTimelineComponent({
+  items,
+  hasMoreOlder = false,
+  hasMoreNewer = false,
+  boundedData = null,
+  stale = false,
+  initialLoading = false,
+  initialFailed = false,
+  loadingOlder = false,
+  loadingNewer = false,
+  onLoadOlder,
+  onLoadNewer,
+}: PullRequestTimelineProps) {
+  const { viewportRef, sortedItems, virtualized, virtualizer } =
+    useTimelineVirtualization(items);
+  const handleLoadOlder = useTimelinePrependLoader({
+    viewportRef,
+    sortedItems,
+    virtualizer,
+    onLoadOlder,
+  });
 
   return (
     <section
       aria-label="Pull request Timeline"
       className="flex min-h-0 flex-1 flex-col bg-background"
     >
-      {stale && (
-        <p
-          role="status"
-          className="flex items-center gap-2 bg-primary/8 px-4 py-2 text-xs text-muted-foreground"
-        >
-          <AlertCircle
-            size={13}
-            aria-hidden
-            className="shrink-0 text-primary/80"
-          />
-          Stale data. Showing the last successful Timeline.
-        </p>
-      )}
-
-      {hasMoreOlder && onLoadOlder && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="mx-4 my-2 text-xs text-muted-foreground"
-          disabled={loadingOlder}
-          onClick={handleLoadOlder}
-        >
-          {loadingOlder ? "Loading older activity" : "Load older activity"}
-        </Button>
-      )}
+      <TimelineStaleNotice stale={stale} />
+      <TimelineOlderActivityControl
+        hasMoreOlder={hasMoreOlder}
+        loadingOlder={loadingOlder}
+        onLoadOlder={onLoadOlder}
+        onLoad={handleLoadOlder}
+      />
 
       <ScrollArea
         className="min-h-0 flex-1"
         viewportRef={viewportRef}
         viewportProps={{ "aria-label": "Pull request Timeline viewport" }}
       >
-        {sortedItems.length === 0 && initialLoading ? (
-          <div className="flex items-center justify-center gap-2 px-4 py-12 text-xs text-muted-foreground">
-            <Spinner size="xs" aria-hidden />
-            <span role="status">Loading Timeline activity</span>
-          </div>
-        ) : sortedItems.length === 0 && initialFailed ? (
-          <div className="px-4 py-12 text-center">
-            <AlertCircle
-              aria-hidden
-              className="mx-auto size-4 text-destructive/70"
-            />
-            <p className="mt-2 text-xs text-muted-foreground">
-              Timeline activity is unavailable.
-            </p>
-          </div>
-        ) : sortedItems.length === 0 ? (
-          <div className="px-4 py-12 text-center">
-            <span
-              aria-hidden
-              className="font-mono text-lg text-muted-foreground/45"
-            >
-              ∅
-            </span>
-            <p className="mt-1 text-xs text-muted-foreground">
-              No remote activity
-            </p>
-          </div>
-        ) : virtualized ? (
-          <ol
-            aria-label="Pull request timeline"
-            className="relative mx-auto w-full max-w-5xl list-none p-0"
-            style={{
-              height: virtualizer.getTotalSize(),
-              contain: "layout paint style",
-            }}
-          >
-            {virtualizer.getVirtualItems().map((virtualItem) => {
-              const item = sortedItems[virtualItem.index];
-              if (!item) return null;
-              return (
-                <TimelineRow
-                  key={virtualItem.key}
-                  item={item}
-                  index={virtualItem.index}
-                  total={sortedItems.length}
-                  className="absolute left-0 top-0 w-full"
-                  style={{ transform: `translateY(${virtualItem.start}px)` }}
-                  measureRef={(element) => {
-                    if (element) virtualizer.measureElement(element);
-                  }}
-                />
-              );
-            })}
-          </ol>
-        ) : (
-          <ol
-            aria-label="Pull request timeline"
-            className="mx-auto w-full max-w-5xl list-none p-0"
-          >
-            {sortedItems.map((item, index) => (
-              <TimelineRow
-                key={item.providerNodeId}
-                item={item}
-                index={index}
-                total={sortedItems.length}
-              />
-            ))}
-          </ol>
-        )}
+        <TimelineList
+          items={sortedItems}
+          virtualized={virtualized}
+          virtualizer={virtualizer}
+          initialLoading={initialLoading}
+          initialFailed={initialFailed}
+        />
       </ScrollArea>
 
-      {hasMoreNewer && (
-        <div className="mx-4 mb-2 bg-page/55 px-3 py-2.5">
-          <p className="text-xs text-muted-foreground">
-            Newer activity remains.
-          </p>
-          {onLoadNewer && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mt-1 w-full text-xs text-muted-foreground"
-              disabled={loadingNewer}
-              onClick={onLoadNewer}
-            >
-              {loadingNewer ? "Loading newer activity" : "Load newer activity"}
-            </Button>
-          )}
-        </div>
-      )}
-
-      {boundedData && (
-        <p
-          role="status"
-          data-bounded-reason={boundedData.reason}
-          className="mx-4 mb-2 flex items-start gap-2 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
-        >
-          <AlertCircle
-            size={13}
-            aria-hidden
-            className="mt-0.5 shrink-0 text-primary/80"
-          />
-          {boundedMessage(boundedData)}
-        </p>
-      )}
+      <TimelineNewerActivityNotice
+        hasMoreNewer={hasMoreNewer}
+        loadingNewer={loadingNewer}
+        onLoadNewer={onLoadNewer}
+      />
+      <TimelineBoundedDataNotice boundedData={boundedData} />
     </section>
   );
 }

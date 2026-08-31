@@ -20,35 +20,46 @@ export function useComposerPrDetection({
   dismiss: () => void;
   reset: () => void;
 } {
-  const [detectedPr, setDetectedPr] = useState<PrDetail | null>(null);
+  const [detectedPrResult, setDetectedPrResult] = useState<{
+    pullRequest: PrDetail | null;
+    requestVersion: number;
+    url: string;
+  } | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const requestGenerationRef = useRef(0);
+  const previousUrlRef = useRef<string | null>(null);
+  const requestVersionRef = useRef(0);
+  const detectedUrl = enabled && !dismissed
+    ? input.match(PULL_REQUEST_URL_PATTERN)?.[0] ?? null
+    : null;
+
+  if (previousUrlRef.current !== detectedUrl) {
+    previousUrlRef.current = detectedUrl;
+    requestVersionRef.current += 1;
+  }
+
+  const requestVersion = requestVersionRef.current;
+  const detectedPr = detectedPrResult?.url === detectedUrl
+    && detectedPrResult.requestVersion === requestVersion
+    ? detectedPrResult.pullRequest
+    : null;
 
   useEffect(() => {
     const requestGeneration = requestGenerationRef.current + 1;
     requestGenerationRef.current = requestGeneration;
 
-    if (!enabled || dismissed) {
-      setDetectedPr(null);
-      return;
-    }
-
-    const match = input.match(PULL_REQUEST_URL_PATTERN);
-    if (!match) {
-      setDetectedPr(null);
-      return;
-    }
+    if (!detectedUrl) return;
 
     const timeout = setTimeout(() => {
-      void lookup(match[0])
+      void lookup(detectedUrl)
         .then((pullRequest) => {
           if (requestGenerationRef.current === requestGeneration) {
-            setDetectedPr(pullRequest);
+            setDetectedPrResult({ pullRequest, requestVersion, url: detectedUrl });
           }
         })
         .catch(() => {
           if (requestGenerationRef.current === requestGeneration) {
-            setDetectedPr(null);
+            setDetectedPrResult({ pullRequest: null, requestVersion, url: detectedUrl });
           }
         });
     }, 500);
@@ -59,17 +70,17 @@ export function useComposerPrDetection({
         requestGenerationRef.current += 1;
       }
     };
-  }, [dismissed, enabled, input, lookup]);
+  }, [detectedUrl, lookup, requestVersion]);
 
   const dismiss = useCallback(() => {
     requestGenerationRef.current += 1;
-    setDetectedPr(null);
+    setDetectedPrResult(null);
     setDismissed(true);
   }, []);
 
   const reset = useCallback(() => {
     requestGenerationRef.current += 1;
-    setDetectedPr(null);
+    setDetectedPrResult(null);
     setDismissed(false);
   }, []);
 

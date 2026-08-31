@@ -70,7 +70,7 @@ export class BrowserAutomationScheduler {
     this.activeItems.get(targetKey)?.controller.abort(reason);
     const queue = this.queues.get(targetKey);
     if (!queue) return;
-    for (const item of [...queue]) {
+    for (const item of queue) {
       item.controller.abort(reason);
       item.reject(reason);
     }

@@ -4,7 +4,7 @@
  */
 
 import { BrowserWindow, type WebContents } from "electron";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type {
   AttachmentMeta,
   BrowserTabInfo,
@@ -190,7 +190,7 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
   const scopeKey = previewTabScopeKey(workspaceId, threadId);
   let set = getThreadTabSet(s, threadId, workspaceId);
   if (!set) {
-    const tabId = randomUUID();
+    const tabId = NodeCrypto.randomUUID();
     const isActiveThread = s.lastPreviewThreadId === threadId && workspaceId === (s.workspaceId ?? threadId);
     const firstTab: TabState = {
       id: tabId,
@@ -213,7 +213,7 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
   if (!active) {
     // Defensive: ensureThreadTabSet guarantees at least one tab, but TypeScript
     // doesn't know that. Add a synthetic one rather than throwing.
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const tab: TabState = {
       id,
       threadId,
@@ -306,9 +306,27 @@ function pageStatusEqual(a: PreviewPageStatus, b: PreviewPageStatus): boolean {
     a.title === b.title &&
     a.favicon === b.favicon &&
     a.phase === b.phase &&
-    a.error?.kind === b.error?.kind &&
-    a.error?.status === b.error?.status &&
-    a.error?.code === b.error?.code &&
-    a.error?.message === b.error?.message
+    pageStatusErrorEqual(a.error, b.error)
   );
+}
+
+function pageStatusErrorEqual(
+  left: PreviewPageStatus["error"],
+  right: PreviewPageStatus["error"],
+): boolean {
+  return pageStatusErrorKindEqual(left, right) && pageStatusErrorDetailsEqual(left, right);
+}
+
+function pageStatusErrorKindEqual(
+  left: PreviewPageStatus["error"],
+  right: PreviewPageStatus["error"],
+): boolean {
+  return left?.kind === right?.kind;
+}
+
+function pageStatusErrorDetailsEqual(
+  left: PreviewPageStatus["error"],
+  right: PreviewPageStatus["error"],
+): boolean {
+  return left?.status === right?.status && left?.code === right?.code && left?.message === right?.message;
 }

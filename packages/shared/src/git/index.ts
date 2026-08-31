@@ -28,36 +28,49 @@ export function validateWorktreeName(name: string): void {
  * Throws on invalid input.
  */
 export function validateBranchName(branch: string): void {
-  if (!branch || branch.length > 250) {
+  if (hasInvalidBranchLength(branch)) {
     throw new Error("Branch name must be 1-250 characters");
   }
   if (branch.startsWith("-")) {
     throw new Error("Branch name cannot start with '-'");
   }
-  if (
-    /[ \t~^:?*\[\\\x00-\x1f\x7f]/.test(branch) ||
-    branch.includes("..")
-  ) {
+  if (hasInvalidBranchCharacters(branch)) {
     throw new Error(`Branch name contains invalid characters: ${branch}`);
   }
-  if (
-    branch.endsWith(".lock") ||
-    branch.endsWith(".") ||
-    branch.endsWith("/")
-  ) {
+  if (hasInvalidBranchSuffix(branch)) {
     throw new Error(`Branch name has an invalid suffix: ${branch}`);
   }
-  if (branch.includes("@{") || branch.includes("//")) {
+  if (hasInvalidBranchSequence(branch)) {
     throw new Error(`Branch name contains invalid sequence: ${branch}`);
   }
   if (branch === "@") {
     throw new Error("Branch name cannot be '@'");
   }
-  if (/(?:^|\/)\./.test(branch)) {
+  if (hasDotPrefixedComponent(branch)) {
     throw new Error(
       `Branch name component cannot start with '.': ${branch}`,
     );
   }
+}
+
+function hasInvalidBranchLength(branch: string): boolean {
+  return !branch || branch.length > 250;
+}
+
+function hasInvalidBranchCharacters(branch: string): boolean {
+  return /[ \t~^:?*[\\\x00-\x1f\x7f]/.test(branch) || branch.includes("..");
+}
+
+function hasInvalidBranchSuffix(branch: string): boolean {
+  return branch.endsWith(".lock") || branch.endsWith(".") || branch.endsWith("/");
+}
+
+function hasInvalidBranchSequence(branch: string): boolean {
+  return branch.includes("@{") || branch.includes("//");
+}
+
+function hasDotPrefixedComponent(branch: string): boolean {
+  return /(?:^|\/)\./.test(branch);
 }
 
 /**

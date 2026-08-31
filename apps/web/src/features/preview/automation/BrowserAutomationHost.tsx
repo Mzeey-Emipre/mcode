@@ -3,7 +3,6 @@ import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
   BrowserAutomationHostDispatchSchema,
-  BrowserAutomationRequestSchema,
   type BrowserAutomationHostDispatch,
   type BrowserAutomationHostDispatchTarget,
   type BrowserAutomationErrorCode,
@@ -29,20 +28,17 @@ import {
 } from "./browserAutomationStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
-import { isEmptyPreviewTabUrl } from "@/features/preview/navigation/open-url-in-preview";
 import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
 import {
   resolveSameOriginFrame,
 } from "./webBrowserInteractionExecutor";
-import { PreviewPanel, WEB_RUNTIME_PREVIEW_TAB_ID } from "../surfaces/PreviewPanel";
+import { PreviewPanel } from "../surfaces/PreviewPanel";
 import { browserSurfacePresentationCoordinator } from "../surfaces/BrowserSurfaceHostRoot";
 import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
 import {
   isBrowserAutomationWebRuntimeEnabled,
   normalizeWebPreviewUrl,
 } from "./browserAutomationRuntime";
-import { executeWebBrowserDispatch } from "./browserAutomationWebExecutor";
-import { captureVisibleWebLocation, sanitizeWebLocation } from "./web-browser-automation/capture";
 import {
   BrowserSessionDriver,
   ElectronBrowserSessionAdapter,
@@ -51,24 +47,26 @@ import {
 } from "./services/browserSessionDriver";
 import { WebBrowserSessionAdapter } from "./services/webBrowserSessionAdapter";
 import {
-  type ViewportApplyResult,
-} from "./services/viewportCoordinator";
-import {
-  getOrCreateViewportCoordinator,
-  waitForViewportLayout,
-} from "./services/viewportCoordinatorFactory";
-import {
   BrowserAutomationHostSupervisor,
   type BrowserAutomationHostLease,
 } from "./services/browserAutomationHostSupervisor";
+import {
+  completeViewportControlRun as completeViewportControlRunImplementation,
+  executeBrowserDispatch as executeBrowserDispatchImplementation,
+  interruptViewportCoordinator as interruptViewportCoordinatorImplementation,
+  projectAgentControl as projectAgentControlImplementation,
+  releaseHandedOffBrowserControl as releaseHandedOffBrowserControlImplementation,
+} from "./browserAutomationHostExecution";
+import {
+  acceptExpectedWebNavigationRevision as acceptExpectedWebNavigationRevisionImplementation,
+} from "./browserAutomationHostNavigation";
+import { createBrowserAutomationBootstrapLifecycle } from "./browserAutomationHostLifecycle";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HOST_REGISTRATION_RETRY_MS = 1_000;
 const TARGET_DISCOVERY_RETRY_MS = 50;
 const TARGET_DISCOVERY_MAX_ATTEMPTS = 40;
 const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
-const viewportCoordinatorDispatches = new WeakMap<object, BrowserAutomationHostDispatch>();
-
 export { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
 
 function requestRemovesBrowserTarget(dispatch: BrowserAutomationHostDispatch): boolean {
@@ -76,87 +74,11 @@ function requestRemovesBrowserTarget(dispatch: BrowserAutomationHostDispatch): b
     (dispatch.request.args.action === "close" || dispatch.request.args.action === "finalize");
 }
 
-function handoffFailureResponse(
-  request: BrowserAutomationRequest,
-  message: string,
-): BrowserAutomationResponse {
-  return {
-    contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-    requestId: request.requestId,
-    sequence: request.sequence,
-    ok: false,
-    error: {
-      code: "TAB_UNAVAILABLE",
-      message,
-      retryable: true,
-      stage: "effect",
-      effect: "preserved",
-      recovery: "inspect",
-      correlationId: globalThis.crypto.randomUUID(),
-    },
-  };
-}
-
 async function releaseHandedOffBrowserControl(
   dispatch: BrowserAutomationHostDispatch,
   response: BrowserAutomationResponse,
 ): Promise<BrowserAutomationResponse> {
-  if (
-    !response.ok ||
-    response.result.operation !== "tabs" ||
-    response.result.action !== "finalize"
-  ) return response;
-  const handoff = response.result.tabs.find(
-    (tab) => tab.disposition === "handoff" && tab.ownership === "released",
-  );
-  if (!handoff) return response;
-
-  const store = useBrowserAutomationStore.getState();
-  const controller = store.controllers.get(browserAutomationTargetKey(
-    dispatch.scope.workspaceId,
-    dispatch.target.threadId,
-    handoff.tabId,
-  ));
-  if (controller?.controller !== "agent") return response;
-  if (
-    controller.controlEpoch !== dispatch.request.expectedControlEpoch ||
-    controller.providerSessionId !== dispatch.request.providerSessionId
-  ) {
-    return handoffFailureResponse(
-      dispatch.request,
-      "Browser control changed before handoff completed",
-    );
-  }
-
-  const bridge = window.desktopBridge?.preview?.automation;
-  if (bridge) {
-    let released: boolean;
-    try {
-      released = await bridge.releaseAgentControl({
-        threadId: dispatch.target.threadId,
-        tabId: handoff.tabId,
-        controlEpoch: controller.controlEpoch,
-        providerSessionId: controller.providerSessionId,
-      });
-    } catch {
-      return handoffFailureResponse(dispatch.request, "Browser handoff could not release agent control");
-    }
-    return released
-      ? response
-      : handoffFailureResponse(dispatch.request, "Browser handoff could not release agent control");
-  }
-
-  store.setControllerForTarget(
-    dispatch.scope.workspaceId,
-    dispatch.target.threadId,
-    handoff.tabId,
-    {
-      tabId: handoff.tabId,
-      controller: "none",
-      controlEpoch: controller.controlEpoch,
-    },
-  );
-  return response;
+  return releaseHandedOffBrowserControlImplementation(dispatch, response);
 }
 
 function isBrowserTabHandoffInFlight(
@@ -236,198 +158,19 @@ function failureResponse(
   };
 }
 
-function viewportFailureCode(status: ViewportApplyResult["status"]): BrowserAutomationErrorCode {
-  if (status === "stale") return "STALE_TARGET_GENERATION";
-  if (status === "superseded") return "OPERATION_CANCELLED";
-  return "INTERNAL_ERROR";
-}
-
-function resizeResponse(
-  dispatch: BrowserAutomationHostDispatch,
-  result: ViewportApplyResult,
-): BrowserAutomationResponse {
-  if (result.status !== "applied" && result.status !== "clamped") {
-    return failureResponse(
-      dispatch.request,
-      viewportFailureCode(result.status),
-      result.error ?? `Browser viewport resize ${result.status}`,
-      result.applied,
-    );
-  }
-  return {
-    contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-    requestId: dispatch.request.requestId,
-    sequence: dispatch.request.sequence,
-    ok: true,
-    result: {
-      operation: "resize",
-      width: result.applied.width,
-      height: result.applied.height,
-      controlEpoch: dispatch.request.expectedControlEpoch,
-    },
-  };
-}
-
-async function restoreCompletedAgentViewport(
-  dispatch: BrowserAutomationHostDispatch,
-  response: BrowserAutomationResponse,
-): Promise<BrowserAutomationResponse> {
-  if (dispatch.request.operation !== "act" || !response.ok) return response;
-  const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
-    browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
-  );
-  if (!coordinator?.snapshot().agentActive) return response;
-  const result = await coordinator.completeAgent({
-    targetGeneration: dispatch.target.targetGeneration,
-  });
-  useBrowserAutomationStore.getState().setViewportState(
-    dispatch.scope.workspaceId,
-    dispatch.target.threadId,
-    dispatch.target.tabId,
-    coordinator.snapshot(),
-    coordinator,
-  );
-  if (result && result.status !== "applied" && result.status !== "clamped") {
-    return failureResponse(
-      dispatch.request,
-      viewportFailureCode(result.status),
-      result.error ?? `Browser viewport restore ${result.status}`,
-      result.applied,
-    );
-  }
-  return response;
-}
-
 async function completeViewportControlRun(
   dispatch: BrowserAutomationHostDispatch,
   response: BrowserAutomationResponse,
 ): Promise<BrowserAutomationResponse> {
-  if (!response.ok) return response;
-  const isCompletedAct = dispatch.request.operation === "act" &&
-    response.result.operation === "act" && response.result.outcome === "completed";
-  if (!isCompletedAct) return response;
-  return restoreCompletedAgentViewport(dispatch, response);
+  return completeViewportControlRunImplementation(dispatch, response);
 }
 
 function interruptViewportCoordinator(dispatch: BrowserAutomationHostDispatch): void {
-  const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
-    browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
-  );
-  if (!coordinator) return;
-  coordinator.interrupt();
-  useBrowserAutomationStore.getState().setViewportState(
-    dispatch.scope.workspaceId,
-    dispatch.target.threadId,
-    dispatch.target.tabId,
-    coordinator.snapshot(),
-    coordinator,
-  );
-}
-
-function ensureViewportCoordinator(
-  dispatch: BrowserAutomationHostDispatch,
-): ReturnType<typeof getOrCreateViewportCoordinator> {
-  const key = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
-  const state = useBrowserAutomationStore.getState();
-  const existing = state.viewportCoordinators.get(key);
-  let coordinator = existing;
-  coordinator = getOrCreateViewportCoordinator({
-    existing,
-    target: dispatch.target,
-    initial: state.viewportStateByTarget.get(key)?.confirmed ?? state.viewportByTarget.get(key),
-    mode: state.viewportStateByTarget.get(key)?.mode,
-    presentation: state.viewportStateByTarget.get(key)?.presentation,
-    targetGeneration: dispatch.target.targetGeneration,
-    surface: {
-      setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
-        dispatch.scope.workspaceId,
-        dispatch.target.threadId,
-        dispatch.target.tabId,
-        coordinator,
-        operation.targetGeneration,
-        size,
-      ),
-      resetViewport: (operation, coordinator) => useBrowserAutomationStore.getState().resetViewportIfCurrent(
-        dispatch.scope.workspaceId,
-        dispatch.target.threadId,
-        dispatch.target.tabId,
-        coordinator,
-        operation.targetGeneration,
-      ),
-      readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
-      waitForLayout: () => waitForViewportLayout(2),
-      isCurrent: (operation, coordinator) => {
-        const current = useBrowserAutomationStore.getState();
-        return current.viewportCoordinators.get(key) === coordinator &&
-          current.liveTargets.get(key)?.revision === operation.targetGeneration;
-      },
-    },
-    readConfirmed: () => useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
-      useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
-    operationId: (_operation, sequence) => {
-      const currentDispatch = viewportCoordinatorDispatches.get(coordinator!) ?? dispatch;
-      return browserAutomationRequestKey(
-        currentDispatch.request.requestId,
-        currentDispatch.request.sequence + sequence,
-      );
-    },
-    onStateChange: (nextState, coordinator) => useBrowserAutomationStore.getState().setViewportState(
-      dispatch.scope.workspaceId,
-      dispatch.target.threadId,
-      dispatch.target.tabId,
-      nextState,
-      coordinator,
-    ),
-    onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
-      dispatch.scope.workspaceId,
-      dispatch.target.threadId,
-      dispatch.target.tabId,
-      created,
-    ),
-  });
-  viewportCoordinatorDispatches.set(coordinator, dispatch);
-  return coordinator;
-}
-
-function bindViewportCoordinatorDispatch(dispatch: BrowserAutomationHostDispatch): void {
-  const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
-    browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
-  );
-  if (coordinator) viewportCoordinatorDispatches.set(coordinator, dispatch);
+  interruptViewportCoordinatorImplementation(dispatch);
 }
 
 function projectAgentControl(dispatch: BrowserAutomationHostDispatch): void {
-  if (
-    window.desktopBridge?.preview?.automation ||
-    dispatch.request.operation === "status" ||
-    !useThreadStore.getState().runningThreadIds.has(dispatch.target.threadId)
-  ) return;
-  useBrowserAutomationStore.getState().setControllerForTarget(
-    dispatch.scope.workspaceId,
-    dispatch.target.threadId,
-    dispatch.target.tabId,
-    {
-      tabId: dispatch.target.tabId,
-      controller: "agent",
-      controlEpoch: dispatch.request.expectedControlEpoch,
-      providerSessionId: dispatch.request.providerSessionId,
-      ...(dispatch.request.operation !== "inspect" &&
-      dispatch.request.operation !== "act" &&
-      dispatch.request.operation !== "tabs"
-        ? {
-            operation: dispatch.request.operation,
-          }
-        : {}),
-    },
-  );
-}
-
-function mountedWebIframe(dispatch: BrowserAutomationHostDispatch): HTMLIFrameElement | null {
-  return document.querySelector<HTMLIFrameElement>(webIframeSelector(
-    dispatch.scope.workspaceId,
-    dispatch.target.threadId,
-    dispatch.target.tabId,
-  ));
+  projectAgentControlImplementation(dispatch);
 }
 
 async function executeBrowserDispatch(
@@ -437,105 +180,7 @@ async function executeBrowserDispatch(
   signal: AbortSignal,
   runtimeOperations?: readonly BrowserAutomationOperation[],
 ): Promise<BrowserAutomationResponse> {
-  bindViewportCoordinatorDispatch(dispatch);
-  const operations = runtimeOperations ?? getBrowserAutomationRuntimeOperations(
-    bridge ? "electron" : "web",
-    { recordingAvailable: bridge ? recordingAvailable() : false },
-  );
-  if (!bridge) {
-    if (dispatch.request.operation === "resize") {
-      const coordinator = ensureViewportCoordinator(dispatch);
-      const result = await coordinator.requestAgentResize(
-        dispatch.request.args,
-        {
-          operationId: browserAutomationRequestKey(
-            dispatch.request.requestId,
-            dispatch.request.sequence,
-          ),
-          targetGeneration: dispatch.target.targetGeneration,
-        },
-      );
-      useBrowserAutomationStore.getState().setViewportState(
-        dispatch.scope.workspaceId,
-        dispatch.target.threadId,
-        dispatch.target.tabId,
-        coordinator.snapshot(),
-        coordinator,
-      );
-      return resizeResponse(dispatch, result);
-    }
-    const response = await executeWebBrowserDispatch(dispatch, signal);
-    if (dispatch.request.operation !== "status" || !response.ok || response.result.operation !== "status") return response;
-    const iframe = mountedWebIframe(dispatch);
-    if (iframe) {
-      try {
-        const frameUrl = iframe.src ? new URL(iframe.src, window.location.href) : null;
-        if (frameUrl && frameUrl.origin !== window.location.origin) {
-          return failureResponse(dispatch.request, "CROSS_ORIGIN", "Visible preview is cross-origin");
-        }
-      } catch {
-        return failureResponse(dispatch.request, "CROSS_ORIGIN", "Visible preview is cross-origin");
-      }
-      const location = captureVisibleWebLocation(iframe);
-      if (!location.ok) return failureResponse(dispatch.request, location.code, "Visible preview is cross-origin");
-      return { ...response, result: { ...response.result, url: location.value, capabilities: [...operations] } };
-    }
-    return { ...response, result: { ...response.result, url: sanitizeWebLocation(response.result.url), capabilities: [...operations] } };
-  }
-  const rendererOwned = dispatch.request.operation === "resize" ||
-    dispatch.request.operation === "recordingStart" ||
-    dispatch.request.operation === "recordingStop";
-  if (rendererOwned) {
-    const lease = await bridge.beginRendererOperation(dispatch);
-    if (!lease.ok) return lease.response;
-    let response: BrowserAutomationResponse;
-    try {
-      if (dispatch.request.operation === "resize") {
-        const coordinator = ensureViewportCoordinator(dispatch);
-        const result = await coordinator.requestAgentResize(
-          dispatch.request.args,
-          {
-            operationId: browserAutomationRequestKey(
-              dispatch.request.requestId,
-              dispatch.request.sequence,
-            ),
-            targetGeneration: dispatch.target.targetGeneration,
-          },
-        );
-        useBrowserAutomationStore.getState().setViewportState(
-          dispatch.scope.workspaceId,
-          dispatch.target.threadId,
-          dispatch.target.tabId,
-          coordinator.snapshot(),
-          coordinator,
-        );
-        response = resizeResponse(dispatch, result);
-      } else if (dispatch.request.operation === "recordingStart") {
-        response = await recorder.start(dispatch, bridge);
-      } else {
-        response = await recorder.stop(dispatch);
-      }
-    } catch (cause) {
-      response = failureResponse(
-        dispatch.request,
-        "INTERNAL_ERROR",
-        cause instanceof Error ? cause.message : "Renderer browser operation failed",
-      );
-    }
-    await bridge.finishRendererOperation({ leaseId: lease.leaseId, succeeded: response.ok });
-    return response;
-  }
-  const response = await bridge.execute(dispatch);
-  if (dispatch.request.operation !== "status" || !response.ok || response.result.operation !== "status") {
-    return response;
-  }
-  return {
-    ...response,
-    result: {
-      ...response.result,
-      capabilities: [...operations],
-    },
-  };
+  return executeBrowserDispatchImplementation(bridge, recorder, dispatch, signal, runtimeOperations);
 }
 
 /** Prioritize the active and live-target workspaces within the registration bound. */
@@ -566,66 +211,6 @@ function hostId(): string | null {
   const created = globalThis.crypto.randomUUID();
   sessionStorage.setItem(storageKey, created);
   return created;
-}
-
-function waitForLiveTarget(
-  workspaceId: string,
-  threadId: string,
-  tabId: string,
-  deadline: number,
-  signal: AbortSignal,
-): Promise<void> {
-  const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
-  if (signal.aborted) return Promise.reject(signal.reason);
-  if (useBrowserAutomationStore.getState().liveTargets.has(key)) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      window.clearTimeout(timeout);
-      unsubscribe();
-      reject(signal.reason);
-    };
-    const timeout = window.setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      unsubscribe();
-      reject(new Error("Browser target did not attach before the request deadline"));
-    }, Math.max(1, Math.min(60_000, deadline - Date.now())));
-    const unsubscribe = useBrowserAutomationStore.subscribe((state) => {
-      if (!state.liveTargets.has(key)) return;
-      window.clearTimeout(timeout);
-      signal.removeEventListener("abort", onAbort);
-      unsubscribe();
-      resolve();
-    });
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-async function waitForDesktopTarget(
-  bridge: PreviewAutomationBridge,
-  threadId: string,
-  tabId: string,
-  deadline: number,
-  signal: AbortSignal,
-): Promise<Extract<Awaited<ReturnType<PreviewAutomationBridge["describeTarget"]>>, { ok: true }>["target"]> {
-  while (true) {
-    if (signal.aborted) throw signal.reason;
-    const described = await bridge.describeTarget({ threadId, tabId });
-    if (described.ok) return described.target;
-    if (described.error !== "TAB_UNAVAILABLE") throw new Error("Browser target could not be described");
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error("Browser target could not be described before the request deadline");
-    await new Promise<void>((resolve, reject) => {
-      const onAbort = () => {
-        window.clearTimeout(timer);
-        reject(signal.reason);
-      };
-      const timer = window.setTimeout(() => {
-        signal.removeEventListener("abort", onAbort);
-        resolve();
-      }, Math.min(TARGET_DISCOVERY_RETRY_MS, remaining));
-      signal.addEventListener("abort", onAbort, { once: true });
-    });
-  }
 }
 
 function webPreviewIframe(
@@ -732,21 +317,464 @@ function acceptExpectedWebNavigationRevision(
   navigation: WebNavigationExpectation | undefined,
   target: { readonly revision: number } | undefined,
 ): number | undefined {
-  if (!navigation || (dispatch.request.operation !== "open" && dispatch.request.operation !== "navigate")) return undefined;
-  if (!navigation.loadObserved) return undefined;
-  if (navigation.acceptedRevision !== undefined) {
-    return navigation.acceptedRevision === target?.revision ? navigation.acceptedRevision : undefined;
+  return acceptExpectedWebNavigationRevisionImplementation(dispatch, navigation, target);
+}
+
+interface BrowserAutomationHostRequestState {
+  readonly inFlight: Map<string, BrowserAutomationHostDispatch>;
+  readonly requestAbort: Map<string, AbortController>;
+  readonly webAbort: Map<string, AbortController>;
+  readonly webObserver: Map<string, () => void>;
+  readonly webNavigation: Map<string, WebNavigationExpectation>;
+  readonly cancelled: Set<string>;
+  readonly recorder: BrowserAutomationRecorder;
+  readonly sessionDriver: BrowserSessionDriver;
+  readonly getLease: () => BrowserAutomationHostLease | null;
+}
+
+interface BrowserAutomationWebRequestFlags {
+  readonly interaction: boolean;
+  readonly executor: boolean;
+  readonly open: boolean;
+  readonly navigate: boolean;
+}
+
+interface BrowserAutomationRequestContext {
+  readonly bridge: PreviewAutomationBridge | undefined;
+  readonly webAutomationEnabled: boolean;
+  readonly state: BrowserAutomationHostRequestState;
+  readonly dispatch: BrowserAutomationHostDispatch;
+  readonly lease: BrowserAutomationHostLease;
+  readonly key: string;
+  readonly controller: AbortController;
+  readonly operationAbort: AbortController | null;
+  readonly targetKey: string;
+  readonly flags: BrowserAutomationWebRequestFlags;
+  readonly initialTargetMatches: boolean;
+  readonly initialControlEpochMatches: boolean;
+}
+
+interface BrowserAutomationCancelPayload {
+  readonly requestId: string;
+  readonly sequence: number;
+}
+
+function parseBrowserAutomationRequest(
+  input: unknown,
+  getLease: () => BrowserAutomationHostLease | null,
+): { readonly dispatch: BrowserAutomationHostDispatch; readonly lease: BrowserAutomationHostLease } | null {
+  const payload = input as { hostId?: unknown; generation?: unknown; dispatch?: unknown };
+  const lease = getLease();
+  if (!lease) return null;
+  if (payload.hostId !== lease.hostId) return null;
+  if (payload.generation !== lease.generation) return null;
+  const parsed = BrowserAutomationHostDispatchSchema().safeParse(payload.dispatch);
+  if (!parsed.success) return null;
+  return { dispatch: parsed.data, lease };
+}
+
+function browserAutomationWebRequestFlags(
+  bridge: PreviewAutomationBridge | undefined,
+  webAutomationEnabled: boolean,
+  dispatch: BrowserAutomationHostDispatch,
+): BrowserAutomationWebRequestFlags {
+  const webRuntime = !bridge && webAutomationEnabled;
+  const operation = dispatch.request.operation;
+  const hasUrl = Boolean(dispatch.request.args.url);
+  return {
+    interaction: webRuntime && (operation === "click" || operation === "type"),
+    executor: webRuntime,
+    open: webRuntime && operation === "open" && hasUrl,
+    navigate: webRuntime && operation === "navigate" && hasUrl,
+  };
+}
+
+function createBrowserAutomationRequestContext(
+  parsed: { readonly dispatch: BrowserAutomationHostDispatch; readonly lease: BrowserAutomationHostLease },
+  bridge: PreviewAutomationBridge | undefined,
+  webAutomationEnabled: boolean,
+  state: BrowserAutomationHostRequestState,
+): BrowserAutomationRequestContext | null {
+  const { dispatch, lease } = parsed;
+  const key = browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence);
+  if (state.inFlight.has(key)) return null;
+  const flags = browserAutomationWebRequestFlags(bridge, webAutomationEnabled, dispatch);
+  const controller = new AbortController();
+  const operationAbort = flags.interaction ? new AbortController() : null;
+  const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
+  state.inFlight.set(key, dispatch);
+  const store = useBrowserAutomationStore.getState();
+  store.setActiveRequest({ dispatch, startedAt: Date.now() });
+  projectAgentControl(dispatch);
+  state.requestAbort.set(key, controller);
+  if (operationAbort) state.webAbort.set(key, operationAbort);
+  const target = store.liveTargets.get(targetKey);
+  const controlEpoch = store.controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
+  return {
+    bridge,
+    webAutomationEnabled,
+    state,
+    dispatch,
+    lease,
+    key,
+    controller,
+    operationAbort,
+    targetKey,
+    flags,
+    initialTargetMatches: Boolean(target && target.revision === dispatch.target.targetGeneration),
+    initialControlEpochMatches: controlEpoch === dispatch.request.expectedControlEpoch,
+  };
+}
+
+function observeExpectedWebNavigationLoad(
+  context: BrowserAutomationRequestContext,
+  requestedUrl: string,
+  navigation: WebNavigationExpectation,
+): void {
+  const selector = webIframeSelector(
+    context.dispatch.scope.workspaceId,
+    context.dispatch.target.threadId,
+    context.dispatch.target.tabId,
+  );
+  const iframe = document.querySelector<HTMLIFrameElement>(selector);
+  if (!iframe) return;
+  const onLoad = () => {
+    if (normalizeWebPreviewUrl(iframe.src) === requestedUrl) navigation.loadObserved = true;
+  };
+  iframe.addEventListener("load", onLoad, { once: true });
+  context.state.webObserver.set(context.key, () => iframe.removeEventListener("load", onLoad));
+}
+
+function trackExpectedWebNavigation(context: BrowserAutomationRequestContext): void {
+  if (!context.flags.navigate) return;
+  const requestedUrl = normalizeWebPreviewUrl(context.dispatch.request.args.url ?? "");
+  if (!requestedUrl || !isSameOriginWebPreviewUrl(requestedUrl)) return;
+  const target = useBrowserAutomationStore.getState().liveTargets.get(context.targetKey);
+  if (!target || target.revision !== context.dispatch.target.targetGeneration) return;
+  const navigation: WebNavigationExpectation = {
+    targetKey: context.targetKey,
+    expectedUrl: requestedUrl,
+    initialRevision: target.revision,
+    loadObserved: false,
+  };
+  context.state.webNavigation.set(context.key, navigation);
+  observeExpectedWebNavigationLoad(context, requestedUrl, navigation);
+}
+
+function initialBrowserRequestFailure(
+  context: BrowserAutomationRequestContext,
+): BrowserAutomationResponse | null {
+  if (!context.initialTargetMatches) {
+    return failureResponse(context.dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
   }
-  const expectedUrl = normalizeWebPreviewUrl(dispatch.request.args.url ?? "");
-  if (
-    navigation.targetKey !== browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId) ||
-    navigation.expectedUrl !== expectedUrl ||
-    dispatch.target.targetGeneration !== navigation.initialRevision ||
-    target?.revision !== navigation.initialRevision + 1 ||
-    !webPreviewIframe(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId, navigation.expectedUrl)
-  ) return undefined;
-  navigation.acceptedRevision = target.revision;
-  return target.revision;
+  if (!context.initialControlEpochMatches) {
+    return failureResponse(context.dispatch.request, "STALE_CONTROL_EPOCH", "Browser operation is stale");
+  }
+  return null;
+}
+
+function executeWebInteraction(
+  context: BrowserAutomationRequestContext,
+): Promise<BrowserAutomationResponse> {
+  const staleResponse = initialBrowserRequestFailure(context);
+  if (staleResponse) return Promise.resolve(staleResponse);
+  if (!context.operationAbort) {
+    return Promise.resolve(failureResponse(context.dispatch.request, "TAB_UNAVAILABLE", "Browser target is unavailable"));
+  }
+  return context.state.sessionDriver.execute(context.dispatch, context.controller.signal);
+}
+
+function sameOriginWebOpenUrl(context: BrowserAutomationRequestContext): string | null {
+  if (!context.flags.open || context.dispatch.request.operation !== "open") return null;
+  const requestedUrl = normalizeWebPreviewUrl(context.dispatch.request.args.url ?? "");
+  if (!requestedUrl || !isSameOriginWebPreviewUrl(requestedUrl)) return null;
+  return requestedUrl;
+}
+
+function staleCurrentWebTargetResponse(
+  context: BrowserAutomationRequestContext,
+): BrowserAutomationResponse | null {
+  const target = useBrowserAutomationStore.getState().liveTargets.get(context.targetKey);
+  if (!target || target.revision !== context.dispatch.target.targetGeneration) {
+    return failureResponse(context.dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+  }
+  return null;
+}
+
+function markExpectedWebNavigationLoaded(
+  context: BrowserAutomationRequestContext,
+  requestedUrl: string,
+): void {
+  const navigation = context.state.webNavigation.get(context.key);
+  if (navigation?.targetKey === context.targetKey && navigation.expectedUrl === requestedUrl) {
+    navigation.loadObserved = true;
+  }
+}
+
+function startWebOpenNavigation(
+  context: BrowserAutomationRequestContext,
+  requestedUrl: string,
+  targetRevision: number,
+): HTMLIFrameElement | null {
+  const iframe = webPreviewIframe(
+    context.dispatch.scope.workspaceId,
+    context.dispatch.target.threadId,
+    context.dispatch.target.tabId,
+    requestedUrl,
+  );
+  if (iframe) return iframe;
+  context.state.webNavigation.set(context.key, {
+    targetKey: context.targetKey,
+    expectedUrl: requestedUrl,
+    initialRevision: targetRevision,
+    loadObserved: false,
+  });
+  useDiffStore.getState().setPreviewUrlForThread(context.dispatch.target.threadId, requestedUrl);
+  return null;
+}
+
+async function waitForWebOpenNavigation(
+  context: BrowserAutomationRequestContext,
+  requestedUrl: string,
+  iframe: HTMLIFrameElement | null,
+): Promise<void> {
+  const onNavigationLoad = iframe
+    ? undefined
+    : () => markExpectedWebNavigationLoaded(context, requestedUrl);
+  await waitForWebPreviewIframe(
+    context.dispatch.scope.workspaceId,
+    context.dispatch.target.threadId,
+    context.dispatch.target.tabId,
+    requestedUrl,
+    context.dispatch.request.deadline,
+    context.controller.signal,
+    onNavigationLoad,
+  );
+}
+
+function expectedWebNavigationRevision(context: BrowserAutomationRequestContext): number {
+  const target = useBrowserAutomationStore.getState().liveTargets.get(context.targetKey);
+  const navigation = context.state.webNavigation.get(context.key);
+  return navigation?.acceptedRevision ??
+    acceptExpectedWebNavigationRevision(context.dispatch, navigation, target) ??
+    context.dispatch.target.targetGeneration;
+}
+
+function staleExpectedWebTargetResponse(
+  context: BrowserAutomationRequestContext,
+): BrowserAutomationResponse | null {
+  const target = useBrowserAutomationStore.getState().liveTargets.get(context.targetKey);
+  if (!target || target.revision !== expectedWebNavigationRevision(context)) {
+    return failureResponse(context.dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+  }
+  return null;
+}
+
+function staleWebOpenResponse(context: BrowserAutomationRequestContext): BrowserAutomationResponse | null {
+  const targetFailure = staleExpectedWebTargetResponse(context);
+  if (targetFailure) return targetFailure;
+  const controlEpoch = useBrowserAutomationStore.getState().controllers.get(context.targetKey)?.controlEpoch ??
+    context.dispatch.request.expectedControlEpoch;
+  if (controlEpoch !== context.dispatch.request.expectedControlEpoch) {
+    return failureResponse(context.dispatch.request, "STALE_CONTROL_EPOCH", "Browser operation is stale");
+  }
+  return null;
+}
+
+function webOpenExecutionDispatch(context: BrowserAutomationRequestContext): BrowserAutomationHostDispatch {
+  return {
+    ...context.dispatch,
+    request: {
+      ...context.dispatch.request,
+      args: { activate: context.dispatch.request.args.activate },
+    },
+  };
+}
+
+async function executeWebOpen(context: BrowserAutomationRequestContext): Promise<BrowserAutomationResponse> {
+  const requestedUrl = sameOriginWebOpenUrl(context);
+  if (!requestedUrl) return context.state.sessionDriver.execute(context.dispatch, context.controller.signal);
+  const staleResponse = staleCurrentWebTargetResponse(context);
+  if (staleResponse) return staleResponse;
+  const target = useBrowserAutomationStore.getState().liveTargets.get(context.targetKey)!;
+  const iframe = startWebOpenNavigation(context, requestedUrl, target.revision);
+  await waitForWebOpenNavigation(context, requestedUrl, iframe);
+  const readyFailure = staleWebOpenResponse(context);
+  if (readyFailure) return readyFailure;
+  return context.state.sessionDriver.execute(webOpenExecutionDispatch(context), context.controller.signal);
+}
+
+function selectBrowserAutomationOperation(
+  context: BrowserAutomationRequestContext,
+): Promise<BrowserAutomationResponse> {
+  if (context.flags.interaction) return executeWebInteraction(context);
+  if (context.flags.open) return executeWebOpen(context);
+  if (context.bridge || context.flags.executor) {
+    return context.state.sessionDriver.execute(context.dispatch, context.controller.signal);
+  }
+  return Promise.resolve(failureResponse(
+    context.dispatch.request,
+    "UNSUPPORTED_OPERATION",
+    WEB_AUTOMATION_UNAVAILABLE_REASON,
+  ));
+}
+
+function requiresWebTargetVerification(context: BrowserAutomationRequestContext): boolean {
+  return context.flags.interaction || context.flags.open || context.flags.navigate;
+}
+
+function guardBrowserAutomationResponse(
+  context: BrowserAutomationRequestContext,
+  response: BrowserAutomationResponse,
+): BrowserAutomationResponse {
+  if (!requiresWebTargetVerification(context)) return response;
+  return staleExpectedWebTargetResponse(context) ?? response;
+}
+
+function guardBrowserAutomationFailure(
+  context: BrowserAutomationRequestContext,
+  cause: unknown,
+): BrowserAutomationResponse {
+  if (requiresWebTargetVerification(context)) {
+    const staleResponse = staleExpectedWebTargetResponse(context);
+    if (staleResponse) return staleResponse;
+  }
+  throw cause;
+}
+
+function guardBrowserAutomationOperation(
+  context: BrowserAutomationRequestContext,
+  operation: Promise<BrowserAutomationResponse>,
+): Promise<BrowserAutomationResponse> {
+  return operation
+    .then((response) => guardBrowserAutomationResponse(context, response))
+    .catch((cause: unknown) => guardBrowserAutomationFailure(context, cause));
+}
+
+function includesResponseTarget(context: BrowserAutomationRequestContext): boolean {
+  return context.flags.interaction ||
+    context.flags.navigate ||
+    context.dispatch.request.operation === "tabs" ||
+    (!context.bridge && context.webAutomationEnabled && context.dispatch.request.operation === "screenshot");
+}
+
+async function respondToBrowserAutomationRequest(
+  context: BrowserAutomationRequestContext,
+  response: BrowserAutomationResponse,
+): Promise<void> {
+  if (context.state.getLease() !== context.lease || context.state.cancelled.has(context.key)) return;
+  const completedResponse = await completeViewportControlRun(context.dispatch, response);
+  const settledResponse = await releaseHandedOffBrowserControl(context.dispatch, completedResponse);
+  const target = context.state.sessionDriver.responseTarget(context.dispatch, settledResponse);
+  if (includesResponseTarget(context)) {
+    await getTransport().respondToBrowserAutomationRequest(
+      context.lease.hostId,
+      context.lease.generation,
+      settledResponse,
+      target,
+    );
+    return;
+  }
+  await getTransport().respondToBrowserAutomationRequest(
+    context.lease.hostId,
+    context.lease.generation,
+    settledResponse,
+  );
+}
+
+function cleanupBrowserAutomationRequest(context: BrowserAutomationRequestContext): void {
+  context.state.webObserver.get(context.key)?.();
+  context.state.webObserver.delete(context.key);
+  context.state.webAbort.delete(context.key);
+  context.state.webNavigation.delete(context.key);
+  if (context.state.inFlight.get(context.key) === context.dispatch) context.state.inFlight.delete(context.key);
+  context.state.requestAbort.delete(context.key);
+  context.state.cancelled.delete(context.key);
+  useBrowserAutomationStore.getState().clearActiveRequest(
+    context.dispatch.request.requestId,
+    context.dispatch.request.sequence,
+  );
+}
+
+function startBrowserAutomationRequest(context: BrowserAutomationRequestContext): void {
+  const operation = guardBrowserAutomationOperation(context, selectBrowserAutomationOperation(context));
+  void operation
+    .then((response) => respondToBrowserAutomationRequest(context, response))
+    .catch(() => undefined)
+    .finally(() => cleanupBrowserAutomationRequest(context));
+}
+
+function handleBrowserAutomationRequest(
+  input: unknown,
+  bridge: PreviewAutomationBridge | undefined,
+  webAutomationEnabled: boolean,
+  state: BrowserAutomationHostRequestState,
+): void {
+  const parsed = parseBrowserAutomationRequest(input, state.getLease);
+  if (!parsed) return;
+  const context = createBrowserAutomationRequestContext(parsed, bridge, webAutomationEnabled, state);
+  if (!context) return;
+  trackExpectedWebNavigation(context);
+  startBrowserAutomationRequest(context);
+}
+
+function parseBrowserAutomationCancel(
+  input: unknown,
+  getLease: () => BrowserAutomationHostLease | null,
+): BrowserAutomationCancelPayload | null {
+  const payload = input as { hostId?: unknown; generation?: unknown; requestId?: unknown; sequence?: unknown };
+  const lease = getLease();
+  if (!lease) return null;
+  if (payload.hostId !== lease.hostId) return null;
+  if (payload.generation !== lease.generation) return null;
+  if (typeof payload.requestId !== "string") return null;
+  if (typeof payload.sequence !== "number") return null;
+  return { requestId: payload.requestId, sequence: payload.sequence };
+}
+
+function abortBootstrapRequest(
+  key: string,
+  bootstrapAbort: Map<string, AbortController>,
+): void {
+  bootstrapAbort.get(key)?.abort(new Error("Browser bootstrap was cancelled"));
+}
+
+function cancelBrowserAutomationRequest(
+  payload: BrowserAutomationCancelPayload,
+  bridge: PreviewAutomationBridge | undefined,
+  state: BrowserAutomationHostRequestState,
+): void {
+  const key = browserAutomationRequestKey(payload.requestId, payload.sequence);
+  const dispatch = state.inFlight.get(key);
+  if (!dispatch || state.cancelled.has(key)) return;
+  state.cancelled.add(key);
+  interruptViewportCoordinator(dispatch);
+  state.webAbort.get(key)?.abort(new Error("Browser operation was cancelled"));
+  state.recorder.cancel(dispatch);
+  state.requestAbort.get(key)?.abort(new Error("Browser operation was cancelled"));
+  if (bridge) void bridge.cancel(payload.requestId);
+}
+
+function createBrowserAutomationRequestHandler(
+  bridge: PreviewAutomationBridge | undefined,
+  webAutomationEnabled: boolean,
+  state: BrowserAutomationHostRequestState,
+): (input: unknown) => void {
+  return (input) => handleBrowserAutomationRequest(input, bridge, webAutomationEnabled, state);
+}
+
+function createBrowserAutomationCancelHandler(
+  bridge: PreviewAutomationBridge | undefined,
+  state: BrowserAutomationHostRequestState,
+  bootstrapAbort: Map<string, AbortController>,
+): (input: unknown) => void {
+  return (input) => {
+    const payload = parseBrowserAutomationCancel(input, state.getLease);
+    if (!payload) return;
+    const key = browserAutomationRequestKey(payload.requestId, payload.sequence);
+    abortBootstrapRequest(key, bootstrapAbort);
+    cancelBrowserAutomationRequest(payload, bridge, state);
+  };
 }
 
 interface BackgroundBrowserScope {
@@ -1070,6 +1098,31 @@ export function BrowserAutomationHost() {
     liveTargets.values(),
   ), [activeWorkspaceId, liveTargets, workspaces]);
   const workspaceSignature = JSON.stringify([...workspaceIds].sort());
+  const workspaceIdsRef = useRef(workspaceIds);
+  workspaceIdsRef.current = workspaceIds;
+  const activeWorkspaceIdRef = useRef(activeWorkspaceId);
+  activeWorkspaceIdRef.current = activeWorkspaceId;
+
+  const shouldInterruptViewport = (dispatch: BrowserAutomationHostDispatch): boolean => {
+    const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
+    return useBrowserAutomationStore.getState().viewportCoordinators.get(targetKey)?.snapshot().agentActive === true ||
+      dispatch.request.operation === "resize";
+  };
+
+  const cancelRemoteHostedRequest = (
+    lease: BrowserAutomationHostLease | null,
+    dispatch: BrowserAutomationHostDispatch,
+    reason: "human-interrupted" | "user-stopped" | "host-shutdown",
+  ): void => {
+    if (!lease) return;
+    void getTransport().cancelBrowserAutomationRequest(
+      lease.hostId,
+      lease.generation,
+      dispatch.request.requestId,
+      dispatch.request.sequence,
+      reason,
+    ).catch(() => undefined);
+  };
 
   const cancelHostedRequest = useCallback((
     key: string,
@@ -1079,24 +1132,11 @@ export function BrowserAutomationHost() {
   ): void => {
     if (cancelledRef.current.has(key)) return;
     cancelledRef.current.add(key);
-    const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
-    const viewportCoordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(targetKey);
-    if (viewportCoordinator?.snapshot().agentActive || dispatch.request.operation === "resize") {
-      interruptViewportCoordinator(dispatch);
-    }
+    if (shouldInterruptViewport(dispatch)) interruptViewportCoordinator(dispatch);
     webAbortRef.current.get(key)?.abort(new Error(`Browser operation was cancelled: ${reason}`));
     recorderRef.current.cancel(dispatch);
     void window.desktopBridge?.preview?.automation?.cancel(dispatch.request.requestId);
-    const lease = leaseOverride ?? leaseRef.current;
-    if (lease) {
-      void getTransport().cancelBrowserAutomationRequest(
-        lease.hostId,
-        lease.generation,
-        dispatch.request.requestId,
-        dispatch.request.sequence,
-        reason,
-      ).catch(() => undefined);
-    }
+    cancelRemoteHostedRequest(leaseOverride ?? leaseRef.current, dispatch, reason);
     useBrowserAutomationStore.getState().clearActiveRequest(
       dispatch.request.requestId,
       dispatch.request.sequence,
@@ -1115,6 +1155,8 @@ export function BrowserAutomationHost() {
   }, []);
 
   useEffect(() => {
+    const registrationWorkspaceIds = workspaceIdsRef.current;
+    const registrationActiveWorkspaceId = activeWorkspaceIdRef.current;
     const desktopAutomation = window.desktopBridge?.preview?.automation;
     const webAutomationEnabled = isBrowserAutomationWebRuntimeEnabled();
     if (!desktopAutomation && !webAutomationEnabled) {
@@ -1126,7 +1168,7 @@ export function BrowserAutomationHost() {
       useBrowserAutomationStore.getState().setStatus("unavailable");
       return;
     }
-    if (connectionStatus !== "connected" || workspaceIds.length === 0) {
+    if (connectionStatus !== "connected" || registrationWorkspaceIds.length === 0) {
       leaseRef.current = null;
       useBrowserAutomationStore.getState().setRegistered(false);
       useBrowserAutomationStore.getState().setStatus("unavailable");
@@ -1135,8 +1177,13 @@ export function BrowserAutomationHost() {
     useBrowserAutomationStore.getState().setLifecycleTabs([]);
     const transport = getTransport();
     const liveTargetSnapshot = useBrowserAutomationStore.getState().liveTargets;
-    const activeTarget = [...liveTargetSnapshot.values()].find((target) => target.workspaceId === activeWorkspaceId);
+    const activeTarget = [...liveTargetSnapshot.values()].find((target) => target.workspaceId === registrationActiveWorkspaceId);
     const worktreeIdentity = import.meta.env.VITE_MCODE_WORKTREE_IDENTITY?.trim() || "web-runtime";
+    const registeredInFlight = inFlightRef.current;
+    const registeredBootstrapRequests = bootstrapRequestRef.current;
+    const registeredBootstrapAbort = bootstrapAbortRef.current;
+    const registeredSessionDriver = sessionDriverRef.current;
+    const registeredAgentOpenTabs = agentOpenTabsRef.current;
     const supervisor = new BrowserAutomationHostSupervisor({
       register: async () => {
         const result = await transport.registerBrowserAutomationHost({
@@ -1145,7 +1192,7 @@ export function BrowserAutomationHost() {
           runtime: executorDescriptor.runtime,
           desktopInstanceId: "pending-desktop",
           worktreeIdentity: desktopAutomation ? "pending-worktree" : worktreeIdentity,
-          workspaceIds,
+          workspaceIds: registrationWorkspaceIds,
           ...(activeTarget && !desktopAutomation && webAutomationEnabled ? {
             targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
           } : {}),
@@ -1199,11 +1246,11 @@ export function BrowserAutomationHost() {
     void supervisor.start();
     return () => {
       const previousLease = leaseRef.current;
-      for (const [key, dispatch] of inFlightRef.current) {
+      for (const [key, dispatch] of registeredInFlight) {
         cancelHostedRequest(key, dispatch, "host-shutdown", previousLease);
       }
-      for (const [key, request] of bootstrapRequestRef.current) {
-        bootstrapAbortRef.current.get(key)?.abort(new Error("Browser host registration was replaced"));
+      for (const [key, request] of registeredBootstrapRequests) {
+        registeredBootstrapAbort.get(key)?.abort(new Error("Browser host registration was replaced"));
         if (previousLease) {
           void transport.cancelBrowserAutomationRequest(
             previousLease.hostId,
@@ -1217,13 +1264,19 @@ export function BrowserAutomationHost() {
       supervisor.stop();
       if (supervisorRef.current === supervisor) supervisorRef.current = null;
       leaseRef.current = null;
-      sessionDriverRef.current?.clearIdempotency();
+      registeredSessionDriver?.clearIdempotency();
       useBrowserAutomationStore.getState().setLifecycleTabs([]);
-      agentOpenTabsRef.current.clear();
+      registeredAgentOpenTabs.clear();
       useBrowserAutomationStore.getState().setRegistered(false);
       useBrowserAutomationStore.getState().setStatus("unavailable");
     };
-  }, [cancelHostedRequest, connectionStatus, stableHostId, workspaceSignature]);
+  }, [
+    cancelHostedRequest,
+    connectionStatus,
+    executorDescriptor,
+    stableHostId,
+    workspaceSignature,
+  ]);
 
   useEffect(() => {
     const lease = leaseRef.current;
@@ -1298,48 +1351,50 @@ export function BrowserAutomationHost() {
     };
   }, [cancelHostedRequest, connectionStatus, liveTargets, registered]);
 
+  const abortRequestsForReplacedTarget = (
+    targetKey: string,
+    target: { readonly revision: number },
+  ): void => {
+    for (const [requestKey, dispatch] of inFlightRef.current) {
+      if (browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId) !== targetKey) continue;
+      const navigation = webNavigationRef.current.get(requestKey);
+      if (acceptExpectedWebNavigationRevision(dispatch, navigation, target) !== undefined) continue;
+      webAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
+      requestAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
+    }
+  };
+
+  const removeOpenTargetMappings = (targetKey: string): void => {
+    for (const [openKey, mappedTarget] of agentOpenTabsRef.current) {
+      if (browserAutomationTargetKey(mappedTarget.workspaceId, mappedTarget.threadId, mappedTarget.tabId) === targetKey) {
+        agentOpenTabsRef.current.delete(openKey);
+      }
+    }
+  };
+
   useEffect(() => {
     const next = new Set(liveTargets.keys());
     const priorRevisions = priorLiveTargetRevisionsRef.current;
+    const cancelRequestsForDetachedTarget = (workspaceId: string, threadId: string, tabId: string): void => {
+      for (const [key, dispatch] of inFlightRef.current) {
+        if (dispatch.scope.workspaceId !== workspaceId || dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
+        if (!requestRemovesBrowserTarget(dispatch)) cancelHostedRequest(key, dispatch, "host-shutdown");
+      }
+    };
     for (const [key, target] of liveTargets) {
       const previousRevision = priorRevisions.get(key);
       if (previousRevision === undefined || previousRevision === target.revision) continue;
-      if (isBrowserTabHandoffInFlight(
-        inFlightRef.current.values(),
-        target.workspaceId,
-        target.threadId,
-        target.tabId,
-      )) continue;
-      for (const [requestKey, dispatch] of inFlightRef.current) {
-        if (browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId) !== key) continue;
-        const navigation = webNavigationRef.current.get(requestKey);
-        const expectedNavigation = acceptExpectedWebNavigationRevision(dispatch, navigation, target) !== undefined;
-        if (expectedNavigation) {
-          continue;
-        }
-        webAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
-        requestAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
+      if (!isBrowserTabHandoffInFlight(inFlightRef.current.values(), target.workspaceId, target.threadId, target.tabId)) {
+        abortRequestsForReplacedTarget(key, target);
       }
     }
     for (const removed of priorLiveTargetKeysRef.current) {
       if (next.has(removed)) continue;
       const [workspaceId, threadId, tabId] = JSON.parse(removed) as [string, string, string];
       sessionDriverRef.current?.clearIdempotencyForTarget(workspaceId, threadId, tabId);
-      for (const [openKey, mappedTarget] of agentOpenTabsRef.current) {
-        if (
-          browserAutomationTargetKey(
-            mappedTarget.workspaceId,
-            mappedTarget.threadId,
-            mappedTarget.tabId,
-          ) === removed
-        ) agentOpenTabsRef.current.delete(openKey);
-      }
+      removeOpenTargetMappings(removed);
       recorderRef.current.disposeTarget(workspaceId, threadId, tabId);
-      for (const [key, dispatch] of inFlightRef.current) {
-        if (dispatch.scope.workspaceId !== workspaceId || dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
-        if (requestRemovesBrowserTarget(dispatch)) continue;
-        cancelHostedRequest(key, dispatch, "host-shutdown");
-      }
+      cancelRequestsForDetachedTarget(workspaceId, threadId, tabId);
     }
     priorLiveTargetKeysRef.current = next;
     priorLiveTargetRevisionsRef.current = new Map(
@@ -1374,233 +1429,25 @@ export function BrowserAutomationHost() {
     const bridge = window.desktopBridge?.preview?.automation;
     const webAutomationEnabled = isBrowserAutomationWebRuntimeEnabled();
     if (!bridge && !webAutomationEnabled) return;
-    const unsubscribeRequest = pushEmitter.on("browserAutomation.request", (input) => {
-      const payload = input as { hostId?: unknown; generation?: unknown; dispatch?: unknown };
-      const lease = leaseRef.current;
-      const parsed = BrowserAutomationHostDispatchSchema().safeParse(payload.dispatch);
-      if (
-        !lease ||
-        payload.hostId !== lease.hostId ||
-        payload.generation !== lease.generation ||
-        !parsed.success
-      ) return;
-      const dispatch = parsed.data;
-      const key = browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence);
-      if (inFlightRef.current.has(key)) return;
-      inFlightRef.current.set(key, dispatch);
-      const store = useBrowserAutomationStore.getState();
-      store.setActiveRequest({ dispatch, startedAt: Date.now() });
-      projectAgentControl(dispatch);
-      const controller = new AbortController();
-      requestAbortRef.current.set(key, controller);
-      const webDispatch = !bridge && webAutomationEnabled &&
-        (dispatch.request.operation === "click" || dispatch.request.operation === "type");
-      const webExecutorDispatch = !bridge && webAutomationEnabled;
-      const webOpenRequest = !bridge && webAutomationEnabled &&
-        dispatch.request.operation === "open" && Boolean(dispatch.request.args.url);
-      const webNavigateRequest = !bridge && webAutomationEnabled &&
-        dispatch.request.operation === "navigate" && Boolean(dispatch.request.args.url);
-      const operationAbort = webDispatch ? new AbortController() : null;
-      if (operationAbort) webAbortRef.current.set(key, operationAbort);
-      const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
-      const liveTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
-      const currentEpoch = useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
-      const staleAtStart = !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration || currentEpoch !== dispatch.request.expectedControlEpoch;
-      if (webNavigateRequest) {
-        const requestedUrl = normalizeWebPreviewUrl(dispatch.request.args.url ?? "");
-        if (
-          requestedUrl &&
-          isSameOriginWebPreviewUrl(requestedUrl) &&
-          liveTarget &&
-          liveTarget.revision === dispatch.target.targetGeneration
-        ) {
-          const navigation: WebNavigationExpectation = {
-            targetKey,
-            expectedUrl: requestedUrl,
-            initialRevision: liveTarget.revision,
-            loadObserved: false,
-          };
-          webNavigationRef.current.set(key, navigation);
-          const selector = webIframeSelector(
-            dispatch.scope.workspaceId,
-            dispatch.target.threadId,
-            dispatch.target.tabId,
-          );
-          const iframe = document.querySelector<HTMLIFrameElement>(selector);
-          if (iframe) {
-            const onLoad = () => {
-              if (normalizeWebPreviewUrl(iframe.src) === requestedUrl) navigation.loadObserved = true;
-            };
-            iframe.addEventListener("load", onLoad, { once: true });
-            webObserverRef.current.set(key, () => iframe.removeEventListener("load", onLoad));
-          }
-        }
-      }
-      const executeWeb = async (): Promise<BrowserAutomationResponse> => {
-        if (staleAtStart) {
-          return failureResponse(dispatch.request, !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration ? "STALE_TARGET_GENERATION" : "STALE_CONTROL_EPOCH", "Browser operation is stale");
-        }
-        if (!operationAbort) return failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser target is unavailable");
-        return sessionDriverRef.current!.execute(dispatch, controller.signal);
-      };
-      const executeWebOpen = async (): Promise<BrowserAutomationResponse> => {
-        if (!webOpenRequest || dispatch.request.operation !== "open" || !dispatch.request.args.url) {
-          return sessionDriverRef.current!.execute(dispatch, controller.signal);
-        }
-        const requestedUrl = normalizeWebPreviewUrl(dispatch.request.args.url);
-        if (!requestedUrl || !isSameOriginWebPreviewUrl(requestedUrl)) {
-          return sessionDriverRef.current!.execute(dispatch, controller.signal);
-        }
-        const currentTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
-        if (!currentTarget || currentTarget.revision !== dispatch.target.targetGeneration) {
-          return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
-        }
-        const currentIframe = webPreviewIframe(
-          dispatch.scope.workspaceId,
-          dispatch.target.threadId,
-          dispatch.target.tabId,
-          requestedUrl,
-        );
-        if (!currentIframe) {
-          webNavigationRef.current.set(key, {
-            targetKey,
-            expectedUrl: requestedUrl,
-            initialRevision: currentTarget.revision,
-            loadObserved: false,
-          });
-        }
-        if (!currentIframe) {
-          useDiffStore.getState().setPreviewUrlForThread(dispatch.target.threadId, requestedUrl);
-        }
-        await waitForWebPreviewIframe(
-          dispatch.scope.workspaceId,
-          dispatch.target.threadId,
-          dispatch.target.tabId,
-          requestedUrl,
-          dispatch.request.deadline,
-          controller.signal,
-          !currentIframe
-          ? () => {
-              const navigation = webNavigationRef.current.get(key);
-              if (navigation?.targetKey === targetKey && navigation.expectedUrl === requestedUrl) {
-                navigation.loadObserved = true;
-              }
-            }
-            : undefined,
-        );
-        const latestStore = useBrowserAutomationStore.getState();
-        const latestTarget = latestStore.liveTargets.get(targetKey);
-        const navigation = webNavigationRef.current.get(key);
-        const expectedRevision = navigation?.acceptedRevision ??
-          acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
-          dispatch.target.targetGeneration;
-        if (!latestTarget || latestTarget.revision !== expectedRevision) {
-          return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
-        }
-        const latestEpoch = latestStore.controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
-        if (latestEpoch !== dispatch.request.expectedControlEpoch) {
-          return failureResponse(dispatch.request, "STALE_CONTROL_EPOCH", "Browser operation is stale");
-        }
-        const executionDispatch = {
-          ...dispatch,
-          request: {
-            ...dispatch.request,
-            args: { activate: dispatch.request.args.activate },
-          },
-        };
-        return sessionDriverRef.current!.execute(executionDispatch, controller.signal);
-      };
-      const operation = webDispatch
-        ? executeWeb()
-        : webOpenRequest
-          ? executeWebOpen()
-        : bridge || webExecutorDispatch
-          ? sessionDriverRef.current!.execute(dispatch, controller.signal)
-          : Promise.resolve(failureResponse(dispatch.request, "UNSUPPORTED_OPERATION", WEB_AUTOMATION_UNAVAILABLE_REASON));
-      const guardedOperation = operation.then((response) => {
-        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest || webNavigateRequest)) {
-          const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
-          const navigation = webNavigationRef.current.get(key);
-          const expectedRevision = navigation?.acceptedRevision ??
-            acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
-            dispatch.target.targetGeneration;
-          if (!latestTarget || latestTarget.revision !== expectedRevision) {
-            return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
-          }
-        }
-        return response;
-      }).catch((cause: unknown) => {
-        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest || webNavigateRequest)) {
-          const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
-          const navigation = webNavigationRef.current.get(key);
-          const expectedRevision = navigation?.acceptedRevision ??
-            acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
-            dispatch.target.targetGeneration;
-          if (!latestTarget || latestTarget.revision !== expectedRevision) {
-            return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
-          }
-        }
-        throw cause;
-      });
-      void guardedOperation.then(async (response) => {
-        if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
-        const completedResponse = await completeViewportControlRun(dispatch, response);
-        const settledResponse = await releaseHandedOffBrowserControl(dispatch, completedResponse);
-        const responseTarget = sessionDriverRef.current!.responseTarget(dispatch, settledResponse);
-        const includeResponseTarget = webDispatch || webNavigateRequest ||
-          dispatch.request.operation === "tabs" ||
-          (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot");
-        return includeResponseTarget
-          ? getTransport().respondToBrowserAutomationRequest(
-            lease.hostId,
-            lease.generation,
-            settledResponse,
-            responseTarget,
-          )
-          : getTransport().respondToBrowserAutomationRequest(
-            lease.hostId,
-            lease.generation,
-            settledResponse,
-          );
-      }).catch(() => undefined).finally(() => {
-        webObserverRef.current.get(key)?.();
-        webObserverRef.current.delete(key);
-        webAbortRef.current.delete(key);
-        webNavigationRef.current.delete(key);
-        if (inFlightRef.current.get(key) === dispatch) inFlightRef.current.delete(key);
-        requestAbortRef.current.delete(key);
-        cancelledRef.current.delete(key);
-        useBrowserAutomationStore.getState().clearActiveRequest(
-          dispatch.request.requestId,
-          dispatch.request.sequence,
-        );
-      });
-    });
-    const unsubscribeCancel = pushEmitter.on("browserAutomation.cancel", (input) => {
-      const payload = input as {
-        hostId?: unknown;
-        generation?: unknown;
-        requestId?: unknown;
-        sequence?: unknown;
-      };
-      const lease = leaseRef.current;
-      if (
-        !lease || payload.hostId !== lease.hostId || payload.generation !== lease.generation ||
-        typeof payload.requestId !== "string" || typeof payload.sequence !== "number"
-      ) return;
-      const key = browserAutomationRequestKey(payload.requestId, payload.sequence);
-      const bootstrapController = bootstrapAbortRef.current.get(key);
-      if (bootstrapController) {
-        bootstrapController.abort(new Error("Browser bootstrap was cancelled"));
-      }
-      if (!inFlightRef.current.has(key) || cancelledRef.current.has(key)) return;
-      cancelledRef.current.add(key);
-      interruptViewportCoordinator(inFlightRef.current.get(key)!);
-      webAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
-      recorderRef.current.cancel(inFlightRef.current.get(key)!);
-      requestAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
-      if (bridge) void bridge.cancel(payload.requestId);
-    });
+    const requestState: BrowserAutomationHostRequestState = {
+      inFlight: inFlightRef.current,
+      requestAbort: requestAbortRef.current,
+      webAbort: webAbortRef.current,
+      webObserver: webObserverRef.current,
+      webNavigation: webNavigationRef.current,
+      cancelled: cancelledRef.current,
+      recorder: recorderRef.current,
+      sessionDriver: sessionDriverRef.current!,
+      getLease: () => leaseRef.current,
+    };
+    const unsubscribeRequest = pushEmitter.on(
+      "browserAutomation.request",
+      createBrowserAutomationRequestHandler(bridge, webAutomationEnabled, requestState),
+    );
+    const unsubscribeCancel = pushEmitter.on(
+      "browserAutomation.cancel",
+      createBrowserAutomationCancelHandler(bridge, requestState, bootstrapAbortRef.current),
+    );
     return () => {
       unsubscribeRequest();
       unsubscribeCancel();
@@ -1610,333 +1457,34 @@ export function BrowserAutomationHost() {
   useEffect(() => {
     const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge && !isBrowserAutomationWebRuntimeEnabled()) return;
-    return pushEmitter.on("browserAutomation.bootstrap", (input) => {
-      const payload = input as { hostId?: unknown; generation?: unknown; request?: unknown };
-      const lease = leaseRef.current;
-      const parsed = BrowserAutomationRequestSchema().safeParse(payload.request);
-      if (
-        !lease || payload.hostId !== lease.hostId || payload.generation !== lease.generation ||
-        !parsed.success || parsed.data.operation !== "open"
-      ) return;
-      const request = parsed.data;
-      const agentOwnedOpen = request.args.idempotencyKey !== undefined;
-      const key = browserAutomationRequestKey(request.requestId, request.sequence);
-      if (inFlightRef.current.has(key) || bootstrapPendingRef.current.has(key)) return;
-      bootstrapPendingRef.current.add(key);
-      bootstrapRequestRef.current.set(key, request);
-      const controller = new AbortController();
-      bootstrapAbortRef.current.set(key, controller);
-      const deadlineTimer = window.setTimeout(
-        () => controller.abort(new Error("Browser bootstrap deadline elapsed")),
-        Math.max(1, request.deadline - Date.now()),
-      );
-      const previousTabId = usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey(request.workspaceId, request.threadId)]?.activeTabId ?? null;
-      const previousPanel = useDiffStore.getState().getRightPanel(request.workspaceId, request.threadId);
-      let backgroundContextRestored = false;
-      let createdTabId: string | null = null;
-      let createdWebTabId: string | undefined;
-      const agentOpenKey = agentOwnedOpen
-        ? JSON.stringify([request.providerSessionId, request.providerInstanceId, request.workspaceId, request.threadId, request.args.idempotencyKey])
-        : null;
-      let bootstrapSucceeded = false;
-      let visibleContextModified = false;
-      const restoreBackgroundContext = async () => {
-        if (agentOwnedOpen || request.args.activate || backgroundContextRestored) return;
-        backgroundContextRestored = true;
-        if (createdTabId && previousTabId && previousTabId !== createdTabId) {
-          await usePreviewTabsStore.getState().activatePage(request.workspaceId, request.threadId, previousTabId);
-        }
-        if (!visibleContextModified) return;
-        const currentDiff = useDiffStore.getState();
-        if (!previousPanel.openTabs.includes("preview")) {
-          currentDiff.closeRightPanelTab(request.workspaceId, request.threadId, "preview");
-        }
-        if (previousPanel.openTabs.includes(previousPanel.activeTab)) {
-          currentDiff.setRightPanelTab(request.workspaceId, request.threadId, previousPanel.activeTab);
-        }
-        if (previousPanel.visible) currentDiff.showRightPanel(request.workspaceId, request.threadId);
-        else currentDiff.hideRightPanel(request.workspaceId, request.threadId);
-      };
-      void (async () => {
-        const ensureActive = () => {
-          if (controller.signal.aborted) throw controller.signal.reason;
-        };
-        ensureActive();
-        const workspace = useWorkspaceStore.getState();
-        if (!workspace.workspaces.some((candidate) => candidate.id === request.workspaceId)) {
-          throw new Error("Browser workspace is unavailable");
-        }
-        const ownsVisibleContext = workspace.activeWorkspaceId === request.workspaceId &&
-          workspace.activeThreadId === request.threadId;
-        const diff = useDiffStore.getState();
-        const currentScopes = backgroundScopesRef.current;
-        const existingScope = currentScopes.find(
-          (scope) => scope.workspaceId === request.workspaceId && scope.threadId === request.threadId,
-        );
-        if (existingScope) {
-          const nextScopes = [
-            ...currentScopes.filter((scope) => scope !== existingScope),
-            existingScope,
-          ];
-          backgroundScopesRef.current = nextScopes;
-          setBackgroundScopes(nextScopes);
-        } else {
-          const isBusy = (scope: BackgroundBrowserScope): boolean =>
-            [...bootstrapRequestRef.current.values()].some(
-              (candidate) => candidate.workspaceId === scope.workspaceId && candidate.threadId === scope.threadId,
-            ) || [...inFlightRef.current.values()].some(
-              (candidate) => candidate.scope.workspaceId === scope.workspaceId && candidate.scope.threadId === scope.threadId,
-            ) || recorderRef.current.hasActiveThread(scope.workspaceId, scope.threadId) ||
-            browserSurfacePresentationCoordinator.hasAutomationAnchor(scope.workspaceId, scope.threadId);
-          const evicted = currentScopes.length >= 5
-            ? currentScopes.find((scope) => !isBusy(scope))
-            : undefined;
-          if (currentScopes.length >= 5 && !evicted) {
-            throw new Error("Browser automation has reached its five-thread surface limit");
-          }
-          const nextScopes = [
-            ...currentScopes.filter((scope) => scope !== evicted),
-            { threadId: request.threadId, workspaceId: request.workspaceId },
-          ];
-          if (evicted) {
-            for (const tab of persistentWebTabsRef.current.values()) {
-              if (tab.workspaceId === evicted.workspaceId && tab.threadId === evicted.threadId) {
-                removePersistentWebTab(tab.workspaceId, tab.threadId, tab.tabId);
-              }
-            }
-          }
-          backgroundScopesRef.current = nextScopes;
-          useBrowserAutomationStore.getState().setHostedScopeIds(
-             new Set(nextScopes.map((scope) => browserAutomationScopeKey(scope.workspaceId, scope.threadId))),
-          );
-          setBackgroundScopes(nextScopes);
-        }
-        if (ownsVisibleContext && !agentOwnedOpen) {
-          visibleContextModified = true;
-          diff.showRightPanel(request.workspaceId, request.threadId);
-          diff.setRightPanelTab(request.workspaceId, request.threadId, "preview");
-        }
-        await waitForViewportLayout(2);
-        const listed = await window.desktopBridge?.preview?.tabs.list?.(request.threadId, request.workspaceId);
-        if (listed?.ok && listed.data.threadId === request.threadId) {
-          usePreviewTabsStore.getState().setTabSet(request.workspaceId, request.threadId, listed.data);
-        }
-        const existingSet = usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey(request.workspaceId, request.threadId)];
-        const requestedWebUrl = !bridge && request.args.url
-          ? normalizeWebPreviewUrl(request.args.url)
-          : undefined;
-        let tabId = agentOwnedOpen
-          ? (agentOpenKey
-              ? agentOpenTabsRef.current.get(agentOpenKey)?.tabId ?? null
-              : null)
-          : existingSet?.activeTabId || existingSet?.tabs[0]?.id ||
-            (!bridge ? WEB_RUNTIME_PREVIEW_TAB_ID : null);
-        if (!bridge && agentOwnedOpen && !tabId) {
-          const webTabId = `web-agent-${globalThis.crypto.randomUUID()}`;
-          const webTabUrl = requestedWebUrl ?? `${window.location.origin}/browser-automation-fixture.html`;
-          createdWebTabId = webTabId;
-          if (agentOpenKey) {
-            agentOpenTabsRef.current.set(agentOpenKey, {
-              workspaceId: request.workspaceId,
-              threadId: request.threadId,
-              tabId: webTabId,
-            });
-          }
-          addPersistentWebTab({
-            threadId: request.threadId,
-            workspaceId: request.workspaceId,
-            tabId: webTabId,
-            url: webTabUrl,
-          });
-          tabId = webTabId;
-        }
-        if (!tabId) {
-          const onlyExistingTab = existingSet?.tabs.length === 1 ? existingSet.tabs[0] : undefined;
-          const browserPanelWasVisible = previousPanel.visible &&
-            previousPanel.openTabs.includes("preview");
-          const existingTabId = agentOwnedOpen &&
-              !browserPanelWasVisible &&
-              onlyExistingTab &&
-              isEmptyPreviewTabUrl(onlyExistingTab.url) &&
-              !onlyExistingTab.title &&
-              !onlyExistingTab.faviconUrl
-            ? onlyExistingTab.id
-            : undefined;
-          tabId = await usePreviewTabsStore.getState().openPage(request.workspaceId, request.threadId, {
-            activate: !agentOwnedOpen,
-            focusOmnibox: ownsVisibleContext && request.args.activate && !agentOwnedOpen,
-            ...(existingTabId ? { tabId: existingTabId } : {}),
-          });
-          if (!tabId && existingTabId) {
-            tabId = await usePreviewTabsStore.getState().openPage(request.workspaceId, request.threadId, {
-              activate: false,
-              focusOmnibox: false,
-            });
-          }
-          if (tabId) {
-            createdTabId = tabId;
-            if (agentOpenKey) {
-              agentOpenTabsRef.current.set(agentOpenKey, {
-                workspaceId: request.workspaceId,
-                threadId: request.threadId,
-                tabId,
-              });
-            }
-          }
-        }
-        if (!tabId) throw new Error("Browser tab could not be created or restored");
-        if (agentOwnedOpen) {
-          useBrowserAutomationStore.getState().setPendingAgentOpen(
-            request.requestId,
-            request.sequence,
-            {
-              workspaceId: request.workspaceId,
-              threadId: request.threadId,
-              tabId,
-              url: request.args.url ?? null,
-              startedAt: Date.now(),
-            },
-          );
-        }
-        const selectedTab = existingSet?.tabs.find((tab) => tab.id === tabId);
-        const initialUrl = requestedWebUrl ??
-          (agentOwnedOpen ? request.args.url : undefined) ??
-          selectedTab?.url ??
-          "about:blank";
-        if ((!selectedTab?.url || requestedWebUrl || request.args.url) && !(bridge && agentOwnedOpen)) {
-          usePreviewTabsStore.getState().updateTabChrome(request.workspaceId, request.threadId, tabId, {
-            title: null,
-            url: initialUrl,
-            favicon: null,
-          });
-          if (!agentOwnedOpen) diff.setPreviewUrlForThread(request.threadId, initialUrl);
-        }
-        if (controller.signal.aborted) {
-          throw controller.signal.reason;
-        }
-        if (!bridge && requestedWebUrl) {
-          await waitForWebPreviewIframe(
-            request.workspaceId,
-            request.threadId,
-            tabId,
-            requestedWebUrl,
-            request.deadline,
-            controller.signal,
-          );
-          ensureActive();
-        }
-        await waitForLiveTarget(request.workspaceId, request.threadId, tabId, request.deadline, controller.signal);
-        ensureActive();
-        const described = bridge
-          ? {
-              ok: true as const,
-              target: await waitForDesktopTarget(
-                bridge,
-                request.threadId,
-                tabId,
-                request.deadline,
-                controller.signal,
-              ),
-            }
-          : {
-              ok: true as const,
-              target: {
-                windowId: 1,
-                threadId: request.threadId,
-                tabId,
-                targetGeneration: useBrowserAutomationStore.getState().liveTargets.get(
-                  browserAutomationTargetKey(request.workspaceId, request.threadId, tabId),
-                )?.revision ?? 1,
-                active: !agentOwnedOpen,
-                focused: !agentOwnedOpen,
-                lastUsedAt: Date.now(),
-              },
-            };
-        ensureActive();
-        const target: BrowserAutomationHostDispatchTarget = {
-          ...described.target,
-          desktopInstanceId: lease.desktopInstanceId,
-          connectionGeneration: lease.generation,
-        };
-        const dispatch = BrowserAutomationHostDispatchSchema().parse({
-          scope: {
-            workspaceId: request.workspaceId,
-            threadId: request.threadId,
-            providerSessionId: request.providerSessionId,
-            providerInstanceId: request.providerInstanceId,
-          },
-          connection: {
-            desktopInstanceId: target.desktopInstanceId,
-            windowId: target.windowId,
-            connectionGeneration: target.connectionGeneration,
-            targetGeneration: target.targetGeneration,
-          },
-          request,
-          target,
-        });
-        inFlightRef.current.set(key, dispatch);
-        requestAbortRef.current.set(key, controller);
-        const executionDispatch = !bridge && requestedWebUrl
-          ? {
-              ...dispatch,
-              request: {
-                ...dispatch.request,
-                args: {
-                  activate: request.args.activate,
-                  ...(request.args.idempotencyKey ? { idempotencyKey: request.args.idempotencyKey } : {}),
-                },
-              },
-            }
-          : dispatch;
-        projectAgentControl(executionDispatch);
-        const response = await sessionDriverRef.current!.execute(executionDispatch, controller.signal);
-        await restoreBackgroundContext();
-        if (leaseRef.current === lease && !cancelledRef.current.has(key)) {
-          await getTransport().respondToBrowserAutomationRequest(
-            lease.hostId,
-            lease.generation,
-            response,
-            target,
-          );
-          bootstrapSucceeded = true;
-        }
-      })().catch((cause) => {
-        if (leaseRef.current !== lease || controller.signal.aborted) return;
-        void getTransport().respondToBrowserAutomationRequest(
-          lease.hostId,
-          lease.generation,
-          failureResponse(request, "TAB_UNAVAILABLE", cause instanceof Error ? cause.message : "Browser open failed"),
-        );
-      }).finally(async () => {
-        try {
-          await restoreBackgroundContext();
-        } catch {
-          // Restoration failure must not skip closing a tab created for this bootstrap.
-        }
-        if (createdTabId && !bootstrapSucceeded) {
-          try {
-            await usePreviewTabsStore.getState().closePage(request.workspaceId, request.threadId, createdTabId);
-          } catch {
-            // Keep finalizer cleanup settled; closePage preserves logical records on physical failure.
-          }
-        }
-        if (createdWebTabId && !bootstrapSucceeded) {
-          removePersistentWebTab(request.workspaceId, request.threadId, createdWebTabId);
-        }
-        if (!bootstrapSucceeded && agentOpenKey) agentOpenTabsRef.current.delete(agentOpenKey);
-        window.clearTimeout(deadlineTimer);
-        if (bootstrapAbortRef.current.get(key) === controller) bootstrapAbortRef.current.delete(key);
-        bootstrapPendingRef.current.delete(key);
-        bootstrapRequestRef.current.delete(key);
-        inFlightRef.current.delete(key);
-        requestAbortRef.current.delete(key);
-        cancelledRef.current.delete(key);
-        useBrowserAutomationStore.getState().clearPendingAgentOpen(
-          request.requestId,
-          request.sequence,
-        );
-      });
+    const lifecycle = createBrowserAutomationBootstrapLifecycle({
+      bridge,
+      sessionDriver: sessionDriverRef.current!,
+      getLease: () => leaseRef.current,
+      state: {
+        inFlight: inFlightRef.current,
+        requestAbort: requestAbortRef.current,
+        cancelled: cancelledRef.current,
+        bootstrapPending: bootstrapPendingRef.current,
+        bootstrapAbort: bootstrapAbortRef.current,
+        bootstrapRequest: bootstrapRequestRef.current,
+        agentOpenTabs: agentOpenTabsRef.current,
+        persistentWebTabs: persistentWebTabsRef.current,
+      },
+      getBackgroundScopes: () => backgroundScopesRef.current,
+      setCurrentBackgroundScopes: (scopes) => {
+        backgroundScopesRef.current = scopes;
+      },
+      setRenderedBackgroundScopes: setBackgroundScopes,
+      setHostedScopeIds: (scopes) => useBrowserAutomationStore.getState().setHostedScopeIds(
+        new Set(scopes.map((scope) => browserAutomationScopeKey(scope.workspaceId, scope.threadId))),
+      ),
+      isScopeBusy: (scope) => recorderRef.current.hasActiveThread(scope.workspaceId, scope.threadId) ||
+        browserSurfacePresentationCoordinator.hasAutomationAnchor(scope.workspaceId, scope.threadId),
+      addPersistentWebTab,
+      removePersistentWebTab,
     });
+    return pushEmitter.on("browserAutomation.bootstrap", lifecycle);
   }, []);
 
   useEffect(() => onBrowserAutomationObservationInvalidation((workspaceId, threadId, tabId) => {
@@ -2011,15 +1559,26 @@ export function BrowserAutomationHost() {
     }
   }), [cancelHostedRequest]);
 
-  useEffect(() => onBrowserAutomationScopeRelease((release) => {
-    const matches = (threadId: string, workspaceId: string): boolean =>
-      release.threadId !== undefined
-        ? workspaceId === release.workspaceId && threadId === release.threadId
-        : workspaceId === release.workspaceId;
-    if (release.threadId !== undefined) void sessionDriverRef.current?.releaseThread(release.workspaceId, release.threadId);
-    else void sessionDriverRef.current?.releaseWorkspace(release.workspaceId);
+  const releasedScopeMatches = (
+    release: Parameters<typeof onBrowserAutomationScopeRelease>[0] extends (value: infer Value) => unknown ? Value : never,
+    threadId: string,
+    workspaceId: string,
+  ): boolean => release.threadId === undefined
+    ? workspaceId === release.workspaceId
+    : workspaceId === release.workspaceId && threadId === release.threadId;
+
+  const releaseBrowserDriverScope = (
+    release: Parameters<typeof onBrowserAutomationScopeRelease>[0] extends (value: infer Value) => unknown ? Value : never,
+  ): void => {
+    if (release.threadId === undefined) void sessionDriverRef.current?.releaseWorkspace(release.workspaceId);
+    else void sessionDriverRef.current?.releaseThread(release.workspaceId, release.threadId);
+  };
+
+  const removeReleasedBackgroundScopes = (
+    release: Parameters<typeof onBrowserAutomationScopeRelease>[0] extends (value: infer Value) => unknown ? Value : never,
+  ): void => {
     const nextScopes = backgroundScopesRef.current.filter(
-      (scope) => !matches(scope.threadId, scope.workspaceId),
+      (scope) => !releasedScopeMatches(release, scope.threadId, scope.workspaceId),
     );
     if (nextScopes.length !== backgroundScopesRef.current.length) {
       backgroundScopesRef.current = nextScopes;
@@ -2028,14 +1587,24 @@ export function BrowserAutomationHost() {
         new Set(nextScopes.map((scope) => browserAutomationScopeKey(scope.workspaceId, scope.threadId))),
       );
     }
+  };
+
+  const removeReleasedPersistentTabs = (
+    release: Parameters<typeof onBrowserAutomationScopeRelease>[0] extends (value: infer Value) => unknown ? Value : never,
+  ): void => {
     for (const tab of persistentWebTabsRef.current.values()) {
-      if (matches(tab.threadId, tab.workspaceId)) {
+      if (releasedScopeMatches(release, tab.threadId, tab.workspaceId)) {
         removePersistentWebTab(tab.workspaceId, tab.threadId, tab.tabId);
       }
     }
+  };
+
+  const cancelReleasedBootstrapRequests = (
+    release: Parameters<typeof onBrowserAutomationScopeRelease>[0] extends (value: infer Value) => unknown ? Value : never,
+  ): void => {
     const lease = leaseRef.current;
     for (const [key, request] of bootstrapRequestRef.current) {
-      if (!matches(request.threadId, request.workspaceId)) continue;
+      if (!releasedScopeMatches(release, request.threadId, request.workspaceId)) continue;
       bootstrapAbortRef.current.get(key)?.abort(new Error("Browser scope was released"));
       if (!inFlightRef.current.has(key)) cancelledRef.current.add(key);
       if (lease && !inFlightRef.current.has(key)) {
@@ -2048,11 +1617,33 @@ export function BrowserAutomationHost() {
         ).catch(() => undefined);
       }
     }
+  };
+
+  const cancelReleasedHostedRequests = (
+    release: Parameters<typeof onBrowserAutomationScopeRelease>[0] extends (value: infer Value) => unknown ? Value : never,
+  ): void => {
+    const lease = leaseRef.current;
     for (const [key, dispatch] of inFlightRef.current) {
-      if (!matches(dispatch.scope.threadId, dispatch.scope.workspaceId)) continue;
+      if (!releasedScopeMatches(release, dispatch.scope.threadId, dispatch.scope.workspaceId)) continue;
       cancelHostedRequest(key, dispatch, "host-shutdown", lease);
     }
-  }), [cancelHostedRequest]);
+  };
+
+  const handleScopeRelease = (
+    release: Parameters<typeof onBrowserAutomationScopeRelease>[0] extends (value: infer Value) => unknown ? Value : never,
+  ): void => {
+    releaseBrowserDriverScope(release);
+    removeReleasedBackgroundScopes(release);
+    removeReleasedPersistentTabs(release);
+    cancelReleasedBootstrapRequests(release);
+    cancelReleasedHostedRequests(release);
+  };
+
+  const handleScopeReleaseRef = useRef(handleScopeRelease);
+  handleScopeReleaseRef.current = handleScopeRelease;
+  useEffect(() => onBrowserAutomationScopeRelease((release) => {
+    handleScopeReleaseRef.current(release);
+  }), []);
 
   useEffect(() => pushEmitter.on("browserAutomation.sessionRelease", (input) => {
     const payload = input as { hostId?: unknown; generation?: unknown; providerSessionId?: unknown };
@@ -2101,7 +1692,7 @@ export function BrowserAutomationHost() {
     sessionDriverRef.current?.clearIdempotency();
     useBrowserAutomationStore.getState().setLifecycleTabs([]);
     agentOpenTabsRef.current.clear();
-  }, []);
+  }, [cancelHostedRequest]);
 
   return backgroundScopes.map((scope) => (
     <PersistentAutomationPreviewSurface

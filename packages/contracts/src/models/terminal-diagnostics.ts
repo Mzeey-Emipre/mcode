@@ -335,88 +335,74 @@ export const TerminalTargetEvidenceManifestSchema = lazySchema(() =>
       terminal: TerminalArtifactAttestationSchema(),
     })
     .strict()
-    .superRefine((value, context) => {
-      if (
-        new Set(value.artifacts.map((artifact) => artifact.name)).size !==
-        value.artifacts.length
-      ) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Release artifact names must be unique",
-        });
-      }
-      if (
-        value.signingRequired &&
-        value.signatures.some((check) => check.status !== "passed")
-      ) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Required signing checks must pass",
-        });
-      }
-      const artifactKinds = new Set(
-        value.artifacts.map((artifact) => artifact.kind),
-      );
-      const requiredArtifactKinds = {
-        windows: ["nsis", "zip"],
-        macos: ["dmg", "zip"],
-        linux: ["appimage", "deb"],
-      }[value.target.platform];
-      for (const requiredKind of requiredArtifactKinds) {
-        if (
-          !artifactKinds.has(
-            requiredKind as "nsis" | "zip" | "dmg" | "appimage" | "deb",
-          )
-        ) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: `Target evidence is missing ${requiredKind}`,
-          });
-        }
-      }
-      const signatureKinds = new Set(
-        value.signatures.map((check) => check.kind),
-      );
-      const requiredSignatureKinds =
-        value.target.platform === "windows"
-          ? ["authenticode"]
-          : value.target.platform === "linux"
-            ? ["release-key"]
-            : ["developer-id", "notarization", "staple", "gatekeeper"];
-      for (const requiredKind of requiredSignatureKinds) {
-        if (
-          !signatureKinds.has(
-            requiredKind as
-              | "authenticode"
-              | "developer-id"
-              | "notarization"
-              | "staple"
-              | "gatekeeper"
-              | "release-key",
-          )
-        ) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: `Target evidence is missing ${requiredKind} evidence`,
-          });
-        }
-      }
-      const nativePlatform = {
-        windows: "win32",
-        macos: "darwin",
-        linux: "linux",
-      }[value.target.platform];
-      if (
-        value.terminal.target.platform !== nativePlatform ||
-        value.terminal.target.arch !== value.target.arch
-      ) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Terminal attestation target must match the release target",
-        });
-      }
-    }),
+    .superRefine(validateTerminalTargetEvidence),
 );
+
+type TerminalTargetEvidenceValidationInput = {
+  readonly artifacts: readonly { readonly name: string; readonly kind: string }[];
+  readonly signingRequired: boolean;
+  readonly signatures: readonly { readonly kind: string; readonly status: string }[];
+  readonly target: { readonly platform: "windows" | "macos" | "linux"; readonly arch: string };
+  readonly terminal: { readonly target: { readonly platform: string; readonly arch: string } };
+};
+
+function validateTerminalTargetEvidence(value: TerminalTargetEvidenceValidationInput, context: z.RefinementCtx): void {
+  validateUniqueArtifactNames(value, context);
+  validateSigningChecks(value, context);
+  validateRequiredArtifactKinds(value, context);
+  validateRequiredSignatureKinds(value, context);
+  validateAttestationTarget(value, context);
+}
+
+function validateUniqueArtifactNames(value: TerminalTargetEvidenceValidationInput, context: z.RefinementCtx): void {
+  if (new Set(value.artifacts.map((artifact) => artifact.name)).size === value.artifacts.length) return;
+  context.addIssue({ code: z.ZodIssueCode.custom, message: "Release artifact names must be unique" });
+}
+
+function validateSigningChecks(value: TerminalTargetEvidenceValidationInput, context: z.RefinementCtx): void {
+  if (!value.signingRequired || value.signatures.every((check) => check.status === "passed")) return;
+  context.addIssue({ code: z.ZodIssueCode.custom, message: "Required signing checks must pass" });
+}
+
+function validateRequiredArtifactKinds(value: TerminalTargetEvidenceValidationInput, context: z.RefinementCtx): void {
+  validateRequiredKinds(
+    new Set(value.artifacts.map((artifact) => artifact.kind)),
+    requiredArtifactKinds(value.target.platform),
+    "",
+    context,
+  );
+}
+
+function validateRequiredSignatureKinds(value: TerminalTargetEvidenceValidationInput, context: z.RefinementCtx): void {
+  validateRequiredKinds(
+    new Set(value.signatures.map((signature) => signature.kind)),
+    requiredSignatureKinds(value.target.platform),
+    " evidence",
+    context,
+  );
+}
+
+function validateRequiredKinds(kinds: ReadonlySet<string>, requiredKinds: readonly string[], suffix: string, context: z.RefinementCtx): void {
+  for (const kind of requiredKinds) {
+    if (!kinds.has(kind)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Target evidence is missing ${kind}${suffix}` });
+  }
+}
+
+function requiredArtifactKinds(platform: TerminalTargetEvidenceValidationInput["target"]["platform"]): readonly string[] {
+  return { windows: ["nsis", "zip"], macos: ["dmg", "zip"], linux: ["appimage", "deb"] }[platform];
+}
+
+function requiredSignatureKinds(platform: TerminalTargetEvidenceValidationInput["target"]["platform"]): readonly string[] {
+  if (platform === "windows") return ["authenticode"];
+  if (platform === "linux") return ["release-key"];
+  return ["developer-id", "notarization", "staple", "gatekeeper"];
+}
+
+function validateAttestationTarget(value: TerminalTargetEvidenceValidationInput, context: z.RefinementCtx): void {
+  const platform = { windows: "win32", macos: "darwin", linux: "linux" }[value.target.platform];
+  if (value.terminal.target.platform === platform && value.terminal.target.arch === value.target.arch) return;
+  context.addIssue({ code: z.ZodIssueCode.custom, message: "Terminal attestation target must match the release target" });
+}
 
 /** Reference to one validated target evidence manifest in a release aggregate. */
 export const TerminalTargetEvidenceReferenceSchema = lazySchema(() =>

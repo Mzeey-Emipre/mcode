@@ -4,9 +4,9 @@
  * returning attachment metadata identical to the JSON-RPC path.
  */
 
-import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
-import { join, basename } from "path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { getAttachmentMaxSizeForMime } from "@mcode/contracts";
 import { getMcodeDir } from "@mcode/shared";
 
@@ -38,7 +38,7 @@ export async function handleBinaryUpload(
     throw new Error("fileName must not contain path separators or null bytes");
   }
   // Normalize to basename to strip any directory components (e.g., Windows drive-relative paths)
-  const safeName = basename(meta.fileName);
+  const safeName = NodePath.basename(meta.fileName);
 
   // Enforce size limits (shared with AttachmentService)
   const maxSize = getAttachmentMaxSizeForMime(meta.mimeType);
@@ -48,12 +48,12 @@ export async function handleBinaryUpload(
     );
   }
 
-  const id = randomUUID();
-  const tempDir = join(getMcodeDir(), "temp", "attachments");
-  await mkdir(tempDir, { recursive: true });
+  const id = NodeCrypto.randomUUID();
+  const tempDir = NodePath.join(getMcodeDir(), "temp", "attachments");
+  await NodeFSPromises.mkdir(tempDir, { recursive: true });
   // Prefix with UUID to guarantee uniqueness; retain original name for debuggability.
-  const tempPath = join(tempDir, `${id}-${safeName}`);
-  await writeFile(tempPath, payload);
+  const tempPath = NodePath.join(tempDir, `${id}-${safeName}`);
+  await NodeFSPromises.writeFile(tempPath, payload);
 
   return {
     id,

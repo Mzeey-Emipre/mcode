@@ -7,7 +7,7 @@ import {
   getTestThreadLastFallback,
   readThreadField,
 } from "@/stores/thread-store-test-utils";
-import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
+import { createEmptyThreadRecord, patchThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { countActiveSubagentCalls, useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockThread } from "./mocks/transport";
@@ -81,6 +81,44 @@ describe("handleAgentEvent branches", () => {
     const state = useThreadStore.getState();
     expect(getTestActiveMessages()).toHaveLength(0);
     expect(state.runningThreadIds.has("thread-1")).toBe(false);
+  });
+
+  it("writes a late persisted hook to durable narrative without changing live hooks", () => {
+    useThreadStore.setState((state) => ({
+      records: patchThreadRecord(state.records, "thread-1", (record) => ({
+        narrativeByMessage: {
+          ...record.narrativeByMessage,
+          "assistant-persisted": { tools: [], thoughts: [], hooks: [] },
+        },
+      })),
+    }));
+    useThreadStore.getState().handleAgentEvent({
+      type: "hookStarted",
+      threadId: "thread-1",
+      hookName: "live-hook",
+      hookType: "stop",
+    } as AgentEvent);
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "hookCompleted",
+      threadId: "thread-1",
+      hookName: "late-hook",
+      exitCode: 0,
+      durationMs: 12,
+      didBlock: false,
+      persistedMessageId: "assistant-persisted",
+      persistedHookId: "late-hook-id",
+    } as AgentEvent);
+
+    expect(readThreadField("thread-1", (record) => record.hooks)).toEqual([
+      expect.objectContaining({ hookName: "live-hook", status: "running" }),
+    ]);
+    expect(readThreadField(
+      "thread-1",
+      (record) => record.narrativeByMessage["assistant-persisted"]?.hooks,
+    )).toEqual([
+      expect.objectContaining({ id: "late-hook-id", hook_name: "late-hook", duration_ms: 12 }),
+    ]);
   });
 
   it("flushes same-frame textDelta before turnComplete persists assistant content", () => {

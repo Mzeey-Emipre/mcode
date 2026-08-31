@@ -3,7 +3,7 @@
  * Provides creation and retrieval operations for tool call records in SQLite.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { ToolCallRecord, ToolCallStatus } from "@mcode/contracts";
@@ -91,7 +91,7 @@ function prepareToolCallRecordInsert(
   input: CreateToolCallRecordInput,
   now: string,
 ): ToolCallRecordInsert {
-  const id = input.toolCallId ?? randomUUID();
+  const id = input.toolCallId ?? NodeCrypto.randomUUID();
   const startedAt = input.startedAt ?? now;
   const completedAt = input.status !== "running" ? input.completedAt ?? now : null;
   return { id, startedAt, completedAt };

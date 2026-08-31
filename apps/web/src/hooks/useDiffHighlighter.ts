@@ -23,6 +23,95 @@ interface BlockRef {
   lineIdx: number;
 }
 
+interface DiffHighlightBlocks {
+  blocks: Array<{ blockId: string; code: string }>;
+  oldIndexMap: Map<number, BlockRef>;
+  newIndexMap: Map<number, BlockRef>;
+}
+
+function getDiffHighlightWorker(): Worker | null {
+  try {
+    return getWorker();
+  } catch {
+    return null;
+  }
+}
+
+function mapWorkerBlocks(response: TokenizeResponse): Map<string, TokenSpan[][]> {
+  const byBlock = new Map<string, TokenSpan[][]>();
+  for (const result of response.results) {
+    if (!result.error && result.lines.length > 0) byBlock.set(result.blockId, result.lines);
+  }
+  return byBlock;
+}
+
+function addTokensFromBlock(
+  target: Map<number, TokenSpan[]>,
+  indexMap: ReadonlyMap<number, BlockRef>,
+  byBlock: ReadonlyMap<string, TokenSpan[][]>,
+  include: (index: number) => boolean,
+): void {
+  for (const [diffIndex, ref] of indexMap) {
+    if (!include(diffIndex)) continue;
+    const tokens = byBlock.get(ref.blockId)?.[ref.lineIdx];
+    if (tokens) target.set(diffIndex, tokens);
+  }
+}
+
+function createTokenMap(
+  response: TokenizeResponse,
+  blocks: DiffHighlightBlocks,
+  lines: readonly ParsedDiffLine[],
+): Map<number, TokenSpan[]> {
+  const result = new Map<number, TokenSpan[]>();
+  const byBlock = mapWorkerBlocks(response);
+  addTokensFromBlock(result, blocks.newIndexMap, byBlock, () => true);
+  addTokensFromBlock(
+    result,
+    blocks.oldIndexMap,
+    byBlock,
+    (index) => lines[index]?.type === "remove",
+  );
+  return result;
+}
+
+function requestDiffTokens({
+  blocks,
+  language,
+  theme,
+  lines,
+  currentRequestId,
+  setTokenMap,
+}: {
+  blocks: DiffHighlightBlocks;
+  language: string;
+  theme: ShikiTheme;
+  lines: readonly ParsedDiffLine[];
+  currentRequestId: { current: string | null };
+  setTokenMap: (tokenMap: Map<number, TokenSpan[]>) => void;
+}): (() => void) | undefined {
+  const worker = getDiffHighlightWorker();
+  if (!worker) return undefined;
+  const id = nextRequestId("diff-hl");
+  const generationAtRequest = workerGeneration;
+  currentRequestId.current = id;
+  pending.set(id, (response) => {
+    if (currentRequestId.current !== id || workerGeneration !== generationAtRequest) return;
+    const parsed = response as TokenizeResponse | null;
+    if (!parsed || parsed.type !== "tokenize") return;
+    setTokenMap(createTokenMap(parsed, blocks, lines));
+  });
+  worker.postMessage({
+    id,
+    type: "tokenize",
+    blocks: blocks.blocks.map((block) => ({ ...block, language, theme })),
+  });
+  return () => {
+    pending.delete(id);
+    currentRequestId.current = null;
+  };
+}
+
 /**
  * Two-pass syntax highlighting for diff lines using the Shiki Web Worker.
  *
@@ -46,12 +135,12 @@ export function useDiffHighlighter(
   theme: ShikiTheme,
   enabled: boolean = true,
 ): { getLineTokens: (index: number) => TokenSpan[] | null } {
-  const [tokenMap, setTokenMap] = useState<Map<number, TokenSpan[]>>(new Map());
+  const [result, setResult] = useState<{ key: string; tokenMap: Map<number, TokenSpan[]> } | null>(null);
   const currentRequestId = useRef<string | null>(null);
 
   // Segment the diff into per-hunk old/new fragments in one pass, recording for
   // each diff line which block and block-line its tokens will come from.
-  const { blocks, oldIndexMap, newIndexMap } = useMemo(() => {
+  const diffBlocks = useMemo<DiffHighlightBlocks>(() => {
     const built: Array<{ blockId: string; code: string }> = [];
     const oldIdxMap = new Map<number, BlockRef>();
     const newIdxMap = new Map<number, BlockRef>();
@@ -99,83 +188,34 @@ export function useDiffHighlighter(
   // Stable, value-based key for the effect deps so re-renders that produce an
   // equivalent block set don't re-issue a worker request.
   const blocksSignature = useMemo(
-    () => blocks.map((b) => `${b.blockId} ${b.code}`).join(""),
-    [blocks],
+    () => diffBlocks.blocks.map((block) => `${block.blockId} ${block.code}`).join(""),
+    [diffBlocks],
   );
+  const requestKey = enabled && language !== "text" && diffBlocks.blocks.length > 0
+    ? `${blocksSignature}\0${language}\0${theme}`
+    : null;
+  const setTokenMap = useCallback((tokenMap: Map<number, TokenSpan[]>) => {
+    if (requestKey) setResult({ key: requestKey, tokenMap });
+  }, [requestKey]);
 
   useEffect(() => {
-    if (!enabled || language === "text" || blocks.length === 0) {
-      setTokenMap(new Map());
-      return;
-    }
+    if (!requestKey) return;
 
-    // Clear previous results so stale tokens don't show for a different file
-    setTokenMap(new Map());
-
-    let worker: Worker;
-    try {
-      worker = getWorker();
-    } catch {
-      return;
-    }
-
-    const id = nextRequestId("diff-hl");
-    const generationAtRequest = workerGeneration;
-    currentRequestId.current = id;
-
-    pending.set(id, (response) => {
-      if (
-        currentRequestId.current !== id ||
-        workerGeneration !== generationAtRequest
-      ) {
-        return;
-      }
-
-      const res = response as TokenizeResponse | null;
-      if (!res || res.type !== "tokenize") return;
-
-      // Index the per-hunk token lines by block id for O(1) lookup.
-      const byBlock = new Map<string, TokenSpan[][]>();
-      for (const result of res.results) {
-        if (result.error || result.lines.length === 0) continue;
-        byBlock.set(result.blockId, result.lines);
-      }
-
-      const map = new Map<number, TokenSpan[]>();
-
-      // New fragments cover context + added lines.
-      for (const [diffIdx, ref] of newIndexMap) {
-        const tokens = byBlock.get(ref.blockId)?.[ref.lineIdx];
-        if (tokens) map.set(diffIdx, tokens);
-      }
-      // Old fragments cover removed lines (context already came from the new
-      // fragment above; removed lines exist only in the old fragment).
-      for (const [diffIdx, ref] of oldIndexMap) {
-        if (lines[diffIdx]?.type !== "remove") continue;
-        const tokens = byBlock.get(ref.blockId)?.[ref.lineIdx];
-        if (tokens) map.set(diffIdx, tokens);
-      }
-
-      setTokenMap(map);
+    return requestDiffTokens({
+      blocks: diffBlocks,
+      language,
+      theme,
+      lines,
+      currentRequestId,
+      setTokenMap,
     });
-
-    worker.postMessage({
-      id,
-      type: "tokenize",
-      blocks: blocks.map((b) => ({ blockId: b.blockId, code: b.code, language, theme })),
-    });
-
-    return () => {
-      pending.delete(id);
-      currentRequestId.current = null;
-    };
-    // blocks, oldIndexMap and newIndexMap all derive from the same memo as
-    // blocksSignature, so the signature alone captures every block-related change.
-  }, [blocksSignature, language, theme, enabled]);
+  }, [diffBlocks, language, lines, requestKey, setTokenMap, theme]);
 
   const getLineTokens = useCallback(
-    (index: number) => tokenMap.get(index) ?? null,
-    [tokenMap],
+    (index: number) => result?.key === requestKey
+      ? result.tokenMap.get(index) ?? null
+      : null,
+    [requestKey, result],
   );
 
   return { getLineTokens };

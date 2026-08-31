@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   TERMINAL_V1_METHODS,
   TerminalDiagnosticsBundleSchema,
@@ -36,7 +36,7 @@ export class TerminalDiagnosticsService {
 
   constructor(private readonly options: TerminalDiagnosticsServiceOptions) {
     this.now = options.now ?? (() => new Date());
-    this.createCorrelationId = options.createCorrelationId ?? (() => `corr-${randomUUID()}`);
+    this.createCorrelationId = options.createCorrelationId ?? (() => `corr-${NodeCrypto.randomUUID()}`);
   }
 
   /** Validates, redacts, deduplicates, and retains one renderer event batch. */
@@ -150,7 +150,7 @@ export class TerminalDiagnosticsService {
 }
 
 function correlationKey(source: string): string {
-  return createHash("sha256").update(source).digest("base64url");
+  return NodeCrypto.createHash("sha256").update(source).digest("base64url");
 }
 
 function percentile(values: readonly number[], quantile: number): number {

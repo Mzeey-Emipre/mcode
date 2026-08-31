@@ -5,6 +5,7 @@
 
 import "reflect-metadata";
 import { container, Lifecycle } from "tsyringe";
+import { hostRuntime, type HostRuntime } from "@mcode/shared/node/host-runtime";
 
 import { openDatabase } from "../../runtime/persistence/sqlite/database.js";
 import { registerCodexProvider } from "../../features/providers/composition/codex-provider-registration.js";
@@ -29,6 +30,7 @@ import { ScopedPreGrantService } from "../../features/agents/permissions/scoped-
 import { CleanupWorker } from "../../features/thread-control/cleanup/cleanup-worker.js";
 import { PtyPidRegistry } from "../../features/terminal/host/pty-pid-registry.js";
 import { JobObject } from "../../runtime/process/containment/job-object.js";
+import { WindowsProcessScopeFactory } from "../../runtime/process/containment/windows-process-scope.js";
 import { ProtectedEnvStore } from "../../runtime/environment/protected-env-store.js";
 import { ShellEnvResolver } from "../../runtime/environment/shell-env-resolver.js";
 import { EnvService } from "../../runtime/environment/env-service.js";
@@ -74,6 +76,7 @@ import {
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(mcodeDir: string): typeof container {
+  container.register<HostRuntime>("HostRuntime", { useValue: hostRuntime });
   registerBrowserAutomation(container);
 
   // PtyPidRegistry is registered before the boot-selected legacy Terminal path.
@@ -82,8 +85,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   });
 
   // JobObject — constructed once so all child processes share the same kernel job
-  const jobObject = new JobObject();
+  const jobObject = new JobObject(hostRuntime);
   container.registerInstance("JobObject", jobObject);
+  container.register(WindowsProcessScopeFactory, {
+    useFactory: (c) => new WindowsProcessScopeFactory(c.resolve<HostRuntime>("HostRuntime")),
+  });
 
   container.register(
     ProtectedEnvStore,

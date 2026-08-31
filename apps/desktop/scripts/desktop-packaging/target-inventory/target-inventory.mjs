@@ -1,12 +1,11 @@
-import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import {
   claudeSdkPlatformPackageCandidates,
   copilotSdkPlatformPackageName,
   electronArchToNpm,
   electronPlatformToNpm,
-  repoRootFromScript,
 } from "../../../../../scripts/build-server-dev-bundle.mjs";
 import {
   readLockPackageRecord,
@@ -25,10 +24,22 @@ export const SUPPORTED_DESKTOP_TARGETS = Object.freeze([
 const DESKTOP_WORKFLOW_MATRIX_NAMES = ["nightly", "stable", "pull-request"];
 
 function parseWorkflowTargetMatrix(source, workflowName) {
+  const lines = requireWorkflowSource(source, workflowName).split(/\r?\n/);
+  const includeIndex = findMatrixIncludeIndex(lines, workflowName);
+  return validateWorkflowTargets(
+    collectWorkflowMatrixEntries(lines.slice(includeIndex + 1), workflowName),
+    workflowName,
+  );
+}
+
+function requireWorkflowSource(source, workflowName) {
   if (typeof source !== "string") {
     throw new TypeError(`Workflow source is required for ${workflowName}`);
   }
-  const lines = source.split(/\r?\n/);
+  return source;
+}
+
+function findMatrixIncludeIndex(lines, workflowName) {
   const matrixIndex = lines.findIndex((line) => /^ {6}matrix:\s*$/.test(line));
   const includeIndex = lines.findIndex(
     (line, index) =>
@@ -37,10 +48,13 @@ function parseWorkflowTargetMatrix(source, workflowName) {
   if (matrixIndex < 0 || includeIndex < 0) {
     throw new Error(`Desktop target matrix is missing from ${workflowName}`);
   }
+  return includeIndex;
+}
 
+function collectWorkflowMatrixEntries(lines, workflowName) {
   const entries = [];
   let entry;
-  for (const line of lines.slice(includeIndex + 1)) {
+  for (const line of lines) {
     if (line.trim() === "") continue;
     const indent = line.match(/^\s*/)[0].length;
     if (indent <= 8) break;
@@ -56,28 +70,40 @@ function parseWorkflowTargetMatrix(source, workflowName) {
   if (entries.length === 0) {
     throw new Error(`Desktop target matrix is empty in ${workflowName}`);
   }
+  return entries;
+}
 
+function validateWorkflowTargets(entries, workflowName) {
   const seen = new Set();
   return entries.map((candidate) => {
-    if (!candidate.platform || !candidate.arch) {
-      throw new Error(`Desktop target matrix entry is incomplete in ${workflowName}`);
-    }
-    const target = {
-      id: `${candidate.platform}-${candidate.arch}`,
-      platform: candidate.platform,
-      arch: candidate.arch,
-    };
-    if (candidate["target-id"] && candidate["target-id"] !== target.id) {
-      throw new Error(
-        `Desktop target matrix id does not match platform and arch in ${workflowName}`,
-      );
-    }
-    if (seen.has(target.id)) {
-      throw new Error(`Duplicate desktop target in ${workflowName}: ${target.id}`);
-    }
-    seen.add(target.id);
+    const target = createWorkflowTarget(candidate, workflowName);
+    assertUniqueWorkflowTarget(target, seen, workflowName);
     return target;
   });
+}
+
+function createWorkflowTarget(candidate, workflowName) {
+  if (!candidate.platform || !candidate.arch) {
+    throw new Error(`Desktop target matrix entry is incomplete in ${workflowName}`);
+  }
+  const target = {
+    id: `${candidate.platform}-${candidate.arch}`,
+    platform: candidate.platform,
+    arch: candidate.arch,
+  };
+  if (candidate["target-id"] && candidate["target-id"] !== target.id) {
+    throw new Error(
+      `Desktop target matrix id does not match platform and arch in ${workflowName}`,
+    );
+  }
+  return target;
+}
+
+function assertUniqueWorkflowTarget(target, seen, workflowName) {
+  if (seen.has(target.id)) {
+    throw new Error(`Duplicate desktop target in ${workflowName}: ${target.id}`);
+  }
+  seen.add(target.id);
 }
 
 /** Parses one packaging workflow matrix into platform and architecture targets. */
@@ -143,12 +169,12 @@ export function resolveHostDesktopTarget({
 }
 
 function readPackageVersion(packageDir) {
-  return JSON.parse(readFileSync(resolve(packageDir, "package.json"), "utf8"))
+  return JSON.parse(NodeFS.readFileSync(NodePath.resolve(packageDir, "package.json"), "utf8"))
     .version;
 }
 
 function packageLockPath(serverPackageRoot) {
-  return resolve(serverPackageRoot, "..", "..", "bun.lock");
+  return NodePath.resolve(serverPackageRoot, "..", "..", "bun.lock");
 }
 
 function planLockData(plan, serverPackageRoot) {
@@ -171,10 +197,10 @@ export function resolveClaudeTargetPackagePlan(serverPackageRoot, platform, arch
   const npmPlatform = { windows: "win32", macos: "darwin", linux: "linux" }[
     targetPlatform.platform
   ];
-  const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
+  const serverRequire = NodeModule.createRequire(NodePath.resolve(serverPackageRoot, "package.json"));
   const sdkEntry = serverRequire.resolve("@anthropic-ai/claude-agent-sdk");
   const packageName = claudeSdkPlatformPackageCandidates(npmPlatform, arch)[0];
-  const packageDir = dirname(sdkEntry);
+  const packageDir = NodePath.dirname(sdkEntry);
   return planLockData(
     {
       kind: "claude",
@@ -200,9 +226,9 @@ export function resolveCopilotTargetPackagePlan(serverPackageRoot, platform, arc
   const npmPlatform = { windows: "win32", macos: "darwin", linux: "linux" }[
     targetPlatform.platform
   ];
-  const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
+  const serverRequire = NodeModule.createRequire(NodePath.resolve(serverPackageRoot, "package.json"));
   const sdkEntry = serverRequire.resolve("@github/copilot-sdk");
-  const copilotPackageDir = resolve(dirname(sdkEntry), "..", "..", "..", "copilot");
+  const copilotPackageDir = NodePath.resolve(NodePath.dirname(sdkEntry), "..", "..", "..", "copilot");
   const packageName = copilotSdkPlatformPackageName(npmPlatform, arch);
   return planLockData(
     {

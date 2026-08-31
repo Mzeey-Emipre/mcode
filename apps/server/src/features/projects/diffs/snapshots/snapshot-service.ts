@@ -5,9 +5,9 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { unlink } from "node:fs/promises";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import type { GitExecutor } from "../../git/execution/index.js";
 import { RealGitExecutor } from "../../git/execution/real-git-executor.js";
 
@@ -104,6 +104,67 @@ function numstatDestinationPath(path: string): string {
   }
   const separatorIndex = path.lastIndexOf(" => ");
   return separatorIndex >= 0 ? path.slice(separatorIndex + 4) : path;
+}
+
+function hasUnsafeDiffRefs(refBefore: string, refAfter: string): boolean {
+  return !refBefore || !refAfter || refBefore.startsWith("-") || refAfter.startsWith("-");
+}
+
+function getDiffPathspecBatches(
+  filePath: string | undefined,
+  allowedPaths: readonly string[] | undefined,
+  allowedPathGroups: readonly (readonly string[])[] | undefined,
+): string[][] | undefined[] {
+  const allGroups = allowedPathGroups ?? allowedPaths?.map((path) => [path]);
+  const selectedGroups = filePath
+    ? allGroups ? selectedPathGroups(filePath, allGroups) : [[filePath]]
+    : allGroups;
+  return selectedGroups ? batchPathspecGroups(selectedGroups) : [undefined];
+}
+
+function gitDiffArgs(
+  cwd: string,
+  format: "unified" | "numstat",
+  refBefore: string,
+  refAfter: string,
+  pathspecs: string[] | undefined,
+): string[] {
+  const formatArgs = format === "unified" ? [] : ["--numstat"];
+  const args = ["-C", cwd, "diff", ...formatArgs, "--find-renames", refBefore, refAfter];
+  if (pathspecs) args.push("--", ...pathspecs);
+  return args;
+}
+
+async function executeDiffBatches(
+  gitExecutor: GitExecutor,
+  cwd: string,
+  format: "unified" | "numstat",
+  refBefore: string,
+  refAfter: string,
+  pathspecBatches: (string[] | undefined)[],
+): Promise<string[]> {
+  const outputs: string[] = [];
+  for (const pathspecs of pathspecBatches) {
+    const { stdout } = await gitExecutor.exec(
+      gitDiffArgs(cwd, format, refBefore, refAfter, pathspecs),
+      { timeout: RealGitExecutor.DEFAULT_TIMEOUT },
+    );
+    const output = stdout.trim();
+    if (output) outputs.push(output);
+  }
+  return outputs;
+}
+
+function limitDiffLines(diff: string, maxLines: number | undefined): string {
+  return maxLines ? diff.split("\n").slice(0, maxLines).join("\n") : diff;
+}
+
+function collectDiffStats(outputs: readonly string[]): { filePath: string; additions: number; deletions: number }[] {
+  const stats = new Map<string, { filePath: string; additions: number; deletions: number }>();
+  for (const output of outputs) {
+    for (const entry of parseNumstat(output)) stats.set(entry.filePath, entry);
+  }
+  return [...stats.values()];
 }
 
 /** Service for capturing and comparing git working tree snapshots. */
@@ -225,35 +286,20 @@ export class SnapshotService {
     allowedPaths?: readonly string[],
     allowedPathGroups?: readonly (readonly string[])[],
   ): Promise<string> {
-    if (!refBefore || !refAfter || refBefore.startsWith("-") || refAfter.startsWith("-")) return "";
-    const allGroups = allowedPathGroups ?? allowedPaths?.map((path) => [path]);
-    const requestedGroups = filePath
-      ? allGroups
-        ? selectedPathGroups(filePath, allGroups)
-        : [[filePath]]
-      : allGroups;
-    const pathspecBatches = requestedGroups
-      ? batchPathspecGroups(requestedGroups)
-      : [undefined];
+    if (hasUnsafeDiffRefs(refBefore, refAfter)) return "";
+    const pathspecBatches = getDiffPathspecBatches(filePath, allowedPaths, allowedPathGroups);
     if (pathspecBatches.length === 0) return "";
 
     try {
-      const outputs: string[] = [];
-      for (const pathspecs of pathspecBatches) {
-        const args = ["-C", cwd, "diff", "--find-renames", refBefore, refAfter];
-        if (pathspecs) args.push("--", ...pathspecs);
-        const { stdout } = await this.gitExecutor.exec(args, {
-          timeout: RealGitExecutor.DEFAULT_TIMEOUT,
-        });
-        if (stdout.trim()) outputs.push(stdout.trim());
-      }
-      const result = outputs.join("\n");
-
-      if (maxLines) {
-        return result.split("\n").slice(0, maxLines).join("\n");
-      }
-
-      return result;
+      const outputs = await executeDiffBatches(
+        this.gitExecutor,
+        cwd,
+        "unified",
+        refBefore,
+        refAfter,
+        pathspecBatches,
+      );
+      return limitDiffLines(outputs.join("\n"), maxLines);
     } catch {
       return "";
     }
@@ -282,29 +328,20 @@ export class SnapshotService {
     allowedPaths?: readonly string[],
     allowedPathGroups?: readonly (readonly string[])[],
   ): Promise<{ filePath: string; additions: number; deletions: number }[]> {
-    if (!refBefore
-      || !refAfter
-      || refBefore.startsWith("-")
-      || refAfter.startsWith("-")
-      || refBefore === refAfter) return [];
-    const pathGroups = allowedPathGroups ?? allowedPaths?.map((path) => [path]);
-    const pathspecBatches = pathGroups
-      ? batchPathspecGroups(pathGroups)
-      : [undefined];
+    if (hasUnsafeDiffRefs(refBefore, refAfter) || refBefore === refAfter) return [];
+    const pathspecBatches = getDiffPathspecBatches(undefined, allowedPaths, allowedPathGroups);
     if (pathspecBatches.length === 0) return [];
 
     try {
-      const stats = new Map<string, { filePath: string; additions: number; deletions: number }>();
-      for (const pathspecs of pathspecBatches) {
-        const args = ["-C", cwd, "diff", "--numstat", "--find-renames", refBefore, refAfter];
-        if (pathspecs) args.push("--", ...pathspecs);
-        const { stdout } = await this.gitExecutor.exec(
-          args,
-          { timeout: RealGitExecutor.DEFAULT_TIMEOUT },
-        );
-        for (const entry of parseNumstat(stdout)) stats.set(entry.filePath, entry);
-      }
-      return [...stats.values()];
+      const outputs = await executeDiffBatches(
+        this.gitExecutor,
+        cwd,
+        "numstat",
+        refBefore,
+        refAfter,
+        pathspecBatches,
+      );
+      return collectDiffStats(outputs);
     } catch {
       return [];
     }
@@ -324,9 +361,9 @@ export class SnapshotService {
     const gitDirRaw = gitDirOut.trim();
     const gitDir = gitDirRaw.startsWith("/") || /^[A-Za-z]:/.test(gitDirRaw)
       ? gitDirRaw
-      : join(cwd, gitDirRaw);
+      : NodePath.join(cwd, gitDirRaw);
 
-    tmpIndex = `${gitDir}/mcode-index-${randomUUID()}`;
+    tmpIndex = `${gitDir}/mcode-index-${NodeCrypto.randomUUID()}`;
     const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
 
     try {
@@ -344,7 +381,7 @@ export class SnapshotService {
       );
       return treeOut.trim();
     } finally {
-      unlink(tmpIndex).catch(() => {});
+      NodeFSPromises.unlink(tmpIndex).catch(() => {});
     }
   }
 }

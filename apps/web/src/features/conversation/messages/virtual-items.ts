@@ -5,11 +5,6 @@ import { computeLiveStreamingText } from "../narrative/build-narrative";
 import { buildPersistedNarrativeItems } from "../narrative/build-persisted-narrative";
 import { isGoalStatusNotice } from "@/lib/goal-message";
 
-/** Compile-time exhaustive check; throws at runtime for unhandled discriminants. */
-function assertNever(value: never): never {
-  throw new Error(`Unhandled item type: ${(value as { type: string }).type}`);
-}
-
 /**
  * A plan-questions assistant message is a COMPLETED "ask the user" turn whose
  * bubble renders as the collapsed AnsweredSummary. Answering it creates no user
@@ -367,110 +362,89 @@ export function buildStableItems(
   turnSummariesByMessageId?: Record<string, TurnFooterSummary>,
   currentAgentDisplayState?: AgentDisplayState,
 ): ChatVirtualItem[] {
-  const items: ChatVirtualItem[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const persistedRecords =
-      msg.role === "assistant" ? persistedNarrativeByMessage?.[msg.id] : undefined;
-    const persistedRows =
-      persistedRecords && msg.role === "assistant"
-        ? buildPersistedNarrativeItems({ ...persistedRecords, messageContent: msg.content })
-        : undefined;
-    const hasPersistedNarrativeRows =
-      persistedRows != null && persistedRows.length > 0;
-    const hasLateHookRows =
-      persistedRecords?.hooks.some((h) => h.phase === "stop") === true;
-    const hasPersistedFooter =
-      persistedRecords?.tools.some((t) => t.parent_tool_call_id == null) === true;
-    const canonicalSummary = turnSummariesByMessageId?.[msg.id];
-    const explicitOutcome = messageOutcome(msg);
-    const outcome = explicitOutcome ?? canonicalSummary?.outcome;
-    const outcomeExecutionId = messageOutcomeExecutionId(msg) ?? canonicalSummary?.outcomeExecutionId;
+  return messages.flatMap((message) => stableItemsForMessage(message, {
+    persistedFilesChanged, latestTurnWithChanges, currentTurn, persistedNarrativeByMessage, turnSummariesByMessageId, currentAgentDisplayState,
+  }));
+}
 
-    // Persisted narrative timeline appears immediately BEFORE each assistant
-    // message so the audit trail visually precedes the response text. Only
-    // visible persisted chrome is emitted; lazy loading is handled by
-    // MessageList so null renderers do not reserve virtualized rail height.
-    if (msg.role === "assistant") {
-      if (hasPersistedNarrativeRows) {
-        items.push({
-          key: `persisted-narrative-${msg.id}`,
-          type: "persisted-narrative",
-          messageId: msg.id,
-          messageContent: msg.content,
-        });
-      }
-    }
-    const isCurrentAgentMessage =
-      msg.role === "assistant" &&
-      currentTurn?.messageId === msg.id;
-    const agentDisplayState = msg.role === "assistant"
-      ? isCurrentAgentMessage && currentAgentDisplayState
-        ? currentAgentDisplayState
-        : agentDisplayStateFromOutcome(outcome)
-      : undefined;
-    items.push({
-      key: agentMessageItemKey(msg, currentTurn),
-      type: "message",
-      message: msg,
-      ...(agentDisplayState
-        ? { agentDisplayState }
-        : {}),
-    });
+interface StableItemInput {
+  persistedFilesChanged?: Record<string, string[]>;
+  latestTurnWithChanges?: string | null;
+  currentTurn?: CurrentTurnResponseIdentity;
+  persistedNarrativeByMessage?: PersistedNarrativeRecordsByMessage;
+  turnSummariesByMessageId?: Record<string, TurnFooterSummary>;
+  currentAgentDisplayState?: AgentDisplayState;
+};
 
-    if (msg.role === "assistant") {
-      // Late stop hooks (Stop / SessionEnd / PreCompact) render immediately
-      // after the assistant bubble, before the files-changed summary.
-      // The component renders null when no late hooks are present, so this
-      // placeholder costs nothing for turns without stop hooks.
-      if (hasLateHookRows) {
-        items.push({
-          key: `persisted-late-hooks-${msg.id}`,
-          type: "persisted-late-hooks",
-          messageId: msg.id,
-        });
-      }
+function persistedNarrativeItems(message: Message, input: StableItemInput): ChatVirtualItem[] {
+  const records = message.role === "assistant" ? input.persistedNarrativeByMessage?.[message.id] : undefined;
+  const rows = records ? buildPersistedNarrativeItems({ ...records, messageContent: message.content }) : undefined;
+  return rows && rows.length > 0 ? [{ key: `persisted-narrative-${message.id}`, type: "persisted-narrative", messageId: message.id, messageContent: message.content }] : [];
+}
 
-      // Turn footer (step / sub-agent counts + duration) renders AFTER the
-      // assistant body — closing the turn rather than separating its actions
-      // from its answer.
-      const turnSummary = canonicalSummary
-        ? {
-            ...canonicalSummary,
-            ...(outcome !== undefined ? { outcome } : {}),
-            ...(outcomeExecutionId !== undefined ? { outcomeExecutionId } : {}),
-          }
-        : outcome != null && outcome !== "completed"
-          ? {
-              counts: { steps: 0, thoughts: 0, subagents: 0 },
-              durationMs: null,
-              outcome,
-              ...(outcomeExecutionId !== undefined ? { outcomeExecutionId } : {}),
-            }
-          : undefined;
-      if (hasPersistedFooter || turnSummary) {
-        items.push({
-          key: `persisted-turn-footer-${msg.id}`,
-          type: "persisted-turn-footer",
-          messageId: msg.id,
-          ...(turnSummary ? { summary: turnSummary } : {}),
-        });
-      }
+function messageVirtualItem(message: Message, input: StableItemInput): ChatVirtualItem {
+  const summary = input.turnSummariesByMessageId?.[message.id];
+  const outcome = messageOutcome(message) ?? summary?.outcome;
+  const display = message.role === "assistant"
+    ? input.currentTurn?.messageId === message.id && input.currentAgentDisplayState
+      ? input.currentAgentDisplayState
+      : agentDisplayStateFromOutcome(outcome)
+    : undefined;
+  return { key: agentMessageItemKey(message, input.currentTurn), type: "message", message, ...(display ? { agentDisplayState: display } : {}) };
+}
 
-      // File change summary appears after the late hook rows
-      const files = persistedFilesChanged?.[msg.id];
-      if (files && files.length > 0) {
-        items.push({
-          key: `turn-changes-${msg.id}`,
-          type: "turn-changes",
-          messageId: msg.id,
-          filesChanged: files,
-          isLatestTurn: msg.id === latestTurnWithChanges,
-        });
-      }
-    }
-  }
-  return items;
+function footerSummary(message: Message, input: StableItemInput): TurnFooterSummary | undefined {
+  const summary = input.turnSummariesByMessageId?.[message.id];
+  const outcome = messageOutcome(message) ?? summary?.outcome;
+  const outcomeExecutionId = messageOutcomeExecutionId(message) ?? summary?.outcomeExecutionId;
+  return summary
+    ? summaryWithOutcome(summary, outcome, outcomeExecutionId)
+    : exceptionalOutcomeSummary(outcome, outcomeExecutionId);
+}
+
+function summaryWithOutcome(summary: TurnFooterSummary, outcome: ReturnType<typeof messageOutcome>, outcomeExecutionId: string | null | undefined): TurnFooterSummary {
+  return { ...summary, ...(outcome === undefined ? {} : { outcome }), ...(outcomeExecutionId === undefined ? {} : { outcomeExecutionId }) };
+}
+
+function exceptionalOutcomeSummary(outcome: ReturnType<typeof messageOutcome>, outcomeExecutionId: string | null | undefined): TurnFooterSummary | undefined {
+  return outcome != null && outcome !== "completed"
+    ? { counts: { steps: 0, thoughts: 0, subagents: 0 }, durationMs: null, outcome, ...(outcomeExecutionId === undefined ? {} : { outcomeExecutionId }) }
+    : undefined;
+}
+
+function lateHookItem(message: Message, records: PersistedNarrativeRecordsByMessage[string] | undefined): ChatVirtualItem | undefined {
+  return records?.hooks.some((hook) => hook.phase === "stop")
+    ? { key: `persisted-late-hooks-${message.id}`, type: "persisted-late-hooks", messageId: message.id }
+    : undefined;
+}
+
+function turnFooterItem(message: Message, records: PersistedNarrativeRecordsByMessage[string] | undefined, summary: TurnFooterSummary | undefined): ChatVirtualItem | undefined {
+  return records?.tools.some((tool) => tool.parent_tool_call_id == null) || summary
+    ? { key: `persisted-turn-footer-${message.id}`, type: "persisted-turn-footer", messageId: message.id, ...(summary ? { summary } : {}) }
+    : undefined;
+}
+
+function turnChangesItem(message: Message, input: StableItemInput): ChatVirtualItem | undefined {
+  const files = input.persistedFilesChanged?.[message.id];
+  return files && files.length > 0
+    ? { key: `turn-changes-${message.id}`, type: "turn-changes", messageId: message.id, filesChanged: files, isLatestTurn: message.id === input.latestTurnWithChanges }
+    : undefined;
+}
+
+function assistantTailItems(message: Message, input: StableItemInput): ChatVirtualItem[] {
+  if (message.role !== "assistant") return [];
+  const records = input.persistedNarrativeByMessage?.[message.id];
+  const summary = footerSummary(message, input);
+  const items: Array<ChatVirtualItem | undefined> = [
+    lateHookItem(message, records),
+    turnFooterItem(message, records, summary),
+    turnChangesItem(message, input),
+  ];
+  return items.filter((item): item is ChatVirtualItem => item !== undefined);
+}
+
+function stableItemsForMessage(message: Message, input: StableItemInput): ChatVirtualItem[] {
+  return [...persistedNarrativeItems(message, input), messageVirtualItem(message, input), ...assistantTailItems(message, input)];
 }
 
 /**
@@ -496,7 +470,6 @@ export function buildVolatileItems(
   currentTurn?: CurrentTurnResponseIdentity,
   committedAssistantBody?: string,
 ): ChatVirtualItem[] {
-  const items: ChatVirtualItem[] = [];
   const isAgentRunning = isAgentDisplayActive(agentDisplayState);
   const resolvedHooks = hooks ?? EMPTY_HOOKS;
   const resolvedThoughtSegments = thoughtSegments ?? EMPTY_THOUGHT_SEGMENTS;
@@ -508,99 +481,33 @@ export function buildVolatileItems(
     toolCalls,
   });
 
-  // Emit the narrative flow item when agent is running or has tool calls.
-  // This replaces the separate "active-tools", "hook-activity", "indicator",
-  // and "streaming" items with a single unified item.
-  if (isAgentRunning || toolCalls.length > 0) {
-    items.push({
-      key: "narrative-flow",
-      type: "narrative-flow",
-      toolCalls,
-      hooks: resolvedHooks,
-      thoughtSegments: resolvedThoughtSegments,
-      streamingText: liveText.length > 0 ? "" : resolvedStreamingText,
-      isAgentRunning,
-      startTime: agentStartTime,
-      committedAssistantBody,
-    });
-  }
+  return [
+    narrativeFlowItem(toolCalls, resolvedHooks, resolvedThoughtSegments, resolvedStreamingText, liveText, isAgentRunning, agentStartTime, committedAssistantBody),
+    liveResponseItem(liveText, currentTurn, agentDisplayState),
+    narrativeIndicatorItem(toolCalls, isAgentRunning, agentStartTime),
+    ...permissionRequestItems(permissions),
+  ].filter((item): item is ChatVirtualItem => item !== undefined);
+}
 
-  // Provisional assistant message — fills the slot where the persisted
-  // MessageBubble will remain on `session.message`. Keeping the item type and
-  // key stable lets React update the same subtree instead of remounting it.
-  if (liveText.length > 0) {
-    const threadId = currentTurn?.threadId ?? "__active_thread__";
-    const responseKey = liveFinalResponseItemKey(threadId, currentTurn?.responseKey);
-    items.push({
-      key: responseKey,
-      type: "message",
-      message: {
-        id: responseKey,
-        thread_id: threadId,
-        role: "assistant",
-        content: liveText,
-        tool_calls: null,
-        files_changed: null,
-        cost_usd: null,
-        tokens_used: null,
-        timestamp: new Date(0).toISOString(),
-        sequence: Number.MAX_SAFE_INTEGER,
-        attachments: null,
-      },
-      agentDisplayState: agentDisplayState?.phase === "finalizing"
-        ? { phase: "finalizing" }
-        : { phase: "streaming" },
-    });
-  }
+function narrativeFlowItem(toolCalls: readonly ToolCall[], hooks: readonly HookExecution[], thoughts: readonly ThoughtSegment[], streamingText: string, liveText: string, isAgentRunning: boolean, startTime: number | undefined, committedAssistantBody: string | undefined): ChatVirtualItem | undefined {
+  return isAgentRunning || toolCalls.length > 0 ? { key: "narrative-flow", type: "narrative-flow", toolCalls, hooks, thoughtSegments: thoughts, streamingText: liveText.length > 0 ? "" : streamingText, isAgentRunning, startTime, committedAssistantBody } : undefined;
+}
 
-  // Narrative indicator — "X steps · N subagents · phase… (0:22)" — rendered
-  // as its own virtual-item slot BELOW the live assistant response so the writing
-  // animation reads as the primary surface and the meta status sits underneath
-  // it (rather than above, between the actions molecule and the response).
-  // Kept emitted after the turn ends (while the turn's tool calls are still in
-  // volatile memory) so NarrativeIndicator can animate out; it renders null
-  // once the exit transition completes.
-  if (isAgentRunning || toolCalls.length > 0) {
-    const topLevelTools = toolCalls.filter((tc) => tc.parentToolCallId == null);
-    // Match `buildNarrativeItems` / `NarrativeCounts.steps`: top-level tool
-    // calls only. Thought segments are tracked separately in the footer.
-    const stepCount = topLevelTools.length;
-    const subagentCount = topLevelTools.filter((tc) => tc.toolName === "Agent").length;
-    const activeToolCalls = toolCalls.filter(
-      (tc) => !tc.isComplete && tc.parentToolCallId == null,
-    );
-    items.push({
-      key: "narrative-indicator",
-      type: "narrative-indicator",
-      stepCount,
-      subagentCount,
-      activeToolCalls,
-      startTime: agentStartTime,
-      isAgentRunning,
-    });
-  }
+function liveResponseItem(liveText: string, currentTurn: CurrentTurnResponseIdentity | undefined, agentDisplayState: AgentDisplayState | undefined): ChatVirtualItem | undefined {
+  if (liveText.length === 0) return undefined;
+  const threadId = currentTurn?.threadId ?? "__active_thread__";
+  const responseKey = liveFinalResponseItemKey(threadId, currentTurn?.responseKey);
+  return { key: responseKey, type: "message", message: { id: responseKey, thread_id: threadId, role: "assistant", content: liveText, tool_calls: null, files_changed: null, cost_usd: null, tokens_used: null, timestamp: new Date(0).toISOString(), sequence: Number.MAX_SAFE_INTEGER, attachments: null }, agentDisplayState: agentDisplayState?.phase === "finalizing" ? { phase: "finalizing" } : { phase: "streaming" } };
+}
 
-  // Show all permission requests (settled and unsettled) so the user gets
-  // visual confirmation of their allow/deny decision. Settled cards collapse
-  // to a single-line badge. The full permissionsByThread entry is cleared
-  // when the agent turn ends, so settled cards never trail below the agent's
-  // persisted message.
-  if (permissions && permissions.length > 0) {
-    for (const p of permissions) {
-      items.push({
-        key: `permission-${p.requestId}`,
-        type: "permission-request" as const,
-        requestId: p.requestId,
-        toolName: p.toolName,
-        input: p.input,
-        title: p.title,
-        settled: p.settled,
-        decision: p.decision,
-      });
-    }
-  }
+function narrativeIndicatorItem(toolCalls: readonly ToolCall[], isAgentRunning: boolean, startTime: number | undefined): ChatVirtualItem | undefined {
+  if (!isAgentRunning && toolCalls.length === 0) return undefined;
+  const topLevelTools = toolCalls.filter((toolCall) => toolCall.parentToolCallId == null);
+  return { key: "narrative-indicator", type: "narrative-indicator", stepCount: topLevelTools.length, subagentCount: topLevelTools.filter((toolCall) => toolCall.toolName === "Agent").length, activeToolCalls: toolCalls.filter((toolCall) => !toolCall.isComplete && toolCall.parentToolCallId == null), startTime, isAgentRunning };
+}
 
-  return items;
+function permissionRequestItems(permissions: Parameters<typeof buildVolatileItems>[4]): ChatVirtualItem[] {
+  return permissions?.map((permission) => ({ key: `permission-${permission.requestId}`, type: "permission-request" as const, requestId: permission.requestId, toolName: permission.toolName, input: permission.input, title: permission.title, settled: permission.settled, decision: permission.decision })) ?? [];
 }
 
 function sameArrayItems<T>(
@@ -627,109 +534,103 @@ function sameAgentDisplayState(
 }
 
 function sameMessage(left: Message, right: Message): boolean {
-  return (
-    left.id === right.id &&
-    left.thread_id === right.thread_id &&
-    left.role === right.role &&
-    left.content === right.content &&
-    left.tool_calls === right.tool_calls &&
-    left.files_changed === right.files_changed &&
-    left.cost_usd === right.cost_usd &&
-    left.tokens_used === right.tokens_used &&
-    left.timestamp === right.timestamp &&
-    left.sequence === right.sequence &&
-    left.attachments === right.attachments &&
-    left.tool_call_count === right.tool_call_count &&
-    left.reply_to_message_id === right.reply_to_message_id &&
-    left.quoted_text === right.quoted_text &&
-    left.model === right.model &&
-    left.is_internal === right.is_internal
-  );
+  return [
+    left.id === right.id,
+    left.thread_id === right.thread_id,
+    left.role === right.role,
+    left.content === right.content,
+    left.tool_calls === right.tool_calls,
+    left.files_changed === right.files_changed,
+    left.cost_usd === right.cost_usd,
+    left.tokens_used === right.tokens_used,
+    left.timestamp === right.timestamp,
+    left.sequence === right.sequence,
+    left.attachments === right.attachments,
+    left.tool_call_count === right.tool_call_count,
+    left.reply_to_message_id === right.reply_to_message_id,
+    left.quoted_text === right.quoted_text,
+    left.model === right.model,
+    left.is_internal === right.is_internal,
+  ].every(Boolean);
 }
 
-function sameVirtualItem(
-  left: ChatVirtualItem | undefined,
-  right: ChatVirtualItem,
-): boolean {
-  if (!left || left.key !== right.key || left.type !== right.type) return false;
-  switch (right.type) {
-    case "message":
-      return (
-        left.type === "message" &&
-        sameMessage(left.message, right.message) &&
-        sameAgentDisplayState(left.agentDisplayState, right.agentDisplayState)
-      );
-    case "active-tools":
-      return left.type === "active-tools" && left.toolCalls === right.toolCalls;
-    case "indicator":
-      return (
-        left.type === "indicator" &&
-        left.startTime === right.startTime &&
-        sameArrayItems(left.activeToolCalls, right.activeToolCalls)
-      );
-    case "streaming":
-      return left.type === "streaming" && left.text === right.text;
-    case "turn-changes":
-      return (
-        left.type === "turn-changes" &&
-        left.messageId === right.messageId &&
-        left.filesChanged === right.filesChanged &&
-        left.isLatestTurn === right.isLatestTurn
-      );
-    case "permission-request":
-      return (
-        left.type === "permission-request" &&
-        left.requestId === right.requestId &&
-        left.toolName === right.toolName &&
-        left.input === right.input &&
-        left.title === right.title &&
-        left.settled === right.settled &&
-        left.decision === right.decision
-      );
-    case "hook-activity":
-      return left.type === "hook-activity" && left.hooks === right.hooks;
-    case "narrative-flow":
-      return (
-        left.type === "narrative-flow" &&
-        left.toolCalls === right.toolCalls &&
-        left.hooks === right.hooks &&
-        left.thoughtSegments === right.thoughtSegments &&
-        left.streamingText === right.streamingText &&
-        left.isAgentRunning === right.isAgentRunning &&
-        left.startTime === right.startTime &&
-        left.committedAssistantBody === right.committedAssistantBody
-      );
-    case "persisted-narrative":
-      return (
-        left.type === "persisted-narrative" &&
-        left.messageId === right.messageId &&
-        left.messageContent === right.messageContent
-      );
-    case "persisted-late-hooks":
-      return left.type === "persisted-late-hooks" && left.messageId === right.messageId;
-    case "persisted-turn-footer":
-      return (
-        left.type === "persisted-turn-footer" &&
-        left.messageId === right.messageId &&
-        left.summary?.counts.steps === right.summary?.counts.steps &&
-        left.summary?.counts.thoughts === right.summary?.counts.thoughts &&
-        left.summary?.counts.subagents === right.summary?.counts.subagents &&
-        left.summary?.durationMs === right.summary?.durationMs &&
-        left.summary?.outcome === right.summary?.outcome &&
-        left.summary?.outcomeExecutionId === right.summary?.outcomeExecutionId
-      );
-    case "narrative-indicator":
-      return (
-        left.type === "narrative-indicator" &&
-        left.stepCount === right.stepCount &&
-        left.subagentCount === right.subagentCount &&
-        sameArrayItems(left.activeToolCalls, right.activeToolCalls) &&
-        left.startTime === right.startTime &&
-        left.isAgentRunning === right.isAgentRunning
-      );
-    default:
-      return assertNever(right);
-  }
+function sameMessageVirtualItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "message" && right.type === "message" && sameMessage(left.message, right.message) && sameAgentDisplayState(left.agentDisplayState, right.agentDisplayState);
+}
+
+function sameActiveToolsItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "active-tools" && right.type === "active-tools" && left.toolCalls === right.toolCalls;
+}
+
+function sameIndicatorItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "indicator" && right.type === "indicator" && left.startTime === right.startTime && sameArrayItems(left.activeToolCalls, right.activeToolCalls);
+}
+
+function sameStreamingItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "streaming" && right.type === "streaming" && left.text === right.text;
+}
+
+function sameTurnChangesItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "turn-changes" && right.type === "turn-changes" && [left.messageId === right.messageId, left.filesChanged === right.filesChanged, left.isLatestTurn === right.isLatestTurn].every(Boolean);
+}
+
+function samePermissionRequestItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "permission-request" && right.type === "permission-request" && [left.requestId === right.requestId, left.toolName === right.toolName, left.input === right.input, left.title === right.title, left.settled === right.settled, left.decision === right.decision].every(Boolean);
+}
+
+function sameHookActivityItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "hook-activity" && right.type === "hook-activity" && left.hooks === right.hooks;
+}
+
+function sameNarrativeFlowItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "narrative-flow" && right.type === "narrative-flow" && [left.toolCalls === right.toolCalls, left.hooks === right.hooks, left.thoughtSegments === right.thoughtSegments, left.streamingText === right.streamingText, left.isAgentRunning === right.isAgentRunning, left.startTime === right.startTime, left.committedAssistantBody === right.committedAssistantBody].every(Boolean);
+}
+
+function samePersistedNarrativeItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "persisted-narrative" && right.type === "persisted-narrative" && left.messageId === right.messageId && left.messageContent === right.messageContent;
+}
+
+function samePersistedLateHooksItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "persisted-late-hooks" && right.type === "persisted-late-hooks" && left.messageId === right.messageId;
+}
+
+function samePersistedTurnFooterItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "persisted-turn-footer" && right.type === "persisted-turn-footer" && left.messageId === right.messageId && sameTurnFooterSummary(left.summary, right.summary);
+}
+
+function sameTurnFooterSummary(left: TurnFooterSummary | undefined, right: TurnFooterSummary | undefined): boolean {
+  return sameTurnFooterCounts(left, right) && sameTurnFooterResult(left, right);
+}
+
+function sameTurnFooterCounts(left: TurnFooterSummary | undefined, right: TurnFooterSummary | undefined): boolean {
+  return [left?.counts.steps === right?.counts.steps, left?.counts.thoughts === right?.counts.thoughts, left?.counts.subagents === right?.counts.subagents].every(Boolean);
+}
+
+function sameTurnFooterResult(left: TurnFooterSummary | undefined, right: TurnFooterSummary | undefined): boolean {
+  return [left?.durationMs === right?.durationMs, left?.outcome === right?.outcome, left?.outcomeExecutionId === right?.outcomeExecutionId].every(Boolean);
+}
+
+function sameNarrativeIndicatorItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
+  return left.type === "narrative-indicator" && right.type === "narrative-indicator" && [left.stepCount === right.stepCount, left.subagentCount === right.subagentCount, sameArrayItems(left.activeToolCalls, right.activeToolCalls), left.startTime === right.startTime, left.isAgentRunning === right.isAgentRunning].every(Boolean);
+}
+
+const VIRTUAL_ITEM_EQUALITY: Record<ChatVirtualItem["type"], (left: ChatVirtualItem, right: ChatVirtualItem) => boolean> = {
+  message: sameMessageVirtualItem,
+  "active-tools": sameActiveToolsItem,
+  indicator: sameIndicatorItem,
+  streaming: sameStreamingItem,
+  "turn-changes": sameTurnChangesItem,
+  "permission-request": samePermissionRequestItem,
+  "hook-activity": sameHookActivityItem,
+  "narrative-flow": sameNarrativeFlowItem,
+  "persisted-narrative": samePersistedNarrativeItem,
+  "persisted-late-hooks": samePersistedLateHooksItem,
+  "persisted-turn-footer": samePersistedTurnFooterItem,
+  "narrative-indicator": sameNarrativeIndicatorItem,
+};
+
+function sameVirtualItem(left: ChatVirtualItem | undefined, right: ChatVirtualItem): boolean {
+  return left !== undefined && left.key === right.key && left.type === right.type && VIRTUAL_ITEM_EQUALITY[right.type](left, right);
 }
 
 function reuseVirtualItems(
@@ -799,117 +700,51 @@ export function buildVirtualItems(
   volatileItems: readonly ChatVirtualItem[],
   hasToolCalls: boolean,
 ): ChatVirtualItem[] {
-  if (volatileItems.length === 0) {
-    return [...stableItems];
-  }
+  const deduped = dedupeVolatileItems(stableItems, volatileItems);
+  if (volatileItems.length === 0 || !hasToolCalls || deduped.length === 0) return [...stableItems, ...deduped];
+  const assistantIndex = lastAssistantItemIndex(stableItems);
+  return spliceNarrativeItems(stableItems, deduped, assistantIndex) ?? [...stableItems, ...deduped];
+}
 
-  // During session.message handoff, the live provisional bubble and persisted
-  // assistant bubble intentionally share a key. Only one can be in React's
-  // sibling list at a time.
+function dedupeVolatileItems(stableItems: readonly ChatVirtualItem[], volatileItems: readonly ChatVirtualItem[]): ChatVirtualItem[] {
   const stableKeys = new Set(stableItems.map((item) => item.key));
-  const dedupedVolatileItems = volatileItems.filter(
-    (item) =>
-      !(
-        item.type === "message" &&
-        isAgentDisplayActive(item.agentDisplayState) &&
-        stableKeys.has(item.key)
-      ),
-  );
+  return volatileItems.filter((item) => item.type !== "message" || !isAgentDisplayActive(item.agentDisplayState) || !stableKeys.has(item.key));
+}
 
-  if (!hasToolCalls || dedupedVolatileItems.length === 0) {
-    return [...stableItems, ...dedupedVolatileItems];
-  }
+function trailingStableChrome(item: ChatVirtualItem): boolean {
+  return item.type === "turn-changes" || item.type === "persisted-late-hooks" || item.type === "persisted-turn-footer" || item.type === "persisted-narrative";
+}
 
-  // Split volatile items: narrative-flow goes before the last assistant
-  // message; permission requests go after it.
+function isSkippableStableItem(item: ChatVirtualItem): boolean {
+  return trailingStableChrome(item) || (item.type === "message" && item.message.role === "assistant" && isGoalStatusNotice(item.message.content));
+}
 
-  // Find the last assistant answer, skipping trailing chrome and goal notices.
-  let lastAssistantIdx = stableItems.length - 1;
-  while (lastAssistantIdx >= 0) {
-    const item = stableItems[lastAssistantIdx];
-    if (
-      item.type === "turn-changes" ||
-      item.type === "persisted-late-hooks" ||
-      item.type === "persisted-turn-footer" ||
-      item.type === "persisted-narrative"
-    ) {
-      lastAssistantIdx--;
-      continue;
-    }
-    if (
-      item.type === "message" &&
-      item.message.role === "assistant" &&
-      isGoalStatusNotice(item.message.content)
-    ) {
-      lastAssistantIdx--;
-      continue;
-    }
-    break;
-  }
+function lastAssistantItemIndex(items: readonly ChatVirtualItem[]): number {
+  let index = items.length - 1;
+  while (index >= 0 && isSkippableStableItem(items[index]!)) index--;
+  return index;
+}
 
-  const lastItem = stableItems[lastAssistantIdx];
-  if (
-    lastItem?.type === "message" &&
-    lastItem.message.role === "assistant" &&
-    !isPlanQuestionsMessage(lastItem.message.content)
-  ) {
-    // narrative-flow and the live assistant message go BEFORE the last
-    // assistant message bubble so the user reads top-to-bottom: actions →
-    // response. The live assistant sits under narrative-flow (mirroring where
-    // the MessageBubble lands on persist). The narrative-indicator goes
-    // immediately AFTER the bubble so the progress meta stays underneath the
-    // response — including through the persist swap, where it now lingers to
-    // play its exit transition instead of jumping above the bubble.
-    const headItems = dedupedVolatileItems.filter(
-      (v) =>
-        v.type === "narrative-flow" ||
-        (v.type === "message" && v.message.role === "assistant" && isAgentDisplayActive(v.agentDisplayState)),
-    );
-    const indicatorItems = dedupedVolatileItems.filter(
-      (v) => v.type === "narrative-indicator",
-    );
-    const tailItems = dedupedVolatileItems.filter(
-      (v) =>
-        v.type !== "narrative-flow" &&
-        !(v.type === "message" && v.message.role === "assistant" && isAgentDisplayActive(v.agentDisplayState)) &&
-        v.type !== "narrative-indicator",
-    );
-    // Drop the persisted-narrative placeholder for the message that has live
-    // narrative-flow above it, to avoid double-rendering the same timeline
-    // while volatile records are still in-memory. The persisted-turn-footer
-    // is NOT suppressed because it sits AFTER the assistant message bubble —
-    // it owns the post-response summary that closes the turn, regardless of
-    // whether the live narrative-flow is still mounted above the bubble.
-    const lastAssistantMessageId = lastItem.message.id;
-    const filteredStable = stableItems.filter(
-      (it, idx) =>
-        !(
-          it.type === "persisted-narrative" &&
-          it.messageId === lastAssistantMessageId &&
-          // Only filter the one immediately preceding the message - older
-          // persisted narratives for prior turns must still render.
-          idx === lastAssistantIdx - 1
-        ),
-    );
-    // Recompute index after the filter.
-    const newLastAssistantIdx = filteredStable.findIndex(
-      (it, idx) =>
-        it.type === "message" &&
-        it.message.id === lastAssistantMessageId &&
-        idx >= 0,
-    );
-    if (newLastAssistantIdx === -1) {
-      return [...stableItems, ...dedupedVolatileItems];
-    }
-    return [
-      ...filteredStable.slice(0, newLastAssistantIdx),
-      ...headItems,
-      filteredStable[newLastAssistantIdx],
-      ...indicatorItems,
-      ...filteredStable.slice(newLastAssistantIdx + 1),
-      ...tailItems,
-    ];
-  }
+function isAssistantInsertionPoint(item: ChatVirtualItem | undefined): item is Extract<ChatVirtualItem, { type: "message" }> {
+  return item?.type === "message" && item.message.role === "assistant" && !isPlanQuestionsMessage(item.message.content);
+}
 
-  return [...stableItems, ...dedupedVolatileItems];
+function isNarrativeHeadItem(item: ChatVirtualItem): boolean {
+  return item.type === "narrative-flow" || (item.type === "message" && item.message.role === "assistant" && isAgentDisplayActive(item.agentDisplayState));
+}
+
+function withoutAdjacentPersistedNarrative(items: readonly ChatVirtualItem[], assistantIndex: number, messageId: string): ChatVirtualItem[] {
+  return items.filter((item, index) => item.type !== "persisted-narrative" || item.messageId !== messageId || index !== assistantIndex - 1);
+}
+
+function spliceNarrativeItems(stableItems: readonly ChatVirtualItem[], volatileItems: readonly ChatVirtualItem[], assistantIndex: number): ChatVirtualItem[] | undefined {
+  const assistantItem = stableItems[assistantIndex];
+  if (!isAssistantInsertionPoint(assistantItem)) return undefined;
+  const filteredStable = withoutAdjacentPersistedNarrative(stableItems, assistantIndex, assistantItem.message.id);
+  const filteredAssistantIndex = filteredStable.findIndex((item) => item.type === "message" && item.message.id === assistantItem.message.id);
+  if (filteredAssistantIndex < 0) return undefined;
+  const headItems = volatileItems.filter(isNarrativeHeadItem);
+  const indicatorItems = volatileItems.filter((item) => item.type === "narrative-indicator");
+  const tailItems = volatileItems.filter((item) => !isNarrativeHeadItem(item) && item.type !== "narrative-indicator");
+  return [...filteredStable.slice(0, filteredAssistantIndex), ...headItems, filteredStable[filteredAssistantIndex]!, ...indicatorItems, ...filteredStable.slice(filteredAssistantIndex + 1), ...tailItems];
 }

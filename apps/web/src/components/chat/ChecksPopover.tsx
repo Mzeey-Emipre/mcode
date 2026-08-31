@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CI_ICON_STROKE } from "@/lib/ci-status";
 import type { ChecksStatus, CheckRun } from "@mcode/contracts";
 
@@ -219,22 +220,27 @@ function RunRow({ run }: { run: CheckRun }) {
       : visual.label;
 
   return (
-    <div className="flex h-[30px] min-h-[30px] items-center gap-2 px-3.5 text-sm" title={title}>
-      {visual.spinning ? (
-        <Spinner size={16} className={visual.iconClassName} />
-      ) : Icon ? (
-        <Icon
-          size={16}
-          strokeWidth={CI_ICON_STROKE}
-          className={cn("shrink-0", visual.iconClassName)}
-        />
-      ) : null}
-      <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-        {run.name}
-      </span>
-      <span className={cn("shrink-0 text-xs", visual.labelClassName)}>
-        {visual.label}
-      </span>
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={<div className="flex h-[30px] min-h-[30px] items-center gap-2 px-3.5 text-sm" />}
+      >
+        {visual.spinning ? (
+          <Spinner size={16} className={visual.iconClassName} />
+        ) : Icon ? (
+          <Icon
+            size={16}
+            strokeWidth={CI_ICON_STROKE}
+            className={cn("shrink-0", visual.iconClassName)}
+          />
+        ) : null}
+        <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+          {run.name}
+        </span>
+        <span className={cn("shrink-0 text-xs", visual.labelClassName)}>
+          {visual.label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{title}</TooltipContent>
+    </Tooltip>
   );
 }

@@ -2,7 +2,7 @@
 /// <reference lib="dom.iterable" />
 
 import { BrowserWindow, nativeImage, type IpcMainInvokeEvent, type WebContents } from "electron";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_AX_NODES,
@@ -118,6 +118,7 @@ interface TargetState {
 
 type MechanicalInspectResult = Omit<Extract<BrowserAutomationResult, { operation: "inspect" }>, "readiness" | "observationRef" | "capabilities" | "guidance" | "capabilityRevision">;
 type MechanicalStatusResult = Omit<Extract<BrowserAutomationResult, { operation: "status" }>, "capabilities" | "capabilityRevision">;
+type OperationRequest<TOperation extends BrowserAutomationRequestOperation> = Extract<BrowserAutomationRequest, { operation: TOperation }>;
 
 interface ResolvedTarget {
   state: TargetState;
@@ -134,6 +135,13 @@ interface RendererOperationLease {
 interface GuestInputAllowanceHandle {
   readonly token: string;
   readonly generation: number;
+}
+
+interface IsolatedCallOptions {
+  readonly awaitPromise?: boolean;
+  readonly returnByValue?: boolean;
+  readonly timeoutMs?: number;
+  readonly onDispatch?: () => void;
 }
 
 function byteLength(value: string): number {
@@ -199,23 +207,19 @@ export function snapshotPage(argument: { semanticGeneration: number; maxElements
   const roleOf = (element: Element): string => {
     const explicit = element.getAttribute("role");
     if (explicit) return explicit;
+    const mappedRole = (roles: Record<string, string>, key: string, fallback: string): string => {
+      return Object.hasOwn(roles, key) ? roles[key]! : fallback;
+    };
     const tag = element.tagName.toLowerCase();
-    if (tag === "a") return "link";
-    if (tag === "button") return "button";
-    if (tag === "textarea") return "textbox";
-    if (tag === "select") return "combobox";
-    if (tag === "input") {
-      const type = (element.getAttribute("type") ?? "text").toLowerCase();
-      if (type === "checkbox") return "checkbox";
-      if (type === "radio") return "radio";
-      if (type === "button" || type === "submit") return "button";
-      return "textbox";
-    }
-    return "generic";
+    const tags: Record<string, string> = { a: "link", button: "button", textarea: "textbox", select: "combobox" };
+    if (tag !== "input") return mappedRole(tags, tag, "generic");
+    const type = (element.getAttribute("type") ?? "text").toLowerCase();
+    const inputRoles: Record<string, string> = { checkbox: "checkbox", radio: "radio", button: "button", submit: "button" };
+    return mappedRole(inputRoles, type, "textbox");
   };
   const nameOf = (element: Element): string => {
-    const labelled = element.getAttribute("aria-label") ?? element.getAttribute("alt") ?? element.getAttribute("title");
-    if (labelled) return labelled.trim().slice(0, 1024);
+    const labelled = ["aria-label", "alt", "title"].map((attribute) => element.getAttribute(attribute)).find((value) => value !== null);
+    if (labelled !== undefined) return labelled.trim().slice(0, 1024);
     const labelId = element.getAttribute("aria-labelledby");
     if (labelId) {
       const text = labelId.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim();
@@ -242,7 +246,8 @@ export function snapshotPage(argument: { semanticGeneration: number; maxElements
   const nodeList = document.querySelectorAll("a[href],button,input,textarea,select,[role],[tabindex]");
   const scanLimit = Math.min(nodeList.length, argument.maxElements * 10);
   const candidates: Element[] = [];
-  for (let index = 0; index < scanLimit && candidates.length <= argument.maxElements; index += 1) {
+  for (let index = 0; index < scanLimit; index += 1) {
+    if (candidates.length > argument.maxElements) break;
     const element = nodeList.item(index);
     if (element && visible(element)) candidates.push(element);
   }
@@ -261,201 +266,176 @@ export function snapshotPage(argument: { semanticGeneration: number; maxElements
   for (const [id, element] of registry.byId) {
     if (!element.isConnected) registry.byId.delete(id);
   }
-  const elements = candidates.slice(0, argument.maxElements).map((element) => {
+  const semanticIdFor = (element: Element): string => {
+    const existing = registry.byElement.get(element);
+    if (existing) return existing;
+    registry.sequence += 1;
+    const randomPart = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now().toString(36)}-${registry.sequence.toString(36)}`;
+    const semanticId = `e-${argument.semanticGeneration}-${randomPart}`;
+    registry.byElement.set(element, semanticId);
+    registry.byId.set(semanticId, element);
+    return semanticId;
+  };
+  const inputValue = (element: Element, input: HTMLInputElement): string | undefined => {
+    if (hasSensitiveValue(element)) return "[REDACTED]";
+    return typeof input.value === "string" ? input.value.slice(0, 1024) : undefined;
+  };
+  const inputDisabled = (element: Element, input: HTMLInputElement): boolean => {
+    return "disabled" in input ? Boolean(input.disabled) : element.getAttribute("aria-disabled") === "true";
+  };
+  const elementSnapshot = (element: Element) => {
     const rect = element.getBoundingClientRect();
     const input = element as HTMLInputElement;
-    let semanticId = registry.byElement.get(element);
-    if (!semanticId) {
-      registry.sequence += 1;
-      const randomPart = typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${registry.sequence.toString(36)}`;
-      semanticId = `e-${argument.semanticGeneration}-${randomPart}`;
-      registry.byElement.set(element, semanticId);
-      registry.byId.set(semanticId, element);
-    }
     return {
-      semanticId,
+      semanticId: semanticIdFor(element),
       role: roleOf(element).slice(0, 128),
       accessibleName: nameOf(element),
-      value: hasSensitiveValue(element)
-        ? "[REDACTED]"
-        : typeof input.value === "string"
-          ? input.value.slice(0, 1024)
-          : undefined,
-      disabled: "disabled" in input ? Boolean(input.disabled) : element.getAttribute("aria-disabled") === "true",
+      value: inputValue(element, input),
+      disabled: inputDisabled(element, input),
       bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     };
-  });
-  const textParts: string[] = [];
-  let textLength = 0;
-  let scannedTextNodes = 0;
-  let textTruncated = false;
-  if (document.body) {
+  };
+  const nodeText = (node: Node): string | null => {
+    const parent = node.parentElement;
+    if (!parent || !visible(parent)) return null;
+    const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+    return text || null;
+  };
+  const appendText = (textParts: string[], textLength: number, part: string): { textLength: number; truncated: boolean } => {
+    const separator = textParts.length > 0 ? 1 : 0;
+    const remaining = argument.maxText - textLength - separator;
+    if (remaining <= 0) return { textLength, truncated: true };
+    textParts.push(part.slice(0, remaining));
+    return { textLength: textLength + separator + Math.min(part.length, remaining), truncated: part.length > remaining };
+  };
+  const visibleText = () => {
+    const textParts: string[] = [];
+    let textLength = 0;
+    let scannedTextNodes = 0;
+    let truncated = false;
+    if (!document.body) return { text: "", truncated };
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     while (scannedTextNodes < 10_000) {
       const node = walker.nextNode();
       if (!node) break;
       scannedTextNodes += 1;
-      const parent = node.parentElement;
-      if (!parent || !visible(parent)) continue;
-      const part = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+      const part = nodeText(node);
       if (!part) continue;
-      const separatorLength = textParts.length > 0 ? 1 : 0;
-      const remaining = argument.maxText - textLength - separatorLength;
-      if (remaining <= 0) { textTruncated = true; break; }
-      textParts.push(part.slice(0, remaining));
-      textLength += separatorLength + Math.min(part.length, remaining);
-      if (part.length > remaining) { textTruncated = true; break; }
+      const appended = appendText(textParts, textLength, part);
+      textLength = appended.textLength;
+      if (appended.truncated) { truncated = true; break; }
     }
-    if (scannedTextNodes >= 10_000) textTruncated = true;
-  }
-  const text = textParts.join(" ").slice(0, argument.maxText);
+    return { text: textParts.join(" ").slice(0, argument.maxText), truncated: truncated || scannedTextNodes >= 10_000 };
+  };
+  const elements = candidates.slice(0, argument.maxElements).map(elementSnapshot);
+  const textResult = visibleText();
+  const elementCount = (): number => nodeList.length > scanLimit || candidates.length > argument.maxElements ? argument.maxElements + 1 : candidates.length;
   return {
     url: location.href,
     title: document.title,
     loading: document.readyState !== "complete",
-    visibleText: text.slice(0, argument.maxText),
-    visibleTextOriginalLength: text.length + (textTruncated ? 1 : 0),
+    visibleText: textResult.text,
+    visibleTextOriginalLength: textResult.text.length + (textResult.truncated ? 1 : 0),
     elements,
-    elementCount: nodeList.length > scanLimit || candidates.length > argument.maxElements
-      ? argument.maxElements + 1
-      : candidates.length,
+    elementCount: elementCount(),
   };
 }
 
 /** Resolves one target to attachment, visibility, and action-point state inside the isolated world. */
 export function inspectPageTarget(argument: { target: BrowserAutomationTarget; scrollIntoView?: boolean }) {
-  const nodeList = document.querySelectorAll("a[href],button,input,textarea,select,[role],[tabindex]");
-  const candidates: Element[] = [];
-  for (let index = 0; index < Math.min(nodeList.length, 2_000); index += 1) {
-    const element = nodeList.item(index);
-    if (element) candidates.push(element);
-  }
-  const nameOf = (element: Element): string => {
-    const labelled = element.getAttribute("aria-label") ?? element.getAttribute("alt") ?? element.getAttribute("title");
-    if (labelled) return labelled.trim().slice(0, 1024);
-    const labelId = element.getAttribute("aria-labelledby");
-    if (labelId) {
-      const text = labelId.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim();
-      if (text) return text.slice(0, 1024);
-    }
-    if (element instanceof HTMLInputElement && element.labels?.length) {
-      return [...element.labels].map((label) => label.textContent ?? "").join(" ").trim().slice(0, 1024);
-    }
-    return (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 1024);
-  };
+  const candidates = () => Array.from(document.querySelectorAll("a[href],button,input,textarea,select,[role],[tabindex]")).slice(0, 2_000);
   const roleOf = (element: Element): string => {
     const explicit = element.getAttribute("role");
     if (explicit) return explicit;
+    const mappedRole = (roles: Record<string, string>, key: string, fallback: string): string => {
+      return Object.hasOwn(roles, key) ? roles[key]! : fallback;
+    };
     const tag = element.tagName.toLowerCase();
-    if (tag === "a") return "link";
-    if (tag === "button") return "button";
-    if (tag === "textarea") return "textbox";
-    if (tag === "select") return "combobox";
-    if (tag === "input") {
-      const type = (element.getAttribute("type") ?? "text").toLowerCase();
-      if (type === "checkbox") return "checkbox";
-      if (type === "radio") return "radio";
-      if (type === "button" || type === "submit") return "button";
-      return "textbox";
-    }
-    return "generic";
+    const tags: Record<string, string> = { a: "link", button: "button", textarea: "textbox", select: "combobox" };
+    if (tag !== "input") return mappedRole(tags, tag, "generic");
+    const type = (element.getAttribute("type") ?? "text").toLowerCase();
+    return mappedRole({ checkbox: "checkbox", radio: "radio", button: "button", submit: "button" }, type, "textbox");
   };
-  let found: Element | null = null;
-  if ("semanticId" in argument.target) {
-    const isolatedGlobal = globalThis as typeof globalThis & {
-      __mcodeBrowserElements?: { byId: Map<string, Element> };
-    };
-    found = isolatedGlobal.__mcodeBrowserElements?.byId.get(argument.target.semanticId) ?? null;
-    if (found && !found.isConnected) {
-      isolatedGlobal.__mcodeBrowserElements?.byId.delete(argument.target.semanticId);
-      found = null;
+  const nameOf = (element: Element): string => {
+    const label = ["aria-label", "alt", "title"].map((attribute) => element.getAttribute(attribute)).find((value) => value !== null);
+    if (label !== undefined) return label.trim().slice(0, 1024);
+    const ids = element.getAttribute("aria-labelledby");
+    if (ids) {
+      const text = ids.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim();
+      if (text) return text.slice(0, 1024);
     }
-  } else if ("role" in argument.target) {
-    const roleTarget = argument.target;
-    const matches = candidates.filter(
-      (element) => roleOf(element) === roleTarget.role && nameOf(element) === roleTarget.accessibleName,
-    );
-    if (matches.length !== 1) return { attached: false, visible: false };
-    found = matches[0] ?? null;
-  } else if ("cssSelector" in argument.target) {
+    const input = element instanceof HTMLInputElement ? element : null;
+    if (input?.labels?.length) return [...input.labels].map((item) => item.textContent ?? "").join(" ").trim().slice(0, 1024);
+    return (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 1024);
+  };
+  const semanticElement = (id: string): Element | null => {
+    const registry = (globalThis as typeof globalThis & { __mcodeBrowserElements?: { byId: Map<string, Element> } }).__mcodeBrowserElements;
+    const element = registry?.byId.get(id) ?? null;
+    if (element && !element.isConnected) registry?.byId.delete(id);
+    return element?.isConnected ? element : null;
+  };
+  const cssElement = (selector: string): Element | null => {
     try {
-      const matches = document.querySelectorAll(argument.target.cssSelector);
-      if (matches.length !== 1) return { attached: false, visible: false };
-      found = matches[0];
+      const matches = document.querySelectorAll(selector);
+      return matches.length === 1 ? matches[0] : null;
     } catch {
-      return { attached: false, visible: false };
+      return null;
     }
-  } else {
-    return {
-      attached: true,
-      visible:
-        argument.target.x >= 0 &&
-        argument.target.y >= 0 &&
-        argument.target.x <= innerWidth &&
-        argument.target.y <= innerHeight,
-      x: argument.target.x,
-      y: argument.target.y,
-    };
-  }
-  if (!found) return { attached: false, visible: false };
-  let rect = found.getBoundingClientRect();
-  if (
-    argument.scrollIntoView &&
-    (rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight)
-  ) {
-    found.scrollIntoView({ block: "center", inline: "center" });
-    rect = found.getBoundingClientRect();
-  }
-  const style = getComputedStyle(found);
-  const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  const isVisible =
-    rect.width > 0 &&
-    rect.height > 0 &&
-    style.visibility !== "hidden" &&
-    style.display !== "none" &&
-    (!argument.scrollIntoView || (
-      point.x >= 0 &&
-      point.y >= 0 &&
-      point.x <= innerWidth &&
-      point.y <= innerHeight
-    ));
-  return {
-    attached: true,
-    visible: isVisible,
-    ...(isVisible ? point : {}),
   };
+  const targetElement = (): Element | null => {
+    const target = argument.target;
+    if ("semanticId" in target) return semanticElement(target.semanticId);
+    if ("cssSelector" in target) return cssElement(target.cssSelector);
+    if ("role" in target) {
+      const matches = candidates().filter((element) => roleOf(element) === target.role && nameOf(element) === target.accessibleName);
+      return matches.length === 1 ? matches[0] ?? null : null;
+    }
+    return null;
+  };
+  const pointVisible = (point: { x: number; y: number }): boolean => point.x >= 0 && point.y >= 0 && point.x <= innerWidth && point.y <= innerHeight;
+  const inspectPoint = (target: { x: number; y: number }) => ({ attached: true, visible: pointVisible(target), x: target.x, y: target.y });
+  const inspectElement = (element: Element) => {
+    let rect = element.getBoundingClientRect();
+    const outOfView = rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight;
+    if (argument.scrollIntoView && outOfView) {
+      element.scrollIntoView({ block: "center", inline: "center" });
+      rect = element.getBoundingClientRect();
+    }
+    const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    const style = getComputedStyle(element);
+    const visible = elementVisible(rect, style, point);
+    return { attached: true, visible, ...(visible ? point : {}) };
+  };
+  const elementVisible = (rect: DOMRect, style: CSSStyleDeclaration, point: { x: number; y: number }): boolean => {
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (style.visibility === "hidden" || style.display === "none") return false;
+    return !argument.scrollIntoView || pointVisible(point);
+  };
+  if ("x" in argument.target) return inspectPoint(argument.target);
+  const found = targetElement();
+  if (!found) return { attached: false, visible: false };
+  return inspectElement(found);
 }
 
 /** Resolves one target to its exact DOM element inside the isolated world. */
 export function resolvePageTargetElement(target: BrowserAutomationTarget): Element | null {
-  const nodeList = document.querySelectorAll("a[href],button,input,textarea,select,[role],[tabindex]");
-  const candidates: Element[] = [];
-  for (let index = 0; index < Math.min(nodeList.length, 2_000); index += 1) {
-    const element = nodeList.item(index);
-    if (element) candidates.push(element);
-  }
+  const candidates = (): Element[] => Array.from(document.querySelectorAll("a[href],button,input,textarea,select,[role],[tabindex]")).slice(0, 2_000);
   const roleOf = (element: Element): string => {
     const explicit = element.getAttribute("role");
     if (explicit) return explicit;
+    const mappedRole = (roles: Record<string, string>, key: string, fallback: string): string => {
+      return Object.hasOwn(roles, key) ? roles[key]! : fallback;
+    };
     const tag = element.tagName.toLowerCase();
-    if (tag === "a") return "link";
-    if (tag === "button") return "button";
-    if (tag === "textarea") return "textbox";
-    if (tag === "select") return "combobox";
-    if (tag === "input") {
-      const type = (element.getAttribute("type") ?? "text").toLowerCase();
-      if (type === "checkbox") return "checkbox";
-      if (type === "radio") return "radio";
-      if (type === "button" || type === "submit") return "button";
-      return "textbox";
-    }
-    return "generic";
+    const tags: Record<string, string> = { a: "link", button: "button", textarea: "textbox", select: "combobox" };
+    if (tag !== "input") return mappedRole(tags, tag, "generic");
+    const type = (element.getAttribute("type") ?? "text").toLowerCase();
+    const inputRoles: Record<string, string> = { checkbox: "checkbox", radio: "radio", button: "button", submit: "button" };
+    return mappedRole(inputRoles, type, "textbox");
   };
   const nameOf = (element: Element): string => {
-    const labelled = element.getAttribute("aria-label") ?? element.getAttribute("alt") ?? element.getAttribute("title");
-    if (labelled) return labelled.trim().slice(0, 1_024);
+    const labelled = ["aria-label", "alt", "title"].map((attribute) => element.getAttribute(attribute)).find((value) => value !== null);
+    if (labelled !== undefined) return labelled.trim().slice(0, 1_024);
     const labelId = element.getAttribute("aria-labelledby");
     if (labelId) {
       const text = labelId.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim();
@@ -466,31 +446,32 @@ export function resolvePageTargetElement(target: BrowserAutomationTarget): Eleme
     }
     return (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 1_024);
   };
-  if ("semanticId" in target) {
+  const semanticElement = (id: string): Element | null => {
     const registry = (globalThis as typeof globalThis & {
       __mcodeBrowserElements?: { byId: Map<string, Element> };
     }).__mcodeBrowserElements;
-    const element = registry?.byId.get(target.semanticId) ?? null;
+    const element = registry?.byId.get(id) ?? null;
     if (!element?.isConnected) {
-      registry?.byId.delete(target.semanticId);
+      registry?.byId.delete(id);
       return null;
     }
     return element;
-  }
-  if ("role" in target) {
-    const matches = candidates.filter(
-      (element) => roleOf(element) === target.role && nameOf(element) === target.accessibleName,
-    );
+  };
+  const roleElement = (role: string, accessibleName: string): Element | null => {
+    const matches = candidates().filter((element) => roleOf(element) === role && nameOf(element) === accessibleName);
     return matches.length === 1 ? matches[0] ?? null : null;
-  }
-  if ("cssSelector" in target) {
+  };
+  const selectorElement = (selector: string): Element | null => {
     try {
-      const matches = document.querySelectorAll(target.cssSelector);
+      const matches = document.querySelectorAll(selector);
       return matches.length === 1 ? matches[0] : null;
     } catch {
       return null;
     }
-  }
+  };
+  if ("semanticId" in target) return semanticElement(target.semanticId);
+  if ("role" in target) return roleElement(target.role, target.accessibleName);
+  if ("cssSelector" in target) return selectorElement(target.cssSelector);
   return document.elementFromPoint(target.x, target.y);
 }
 
@@ -540,22 +521,21 @@ export function evaluateIsolatedExpression(argument: {
     const bounded = candidate.slice(0, 4_096);
     if (bounded.length >= 4) opaqueSecrets.add(bounded);
   };
-  try {
-    const cookieText = typeof document === "undefined" ? "" : document.cookie;
+  const retainCookieSecrets = () => {
+    let cookieText = "";
+    try {
+      cookieText = typeof document === "undefined" ? "" : document.cookie;
+    } catch {
+      return;
+    }
     retainSecret(cookieText);
     for (const cookie of cookieText.split(";").slice(0, 200)) {
       retainSecret(cookie.trim());
       retainSecret(cookie.slice(cookie.indexOf("=") + 1).trim());
     }
-  } catch {
-    // Pages can deny cookie access. Evaluation remains available with the
-    // structural redaction policy below.
-  }
-  for (const storage of [
-    typeof localStorage === "undefined" ? null : localStorage,
-    typeof sessionStorage === "undefined" ? null : sessionStorage,
-  ]) {
-    if (!storage) continue;
+  };
+  const retainStorageSecrets = (storage: Storage | null) => {
+    if (!storage) return;
     try {
       const entryCount = Math.min(storage.length, 200);
       for (let index = 0; index < entryCount; index += 1) {
@@ -566,37 +546,47 @@ export function evaluateIsolatedExpression(argument: {
     } catch {
       // Sandboxed or opaque origins can deny storage access.
     }
-  }
+  };
+  retainCookieSecrets();
+  retainStorageSecrets(typeof localStorage === "undefined" ? null : localStorage);
+  retainStorageSecrets(typeof sessionStorage === "undefined" ? null : sessionStorage);
   const seen = new WeakSet<object>();
   let remainingNodes = 1_000;
-  const sanitize = (value: unknown, depth: number): unknown => {
-    remainingNodes -= 1;
-    if (remainingNodes < 0 || depth > 8) return "[TRUNCATED]";
-    if (typeof value === "string") {
-      let redacted = value;
-      for (const secret of opaqueSecrets) {
-        if (redacted.includes(secret)) redacted = redacted.split(secret).join("[REDACTED]");
-      }
-      return redacted.replace(secretText, (match, captured: string) => match.replace(captured, "[REDACTED]")).slice(0, 4_096);
+  const redactText = (value: string): string => {
+    let redacted = value;
+    for (const secret of opaqueSecrets) {
+      if (redacted.includes(secret)) redacted = redacted.split(secret).join("[REDACTED]");
     }
-    if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
-    if (typeof value === "bigint") return value.toString();
-    if (typeof value === "undefined") return null;
-    if (typeof value === "function" || typeof value === "symbol") return `[${typeof value}]`;
-    if (typeof value !== "object") return null;
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-    if (Array.isArray(value)) return value.slice(0, 200).map((item) => sanitize(item, depth + 1));
+    return redacted.replace(secretText, (match, captured: string) => match.replace(captured, "[REDACTED]")).slice(0, 4_096);
+  };
+  const scalarValue = (value: unknown): { found: true; value: unknown } | { found: false } => {
+    if (typeof value === "string") return { found: true, value: redactText(value) };
+    if (typeof value === "number" || typeof value === "boolean" || value === null) return { found: true, value };
+    if (typeof value === "bigint") return { found: true, value: value.toString() };
+    if (typeof value === "undefined") return { found: true, value: null };
+    if (typeof value === "function" || typeof value === "symbol") return { found: true, value: `[${typeof value}]` };
+    return { found: false };
+  };
+  const sanitizeRecord = (value: Record<string, unknown>, depth: number): Record<string, unknown> => {
     const output: Record<string, unknown> = {};
     let retained = 0;
-    for (const key in value as Record<string, unknown>) {
+    for (const key in value) {
       if (retained >= 200 || remainingNodes <= 0) break;
-      output[key] = secretKey.test(key)
-        ? "[REDACTED]"
-        : sanitize((value as Record<string, unknown>)[key], depth + 1);
+      output[key] = secretKey.test(key) ? "[REDACTED]" : sanitize(value[key], depth + 1);
       retained += 1;
     }
     return output;
+  };
+  const sanitize = (value: unknown, depth: number): unknown => {
+    remainingNodes -= 1;
+    if (remainingNodes < 0 || depth > 8) return "[TRUNCATED]";
+    const scalar = scalarValue(value);
+    if (scalar.found) return scalar.value;
+    if (typeof value !== "object" || value === null) return null;
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    if (Array.isArray(value)) return value.slice(0, 200).map((item) => sanitize(item, depth + 1));
+    return sanitizeRecord(value as Record<string, unknown>, depth);
   };
   const serialize = (value: unknown) => {
     const valueJson = JSON.stringify(sanitize(value, 0));
@@ -605,17 +595,20 @@ export function evaluateIsolatedExpression(argument: {
     }
     return { ok: true, valueJson };
   };
-  const value = globalThis.eval(argument.expression) as unknown;
+  const evaluateExpression = Reflect.get(globalThis, "eval") as (source: string) => unknown;
+  const value = evaluateExpression(argument.expression);
   return argument.awaitPromise ? Promise.resolve(value).then(serialize) : serialize(value);
 }
 
 /** Returns the native Select All modifier mask used by Chromium input events. */
-export function selectAllModifierMask(platform: NodeJS.Platform = process.platform): number {
+export function selectAllModifierMask(platform: NodeJS.Platform): number {
   return platform === "darwin" ? 4 : 2;
 }
 
 /** Executes bounded, serial browser operations against exact visible Electron webviews. */
 export class BrowserAutomationKernel {
+  constructor(private readonly platform: NodeJS.Platform) {}
+
   private readonly scheduler = new BrowserAutomationScheduler(5, BROWSER_AUTOMATION_MAX_PENDING_REQUESTS);
   private readonly targets = new Map<string, TargetState>();
   private readonly targetGenerations = new Map<string, number>();
@@ -687,7 +680,7 @@ export class BrowserAutomationKernel {
         throw new KernelError("INVALID_REQUEST", "Browser request id is already active", false);
       }
       const resolved = this.resolveTarget(event, request.threadId, parsedInput.target);
-      const leaseId = randomUUID();
+      const leaseId = NodeCrypto.randomUUID();
       let resolveReady!: (value: { ok: true; leaseId: string } | { ok: false; response: BrowserAutomationResponse }) => void;
       const ready = new Promise<{ ok: true; leaseId: string } | { ok: false; response: BrowserAutomationResponse }>((resolve) => {
         resolveReady = resolve;
@@ -908,40 +901,44 @@ export class BrowserAutomationKernel {
   async openDevTools(event: IpcMainInvokeEvent, input?: unknown): Promise<boolean> {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return false;
-    const session = getSession(win);
-    let threadId = session.lastPreviewThreadId;
-    let tabId: string | null = null;
-    const exactTargetRequested = input !== undefined;
-    if (exactTargetRequested) {
-      const target = asRecord(input);
-      try {
-        threadId = assertShortId(target.threadId, "threadId");
-        tabId = assertShortId(target.tabId, "tabId");
-      } catch {
-        return false;
-      }
-    }
-    if (!threadId) return false;
-    const set = getThreadTabSet(session, threadId);
-    const tab = set?.tabs.find((candidate) => candidate.id === (tabId ?? set.activeTabId));
-    if (!tab) return false;
-    const adopted = findAdoptedWebContentsForWindow(win.id, threadId, tab.id);
-    const guest = adopted?.hostWebContents === event.sender ? adopted : null;
-    if (!guest || guest.isDestroyed()) return false;
-    const state = this.targets.get(targetKey(win.id, threadId, tab.id));
-    if (state) {
-      this.humanInterrupt(state);
-      if (state.syntheticInputDepth > 0 && state.debuggerOwned) await this.releaseInput(guest, state.heldKeys);
-      state.syntheticInputDepth = 0;
-      if (state.debuggerOwned && guest.debugger.isAttached()) {
-        guest.debugger.detach();
-        state.debuggerOwned = false;
-        state.diagnosticsReady = false;
-        state.isolatedContextId = null;
-      }
-    }
-    guest.openDevTools({ mode: "detach" });
+    const target = this.resolveDevToolsGuest(event, win, input);
+    if (!target) return false;
+    await this.releaseDevToolsState(target.guest, target.state);
+    target.guest.openDevTools({ mode: "detach" });
     return true;
+  }
+
+  private resolveDevToolsTarget(session: ReturnType<typeof getSession>, input: unknown): { threadId: string; tabId: string | null } | null {
+    if (input === undefined) return { threadId: session.lastPreviewThreadId ?? "", tabId: null };
+    const value = asRecord(input);
+    try {
+      return { threadId: assertShortId(value.threadId, "threadId"), tabId: assertShortId(value.tabId, "tabId") };
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveDevToolsGuest(event: IpcMainInvokeEvent, win: BrowserWindow, input: unknown): { guest: WebContents; state: TargetState | undefined } | null {
+    const target = this.resolveDevToolsTarget(getSession(win), input);
+    if (!target?.threadId) return null;
+    const tab = getThreadTabSet(getSession(win), target.threadId)?.tabs.find((candidate) => candidate.id === (target.tabId ?? getThreadTabSet(getSession(win), target.threadId)?.activeTabId));
+    if (!tab) return null;
+    const guest = findAdoptedWebContentsForWindow(win.id, target.threadId, tab.id);
+    if (!guest || guest.hostWebContents !== event.sender || guest.isDestroyed()) return null;
+    return { guest, state: this.targets.get(targetKey(win.id, target.threadId, tab.id)) };
+  }
+
+  private async releaseDevToolsState(guest: WebContents, state: TargetState | undefined): Promise<void> {
+    if (!state) return;
+    this.humanInterrupt(state);
+    if (state.syntheticInputDepth > 0 && state.debuggerOwned) await this.releaseInput(guest, state.heldKeys);
+    state.syntheticInputDepth = 0;
+    if (state.debuggerOwned && guest.debugger.isAttached()) {
+      guest.debugger.detach();
+      state.debuggerOwned = false;
+      state.diagnosticsReady = false;
+      state.isolatedContextId = null;
+    }
   }
 
   /** Subscribes a renderer window to controller changes without exposing debugger access. */
@@ -1020,28 +1017,38 @@ export class BrowserAutomationKernel {
   ): ResolvedTarget {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) throw new KernelError("TAB_UNAVAILABLE", "Browser window is unavailable", true);
-    const session = getSession(win);
-    const tab = getThreadTabSet(session, threadId)?.tabs.find((candidate) => candidate.id === tabId);
-    if (!tab || tab.threadId !== threadId) {
-      throw new KernelError("TAB_UNAVAILABLE", "Browser target slot is unavailable", true);
-    }
-    let webContents = findAdoptedWebContentsForWindow(win.id, threadId, tabId);
-    if (webContents?.hostWebContents !== event.sender) webContents = null;
-    if (!webContents || webContents.isDestroyed()) throw new KernelError("TAB_UNAVAILABLE", "Exact browser tab is unavailable", true);
-
+    this.requireOwnedTab(win, threadId, tabId);
+    const webContents = this.requireOwnedWebContents(event, win, threadId, tabId);
     const key = targetKey(win.id, threadId, tabId);
-    let state = this.targets.get(key);
-    if (!state || state.webContents.id !== webContents.id) {
-      const generation = (this.targetGenerations.get(key) ?? -1) + 1;
-      state?.dispose();
-      this.scheduler.cancelTarget(key);
-      state = this.createTargetState(key, win.id, threadId, tabId, webContents, generation);
-      this.targets.set(key, state);
-      this.targetGenerations.delete(key);
-      this.targetGenerations.set(key, generation);
-      this.evictTargetGenerationTombstones();
-    }
+    const state = this.resolveTargetState(key, win, threadId, tabId, webContents);
     return { state, webContents, window: win };
+  }
+
+  private requireOwnedTab(win: BrowserWindow, threadId: string, tabId: string): void {
+    const tab = getThreadTabSet(getSession(win), threadId)?.tabs.find((candidate) => candidate.id === tabId);
+    if (!tab || tab.threadId !== threadId) throw new KernelError("TAB_UNAVAILABLE", "Browser target slot is unavailable", true);
+  }
+
+  private requireOwnedWebContents(event: IpcMainInvokeEvent, win: BrowserWindow, threadId: string, tabId: string): WebContents {
+    const webContents = findAdoptedWebContentsForWindow(win.id, threadId, tabId);
+    if (!webContents || webContents.hostWebContents !== event.sender || webContents.isDestroyed()) {
+      throw new KernelError("TAB_UNAVAILABLE", "Exact browser tab is unavailable", true);
+    }
+    return webContents;
+  }
+
+  private resolveTargetState(key: string, win: BrowserWindow, threadId: string, tabId: string, webContents: WebContents): TargetState {
+    const current = this.targets.get(key);
+    if (current?.webContents.id === webContents.id) return current;
+    const generation = (this.targetGenerations.get(key) ?? -1) + 1;
+    current?.dispose();
+    this.scheduler.cancelTarget(key);
+    const state = this.createTargetState(key, win.id, threadId, tabId, webContents, generation);
+    this.targets.set(key, state);
+    this.targetGenerations.delete(key);
+    this.targetGenerations.set(key, generation);
+    this.evictTargetGenerationTombstones();
+    return state;
   }
 
   private restoreActivePreviewGuestFocus(resolved: ResolvedTarget): void {
@@ -1191,11 +1198,7 @@ export class BrowserAutomationKernel {
 
   private async runOperation(resolved: ResolvedTarget, request: BrowserAutomationRequest, signal: AbortSignal): Promise<unknown> {
     const { state, webContents } = resolved;
-    if (webContents.isDestroyed()) throw new KernelError("TAB_UNAVAILABLE", "Browser tab was closed", true);
-    if (request.operation !== "status" && request.expectedControlEpoch !== state.controlEpoch) {
-      throw new KernelError("STALE_CONTROL_EPOCH", `Control epoch is stale; current epoch is ${state.controlEpoch}`, true);
-    }
-    if (request.deadline <= Date.now()) throw new KernelError("DEADLINE_EXCEEDED", "Browser operation deadline elapsed", true);
+    this.validateOperationStart(state, webContents, request);
     state.actions.push({ timestamp: Date.now(), operation: request.operation, outcome: "started" });
     if (request.operation !== "status") this.emitController(state, "agent", request);
     updateBrowserAutomationAgentOperationDepth(webContents, 1);
@@ -1204,359 +1207,575 @@ export class BrowserAutomationKernel {
       if (effect === "none") effect = "preserved";
     };
     try {
-      const operation = this.dispatch(resolved, request, signal, markEffect);
-      const result = request.operation === "open" || request.operation === "navigate"
-        ? await operation
-        : await boundedRace(operation, signal, request.deadline);
+      const result = await this.executeDispatchedOperation(resolved, request, signal, markEffect);
       state.actions.push({ timestamp: Date.now(), operation: request.operation, outcome: "succeeded" });
       return result;
     } catch (cause) {
-      const finalCause = effect === "none" ? cause : this.withEffect(cause, effect);
-      state.actions.push({
-        timestamp: Date.now(),
-        operation: request.operation,
-        outcome:
-          finalCause instanceof BrowserAutomationCancelledError ||
-          (finalCause instanceof KernelError && (finalCause.code === "HUMAN_INTERRUPTED" || finalCause.code === "OPERATION_CANCELLED"))
-            ? "interrupted"
-            : "failed",
-        detail: redactBrowserText(finalCause instanceof Error ? finalCause.message : "Browser operation failed"),
-      });
-      throw finalCause;
+      throw this.recordOperationFailure(state, request, cause, effect);
     } finally {
       updateBrowserAutomationAgentOperationDepth(webContents, -1);
-      if (state.syntheticInputDepth > 0 && state.debuggerOwned) {
-        await Promise.race([
-          this.releaseInput(state.webContents, state.heldKeys),
-          new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, 500);
-            timer.unref?.();
-          }),
-        ]);
-      }
-      state.syntheticInputDepth = 0;
+      await this.releaseSyntheticInput(state);
     }
   }
 
-  private async dispatch(
+  private validateOperationStart(state: TargetState, webContents: WebContents, request: BrowserAutomationRequest): void {
+    if (webContents.isDestroyed()) throw new KernelError("TAB_UNAVAILABLE", "Browser tab was closed", true);
+    if (request.operation !== "status" && request.expectedControlEpoch !== state.controlEpoch) {
+      throw new KernelError("STALE_CONTROL_EPOCH", `Control epoch is stale; current epoch is ${state.controlEpoch}`, true);
+    }
+    if (request.deadline <= Date.now()) throw new KernelError("DEADLINE_EXCEEDED", "Browser operation deadline elapsed", true);
+  }
+
+  private async executeDispatchedOperation(resolved: ResolvedTarget, request: BrowserAutomationRequest, signal: AbortSignal, markEffect: () => void): Promise<unknown> {
+    const operation = this.dispatch(resolved, request, signal, markEffect);
+    return new Set(["open", "navigate"]).has(request.operation)
+      ? await operation
+      : await boundedRace(operation, signal, request.deadline);
+  }
+
+  private recordOperationFailure(state: TargetState, request: BrowserAutomationRequest, cause: unknown, effect: KernelErrorEffect): unknown {
+    const finalCause = effect === "none" ? cause : this.withEffect(cause, effect);
+    const interrupted = finalCause instanceof BrowserAutomationCancelledError || (finalCause instanceof KernelError && new Set(["HUMAN_INTERRUPTED", "OPERATION_CANCELLED"]).has(finalCause.code));
+    state.actions.push({
+      timestamp: Date.now(),
+      operation: request.operation,
+      outcome: interrupted ? "interrupted" : "failed",
+      detail: redactBrowserText(finalCause instanceof Error ? finalCause.message : "Browser operation failed"),
+    });
+    return finalCause;
+  }
+
+  private async releaseSyntheticInput(state: TargetState): Promise<void> {
+    if (state.syntheticInputDepth > 0 && state.debuggerOwned) {
+      await Promise.race([
+        this.releaseInput(state.webContents, state.heldKeys),
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 500);
+          timer.unref?.();
+        }),
+      ]);
+    }
+    state.syntheticInputDepth = 0;
+  }
+
+  private dispatch(
     resolved: ResolvedTarget,
     request: BrowserAutomationRequest,
     signal: AbortSignal,
     markEffect: () => void,
   ): Promise<unknown> {
-    const { state, webContents } = resolved;
-    const base = () => ({ url: redactBrowserLocation(webContents.getURL()), title: redactBrowserText(webContents.getTitle(), 4_096), controlEpoch: state.controlEpoch });
-    switch (request.operation) {
-      case "inspect": {
-        const snapshot = await this.captureSnapshot(resolved, false);
-        const screenshot = request.args.includeScreenshot
-          ? await this.captureScreenshot(state, 1_280)
-          : undefined;
-        const diagnostics = request.args.includeDiagnostics
-          ? state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).map((entry) => entry.text)
-          : undefined;
-        const mechanical: MechanicalInspectResult = {
-          operation: "inspect",
-          target: { threadId: state.threadId, tabId: state.tabId, targetGeneration: state.targetGeneration, sticky: true },
-          tabs: [{
-            desktopInstanceId: "electron",
-            windowId: state.windowId,
-            connectionGeneration: 1,
-            threadId: state.threadId,
-            tabId: state.tabId,
-            targetGeneration: state.targetGeneration,
-            active: getThreadTabSet(getSession(resolved.window), state.threadId)?.activeTabId === state.tabId,
-            focused: webContents.isFocused(),
-            lastUsedAt: Date.now(),
-          }],
-          snapshot: snapshot as MechanicalInspectResult["snapshot"],
-          ...(screenshot ? { screenshot: screenshot as NonNullable<MechanicalInspectResult["screenshot"]> } : {}),
-          ...(diagnostics ? { diagnostics } : {}),
-        };
-        return mechanical;
-      }
-      case "status":
-        {
-          const viewportValue = asRecord(await boundedRace(
-            webContents.executeJavaScript("({ width: window.innerWidth, height: window.innerHeight })", true),
-            signal,
-            request.deadline,
-          ));
-          const width = Number(viewportValue.width);
-          const height = Number(viewportValue.height);
-          if (!Number.isFinite(width) || !Number.isFinite(height)) {
-            throw new KernelError("TAB_UNAVAILABLE", "Browser viewport is unavailable", true);
-          }
-        const mechanical: MechanicalStatusResult = {
-          operation: "status",
-          available: true,
-          active: getThreadTabSet(getSession(resolved.window), state.threadId)?.activeTabId === state.tabId,
-          tabId: state.tabId,
-          url: redactBrowserLocation(webContents.getURL()),
-          loading: webContents.isLoading(),
-          focused: webContents.isFocused(),
-          viewport: {
-            width: Math.max(1, Math.min(10_000, Math.round(width))),
-            height: Math.max(1, Math.min(10_000, Math.round(height))),
-          },
-          controller: state.controller,
-        };
-        return mechanical;
-        }
-      case "open":
-      case "navigate": {
-        const url = request.operation === "navigate" ? request.args.url : request.args.url;
-        if (url) {
-          const navigationSequence = ++state.navigationSequence;
-          const stopNavigation = () => {
-            if (state.navigationSequence !== navigationSequence) return;
-            state.navigationSequence += 1;
-            if (!webContents.isDestroyed()) webContents.stop();
-          };
-          signal.addEventListener("abort", stopNavigation, { once: true });
-          state.automationNavigationDepth += 1;
-          try {
-            const navigation = loadPreviewGuestUrl(webContents, url);
-            markEffect();
-            const result = await boundedRace(navigation, signal, request.deadline);
-            if (signal.aborted || state.navigationSequence !== navigationSequence) {
-              throw new BrowserAutomationCancelledError("Browser navigation was cancelled");
-            }
-            if (result.status === "failed") {
-              throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
-            }
-          } catch (cause) {
-            if (
-              cause instanceof BrowserAutomationCancelledError ||
-              (cause instanceof KernelError &&
-                (cause.code === "TIMEOUT" || cause.code === "DEADLINE_EXCEEDED"))
-            ) {
-              stopNavigation();
-              throw cause;
-            }
-            if (cause instanceof KernelError) throw cause;
-            throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
-          } finally {
-            signal.removeEventListener("abort", stopNavigation);
-            state.automationNavigationDepth -= 1;
-          }
-        }
-        return {
-          operation: request.operation,
-          ...base(),
-          ...(request.operation === "open" ? { observationRef: randomUUID() } : {}),
-        };
-      }
-      case "back":
-      case "forward":
-      case "reload": {
-        const canNavigate = request.operation === "back"
-          ? webContents.canGoBack()
-          : request.operation === "forward"
-            ? webContents.canGoForward()
-            : true;
-        if (!canNavigate) throw new KernelError("TARGET_NOT_FOUND", "Browser history has no requested entry", true);
-        const navigationSequence = ++state.navigationSequence;
-        const stopNavigation = () => {
-          if (state.navigationSequence !== navigationSequence) return;
-          state.navigationSequence += 1;
-          if (!webContents.isDestroyed()) webContents.stop();
-        };
-        state.automationNavigationDepth += 1;
-        let removeStoppedListener: () => void = () => undefined;
-        try {
-          const stopped = new Promise<void>((resolve) => {
-            const onStopped = () => {
-              webContents.removeListener("did-stop-loading", onStopped);
-              resolve();
-            };
-            removeStoppedListener = () => { webContents.removeListener("did-stop-loading", onStopped); };
-            webContents.once("did-stop-loading", onStopped);
-          });
-          signal.addEventListener("abort", stopNavigation, { once: true });
-          if (request.operation === "back") webContents.goBack();
-          else if (request.operation === "forward") webContents.goForward();
-          else webContents.reload();
-          markEffect();
-          await boundedRace(stopped, signal, request.deadline);
-          if (signal.aborted || state.navigationSequence !== navigationSequence) {
-            throw new BrowserAutomationCancelledError("Browser navigation was cancelled");
-          }
-        } finally {
-          removeStoppedListener();
-          signal.removeEventListener("abort", stopNavigation);
-          state.automationNavigationDepth -= 1;
-        }
-        return { operation: request.operation, ...base() };
-      }
-      case "resize":
-        throw new KernelError("UNSUPPORTED_OPERATION", "Renderer-hosted browser resize is unavailable", false);
-      case "snapshot": {
-        const snapshot = await this.captureSnapshot(resolved, request.args.includeScreenshot);
-        return { operation: "snapshot", snapshot, controlEpoch: state.controlEpoch };
-      }
-      case "screenshot": {
-        if (request.args.fullPage) throw new KernelError("UNSUPPORTED_OPERATION", "Full-page screenshot is unavailable", false);
-        return { operation: "screenshot", screenshot: await this.captureScreenshot(state, request.args.maxWidth), controlEpoch: state.controlEpoch };
-      }
-      case "click": {
-        const point = await this.resolvePoint(resolved, request.args.target);
-        this.emitController(state, "agent", request, point);
-        await this.withSyntheticInput(state, async () => {
-          await this.ensureDebugger(state);
-          await this.dispatchGuestInput(
-            state,
-            "pointer",
-            () => webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-              type: "mousePressed",
-              x: point.x,
-              y: point.y,
-              button: request.args.button,
-              clickCount: request.args.clickCount,
-            }),
-            markEffect,
-          );
-          this.throwIfAborted(signal);
-          try {
-            await webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: request.args.button, clickCount: request.args.clickCount });
-          } catch (cause) {
-            await this.releaseInput(webContents, state.heldKeys);
-            throw cause;
-          }
-        });
-        return { operation: "click", ...base() };
-      }
-      case "type": {
-        if (request.args.target) {
-          const point = await this.resolvePoint(resolved, request.args.target);
-          this.emitController(state, "agent", request, point);
-          await this.withSyntheticInput(state, () => this.clickPoint(state, point, markEffect));
-          this.throwIfAborted(signal);
-        }
-        await this.withSyntheticInput(state, async () => {
-          await this.ensureDebugger(state);
-          if (request.args.clear) {
-            await this.pressKey(state, "a", selectAllModifierMask() === 4 ? ["Meta"] : ["Control"], markEffect);
-            await this.pressKey(state, "Backspace", [], markEffect);
-          }
-          this.throwIfAborted(signal);
-          const insertion = webContents.debugger.sendCommand("Input.insertText", { text: request.args.text });
-          markEffect();
-          await insertion;
-          this.throwIfAborted(signal);
-          if (request.args.submit) await this.pressKey(state, "Enter", [], markEffect);
-        });
-        return { operation: "type", ...base() };
-      }
-      case "press":
-        await this.withSyntheticInput(state, () => this.pressKey(state, request.args.key, request.args.modifiers, markEffect));
-        this.throwIfAborted(signal);
-        return { operation: "press", ...base() };
-      case "scroll": {
-        const point = request.args.target ? await this.resolvePoint(resolved, request.args.target) : { x: 1, y: 1 };
-        await this.withSyntheticInput(state, async () => {
-          await this.ensureDebugger(state);
-          await this.dispatchGuestInput(
-            state,
-            "wheel",
-            () => webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-              type: "mouseWheel",
-              x: point.x,
-              y: point.y,
-              deltaX: request.args.deltaX,
-              deltaY: request.args.deltaY,
-            }),
-            markEffect,
-          );
-          this.throwIfAborted(signal);
-        });
-        return { operation: "scroll", ...base() };
-      }
-      case "waitFor":
-        await this.waitFor(
-          resolved,
-          request.args,
-          signal,
-          Math.min(request.deadline, Date.now() + request.args.timeoutMs),
-        );
-        return { operation: "waitFor", ...base() };
-      case "wait": {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await boundedRace(
-            new Promise<void>((resolve) => {
-              timer = setTimeout(resolve, request.args.durationMs);
-              timer.unref?.();
-            }),
-            signal,
-            Math.min(request.deadline, Date.now() + request.args.durationMs),
-          );
-        } finally {
-          if (timer) clearTimeout(timer);
-        }
-        return { operation: "wait", ...base() };
-      }
-      case "console": {
-        const filtered = state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).filter((entry) =>
-          (!request.args.levels || request.args.levels.includes(entry.level)) &&
-          (!request.args.source || entry.sourceUrl === request.args.source),
-        );
-        const originalCount = filtered.length;
-        const entries = filtered.slice(-request.args.limit);
-        return { operation: "console", entries, truncation: { truncated: originalCount > entries.length, originalCount } };
-      }
-      case "network": {
-        await this.ensureDebugger(state);
-        const originalCount = state.network.size;
-        const all = state.network.read(request.args.limit);
-        const entries = request.args.failedOnly ? all.filter((entry) => entry.failed) : all;
-        return { operation: "network", entries, truncation: { truncated: originalCount > entries.length, originalCount } };
-      }
-      case "accessibility":
-        return { operation: "accessibility", ...(await this.captureAccessibility(state, request.args.limit, request.args.root)) };
-      case "performance":
-        return { operation: "performance", metrics: await this.capturePerformance(state, request.args.includeMemory), controlEpoch: state.controlEpoch };
-      case "evaluate": {
-        if (byteLength(request.args.expression) > EVALUATION_LIMIT) throw new KernelError("INVALID_REQUEST", "Evaluation expression exceeds 64 KiB", false);
-        const timeoutMs = Math.min(request.args.timeoutMs, Math.max(1, request.deadline - Date.now()));
-        try {
-          const evaluation = this.callIsolatedFunction(
-            state,
-            evaluateIsolatedExpression,
-            {
-              expression: request.args.expression,
-              awaitPromise: request.args.awaitPromise,
-              maxBytes: EVALUATION_LIMIT,
-            },
-            { awaitPromise: true, timeoutMs, onDispatch: markEffect },
-          );
-          const evaluated = asRecord(await boundedRace(evaluation, signal, Date.now() + timeoutMs));
-          if (evaluated.ok !== true || typeof evaluated.valueJson !== "string") {
-            throw new KernelError("RESULT_TOO_LARGE", "Evaluation result exceeds 64 KiB", false);
-          }
-          return { operation: "evaluate", valueJson: evaluated.valueJson, controlEpoch: state.controlEpoch };
-        } catch (cause) {
-          if (state.webContents.debugger.isAttached()) {
-            await Promise.race([
-              state.webContents.debugger.sendCommand("Runtime.terminateExecution"),
-              new Promise((resolve) => setTimeout(resolve, 250)),
-            ]).catch(() => undefined);
-          }
-          state.isolatedContextId = null;
-          if (
-            !(cause instanceof KernelError) &&
-            !(cause instanceof BrowserAutomationCancelledError) &&
-            /tim(?:e|ed)\s*out|terminated/i.test(cause instanceof Error ? cause.message : String(cause))
-          ) {
-            throw new KernelError("TIMEOUT", "Browser evaluation timed out", true);
-          }
-          throw cause;
-        }
-      }
-      case "recordingStart":
-      case "recordingStop":
-        throw new KernelError("UNSUPPORTED_OPERATION", "Browser recording is not available in this host", false);
+    const handlers = {
+      inspect: () => this.inspectOperation(resolved, request as OperationRequest<"inspect">),
+      act: () => this.unhandledOperation(),
+      status: () => this.statusOperation(resolved, request as OperationRequest<"status">, signal),
+      tabs: () => this.unhandledOperation(),
+      open: () => this.urlNavigationOperation(resolved, request as OperationRequest<"open" | "navigate">, signal, markEffect),
+      navigate: () => this.urlNavigationOperation(resolved, request as OperationRequest<"open" | "navigate">, signal, markEffect),
+      back: () => this.historyNavigationOperation(resolved, request as OperationRequest<"back" | "forward" | "reload">, signal, markEffect),
+      forward: () => this.historyNavigationOperation(resolved, request as OperationRequest<"back" | "forward" | "reload">, signal, markEffect),
+      reload: () => this.historyNavigationOperation(resolved, request as OperationRequest<"back" | "forward" | "reload">, signal, markEffect),
+      resize: () => this.unsupportedResizeOperation(),
+      snapshot: () => this.snapshotOperation(resolved, request as OperationRequest<"snapshot">),
+      screenshot: () => this.screenshotOperation(resolved, request as OperationRequest<"screenshot">),
+      click: () => this.clickOperation(resolved, request as OperationRequest<"click">, signal, markEffect),
+      type: () => this.typeOperation(resolved, request as OperationRequest<"type">, signal, markEffect),
+      press: () => this.pressOperation(resolved, request as OperationRequest<"press">, signal, markEffect),
+      scroll: () => this.scrollOperation(resolved, request as OperationRequest<"scroll">, signal, markEffect),
+      waitFor: () => this.waitForOperation(resolved, request as OperationRequest<"waitFor">, signal),
+      wait: () => this.waitOperation(resolved, request as OperationRequest<"wait">, signal),
+      console: () => this.consoleOperation(resolved, request as OperationRequest<"console">),
+      network: () => this.networkOperation(resolved, request as OperationRequest<"network">),
+      accessibility: () => this.accessibilityOperation(resolved, request as OperationRequest<"accessibility">),
+      performance: () => this.performanceOperation(resolved, request as OperationRequest<"performance">),
+      evaluate: () => this.evaluateOperation(resolved, request as OperationRequest<"evaluate">, signal, markEffect),
+      recordingStart: () => this.unsupportedRecordingOperation(),
+      recordingStop: () => this.unsupportedRecordingOperation(),
+    } satisfies Record<BrowserAutomationRequestOperation, () => Promise<unknown>>;
+    return handlers[request.operation]();
+  }
+
+  private operationBase(resolved: ResolvedTarget): { url: string; title: string; controlEpoch: number } {
+    return {
+      url: redactBrowserLocation(resolved.webContents.getURL()),
+      title: redactBrowserText(resolved.webContents.getTitle(), 4_096),
+      controlEpoch: resolved.state.controlEpoch,
+    };
+  }
+
+  private unhandledOperation(): Promise<undefined> {
+    return Promise.resolve(undefined);
+  }
+
+  private async inspectOperation(resolved: ResolvedTarget, request: OperationRequest<"inspect">): Promise<MechanicalInspectResult> {
+    const { state } = resolved;
+    const snapshot = await this.captureSnapshot(resolved, false);
+    const screenshot = request.args.includeScreenshot ? await this.captureScreenshot(state, 1_280) : undefined;
+    const diagnostics = request.args.includeDiagnostics
+      ? state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).map((entry) => entry.text)
+      : undefined;
+    return {
+      operation: "inspect",
+      target: { threadId: state.threadId, tabId: state.tabId, targetGeneration: state.targetGeneration, sticky: true },
+      tabs: [this.inspectTab(resolved)],
+      snapshot: snapshot as MechanicalInspectResult["snapshot"],
+      ...(screenshot ? { screenshot: screenshot as NonNullable<MechanicalInspectResult["screenshot"]> } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
+    };
+  }
+
+  private inspectTab(resolved: ResolvedTarget): MechanicalInspectResult["tabs"][number] {
+    const { state, webContents, window } = resolved;
+    return {
+      desktopInstanceId: "electron",
+      windowId: state.windowId,
+      connectionGeneration: 1,
+      threadId: state.threadId,
+      tabId: state.tabId,
+      targetGeneration: state.targetGeneration,
+      active: getThreadTabSet(getSession(window), state.threadId)?.activeTabId === state.tabId,
+      focused: webContents.isFocused(),
+      lastUsedAt: Date.now(),
+    };
+  }
+
+  private async statusOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"status">,
+    signal: AbortSignal,
+  ): Promise<MechanicalStatusResult> {
+    const viewport = await this.readViewport(resolved.webContents, signal, request.deadline);
+    const { state, webContents, window } = resolved;
+    return {
+      operation: "status",
+      available: true,
+      active: getThreadTabSet(getSession(window), state.threadId)?.activeTabId === state.tabId,
+      tabId: state.tabId,
+      url: redactBrowserLocation(webContents.getURL()),
+      loading: webContents.isLoading(),
+      focused: webContents.isFocused(),
+      viewport,
+      controller: state.controller,
+    };
+  }
+
+  private async readViewport(webContents: WebContents, signal: AbortSignal, deadline: number): Promise<{ width: number; height: number }> {
+    const viewportValue = asRecord(await boundedRace(
+      webContents.executeJavaScript("({ width: window.innerWidth, height: window.innerHeight })", true),
+      signal,
+      deadline,
+    ));
+    const width = Number(viewportValue.width);
+    const height = Number(viewportValue.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      throw new KernelError("TAB_UNAVAILABLE", "Browser viewport is unavailable", true);
     }
+    return {
+      width: Math.max(1, Math.min(10_000, Math.round(width))),
+      height: Math.max(1, Math.min(10_000, Math.round(height))),
+    };
+  }
+
+  private async urlNavigationOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"open" | "navigate">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<unknown> {
+    if (request.args.url) await this.navigateToUrl(resolved, request.args.url, signal, request.deadline, markEffect);
+    return {
+      operation: request.operation,
+      ...this.operationBase(resolved),
+      ...(request.operation === "open" ? { observationRef: NodeCrypto.randomUUID() } : {}),
+    };
+  }
+
+  private async navigateToUrl(
+    resolved: ResolvedTarget,
+    url: string,
+    signal: AbortSignal,
+    deadline: number,
+    markEffect: () => void,
+  ): Promise<void> {
+    const { state, webContents } = resolved;
+    const navigationSequence = ++state.navigationSequence;
+    const stopNavigation = this.navigationStopper(state, webContents, navigationSequence);
+    signal.addEventListener("abort", stopNavigation, { once: true });
+    state.automationNavigationDepth += 1;
+    try {
+      const navigation = loadPreviewGuestUrl(webContents, url);
+      markEffect();
+      const result = await boundedRace(navigation, signal, deadline);
+      this.assertNavigationActive(signal, state, navigationSequence);
+      if (result.status === "failed") throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
+    } catch (cause) {
+      this.rethrowUrlNavigationFailure(cause, stopNavigation);
+    } finally {
+      signal.removeEventListener("abort", stopNavigation);
+      state.automationNavigationDepth -= 1;
+    }
+  }
+
+  private navigationStopper(state: TargetState, webContents: WebContents, navigationSequence: number): () => void {
+    return () => {
+      if (state.navigationSequence !== navigationSequence) return;
+      state.navigationSequence += 1;
+      if (!webContents.isDestroyed()) webContents.stop();
+    };
+  }
+
+  private assertNavigationActive(signal: AbortSignal, state: TargetState, navigationSequence: number): void {
+    if (signal.aborted || state.navigationSequence !== navigationSequence) {
+      throw new BrowserAutomationCancelledError("Browser navigation was cancelled");
+    }
+  }
+
+  private rethrowUrlNavigationFailure(cause: unknown, stopNavigation: () => void): never {
+    if (cause instanceof BrowserAutomationCancelledError || this.isNavigationTimeout(cause)) {
+      stopNavigation();
+      throw cause;
+    }
+    if (cause instanceof KernelError) throw cause;
+    throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
+  }
+
+  private isNavigationTimeout(cause: unknown): boolean {
+    return cause instanceof KernelError && (cause.code === "TIMEOUT" || cause.code === "DEADLINE_EXCEEDED");
+  }
+
+  private async historyNavigationOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"back" | "forward" | "reload">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<unknown> {
+    const { state, webContents } = resolved;
+    if (!this.canNavigateHistory(webContents, request.operation)) {
+      throw new KernelError("TARGET_NOT_FOUND", "Browser history has no requested entry", true);
+    }
+    const navigationSequence = ++state.navigationSequence;
+    const stopNavigation = this.navigationStopper(state, webContents, navigationSequence);
+    const removeStoppedListener = this.waitForStoppedLoading(webContents);
+    state.automationNavigationDepth += 1;
+    try {
+      signal.addEventListener("abort", stopNavigation, { once: true });
+      this.startHistoryNavigation(webContents, request.operation);
+      markEffect();
+      await boundedRace(removeStoppedListener.stopped, signal, request.deadline);
+      this.assertNavigationActive(signal, state, navigationSequence);
+    } finally {
+      removeStoppedListener.remove();
+      signal.removeEventListener("abort", stopNavigation);
+      state.automationNavigationDepth -= 1;
+    }
+    return { operation: request.operation, ...this.operationBase(resolved) };
+  }
+
+  private canNavigateHistory(webContents: WebContents, operation: "back" | "forward" | "reload"): boolean {
+    if (operation === "back") return webContents.canGoBack();
+    if (operation === "forward") return webContents.canGoForward();
+    return true;
+  }
+
+  private waitForStoppedLoading(webContents: WebContents): { stopped: Promise<void>; remove: () => void } {
+    let remove = () => undefined;
+    const stopped = new Promise<void>((resolve) => {
+      const onStopped = () => {
+        webContents.removeListener("did-stop-loading", onStopped);
+        resolve();
+      };
+      remove = () => { webContents.removeListener("did-stop-loading", onStopped); };
+      webContents.once("did-stop-loading", onStopped);
+    });
+    return { stopped, remove };
+  }
+
+  private startHistoryNavigation(webContents: WebContents, operation: "back" | "forward" | "reload"): void {
+    if (operation === "back") webContents.goBack();
+    else if (operation === "forward") webContents.goForward();
+    else webContents.reload();
+  }
+
+  private unsupportedResizeOperation(): Promise<never> {
+    return Promise.reject(new KernelError("UNSUPPORTED_OPERATION", "Renderer-hosted browser resize is unavailable", false));
+  }
+
+  private async snapshotOperation(resolved: ResolvedTarget, request: OperationRequest<"snapshot">): Promise<unknown> {
+    return {
+      operation: "snapshot",
+      snapshot: await this.captureSnapshot(resolved, request.args.includeScreenshot),
+      controlEpoch: resolved.state.controlEpoch,
+    };
+  }
+
+  private async screenshotOperation(resolved: ResolvedTarget, request: OperationRequest<"screenshot">): Promise<unknown> {
+    if (request.args.fullPage) throw new KernelError("UNSUPPORTED_OPERATION", "Full-page screenshot is unavailable", false);
+    return {
+      operation: "screenshot",
+      screenshot: await this.captureScreenshot(resolved.state, request.args.maxWidth),
+      controlEpoch: resolved.state.controlEpoch,
+    };
+  }
+
+  private async clickOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"click">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<unknown> {
+    const { state, webContents } = resolved;
+    const point = await this.resolvePoint(resolved, request.args.target);
+    this.emitController(state, "agent", request, point);
+    await this.withSyntheticInput(state, async () => {
+      await this.dispatchClick(state, webContents, point, request, signal, markEffect);
+      this.throwIfAborted(signal);
+    });
+    return { operation: "click", ...this.operationBase(resolved) };
+  }
+
+  private async dispatchClick(
+    state: TargetState,
+    webContents: WebContents,
+    point: { x: number; y: number },
+    request: OperationRequest<"click">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<void> {
+    await this.ensureDebugger(state);
+    await this.dispatchGuestInput(
+      state,
+      "pointer",
+      () => webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: point.x,
+        y: point.y,
+        button: request.args.button,
+        clickCount: request.args.clickCount,
+      }),
+      markEffect,
+    );
+    this.throwIfAborted(signal);
+    try {
+      await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: point.x,
+        y: point.y,
+        button: request.args.button,
+        clickCount: request.args.clickCount,
+      });
+    } catch (cause) {
+      await this.releaseInput(webContents, state.heldKeys);
+      throw cause;
+    }
+  }
+
+  private async typeOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"type">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<unknown> {
+    const { state, webContents } = resolved;
+    await this.focusTypeTarget(resolved, request, signal, markEffect);
+    await this.withSyntheticInput(state, async () => {
+      await this.insertText(state, webContents, request, signal, markEffect);
+    });
+    return { operation: "type", ...this.operationBase(resolved) };
+  }
+
+  private async focusTypeTarget(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"type">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<void> {
+    if (!request.args.target) return;
+    const point = await this.resolvePoint(resolved, request.args.target);
+    this.emitController(resolved.state, "agent", request, point);
+    await this.withSyntheticInput(resolved.state, () => this.clickPoint(resolved.state, point, markEffect));
+    this.throwIfAborted(signal);
+  }
+
+  private async insertText(
+    state: TargetState,
+    webContents: WebContents,
+    request: OperationRequest<"type">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<void> {
+    await this.ensureDebugger(state);
+    if (request.args.clear) await this.clearSelectedText(state, markEffect);
+    this.throwIfAborted(signal);
+    const insertion = webContents.debugger.sendCommand("Input.insertText", { text: request.args.text });
+    markEffect();
+    await insertion;
+    this.throwIfAborted(signal);
+    if (request.args.submit) await this.pressKey(state, "Enter", [], markEffect);
+  }
+
+  private async clearSelectedText(state: TargetState, markEffect: () => void): Promise<void> {
+    const modifiers = selectAllModifierMask(this.platform) === 4 ? ["Meta"] : ["Control"];
+    await this.pressKey(state, "a", modifiers, markEffect);
+    await this.pressKey(state, "Backspace", [], markEffect);
+  }
+
+  private async pressOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"press">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<unknown> {
+    await this.withSyntheticInput(resolved.state, () => this.pressKey(resolved.state, request.args.key, request.args.modifiers, markEffect));
+    this.throwIfAborted(signal);
+    return { operation: "press", ...this.operationBase(resolved) };
+  }
+
+  private async scrollOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"scroll">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<unknown> {
+    const { state, webContents } = resolved;
+    const point = request.args.target ? await this.resolvePoint(resolved, request.args.target) : { x: 1, y: 1 };
+    await this.withSyntheticInput(state, async () => {
+      await this.ensureDebugger(state);
+      await this.dispatchGuestInput(
+        state,
+        "wheel",
+        () => webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          x: point.x,
+          y: point.y,
+          deltaX: request.args.deltaX,
+          deltaY: request.args.deltaY,
+        }),
+        markEffect,
+      );
+      this.throwIfAborted(signal);
+    });
+    return { operation: "scroll", ...this.operationBase(resolved) };
+  }
+
+  private async waitForOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"waitFor">,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    await this.waitFor(resolved, request.args, signal, Math.min(request.deadline, Date.now() + request.args.timeoutMs));
+    return { operation: "waitFor", ...this.operationBase(resolved) };
+  }
+
+  private async waitOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"wait">,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await boundedRace(
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, request.args.durationMs);
+          timer.unref?.();
+        }),
+        signal,
+        Math.min(request.deadline, Date.now() + request.args.durationMs),
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    return { operation: "wait", ...this.operationBase(resolved) };
+  }
+
+  private async consoleOperation(resolved: ResolvedTarget, request: OperationRequest<"console">): Promise<unknown> {
+    const filtered = resolved.state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).filter((entry) =>
+      (!request.args.levels || request.args.levels.includes(entry.level)) &&
+      (!request.args.source || entry.sourceUrl === request.args.source),
+    );
+    const originalCount = filtered.length;
+    const entries = filtered.slice(-request.args.limit);
+    return { operation: "console", entries, truncation: { truncated: originalCount > entries.length, originalCount } };
+  }
+
+  private async networkOperation(resolved: ResolvedTarget, request: OperationRequest<"network">): Promise<unknown> {
+    await this.ensureDebugger(resolved.state);
+    const originalCount = resolved.state.network.size;
+    const all = resolved.state.network.read(request.args.limit);
+    const entries = request.args.failedOnly ? all.filter((entry) => entry.failed) : all;
+    return { operation: "network", entries, truncation: { truncated: originalCount > entries.length, originalCount } };
+  }
+
+  private async accessibilityOperation(resolved: ResolvedTarget, request: OperationRequest<"accessibility">): Promise<unknown> {
+    return { operation: "accessibility", ...(await this.captureAccessibility(resolved.state, request.args.limit, request.args.root)) };
+  }
+
+  private async performanceOperation(resolved: ResolvedTarget, request: OperationRequest<"performance">): Promise<unknown> {
+    return {
+      operation: "performance",
+      metrics: await this.capturePerformance(resolved.state, request.args.includeMemory),
+      controlEpoch: resolved.state.controlEpoch,
+    };
+  }
+
+  private async evaluateOperation(
+    resolved: ResolvedTarget,
+    request: OperationRequest<"evaluate">,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<unknown> {
+    if (byteLength(request.args.expression) > EVALUATION_LIMIT) {
+      throw new KernelError("INVALID_REQUEST", "Evaluation expression exceeds 64 KiB", false);
+    }
+    const timeoutMs = Math.min(request.args.timeoutMs, Math.max(1, request.deadline - Date.now()));
+    try {
+      const evaluated = await this.runEvaluation(resolved.state, request, signal, timeoutMs, markEffect);
+      return { operation: "evaluate", valueJson: evaluated, controlEpoch: resolved.state.controlEpoch };
+    } catch (cause) {
+      await this.resetEvaluation(resolved.state);
+      if (this.isEvaluationTimeout(cause)) {
+        throw new KernelError("TIMEOUT", "Browser evaluation timed out", true);
+      }
+      throw cause;
+    }
+  }
+
+  private async runEvaluation(
+    state: TargetState,
+    request: OperationRequest<"evaluate">,
+    signal: AbortSignal,
+    timeoutMs: number,
+    markEffect: () => void,
+  ): Promise<string> {
+    const evaluation = this.callIsolatedFunction(
+      state,
+      evaluateIsolatedExpression,
+      { expression: request.args.expression, awaitPromise: request.args.awaitPromise, maxBytes: EVALUATION_LIMIT },
+      { awaitPromise: true, timeoutMs, onDispatch: markEffect },
+    );
+    const evaluated = asRecord(await boundedRace(evaluation, signal, Date.now() + timeoutMs));
+    if (evaluated.ok !== true || typeof evaluated.valueJson !== "string") {
+      throw new KernelError("RESULT_TOO_LARGE", "Evaluation result exceeds 64 KiB", false);
+    }
+    return evaluated.valueJson;
+  }
+
+  private async resetEvaluation(state: TargetState): Promise<void> {
+    if (state.webContents.debugger.isAttached()) {
+      await Promise.race([
+        state.webContents.debugger.sendCommand("Runtime.terminateExecution"),
+        new Promise((resolve) => setTimeout(resolve, 250)),
+      ]).catch(() => undefined);
+    }
+    state.isolatedContextId = null;
+  }
+
+  private isEvaluationTimeout(cause: unknown): boolean {
+    return !(cause instanceof KernelError) &&
+      !(cause instanceof BrowserAutomationCancelledError) &&
+      /tim(?:e|ed)\s*out|terminated/i.test(cause instanceof Error ? cause.message : String(cause));
+  }
+
+  private unsupportedRecordingOperation(): Promise<never> {
+    return Promise.reject(new KernelError("UNSUPPORTED_OPERATION", "Browser recording is not available in this host", false));
   }
 
   private async withSyntheticInput<T>(state: TargetState, action: () => Promise<T>): Promise<T> {
@@ -1592,7 +1811,7 @@ export class BrowserAutomationKernel {
   ): GuestInputAllowanceHandle | null {
     if (state.webContents.isDestroyed()) return null;
     const generation = ++state.guestInputGeneration;
-    const token = randomUUID();
+    const token = NodeCrypto.randomUUID();
     state.webContents.send(PREVIEW_GUEST_AGENT_INPUT_CHANNEL, {
       action: "allow",
       token,
@@ -1707,69 +1926,100 @@ export class BrowserAutomationKernel {
   private async waitFor(resolved: ResolvedTarget, args: Record<string, unknown>, signal: AbortSignal, deadline: number): Promise<void> {
     while (Date.now() < deadline) {
       if (signal.aborted) throw new BrowserAutomationCancelledError();
-      if ("url" in args && resolved.webContents.getURL() === args.url) return;
-      if ("text" in args) {
-        const found = await this.callIsolatedFunction(
-          resolved.state,
-          (text: string) => (document.body?.innerText ?? "").includes(text),
-          String(args.text),
-        );
-        if (found) return;
-      }
-      if ("target" in args) {
-        const inspected = asRecord(await this.callIsolatedFunction(
-          resolved.state,
-          inspectPageTarget,
-          { target: args.target as BrowserAutomationTarget },
-        ));
-        const desired = args.state ?? "visible";
-        const attached = inspected.attached === true;
-        const visible = inspected.visible === true;
-        if (desired === "attached" && attached) return;
-        if (desired === "visible" && attached && visible) return;
-        if (desired === "hidden" && attached && !visible) return;
-        if (desired === "detached" && !attached) return;
-      }
+      if (await this.waitConditionMatches(resolved, args)) return;
       await boundedRace(new Promise((resolve) => setTimeout(resolve, 50)), signal, deadline);
     }
     throw new KernelError("TIMEOUT", "waitFor timed out", true);
   }
 
-  private async captureSnapshot(resolved: ResolvedTarget, includeScreenshot: boolean): Promise<Record<string, unknown>> {
-    const raw = asRecord(await this.callIsolatedFunction(
+  private async waitConditionMatches(resolved: ResolvedTarget, args: Record<string, unknown>): Promise<boolean> {
+    if (this.matchesWaitUrl(resolved, args)) return true;
+    if (await this.matchesWaitText(resolved, args)) return true;
+    return this.matchesWaitTarget(resolved, args);
+  }
+
+  private matchesWaitUrl(resolved: ResolvedTarget, args: Record<string, unknown>): boolean {
+    return "url" in args && resolved.webContents.getURL() === args.url;
+  }
+
+  private async matchesWaitText(resolved: ResolvedTarget, args: Record<string, unknown>): Promise<boolean> {
+    if (!("text" in args)) return false;
+    return Boolean(await this.callIsolatedFunction(
       resolved.state,
-      snapshotPage,
-      { semanticGeneration: resolved.state.semanticGeneration, maxElements: BROWSER_AUTOMATION_MAX_ELEMENTS, maxText: BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS },
+      (text: string) => (document.body?.innerText ?? "").includes(text),
+      String(args.text),
     ));
+  }
+
+  private async matchesWaitTarget(resolved: ResolvedTarget, args: Record<string, unknown>): Promise<boolean> {
+    if (!("target" in args)) return false;
+    const inspected = asRecord(await this.callIsolatedFunction(
+      resolved.state,
+      inspectPageTarget,
+      { target: args.target as BrowserAutomationTarget },
+    ));
+    return this.matchesTargetState(inspected, args.state ?? "visible");
+  }
+
+  private matchesTargetState(inspected: Record<string, unknown>, desired: unknown): boolean {
+    const attached = inspected.attached === true;
+    const visible = inspected.visible === true;
+    const matches = { attached, visible: attached && visible, hidden: attached && !visible, detached: !attached };
+    return matches[String(desired) as keyof typeof matches] ?? false;
+  }
+
+  private async captureSnapshot(resolved: ResolvedTarget, includeScreenshot: boolean): Promise<Record<string, unknown>> {
+    const raw = await this.readRawSnapshot(resolved.state);
     const accessibility = await this.captureAccessibility(resolved.state, BROWSER_AUTOMATION_MAX_AX_NODES);
-    const visibleText = redactBrowserText(raw.visibleText, BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS);
-    const rawVisibleTextCount = Number.isFinite(raw.visibleTextOriginalLength)
-      ? Math.max(0, Math.floor(Number(raw.visibleTextOriginalLength)))
-      : visibleText.length;
-    const visibleTextOriginalCount = Math.max(rawVisibleTextCount, visibleText.length);
-    const visibleTextTruncated = visibleTextOriginalCount > visibleText.length;
+    const text = this.snapshotText(raw);
+    const elements = this.snapshotElements(raw);
+    const snapshot = this.snapshotStructure(resolved, raw, text, elements, accessibility.truncation);
+    this.fitSnapshotContent(snapshot, resolved.state, accessibility.nodes, elements.values, text.originalCount, includeScreenshot);
+    await this.attachSnapshotScreenshot(snapshot, resolved.state, includeScreenshot);
+    if (byteLength(JSON.stringify(snapshot)) > SNAPSHOT_RESPONSE_BUDGET) {
+      throw new KernelError("RESULT_TOO_LARGE", "Snapshot cannot fit the 512 KiB response envelope", false);
+    }
+    return snapshot;
+  }
+
+  private async readRawSnapshot(state: TargetState): Promise<Record<string, unknown>> {
+    return asRecord(await this.callIsolatedFunction(
+      state,
+      snapshotPage,
+      { semanticGeneration: state.semanticGeneration, maxElements: BROWSER_AUTOMATION_MAX_ELEMENTS, maxText: BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS },
+    ));
+  }
+
+  private snapshotText(raw: Record<string, unknown>): { value: string; originalCount: number; truncated: boolean } {
+    const value = redactBrowserText(raw.visibleText, BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS);
+    const reported = Number.isFinite(raw.visibleTextOriginalLength) ? Math.max(0, Math.floor(Number(raw.visibleTextOriginalLength))) : value.length;
+    const originalCount = Math.max(reported, value.length);
+    return { value, originalCount, truncated: originalCount > value.length };
+  }
+
+  private snapshotElements(raw: Record<string, unknown>): { values: unknown[]; originalCount: number } {
     const rawElements = Array.isArray(raw.elements) ? raw.elements : [];
-    const rawElementCount = Math.max(rawElements.length, Number.isFinite(raw.elementCount)
-      ? Math.max(0, Math.floor(Number(raw.elementCount)))
-      : 0);
-    const elements = redactBrowserValue(rawElements) as unknown[];
-    const structuredBudget = includeScreenshot
-      ? SNAPSHOT_STRUCTURED_BUDGET_WITH_IMAGE
-      : SNAPSHOT_RESPONSE_BUDGET;
-    const snapshot: Record<string, unknown> = {
+    const reported = Number.isFinite(raw.elementCount) ? Math.max(0, Math.floor(Number(raw.elementCount))) : 0;
+    return { values: redactBrowserValue(rawElements) as unknown[], originalCount: Math.max(rawElements.length, reported) };
+  }
+
+  private snapshotStructure(
+    resolved: ResolvedTarget,
+    raw: Record<string, unknown>,
+    text: { value: string; originalCount: number; truncated: boolean },
+    elements: { originalCount: number },
+    accessibilityTruncation: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
       url: redactBrowserLocation(raw.url),
       title: redactBrowserText(raw.title),
       loading: Boolean(raw.loading),
-      visibleText,
-      visibleTextTruncation: visibleTextTruncated
-        ? { truncated: true, originalCount: visibleTextOriginalCount, reason: "character-limit" }
-        : { truncated: false, originalCount: visibleTextOriginalCount },
+      visibleText: text.value,
+      visibleTextTruncation: this.snapshotTruncation(text.truncated, text.originalCount, "character-limit"),
       elements: [],
-      elementsTruncation: rawElementCount > BROWSER_AUTOMATION_MAX_ELEMENTS
-        ? { truncated: true, originalCount: rawElementCount, reason: "entry-limit" }
-        : { truncated: false, originalCount: rawElementCount },
+      elementsTruncation: this.snapshotTruncation(elements.originalCount > BROWSER_AUTOMATION_MAX_ELEMENTS, elements.originalCount, "entry-limit"),
       accessibility: [],
-      accessibilityTruncation: accessibility.truncation,
+      accessibilityTruncation,
       console: [],
       consoleTruncation: this.bufferTruncation(resolved.state.console),
       network: [],
@@ -1777,31 +2027,39 @@ export class BrowserAutomationKernel {
       actions: [],
       actionsTruncation: this.bufferTruncation(resolved.state.actions),
     };
-    this.fitSnapshotText(snapshot, structuredBudget, visibleTextOriginalCount);
-    this.fitSnapshotCollection(snapshot, "elements", "elementsTruncation", elements, structuredBudget);
-    this.fitSnapshotCollection(snapshot, "accessibility", "accessibilityTruncation", accessibility.nodes, structuredBudget);
-    this.fitSnapshotCollection(snapshot, "console", "consoleTruncation", resolved.state.console.read(), structuredBudget);
-    this.fitSnapshotCollection(snapshot, "network", "networkTruncation", resolved.state.network.read(), structuredBudget);
-    this.fitSnapshotCollection(snapshot, "actions", "actionsTruncation", resolved.state.actions.read(), structuredBudget);
-    if (includeScreenshot) {
-      const remainingJsonBytes = SNAPSHOT_RESPONSE_BUDGET - byteLength(JSON.stringify(snapshot));
-      const maxScreenshotBytes = Math.max(0, Math.floor((remainingJsonBytes - 1_024) * 0.75));
-      if (maxScreenshotBytes >= 1_024) {
-        try {
-          snapshot.screenshot = await this.captureScreenshot(
-            resolved.state,
-            1_280,
-            Math.min(SCREENSHOT_BINARY_LIMIT, maxScreenshotBytes),
-          );
-        } catch (cause) {
-          if (!(cause instanceof KernelError) || cause.code !== "RESULT_TOO_LARGE") throw cause;
-        }
-      }
+  }
+
+  private snapshotTruncation(truncated: boolean, originalCount: number, reason: string): Record<string, unknown> {
+    return truncated ? { truncated: true, originalCount, reason } : { truncated: false, originalCount };
+  }
+
+  private fitSnapshotContent(
+    snapshot: Record<string, unknown>,
+    state: TargetState,
+    accessibility: unknown[],
+    elements: unknown[],
+    textOriginalCount: number,
+    includeScreenshot: boolean,
+  ): void {
+    const budget = includeScreenshot ? SNAPSHOT_STRUCTURED_BUDGET_WITH_IMAGE : SNAPSHOT_RESPONSE_BUDGET;
+    this.fitSnapshotText(snapshot, budget, textOriginalCount);
+    this.fitSnapshotCollection(snapshot, "elements", "elementsTruncation", elements, budget);
+    this.fitSnapshotCollection(snapshot, "accessibility", "accessibilityTruncation", accessibility, budget);
+    this.fitSnapshotCollection(snapshot, "console", "consoleTruncation", state.console.read(), budget);
+    this.fitSnapshotCollection(snapshot, "network", "networkTruncation", state.network.read(), budget);
+    this.fitSnapshotCollection(snapshot, "actions", "actionsTruncation", state.actions.read(), budget);
+  }
+
+  private async attachSnapshotScreenshot(snapshot: Record<string, unknown>, state: TargetState, includeScreenshot: boolean): Promise<void> {
+    if (!includeScreenshot) return;
+    const remaining = SNAPSHOT_RESPONSE_BUDGET - byteLength(JSON.stringify(snapshot));
+    const maxBytes = Math.max(0, Math.floor((remaining - 1_024) * 0.75));
+    if (maxBytes < 1_024) return;
+    try {
+      snapshot.screenshot = await this.captureScreenshot(state, 1_280, Math.min(SCREENSHOT_BINARY_LIMIT, maxBytes));
+    } catch (cause) {
+      if (!(cause instanceof KernelError) || cause.code !== "RESULT_TOO_LARGE") throw cause;
     }
-    if (byteLength(JSON.stringify(snapshot)) > SNAPSHOT_RESPONSE_BUDGET) {
-      throw new KernelError("RESULT_TOO_LARGE", "Snapshot cannot fit the 512 KiB response envelope", false);
-    }
-    return snapshot;
   }
 
   private fitSnapshotText(
@@ -1922,30 +2180,37 @@ export class BrowserAutomationKernel {
     state: TargetState,
     fn: (argument: TArgument) => unknown,
     argument: TArgument,
-    options?: { awaitPromise?: boolean; returnByValue?: boolean; timeoutMs?: number; onDispatch?: () => void },
+    options?: IsolatedCallOptions,
   ): Promise<unknown> {
     const executionContextId = await this.ensureIsolatedContext(state);
-    const responsePromise = state.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+    const responsePromise = state.webContents.debugger.sendCommand("Runtime.callFunctionOn", this.isolatedInvocation(fn, argument, executionContextId, options));
+    options?.onDispatch?.();
+    return this.readIsolatedResponse(await responsePromise, options);
+  }
+
+  private isolatedInvocation<TArgument>(fn: (argument: TArgument) => unknown, argument: TArgument, executionContextId: number, options: IsolatedCallOptions | undefined): Record<string, unknown> {
+    const timeout = options?.timeoutMs;
+    return {
       functionDeclaration: fn.toString(),
       executionContextId,
       arguments: [{ value: argument }],
       awaitPromise: options?.awaitPromise ?? true,
       returnByValue: options?.returnByValue ?? true,
       userGesture: false,
-      ...(options?.timeoutMs ? { timeout: options.timeoutMs } : {}),
-    });
-    options?.onDispatch?.();
-    const response = asRecord(await responsePromise);
-    if (response.exceptionDetails) {
-      const details = asRecord(response.exceptionDetails);
-      throw new KernelError(
-        "INTERNAL_ERROR",
-        redactBrowserText(details.text || "Browser isolated execution failed"),
-        true,
-      );
-    }
+      ...(timeout ? { timeout } : {}),
+    };
+  }
+
+  private readIsolatedResponse(responseValue: unknown, options: IsolatedCallOptions | undefined): unknown {
+    const response = asRecord(responseValue);
+    if (response.exceptionDetails) throw this.isolatedException(response.exceptionDetails);
     const result = asRecord(response.result);
     return options?.returnByValue === false ? result : result.value;
+  }
+
+  private isolatedException(detailsValue: unknown): KernelError {
+    const details = asRecord(detailsValue);
+    return new KernelError("INTERNAL_ERROR", redactBrowserText(details.text || "Browser isolated execution failed"), true);
   }
 
   private async ensureDebugger(state: TargetState): Promise<void> {
@@ -1973,36 +2238,7 @@ export class BrowserAutomationKernel {
     } catch {
       throw new KernelError("DEBUGGER_CONFLICT", "Browser debugger could not enable bounded diagnostics", true);
     }
-    const onMessage = (_event: unknown, method: string, params: unknown) => {
-      const data = asRecord(params);
-      if (method === "Network.requestWillBeSent") {
-        const requestId = String(data.requestId ?? "");
-        const request = asRecord(data.request);
-        const requestUrl = redactBrowserDiagnosticUrl(request.url);
-        if (!requestId || !requestUrl) return;
-        if (state.networkRequests.size >= BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES) {
-          const oldest = state.networkRequests.keys().next().value as string | undefined;
-          if (oldest) state.networkRequests.delete(oldest);
-        }
-        state.networkRequests.set(requestId, {
-          url: requestUrl,
-          method: redactBrowserText(request.method || "GET").slice(0, 32) || "GET",
-        });
-      } else if (method === "Network.responseReceived") {
-        const response = asRecord(data.response);
-        const requestId = String(data.requestId ?? "");
-        const request = state.networkRequests.get(requestId);
-        const requestUrl = request?.url ?? redactBrowserDiagnosticUrl(response.url);
-        if (!requestUrl) return;
-        state.network.push({ timestamp: Date.now(), url: requestUrl, method: request?.method ?? "GET", status: Number(response.status) || 0, failed: Number(response.status) >= 400 });
-      } else if (method === "Network.loadingFailed") {
-        const requestId = String(data.requestId ?? "");
-        const request = state.networkRequests.get(requestId);
-        const requestUrl = request?.url ?? redactBrowserDiagnosticUrl(data.url);
-        if (!requestUrl) return;
-        state.network.push({ timestamp: Date.now(), url: requestUrl, method: request?.method ?? "GET", failed: true, errorText: redactBrowserText(data.errorText) });
-      }
-    };
+    const onMessage = (_event: unknown, method: string, params: unknown) => this.handleDebuggerMessage(state, method, params);
     if (!state.diagnosticListenerReady) {
       const onDetach = () => {
         state.debuggerOwned = false;
@@ -2022,6 +2258,50 @@ export class BrowserAutomationKernel {
       state.diagnosticListenerReady = true;
     }
     state.diagnosticsReady = true;
+  }
+
+  private handleDebuggerMessage(state: TargetState, method: string, params: unknown): void {
+    const handlers: Record<string, (data: Record<string, unknown>) => void> = {
+      "Network.requestWillBeSent": (data) => this.recordNetworkRequest(state, data),
+      "Network.responseReceived": (data) => this.recordNetworkResponse(state, data),
+      "Network.loadingFailed": (data) => this.recordNetworkFailure(state, data),
+    };
+    handlers[method]?.(asRecord(params));
+  }
+
+  private recordNetworkRequest(state: TargetState, data: Record<string, unknown>): void {
+    const requestId = String(data.requestId ?? "");
+    const request = asRecord(data.request);
+    const url = redactBrowserDiagnosticUrl(request.url);
+    if (!requestId || !url) return;
+    this.evictOldestNetworkRequest(state);
+    state.networkRequests.set(requestId, { url, method: this.networkMethod(request.method) });
+  }
+
+  private evictOldestNetworkRequest(state: TargetState): void {
+    if (state.networkRequests.size < BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES) return;
+    const oldest = state.networkRequests.keys().next().value as string | undefined;
+    if (oldest) state.networkRequests.delete(oldest);
+  }
+
+  private recordNetworkResponse(state: TargetState, data: Record<string, unknown>): void {
+    const request = state.networkRequests.get(String(data.requestId ?? ""));
+    const response = asRecord(data.response);
+    const url = request?.url ?? redactBrowserDiagnosticUrl(response.url);
+    if (!url) return;
+    const status = Number(response.status) || 0;
+    state.network.push({ timestamp: Date.now(), url, method: request?.method ?? "GET", status, failed: status >= 400 });
+  }
+
+  private recordNetworkFailure(state: TargetState, data: Record<string, unknown>): void {
+    const request = state.networkRequests.get(String(data.requestId ?? ""));
+    const url = request?.url ?? redactBrowserDiagnosticUrl(data.url);
+    if (!url) return;
+    state.network.push({ timestamp: Date.now(), url, method: request?.method ?? "GET", failed: true, errorText: redactBrowserText(data.errorText) });
+  }
+
+  private networkMethod(value: unknown): string {
+    return redactBrowserText(value || "GET").slice(0, 32) || "GET";
   }
 
   private async ensureDebuggerForWebContents(webContents: WebContents): Promise<void> {
@@ -2106,39 +2386,67 @@ export class BrowserAutomationKernel {
 
   private async capturePerformance(state: TargetState, includeMemory: boolean): Promise<Record<string, unknown>> {
     await this.ensureDebugger(state);
-    const metricsResponse = asRecord(await state.webContents.debugger.sendCommand("Performance.getMetrics"));
-    const metrics = new Map<string, number>();
-    for (const raw of Array.isArray(metricsResponse.metrics) ? metricsResponse.metrics : []) {
-      const metric = asRecord(raw);
-      if (typeof metric.name === "string" && typeof metric.value === "number") metrics.set(metric.name, metric.value);
-    }
+    const metrics = await this.getPerformanceMetrics(state);
     const timing = asRecord(await this.callIsolatedFunction(
       state,
       capturePagePerformance,
       null,
     ));
+    const result = this.performanceResult(timing);
+    this.appendPerformanceMemory(result, timing, metrics, includeMemory);
+    return result;
+  }
+
+  private async getPerformanceMetrics(state: TargetState): Promise<Map<string, number>> {
+    const response = asRecord(await state.webContents.debugger.sendCommand("Performance.getMetrics"));
+    const metrics = new Map<string, number>();
+    for (const raw of Array.isArray(response.metrics) ? response.metrics : []) {
+      const metric = asRecord(raw);
+      if (typeof metric.name === "string" && typeof metric.value === "number") metrics.set(metric.name, metric.value);
+    }
+    return metrics;
+  }
+
+  private performanceResult(timing: Record<string, unknown>): Record<string, unknown> {
     const navigation = asRecord(timing.navigation);
     const resources = asRecord(timing.resources);
     const longTasks = asRecord(timing.longTasks);
-    const result: Record<string, unknown> = {
+    return {
       capturedAt: Date.now(),
-      navigation: {
-        ...(Number(navigation.ttfb) >= 0 ? { timeToFirstByteMs: Number(navigation.ttfb) } : {}),
-        ...(Number(navigation.dcl) >= 0 ? { domContentLoadedMs: Number(navigation.dcl) } : {}),
-        ...(Number(navigation.load) >= 0 ? { loadMs: Number(navigation.load) } : {}),
-      },
-      resources: { count: Math.max(0, Number(resources.count) || 0), transferBytes: Math.max(0, Math.floor(Number(resources.transferBytes) || 0)), decodedBodyBytes: Math.max(0, Math.floor(Number(resources.decodedBodyBytes) || 0)) },
-      responsiveness: { longTaskCount: Math.max(0, Number(longTasks.count) || 0), totalBlockingTimeMs: Math.max(0, Number(longTasks.totalBlockingTimeMs) || 0) },
+      navigation: this.navigationMetrics(navigation),
+      resources: this.resourceMetrics(resources),
+      responsiveness: this.responsivenessMetrics(longTasks),
     };
-    const jsHeapLimitBytes = Math.max(0, Math.floor(Number(timing.jsHeapLimitBytes) || 0));
-    if (includeMemory && jsHeapLimitBytes > 0) {
-      result.memory = {
-        usedJsHeapBytes: Math.max(0, Math.floor((metrics.get("JSHeapUsedSize") ?? 0))),
-        totalJsHeapBytes: Math.max(0, Math.floor((metrics.get("JSHeapTotalSize") ?? 0))),
-        jsHeapLimitBytes,
-      };
-    }
-    return result;
+  }
+
+  private navigationMetrics(navigation: Record<string, unknown>): Record<string, number> {
+    const entries = [["timeToFirstByteMs", navigation.ttfb], ["domContentLoadedMs", navigation.dcl], ["loadMs", navigation.load]] as const;
+    return Object.fromEntries(entries.filter(([, value]) => Number(value) >= 0).map(([name, value]) => [name, Number(value)]));
+  }
+
+  private resourceMetrics(resources: Record<string, unknown>): Record<string, number> {
+    return { count: this.nonNegative(resources.count), transferBytes: this.nonNegative(resources.transferBytes), decodedBodyBytes: this.nonNegative(resources.decodedBodyBytes) };
+  }
+
+  private responsivenessMetrics(longTasks: Record<string, unknown>): Record<string, number> {
+    return {
+      longTaskCount: this.nonNegative(longTasks.count),
+      totalBlockingTimeMs: this.nonNegativeFraction(longTasks.totalBlockingTimeMs),
+    };
+  }
+
+  private nonNegative(value: unknown): number {
+    return Math.max(0, Math.floor(Number(value) || 0));
+  }
+
+  private nonNegativeFraction(value: unknown): number {
+    return Math.max(0, Number(value) || 0);
+  }
+
+  private appendPerformanceMemory(result: Record<string, unknown>, timing: Record<string, unknown>, metrics: Map<string, number>, includeMemory: boolean): void {
+    const jsHeapLimitBytes = this.nonNegative(timing.jsHeapLimitBytes);
+    if (!includeMemory || jsHeapLimitBytes === 0) return;
+    result.memory = { usedJsHeapBytes: this.nonNegative(metrics.get("JSHeapUsedSize")), totalJsHeapBytes: this.nonNegative(metrics.get("JSHeapTotalSize")), jsHeapLimitBytes };
   }
 
   private withEffect(cause: unknown, effect: KernelErrorEffect): unknown {
@@ -2152,13 +2460,7 @@ export class BrowserAutomationKernel {
   }
 
   private failureResponse(request: BrowserAutomationRequest | null, cause: unknown): BrowserAutomationResponse {
-    const mapped = cause instanceof KernelError
-      ? cause
-      : cause instanceof BrowserAutomationCancelledError
-        ? new KernelError("OPERATION_CANCELLED", cause.message, true)
-        : cause instanceof BrowserAutomationQueueFullError
-          ? new KernelError("HOST_UNAVAILABLE", cause.message, true)
-          : new KernelError("INTERNAL_ERROR", "Browser automation failed", true);
+    const mapped = this.mapFailure(cause);
     return {
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
       requestId: request?.requestId ?? "invalid-request",
@@ -2168,11 +2470,26 @@ export class BrowserAutomationKernel {
         code: mapped.code,
         message: redactBrowserText(mapped.message),
         retryable: mapped.retryable,
-        stage: mapped.code === "TAB_UNAVAILABLE" ? "allocation" : "effect",
-        effect: mapped.code === "TAB_UNAVAILABLE" && mapped.effect === "none" ? "unknown" : mapped.effect,
+        stage: this.failureStage(mapped),
+        effect: this.failureEffect(mapped),
         recovery: mapped.retryable ? "retry" : "manual",
-        correlationId: randomUUID(),
+        correlationId: NodeCrypto.randomUUID(),
       },
     };
+  }
+
+  private mapFailure(cause: unknown): KernelError {
+    if (cause instanceof KernelError) return cause;
+    if (cause instanceof BrowserAutomationCancelledError) return new KernelError("OPERATION_CANCELLED", cause.message, true);
+    if (cause instanceof BrowserAutomationQueueFullError) return new KernelError("HOST_UNAVAILABLE", cause.message, true);
+    return new KernelError("INTERNAL_ERROR", "Browser automation failed", true);
+  }
+
+  private failureStage(cause: KernelError): "allocation" | "effect" {
+    return cause.code === "TAB_UNAVAILABLE" ? "allocation" : "effect";
+  }
+
+  private failureEffect(cause: KernelError): KernelErrorEffect {
+    return cause.code === "TAB_UNAVAILABLE" && cause.effect === "none" ? "unknown" : cause.effect;
   }
 }

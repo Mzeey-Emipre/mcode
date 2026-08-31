@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { AttachmentService } from "../attachment-service.js";
 import {
   MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME,
@@ -44,9 +44,9 @@ describe("AttachmentService.persist virtual browser context", () => {
 
 describe("AttachmentService.persistGeneratedImageFromPath", () => {
   it("copies a generated image and returns stored metadata only", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "mcode-generated-image-"));
-    const sourcePath = join(tempDir, "generated.png");
-    writeFileSync(sourcePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-generated-image-"));
+    const sourcePath = NodePath.join(tempDir, "generated.png");
+    NodeFS.writeFileSync(sourcePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     const svc = new AttachmentService();
 
     try {
@@ -56,21 +56,21 @@ describe("AttachmentService.persistGeneratedImageFromPath", () => {
       expect(stored.mimeType).toBe("image/png");
       expect(stored.sizeBytes).toBe(4);
       expect(stored).not.toHaveProperty("sourcePath");
-      expect(existsSync(sourcePath)).toBe(true);
+      expect(NodeFS.existsSync(sourcePath)).toBe(true);
     } finally {
       svc.removeForThread("thread-unit-test-generated");
-      rmSync(tempDir, { recursive: true, force: true });
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });
 
 describe("AttachmentService.removeStoredAttachments", () => {
   it("removes only the requested stored file and leaves another queued attachment available", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "mcode-attachment-cleanup-"));
-    const firstSource = join(tempDir, "first.png");
-    const secondSource = join(tempDir, "second.png");
-    writeFileSync(firstSource, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-    writeFileSync(secondSource, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-attachment-cleanup-"));
+    const firstSource = NodePath.join(tempDir, "first.png");
+    const secondSource = NodePath.join(tempDir, "second.png");
+    NodeFS.writeFileSync(firstSource, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    NodeFS.writeFileSync(secondSource, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     const service = new AttachmentService();
     const threadId = "thread-unit-test-selective-cleanup";
 
@@ -82,11 +82,11 @@ describe("AttachmentService.removeStoredAttachments", () => {
 
       await service.removeStoredAttachments(threadId, [stored[0]!]);
 
-      expect(existsSync(persisted[0]!.sourcePath)).toBe(false);
-      expect(existsSync(persisted[1]!.sourcePath)).toBe(true);
+      expect(NodeFS.existsSync(persisted[0]!.sourcePath)).toBe(false);
+      expect(NodeFS.existsSync(persisted[1]!.sourcePath)).toBe(true);
     } finally {
       service.removeForThread(threadId);
-      rmSync(tempDir, { recursive: true, force: true });
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });

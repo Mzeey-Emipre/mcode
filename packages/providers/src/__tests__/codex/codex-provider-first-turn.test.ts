@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { tmpdir } from "os";
-import { join } from "path";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 
 vi.mock("@mcode/shared", () => ({
@@ -24,7 +24,7 @@ vi.mock("../../private/codex/codex-version.js", () => ({
 const { sendTurnMock, readConfigMock, appServers, startError } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue("turn-test-id"),
   readConfigMock: vi.fn(),
-  appServers: [] as Array<import("events").EventEmitter & {
+  appServers: [] as Array<import("node:events").EventEmitter & {
     isAlive: boolean;
     options: Record<string, unknown>;
     spawnedEnv?: Record<string, string>;
@@ -33,7 +33,7 @@ const { sendTurnMock, readConfigMock, appServers, startError } = vi.hoisted(() =
 }));
 
 vi.mock("../../private/codex/codex-app-server.js", async () => {
-  const { EventEmitter } = await import("events");
+  const { EventEmitter } = await import("node:events");
   class MockCodexAppServer extends EventEmitter {
     isAlive = true;
     threadId = "sdk-thread-1";
@@ -70,7 +70,7 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
 
 import { BrowserAutomationSessionLease, CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
 import { AgentEventSchema, AgentEventType } from "@mcode/contracts";
-import type { AgentEvent, ProviderRuntimeEvent } from "@mcode/contracts";
+import type { ProviderRuntimeEvent } from "@mcode/contracts";
 
 const schemaValidExecutionId = "00000000-0000-4000-8000-000000000001";
 
@@ -899,10 +899,10 @@ describe("CodexProvider first turn on new session", () => {
   });
 
   it("expands Codex prompt commands before turn/start", async () => {
-    const promptDir = mkdtempSync(join(tmpdir(), "codex-provider-prompt-"));
+    const promptDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "codex-provider-prompt-"));
     try {
-      const promptPath = join(promptDir, "draftpr.md");
-      writeFileSync(
+      const promptPath = NodePath.join(promptDir, "draftpr.md");
+      NodeFS.writeFileSync(
         promptPath,
         "---\ndescription: Draft a PR\n---\nDraft a PR for $FILES titled $PR_TITLE. Args: $ARGUMENTS",
       );
@@ -949,16 +949,16 @@ describe("CodexProvider first turn on new session", () => {
       }]);
       expect(refreshCustomPrompts).toHaveBeenCalledTimes(1);
     } finally {
-      rmSync(promptDir, { recursive: true, force: true });
+      NodeFS.rmSync(promptDir, { recursive: true, force: true });
     }
   });
 
   it("uses selected catalog identity when a Skill and custom prompt share a name", async () => {
-    const promptDir = mkdtempSync(join(tmpdir(), "codex-provider-collision-"));
+    const promptDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "codex-provider-collision-"));
     try {
-      const promptPath = join(promptDir, "release.md");
-      const skillPath = join(promptDir, "release-skill", "SKILL.md");
-      writeFileSync(promptPath, "Prompt release $ARGUMENTS");
+      const promptPath = NodePath.join(promptDir, "release.md");
+      const skillPath = NodePath.join(promptDir, "release-skill", "SKILL.md");
+      NodeFS.writeFileSync(promptPath, "Prompt release $ARGUMENTS");
       const prompt = {
         name: "prompts:release",
         nativeName: "release",
@@ -1049,12 +1049,12 @@ describe("CodexProvider first turn on new session", () => {
         { type: "text", text: "$prompts:release beta" },
       ]);
     } finally {
-      rmSync(promptDir, { recursive: true, force: true });
+      NodeFS.rmSync(promptDir, { recursive: true, force: true });
     }
   });
 
   it("emits a controlled error when a listed Codex prompt cannot be read", async () => {
-    const promptDir = mkdtempSync(join(tmpdir(), "missing-codex-prompt-"));
+    const promptDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "missing-codex-prompt-"));
     try {
       const prompt = {
         name: "prompts:draftpr",
@@ -1063,7 +1063,7 @@ describe("CodexProvider first turn on new session", () => {
         kind: "command",
         source: "user",
         providers: ["codex"],
-        path: join(promptDir, "draftpr.md"),
+        path: NodePath.join(promptDir, "draftpr.md"),
       };
       const provider = makeProvider({
           currentSkills: vi.fn(() => []),
@@ -1103,7 +1103,7 @@ describe("CodexProvider first turn on new session", () => {
         { event: { type: AgentEventType.Ended, threadId: "missing-prompt", turnExecutionId: "test-execution" } },
       ]);
     } finally {
-      rmSync(promptDir, { recursive: true, force: true });
+      NodeFS.rmSync(promptDir, { recursive: true, force: true });
     }
   });
 

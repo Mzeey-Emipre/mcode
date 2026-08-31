@@ -6,10 +6,10 @@
  * manifest). ULID ordering makes "latest handoff" a simple sort.
  */
 
-import { mkdir, readFile, writeFile, readdir, rm, copyFile, stat } from "fs/promises";
-import { existsSync } from "fs";
-import { dirname, extname, join } from "path";
-import { createHash } from "crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import { injectable } from "tsyringe";
 import { logger } from "@mcode/shared";
 import {
@@ -40,7 +40,7 @@ export class HandoffStorage {
   // defaults broke DI ("TypeInfo not known for Function"). Production callers
   // get the real resolvers; tests override via `forTesting()`.
   private mcodeDirFn: () => string = getMcodeDir;
-  private statFn: (path: string) => Promise<{ size: number }> = stat;
+  private statFn: (path: string) => Promise<{ size: number }> = NodeFSPromises.stat;
 
   /**
    * Test-only constructor override. Allows injecting a fake `mcodeDirFn`
@@ -61,26 +61,26 @@ export class HandoffStorage {
   async write(threadId: string, artifact: HandoffArtifact): Promise<string> {
     const ulid = newHandoffUlid();
     const handoffDir = resolveHandoffDir(this.mcodeDirFn(), threadId, ulid);
-    await mkdir(handoffDir, { recursive: true });
+    await NodeFSPromises.mkdir(handoffDir, { recursive: true });
 
     const markdownWithFrontmatter = this.injectFrontmatter(artifact.markdown, artifact.meta);
-    await writeFile(join(handoffDir, "handoff.md"), markdownWithFrontmatter, "utf8");
-    await writeFile(join(handoffDir, "handoff.json"), JSON.stringify(artifact.meta, null, 2), "utf8");
+    await NodeFSPromises.writeFile(NodePath.join(handoffDir, "handoff.md"), markdownWithFrontmatter, "utf8");
+    await NodeFSPromises.writeFile(NodePath.join(handoffDir, "handoff.json"), JSON.stringify(artifact.meta, null, 2), "utf8");
     return ulid;
   }
 
   /** Most recent handoff by ULID lexicographic sort (ULIDs are time-ordered). */
   async readLatest(threadId: string): Promise<HandoffArtifact | null> {
     const handoffsRoot = resolveThreadHandoffsDir(this.mcodeDirFn(), threadId);
-    if (!existsSync(handoffsRoot)) return null;
-    const entries = await readdir(handoffsRoot);
+    if (!NodeFS.existsSync(handoffsRoot)) return null;
+    const entries = await NodeFSPromises.readdir(handoffsRoot);
     if (entries.length === 0) return null;
     const latest = entries.sort().at(-1);
     if (!latest) return null;
-    const dir = join(handoffsRoot, latest);
+    const dir = NodePath.join(handoffsRoot, latest);
     const [md, json] = await Promise.all([
-      readFile(join(dir, "handoff.md"), "utf8"),
-      readFile(join(dir, "handoff.json"), "utf8"),
+      NodeFSPromises.readFile(NodePath.join(dir, "handoff.md"), "utf8"),
+      NodeFSPromises.readFile(NodePath.join(dir, "handoff.json"), "utf8"),
     ]);
     return { markdown: md, meta: JSON.parse(json) as HandoffMeta };
   }
@@ -88,7 +88,7 @@ export class HandoffStorage {
   /** Copy source files into <thread>/attachments/<id>.<ext>. */
   async copyAttachments(threadId: string, sources: AttachmentSource[]): Promise<HandoffMeta["attachments"]> {
     const attachDir = resolveThreadAttachmentsDir(this.mcodeDirFn(), threadId);
-    await mkdir(attachDir, { recursive: true });
+    await NodeFSPromises.mkdir(attachDir, { recursive: true });
     const result: HandoffMeta["attachments"] = [];
     for (const s of sources) {
       const fileStat = await this.statFn(s.absolutePath);
@@ -107,10 +107,10 @@ export class HandoffStorage {
         });
         continue;
       }
-      const ext = extname(s.originalName) || extname(s.absolutePath) || "";
-      const dest = join(attachDir, `${s.id}${ext}`);
-      await copyFile(s.absolutePath, dest);
-      const sha = createHash("sha256").update(await readFile(dest)).digest("hex");
+      const ext = NodePath.extname(s.originalName) || NodePath.extname(s.absolutePath) || "";
+      const dest = NodePath.join(attachDir, `${s.id}${ext}`);
+      await NodeFSPromises.copyFile(s.absolutePath, dest);
+      const sha = NodeCrypto.createHash("sha256").update(await NodeFSPromises.readFile(dest)).digest("hex");
       result.push({
         id: s.id,
         originalName: s.originalName,
@@ -124,8 +124,8 @@ export class HandoffStorage {
 
   /** Wipe the entire <mcodeDir>/threads/<id>/ subtree. Called on thread hard delete. */
   async deleteThreadFiles(threadId: string): Promise<void> {
-    const threadRoot = dirname(resolveThreadHandoffsDir(this.mcodeDirFn(), threadId));
-    await rm(threadRoot, { recursive: true, force: true });
+    const threadRoot = NodePath.dirname(resolveThreadHandoffsDir(this.mcodeDirFn(), threadId));
+    await NodeFSPromises.rm(threadRoot, { recursive: true, force: true });
   }
 
   private injectFrontmatter(markdownBody: string, meta: HandoffMeta): string {

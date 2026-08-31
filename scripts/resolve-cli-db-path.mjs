@@ -1,7 +1,7 @@
 /**
  * Match server startup DB resolution for CLI tooling (`state:paths`, `db:info`).
  */
-import { execFileSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import { getMcodeDir, resolveDbPath } from "../packages/shared/src/index.ts";
 
 /**
@@ -14,32 +14,28 @@ export function resolveCliDbPath() {
   const fromEnv = process.env.MCODE_DB_PATH?.trim();
   if (fromEnv) return fromEnv;
 
+  const gitValues = resolveDevelopmentGitValues();
+  return resolveDbPath(getMcodeDir(), gitValues);
+}
+
+function resolveGitValue(args) {
+  try {
+    return NodeChildProcess.execFileSync("git", args, { encoding: "utf-8", timeout: 3000 }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveDevelopmentGitValues() {
   let branch = process.env.MCODE_GIT_BRANCH?.trim();
   let gitToplevel = process.env.MCODE_GIT_TOPLEVEL?.trim();
-
-  if (process.env.NODE_ENV !== "production") {
-    if (!branch) {
-      try {
-        const b = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-          encoding: "utf-8",
-          timeout: 3000,
-        }).trim();
-        if (b && b !== "HEAD") branch = b;
-      } catch {
-        /* not a git checkout */
-      }
-    }
-    if (!gitToplevel) {
-      try {
-        gitToplevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-          encoding: "utf-8",
-          timeout: 3000,
-        }).trim();
-      } catch {
-        /* */
-      }
-    }
+  if (process.env.NODE_ENV === "production") return { branch, gitToplevel };
+  if (!branch) {
+    const resolvedBranch = resolveGitValue(["rev-parse", "--abbrev-ref", "HEAD"]);
+    branch = resolvedBranch && resolvedBranch !== "HEAD" ? resolvedBranch : branch;
   }
-
-  return resolveDbPath(getMcodeDir(), { branch, gitToplevel });
+  if (!gitToplevel) {
+    gitToplevel = resolveGitValue(["rev-parse", "--show-toplevel"]);
+  }
+  return { branch, gitToplevel };
 }

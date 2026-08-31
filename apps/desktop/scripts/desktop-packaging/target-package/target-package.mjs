@@ -6,21 +6,11 @@
  * isolated store without changing package manifests or the lockfile.
  */
 
-import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import {
-  chmodSync,
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { electronArchToNpm, electronPlatformToNpm, repoRootFromScript } from "../../../../../scripts/build-server-dev-bundle.mjs";
 import {
   assertContained,
@@ -54,7 +44,7 @@ export {
 } from "../target-inventory/target-inventory.mjs";
 
 const repoRoot = repoRootFromScript();
-const serverRoot = resolve(repoRoot, "apps/server");
+const serverRoot = NodePath.resolve(repoRoot, "apps/server");
 
 /** Download and extract one npm package into a bounded Bun-store destination. */
 export async function downloadAndExtractPackage({
@@ -69,100 +59,94 @@ export async function downloadAndExtractPackage({
   registry = process.env.npm_config_registry ?? "https://registry.npmjs.org",
 }) {
   assertPackageSpec(packageName, version);
-  const resolvedInstallRoot = resolve(
+  const resolvedInstallRoot = NodePath.resolve(
     installRoot ?? resolveInstallRoot(destination),
   );
   assertContained(resolvedInstallRoot, destination);
+  const tarballBytes = await downloadPackageTarball(registry, packageName, version);
+  verifyPackageIntegrity(tarballBytes, integrity ?? plan?.integrity);
+  const { tempDir, tarballPath } = createPackageTempDirectory(destination, resolvedInstallRoot);
+  try {
+    extractAndValidatePackage(tempDir, tarballPath, tarballBytes, packageName, plan, executable, chmodExecutable);
+    replacePackageDestination(tempDir, destination, resolvedInstallRoot);
+  } finally {
+    removePackagePath(tarballPath);
+    removePackageDirectory(tempDir);
+  }
+}
+
+async function downloadPackageTarball(registry, packageName, version) {
   const metadataUrl = buildRegistryMetadataUrl(registry, packageName, version);
   const metadataResponse = await fetch(metadataUrl);
   if (!metadataResponse.ok) {
-    throw new Error(
-      `[ensure-sdk] Registry lookup failed for ${packageName}@${version}: HTTP ${metadataResponse.status}`,
-    );
+    throw new Error(`[ensure-sdk] Registry lookup failed for ${packageName}@${version}: HTTP ${metadataResponse.status}`);
   }
   const tarballUrl = (await metadataResponse.json()).dist?.tarball;
-  if (!tarballUrl) {
-    throw new Error(
-      `[ensure-sdk] Registry metadata for ${packageName}@${version} has no dist.tarball`,
-    );
-  }
-
+  if (!tarballUrl) throw new Error(`[ensure-sdk] Registry metadata for ${packageName}@${version} has no dist.tarball`);
   const tarballResponse = await fetch(tarballUrl);
   if (!tarballResponse.ok) {
-    throw new Error(
-      `[ensure-sdk] Tarball download failed (${tarballUrl}): HTTP ${tarballResponse.status}`,
-    );
+    throw new Error(`[ensure-sdk] Tarball download failed (${tarballUrl}): HTTP ${tarballResponse.status}`);
   }
+  return Buffer.from(await tarballResponse.arrayBuffer());
+}
 
-  const tarballBytes = Buffer.from(await tarballResponse.arrayBuffer());
-  verifyPackageIntegrity(tarballBytes, integrity ?? plan?.integrity);
+function createPackageTempDirectory(destination, installRoot) {
+  const destinationParent = NodePath.dirname(destination);
+  assertContained(installRoot, destinationParent);
+  NodeFS.mkdirSync(destinationParent, { recursive: true });
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(destinationParent, `.${NodePath.basename(destination)}-tmp-`));
+  assertContained(installRoot, tempDir);
+  return { tempDir, tarballPath: NodePath.join(tempDir, "package.tgz") };
+}
 
-  const destinationParent = dirname(destination);
-  assertContained(resolvedInstallRoot, destinationParent);
-  mkdirSync(destinationParent, { recursive: true });
-  const tempDir = mkdtempSync(
-    join(destinationParent, `.${basename(destination)}-tmp-`),
-  );
-  assertContained(resolvedInstallRoot, tempDir);
-  const tarballPath = join(tempDir, "package.tgz");
+function extractAndValidatePackage(tempDir, tarballPath, tarballBytes, packageName, plan, executable, chmodExecutable) {
+  NodeFS.writeFileSync(tarballPath, tarballBytes);
+  NodeChildProcess.execFileSync("tar", ["-xzf", "package.tgz", "--strip-components=1"], { cwd: tempDir, stdio: "inherit" });
+  validateExtractedPackage(tempDir, packageName, plan, executable);
+  if (executable && chmodExecutable) NodeFS.chmodSync(NodePath.join(tempDir, executable), 0o755);
+}
+
+function validateExtractedPackage(tempDir, packageName, plan, executable) {
+  if (plan && !packageMetadataUsable(JSON.parse(NodeFS.readFileSync(NodePath.resolve(tempDir, "package.json"), "utf8")), plan)) {
+    throw new Error(`[ensure-sdk] Downloaded package metadata mismatch for ${packageName}`);
+  }
+  if (!executable) return;
+  const executablePath = NodePath.resolve(tempDir, executable);
+  if (!NodeFS.existsSync(executablePath) || !NodeFS.statSync(executablePath).isFile()) {
+    throw new Error(`[ensure-sdk] Downloaded package executable missing for ${packageName}`);
+  }
+}
+
+function replacePackageDestination(tempDir, destination, installRoot) {
+  const backupPath = NodePath.join(NodePath.dirname(destination), `.${NodePath.basename(destination)}-backup-${NodeCrypto.randomUUID()}`);
+  assertContained(installRoot, backupPath);
+  let movedExisting = false;
   try {
-    writeFileSync(tarballPath, tarballBytes);
-    execFileSync("tar", ["-xzf", "package.tgz", "--strip-components=1"], {
-      cwd: tempDir,
-      stdio: "inherit",
-    });
-    if (plan) {
-      const metadata = JSON.parse(
-        readFileSync(resolve(tempDir, "package.json"), "utf8"),
-      );
-      if (!packageMetadataUsable(metadata, plan)) {
-        throw new Error(
-          `[ensure-sdk] Downloaded package metadata mismatch for ${packageName}`,
-        );
-      }
+    if (pathExists(destination)) {
+      NodeFS.renameSync(destination, backupPath);
+      movedExisting = true;
     }
-    const executablePath = executable
-      ? resolve(tempDir, executable)
-      : undefined;
-    if (
-      executablePath &&
-      (!existsSync(executablePath) || !statSync(executablePath).isFile())
-    ) {
-      throw new Error(
-        `[ensure-sdk] Downloaded package executable missing for ${packageName}`,
-      );
-    }
-    if (executable && chmodExecutable) {
-      chmodSync(join(tempDir, executable), 0o755);
-    }
-
-    const backupPath = join(
-      destinationParent,
-      `.${basename(destination)}-backup-${randomUUID()}`,
-    );
-    assertContained(resolvedInstallRoot, backupPath);
-    let movedExisting = false;
-    try {
-      if (pathExists(destination)) {
-        renameSync(destination, backupPath);
-        movedExisting = true;
-      }
-      renameSync(tempDir, destination);
-      if (movedExisting) rmSync(backupPath, { recursive: true, force: true });
-    } catch (error) {
-      if (pathExists(destination))
-        rmSync(destination, { recursive: true, force: true });
-      if (movedExisting && pathExists(backupPath))
-        renameSync(backupPath, destination);
-      throw error;
-    } finally {
-      if (pathExists(backupPath))
-        rmSync(backupPath, { recursive: true, force: true });
-    }
+    NodeFS.renameSync(tempDir, destination);
+    if (movedExisting) removePackageDirectory(backupPath);
+  } catch (error) {
+    restorePackageDestination(destination, backupPath, movedExisting);
+    throw error;
   } finally {
-    if (pathExists(tarballPath)) rmSync(tarballPath, { force: true });
-    if (pathExists(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+    removePackageDirectory(backupPath);
   }
+}
+
+function restorePackageDestination(destination, backupPath, movedExisting) {
+  removePackageDirectory(destination);
+  if (movedExisting && pathExists(backupPath)) NodeFS.renameSync(backupPath, destination);
+}
+
+function removePackagePath(filePath) {
+  if (pathExists(filePath)) NodeFS.rmSync(filePath, { force: true });
+}
+
+function removePackageDirectory(directoryPath) {
+  if (pathExists(directoryPath)) NodeFS.rmSync(directoryPath, { recursive: true, force: true });
 }
 
 /** Forward a resolved package plan through shared download mechanics. */
@@ -190,53 +174,32 @@ export async function prepareSdkPlatformPackages({
     targetPlatform,
     target.arch,
   );
-  if (readPlanTargetMetadata(claudePlan, serverPackageRoot)) {
-    console.log(
-      `[ensure-sdk] Claude target package already installed (${target.id})`,
-    );
-  } else {
-    console.log(
-      `[ensure-sdk] Downloading ${claudePlan.packageName}@${claudePlan.version} for ${target.id}...`,
-    );
-    await downloadTargetPackage(claudePlan);
-    if (!readPlanTargetMetadata(claudePlan, serverPackageRoot)) {
-      throw new Error(
-        `[ensure-sdk] Installed Claude package failed validation: ${claudePlan.packageName}`,
-      );
-    }
-    console.log(
-      `[ensure-sdk] Installed ${claudePlan.packageName} at ${claudePlan.destination}`,
-    );
-  }
+  await ensureTargetPackage("Claude", claudePlan, target.id, serverPackageRoot);
 
   const copilotPlan = resolveCopilotTargetPackagePlan(
     serverPackageRoot,
     targetPlatform,
     target.arch,
   );
-  if (readPlanTargetMetadata(copilotPlan, serverPackageRoot)) {
-    console.log(
-      `[ensure-sdk] Copilot target package already installed (${target.id})`,
-    );
-  } else {
-    console.log(
-      `[ensure-sdk] Downloading ${copilotPlan.packageName}@${copilotPlan.version} for ${target.id}...`,
-    );
-    await downloadTargetPackage(copilotPlan);
-    if (!readPlanTargetMetadata(copilotPlan, serverPackageRoot)) {
-      throw new Error(
-        `[ensure-sdk] Installed Copilot package failed validation: ${copilotPlan.packageName}`,
-      );
-    }
-    console.log(
-      `[ensure-sdk] Installed ${copilotPlan.packageName} at ${copilotPlan.destination}`,
-    );
+  await ensureTargetPackage("Copilot", copilotPlan, target.id, serverPackageRoot);
+}
+
+async function ensureTargetPackage(label, plan, targetId, serverPackageRoot) {
+  if (readPlanTargetMetadata(plan, serverPackageRoot)) {
+    console.log(`[ensure-sdk] ${label} target package already installed (${targetId})`);
+    return;
   }
+  console.log(`[ensure-sdk] Downloading ${plan.packageName}@${plan.version} for ${targetId}...`);
+  await downloadTargetPackage(plan);
+  if (!readPlanTargetMetadata(plan, serverPackageRoot)) {
+    throw new Error(`[ensure-sdk] Installed ${label} package failed validation: ${plan.packageName}`);
+  }
+  console.log(`[ensure-sdk] Installed ${plan.packageName} at ${plan.destination}`);
 }
 
 if (
   process.argv[1] &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
 ) {
   await prepareSdkPlatformPackages();
 }

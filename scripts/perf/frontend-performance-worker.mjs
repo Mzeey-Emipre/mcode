@@ -1,7 +1,7 @@
-import { createRequire } from "node:module";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeModule from "node:module";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { collectRunEnvironment } from "./frontend-performance-collectors.mjs";
 import {
   normalizeFrontendRendererRuntimes,
@@ -61,12 +61,12 @@ function parseElectronSessionFile(required) {
 }
 
 function resolveOutputFile(repoRoot) {
-  const outputRoot = resolve(repoRoot, ".dev", "verification", "performance");
+  const outputRoot = NodePath.resolve(repoRoot, ".dev", "verification", "performance");
   const requested = readArgument("--output");
   const outputFile = requested
-    ? resolve(repoRoot, requested)
-    : join(outputRoot, `frontend-${new Date().toISOString().replaceAll(":", "-")}.json`);
-  const relativePath = relative(outputRoot, outputFile);
+    ? NodePath.resolve(repoRoot, requested)
+    : NodePath.join(outputRoot, `frontend-${new Date().toISOString().replaceAll(":", "-")}.json`);
+  const relativePath = NodePath.relative(outputRoot, outputFile);
   if (relativePath.length === 0 || relativePath.startsWith("..")) {
     throw new Error("--output must name a file inside .dev/verification/performance");
   }
@@ -117,168 +117,183 @@ function decorateRuntimeResult(
 }
 
 async function run() {
-  const repoRoot = process.cwd();
-  const sampleCount = parseSampleCount();
-  const mode = parseMode();
-  const workloads = parseWorkloads();
-  const runtimes = parseRuntimes();
-  const webUrl = parseWebUrl();
-  const electronSessionFile = parseElectronSessionFile(runtimes.includes("electron"));
-  const { outputFile, outputRoot } = resolveOutputFile(repoRoot);
-  await mkdir(outputRoot, { recursive: true });
-
-  const ports = JSON.parse(
-    await readFile(join(repoRoot, ".dev", "ports.json"), "utf8"),
-  );
-  const scratchRequire = createRequire(
-    join(repoRoot, ".dev", "playwright-scratch", "package.json"),
-  );
-  const playwright = scratchRequire("playwright");
-  const playwrightVersion = scratchRequire("playwright/package.json").version;
-  const electronHelper = await import(
-    pathToFileURL(
-      join(
-        repoRoot,
-        ".codex",
-        "skills",
-        "electorn-live-testing",
-        "scripts",
-        "electron-session.mjs",
-      ),
-    ).href,
-  );
-
-  const runEnvironment = collectRunEnvironment(repoRoot, {
-    electron: process.versions.electron,
-    playwright: playwrightVersion,
-  });
+  const context = await prepareWorkerContext();
   let browser;
   let electronSession;
+  let browserResult;
+  let electronResult;
   try {
-    let webResult;
-    if (runtimes.includes("standalone-web")) {
-      browser = await playwright.chromium.launch({ headless: true });
-      const context = await browser.newContext({ viewport: VIEWPORT });
-      await context.addCookies([
-        {
-          name: ports.seedLogin.cookieName,
-          value: ports.seedLogin.token,
-          url: webUrl,
-        },
-      ]);
-      const webPage = await context.newPage();
-      await webPage.goto(webUrl, { waitUntil: "domcontentloaded" });
-      await webPage.bringToFront();
-      webResult = decorateRuntimeResult(
-        await runRendererMatrix(webPage, "standalone-web", sampleCount, mode, {
-          workload: workloads.join(","),
-        }),
-        runEnvironment,
-        await collectPageEnvironment(webPage),
-        mode,
-        null,
-      );
-    }
-
-    let electronResult;
-    if (runtimes.includes("electron")) {
-      electronSession = await electronHelper.connectElectronSession({
-        playwright,
-        repoRoot,
-        sessionFileName: electronSessionFile,
-      });
-      await electronSession.page.setViewportSize(VIEWPORT);
-      const electronStartupMetrics = await electronSession.page.evaluate(async () =>
-        window.desktopBridge?.performance?.getMetrics?.() ?? null,
-      );
-      if (!electronStartupMetrics) {
-        throw new Error("Electron performance metrics are unavailable");
-      }
-      if (mode === "production" && electronStartupMetrics.devToolsOpen) {
-        throw new Error("Production performance mode must run without open DevTools");
-      }
-      await electronSession.page.bringToFront();
-      electronResult = decorateRuntimeResult(
-        await runRendererMatrix(electronSession.page, "electron", sampleCount, mode, {
-          workload: workloads.join(","),
-        }),
-        runEnvironment,
-        await collectPageEnvironment(electronSession.page),
-        mode,
-        electronStartupMetrics.accelerationMode === "default",
-      );
-    }
-    const runtimeEntries = [
-      ["standaloneWeb", webResult],
-      ["electron", electronResult],
-    ].filter(([, runtime]) => runtime !== undefined);
-    const runtimeResults = runtimeEntries.map(([, runtime]) => runtime);
-    const result = {
-      schemaVersion: 2,
-      recordedAt: new Date().toISOString(),
-      buildMode: mode,
-      comparisonContract: {
-        viewport: VIEWPORT,
-        workloadOrder: workloads,
-        warmupCount: WARMUP_COUNT,
-        sampleCount,
-      },
-      correctness: {
-        passed: runtimeResults.every((runtime) => runtime.correctness.passed),
-        rejectedSamples: runtimeResults.reduce(
-          (total, runtime) => total + runtime.correctness.rejectedSamples,
-          0,
-        ),
-      },
-      runtimes: Object.fromEntries(runtimeEntries),
-    };
-    const invalidLifecycleCandidate = Object.values(result.runtimes).some((runtime) => {
-      const decision = runtime.metrics.vlistLifecycle?.gateDecision;
-      return decision != null
-        && (decision.status !== "accepted"
-          || decision.candidateEligible !== true
-          || decision.reason !== null);
-    });
-    await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+    ({ browser, result: browserResult } = await runStandaloneWeb(context));
+    ({ electronSession, result: electronResult } = await runElectron(context));
+    const result = buildWorkerResult(context, browserResult, electronResult);
+    const invalidLifecycleCandidate = hasInvalidLifecycleCandidate(result);
+    await NodeFSPromises.writeFile(context.outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     process.stdout.write(`${JSON.stringify({
-      outputFile,
+      outputFile: context.outputFile,
       correctness: result.correctness,
       invalidLifecycleCandidate,
-      sourceRevision: runEnvironment.sourceRevision,
+      sourceRevision: context.runEnvironment.sourceRevision,
     })}\n`);
     if (!result.correctness.passed || invalidLifecycleCandidate) process.exitCode = 1;
   } finally {
-    if (electronSession) {
-      try {
-        await electronSession.page.evaluate(async () => {
-          await window.desktopBridge?.performance?.quit?.();
-        });
-      } catch {
-        // The target can close before the quit IPC response reaches the renderer.
-      }
-      try {
-        await electronHelper.disconnectElectronSession(electronSession);
-      } catch {
-        // A graceful application quit closes the CDP connection first.
-      }
-    }
+    await closeElectronSession(electronSession, context.electronHelper);
     if (browser) await browser.close();
   }
-  await writeFile(`${outputFile}.complete`, "complete\n", "utf8");
+  await NodeFSPromises.writeFile(`${context.outputFile}.complete`, "complete\n", "utf8");
+}
+
+async function prepareWorkerContext() {
+  const repoRoot = process.cwd();
+  const runtimes = parseRuntimes();
+  const { outputFile, outputRoot } = resolveOutputFile(repoRoot);
+  await NodeFSPromises.mkdir(outputRoot, { recursive: true });
+  const scratchRequire = NodeModule.createRequire(NodePath.join(repoRoot, ".dev", "playwright-scratch", "package.json"));
+  const playwright = scratchRequire("playwright");
+  const playwrightVersion = scratchRequire("playwright/package.json").version;
+  return {
+    repoRoot,
+    sampleCount: parseSampleCount(),
+    mode: parseMode(),
+    workloads: parseWorkloads(),
+    runtimes,
+    webUrl: parseWebUrl(),
+    electronSessionFile: parseElectronSessionFile(runtimes.includes("electron")),
+    outputFile,
+    ports: JSON.parse(await NodeFSPromises.readFile(NodePath.join(repoRoot, ".dev", "ports.json"), "utf8")),
+    playwright,
+    electronHelper: await loadElectronHelper(repoRoot),
+    runEnvironment: collectRunEnvironment(repoRoot, {
+      electron: process.versions.electron,
+      playwright: playwrightVersion,
+    }),
+  };
+}
+
+function loadElectronHelper(repoRoot) {
+  return import(NodeURL.pathToFileURL(NodePath.join(
+    repoRoot, ".codex", "skills", "electorn-live-testing", "scripts", "electron-session.mjs",
+  )).href);
+}
+
+async function runStandaloneWeb(context) {
+  if (!context.runtimes.includes("standalone-web")) return { browser: undefined, result: undefined };
+  const browser = await context.playwright.chromium.launch({ headless: true });
+  const page = await createStandaloneWebPage(browser, context.ports.seedLogin, context.webUrl);
+  const result = decorateRuntimeResult(
+    await runRendererMatrix(page, "standalone-web", context.sampleCount, context.mode, {
+      workload: context.workloads.join(","),
+    }),
+    context.runEnvironment,
+    await collectPageEnvironment(page),
+    context.mode,
+    null,
+  );
+  return { browser, result };
+}
+
+async function createStandaloneWebPage(browser, seedLogin, webUrl) {
+  const browserContext = await browser.newContext({ viewport: VIEWPORT });
+  await browserContext.addCookies([{ name: seedLogin.cookieName, value: seedLogin.token, url: webUrl }]);
+  const page = await browserContext.newPage();
+  await page.goto(webUrl, { waitUntil: "domcontentloaded" });
+  await page.bringToFront();
+  return page;
+}
+
+async function runElectron(context) {
+  if (!context.runtimes.includes("electron")) return { electronSession: undefined, result: undefined };
+  const electronSession = await context.electronHelper.connectElectronSession({
+    playwright: context.playwright,
+    repoRoot: context.repoRoot,
+    sessionFileName: context.electronSessionFile,
+  });
+  await electronSession.page.setViewportSize(VIEWPORT);
+  const metrics = await readElectronStartupMetrics(electronSession.page, context.mode);
+  await electronSession.page.bringToFront();
+  const result = decorateRuntimeResult(
+    await runRendererMatrix(electronSession.page, "electron", context.sampleCount, context.mode, {
+      workload: context.workloads.join(","),
+    }),
+    context.runEnvironment,
+    await collectPageEnvironment(electronSession.page),
+    context.mode,
+    metrics.accelerationMode === "default",
+  );
+  return { electronSession, result };
+}
+
+async function readElectronStartupMetrics(page, mode) {
+  const metrics = await page.evaluate(async () => window.desktopBridge?.performance?.getMetrics?.() ?? null);
+  if (!metrics) throw new Error("Electron performance metrics are unavailable");
+  if (mode === "production" && metrics.devToolsOpen) {
+    throw new Error("Production performance mode must run without open DevTools");
+  }
+  return metrics;
+}
+
+function buildWorkerResult(context, browserResult, electronResult) {
+  const entries = [["standaloneWeb", browserResult], ["electron", electronResult]]
+    .filter(([, runtime]) => runtime !== undefined);
+  const runtimes = entries.map(([, runtime]) => runtime);
+  return {
+    schemaVersion: 2,
+    recordedAt: new Date().toISOString(),
+    buildMode: context.mode,
+    comparisonContract: {
+      viewport: VIEWPORT,
+      workloadOrder: context.workloads,
+      warmupCount: WARMUP_COUNT,
+      sampleCount: context.sampleCount,
+    },
+    correctness: buildCorrectness(runtimes),
+    runtimes: Object.fromEntries(entries),
+  };
+}
+
+function buildCorrectness(runtimes) {
+  return {
+    passed: runtimes.every((runtime) => runtime.correctness.passed),
+    rejectedSamples: runtimes.reduce((total, runtime) => total + runtime.correctness.rejectedSamples, 0),
+  };
+}
+
+function hasInvalidLifecycleCandidate(result) {
+  return Object.values(result.runtimes).some((runtime) => {
+    const decision = runtime.metrics.vlistLifecycle?.gateDecision;
+    return decision != null && (
+      decision.status !== "accepted" || decision.candidateEligible !== true || decision.reason !== null
+    );
+  });
+}
+
+async function closeElectronSession(electronSession, electronHelper) {
+  if (!electronSession) return;
+  try {
+    await electronSession.page.evaluate(async () => {
+      await window.desktopBridge?.performance?.quit?.();
+    });
+  } catch {
+    // The target can close before the quit IPC response reaches the renderer.
+  }
+  try {
+    await electronHelper.disconnectElectronSession(electronSession);
+  } catch {
+    // A graceful application quit closes the CDP connection first.
+  }
 }
 
 try {
   await run();
 } catch (error) {
-  const failureFile = resolve(
+  const failureFile = NodePath.resolve(
     process.cwd(),
     ".dev",
     "verification",
     "performance",
     "frontend-worker-error.json",
   );
-  await mkdir(dirname(failureFile), { recursive: true });
-  await writeFile(
+  await NodeFSPromises.mkdir(NodePath.dirname(failureFile), { recursive: true });
+  await NodeFSPromises.writeFile(
     failureFile,
     `${JSON.stringify({
       message: error instanceof Error ? error.message : String(error),

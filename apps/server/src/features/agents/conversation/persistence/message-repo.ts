@@ -3,7 +3,7 @@
  * Provides creation and retrieval operations for message records in SQLite.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type {
@@ -293,51 +293,37 @@ export class MessageRepo {
     messageId?: string,
     selectedTextComments?: SelectedTextComment[],
   ): Message {
-    const id = messageId ?? randomUUID();
+    const id = messageId ?? NodeCrypto.randomUUID();
     const now = new Date().toISOString();
-    const attachmentsJson =
-      attachments && attachments.length > 0
-        ? JSON.stringify(attachments)
-        : null;
-    const mentionsJson =
-      mentions && mentions.length > 0
-        ? JSON.stringify(mentions)
-        : null;
+    const attachmentsJson = this.serializeNonEmptyArray(attachments);
+    const mentionsJson = this.serializeNonEmptyArray(mentions);
     const previewAnnotationsJson = serializePreviewAnnotations(previewAnnotations);
     const selectedTextCommentsJson = serializeSelectedTextComments(selectedTextComments);
     const modelValue = model ?? null;
     const isInternalValue = isInternal ? 1 : 0;
-    const sourceThreadId = origin.type === "thread" ? origin.sourceThreadId : null;
-    const sourceTurnId = origin.type === "thread" ? origin.sourceTurnId : null;
-    const sourceProviderId = origin.type === "thread" ? origin.sourceProviderId : null;
+    const source = this.messageSource(origin);
 
     this.getCreateStatement().run(
         id, threadId, role, content, now, sequence,
-        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, origin.type, sourceThreadId, sourceTurnId, sourceProviderId, isInternalValue, selectedTextCommentsJson,
+        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, origin.type, source.threadId, source.turnId, source.providerId, isInternalValue, selectedTextCommentsJson,
       );
 
-    return {
+    return this.createdMessage({
       id,
-      thread_id: threadId,
+      threadId,
       role,
       content,
-      tool_calls: null,
-      files_changed: null,
-      cost_usd: null,
-      tokens_used: null,
-      timestamp: now,
       sequence,
-      attachments: attachments ?? null,
-      previewAnnotations: previewAnnotations ?? null,
-      mentions: mentions ?? null,
-      selectedTextComments: selectedTextComments ?? null,
-      reply_to_message_id: replyToMessageId ?? null,
-      quoted_text: quotedText ?? null,
+      timestamp: now,
+      attachments,
+      previewAnnotations,
+      mentions,
+      selectedTextComments,
+      replyToMessageId,
+      quotedText,
       model: modelValue,
-      is_internal: isInternal ?? false,
-      outcome: null,
-      outcomeExecutionId: null,
-    };
+      isInternal,
+    });
   }
 
   /**
@@ -370,14 +356,8 @@ export class MessageRepo {
     const now = new Date().toISOString();
     const modelValue = input.model ?? null;
     const providerValue = input.provider ?? null;
-    const attachmentsJson =
-      input.attachments && input.attachments.length > 0
-        ? JSON.stringify(input.attachments)
-        : null;
-    const mentionsJson =
-      input.mentions && input.mentions.length > 0
-        ? JSON.stringify(input.mentions)
-        : null;
+    const attachmentsJson = this.serializeNonEmptyArray(input.attachments);
+    const mentionsJson = this.serializeNonEmptyArray(input.mentions);
 
     const result = this.getCreateAssistantStatement().run(
       input.id,
@@ -392,32 +372,87 @@ export class MessageRepo {
       input.isInternal ? 1 : 0,
     );
 
-    const attachments =
-      result.changes === 0 && input.attachments && input.attachments.length > 0
-        ? this.appendAttachments(input.id, input.attachments)
-        : (input.attachments ?? null);
+    const attachments = this.assistantAttachments(result, input.id, input.attachments);
+    return this.createdMessage({
+      id: input.id,
+      threadId: input.threadId,
+      role: "assistant",
+      content: input.content,
+      sequence: input.sequence,
+      timestamp: now,
+      attachments,
+      mentions: input.mentions,
+      model: modelValue,
+      isInternal: input.isInternal,
+    });
+  }
 
+  private serializeNonEmptyArray<T>(value: readonly T[] | undefined): string | null {
+    return value && value.length > 0 ? JSON.stringify(value) : null;
+  }
+
+  private messageSource(origin: MessageOriginInput): {
+    threadId: string | null;
+    turnId: string | null;
+    providerId: string | null;
+  } {
+    if (origin.type !== "thread") return { threadId: null, turnId: null, providerId: null };
+    return {
+      threadId: origin.sourceThreadId,
+      turnId: origin.sourceTurnId,
+      providerId: origin.sourceProviderId,
+    };
+  }
+
+  private createdMessage(input: {
+    id: string;
+    threadId: string;
+    role: MessageRole;
+    content: string;
+    sequence: number;
+    timestamp: string;
+    attachments?: StoredAttachment[] | null;
+    previewAnnotations?: PreviewAnnotationBundle | null;
+    mentions?: MessageMention[] | null;
+    selectedTextComments?: SelectedTextComment[] | null;
+    replyToMessageId?: string;
+    quotedText?: string;
+    model?: string | null;
+    isInternal?: boolean;
+  }): Message {
     return {
       id: input.id,
       thread_id: input.threadId,
-      role: "assistant",
+      role: input.role,
       content: input.content,
       tool_calls: null,
       files_changed: null,
       cost_usd: null,
       tokens_used: null,
-      timestamp: now,
+      timestamp: input.timestamp,
       sequence: input.sequence,
-      attachments,
+      attachments: input.attachments ?? null,
+      previewAnnotations: input.previewAnnotations ?? null,
       mentions: input.mentions ?? null,
-      selectedTextComments: null,
-      reply_to_message_id: null,
-      quoted_text: null,
-      model: modelValue,
+      selectedTextComments: input.selectedTextComments ?? null,
+      reply_to_message_id: input.replyToMessageId ?? null,
+      quoted_text: input.quotedText ?? null,
+      model: input.model ?? null,
       is_internal: input.isInternal ?? false,
       outcome: null,
       outcomeExecutionId: null,
     };
+  }
+
+  private assistantAttachments(
+    result: Database.RunResult,
+    messageId: string,
+    attachments: StoredAttachment[] | undefined,
+  ): StoredAttachment[] | null {
+    if (result.changes === 0 && attachments && attachments.length > 0) {
+      return this.appendAttachments(messageId, attachments);
+    }
+    return attachments ?? null;
   }
 
   /** Persist a terminal outcome after the turn finalizer proves the turn ended. */
@@ -663,12 +698,8 @@ ORDER BY m.sequence ASC`,
     maxSequence: number,
     options: BudgetedThreadMessageOptions,
   ): BudgetedThreadMessages {
-    const budgetBytes = clampPositiveInt(options.maxBytes, 1, Number.MAX_SAFE_INTEGER);
-    const pageSize = clampPositiveInt(options.pageSize ?? DEFAULT_HISTORY_PAGE_SIZE, DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE);
-    const maxRows = clampPositiveInt(options.maxRows ?? DEFAULT_HISTORY_MAX_ROWS, DEFAULT_HISTORY_MAX_ROWS, MAX_HISTORY_MAX_ROWS);
-    const includeInternal = options.includeInternal === true;
-    const internalClause = includeInternal ? "" : "AND m.is_internal = 0";
-    const countInternalClause = includeInternal ? "" : "AND is_internal = 0";
+    const { budgetBytes, pageSize, maxRows, internalClause, countInternalClause } =
+      this.budgetedHistoryOptions(options);
 
     const pageStmt = this.db.prepare(
       `SELECT
@@ -780,6 +811,31 @@ LIMIT ?`,
         omittedBeforeCount,
         truncatedMessages,
       },
+    };
+  }
+
+  private budgetedHistoryOptions(options: BudgetedThreadMessageOptions): {
+    budgetBytes: number;
+    pageSize: number;
+    maxRows: number;
+    internalClause: string;
+    countInternalClause: string;
+  } {
+    const includeInternal = options.includeInternal === true;
+    return {
+      budgetBytes: clampPositiveInt(options.maxBytes, 1, Number.MAX_SAFE_INTEGER),
+      pageSize: clampPositiveInt(
+        options.pageSize ?? DEFAULT_HISTORY_PAGE_SIZE,
+        DEFAULT_HISTORY_PAGE_SIZE,
+        MAX_HISTORY_PAGE_SIZE,
+      ),
+      maxRows: clampPositiveInt(
+        options.maxRows ?? DEFAULT_HISTORY_MAX_ROWS,
+        DEFAULT_HISTORY_MAX_ROWS,
+        MAX_HISTORY_MAX_ROWS,
+      ),
+      internalClause: includeInternal ? "" : "AND m.is_internal = 0",
+      countInternalClause: includeInternal ? "" : "AND is_internal = 0",
     };
   }
 

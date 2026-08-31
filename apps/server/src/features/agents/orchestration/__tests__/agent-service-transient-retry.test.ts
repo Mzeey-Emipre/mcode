@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
@@ -8,7 +8,6 @@ import { publishParentProviderEvent } from "../../events/provider-event-publicat
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
@@ -19,7 +18,6 @@ import type { ToolCallRecordRepo } from "../../tools/persistence/tool-call-recor
 import type { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
-import type { TaskRepo } from "../persistence/task-repo.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
@@ -74,13 +72,13 @@ function buildService(): {
   discardSession: ReturnType<typeof vi.fn>;
   waitForSessionExit: ReturnType<typeof vi.fn>;
   threadControlMcp: { activate: ReturnType<typeof vi.fn> };
-  providerEmitter: EventEmitter;
+  providerEmitter: NodeEvents.EventEmitter;
   messageRepo: MessageRepo;
   mutationReservations: ThreadControlMutationReservationService;
   threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
-  const providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+  const providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
     id: "claude" as const,
   }));
   const sendTurn = vi.fn(() => Promise.resolve());
@@ -167,7 +165,6 @@ function buildService(): {
     assertCanStartTurn: vi.fn(),
     onPressureChange: vi.fn(),
   } as unknown as MemoryPressureService;
-  const taskRepo = { get: vi.fn(() => []), upsert: vi.fn() } as unknown as TaskRepo;
   const settingsService = {
     get: vi.fn(() => ({
       model: { defaults: { fallbackId: undefined } },

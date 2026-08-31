@@ -8,9 +8,9 @@ import { HookExecutionRecordSchema } from "./hook-execution.js";
 /** Persisted narrative records grouped under one assistant message. */
 export const ConversationNarrativeBatchSchema = lazySchema(() =>
   z.object({
-    tools: z.array(ToolCallRecordSchema),
-    thoughts: z.array(ThoughtSegmentRecordSchema),
-    hooks: z.array(HookExecutionRecordSchema),
+    tools: z.array(ToolCallRecordSchema()),
+    thoughts: z.array(ThoughtSegmentRecordSchema()),
+    hooks: z.array(HookExecutionRecordSchema()),
   }),
 );
 

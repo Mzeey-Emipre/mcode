@@ -15,6 +15,7 @@ import { SideBySideDiff } from "./SideBySideDiff";
 import { DiffPreview } from "./DiffPreview";
 import { FileActionBar } from "./FileActionBar";
 import { DiffStat } from "./DiffStat";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Props for FileEntry. */
 interface FileEntryProps {
@@ -66,13 +67,17 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
  * Diff is loaded lazily on the first expand, or immediately for auto-opened views.
  * Large diffs (>200 lines) are truncated with a "Show all N lines" button.
  */
-export const FileEntry = memo(function FileEntry({
+export const FileEntry = memo(function FileEntry(props: FileEntryProps) {
+  const entryKey = `${props.threadId}:${props.source}:${props.id}:${props.filePath}:${props.cacheVersion ?? 0}`;
+  return <FileEntryContent key={entryKey} {...props} />;
+});
+
+function FileEntryContent({
   filePath,
   source,
   id,
   threadId,
   defaultExpanded: defaultExpandedProp = false,
-  cacheVersion = 0,
   jumpToken,
   onJumpSettled,
   highlightToken,
@@ -109,27 +114,16 @@ export const FileEntry = memo(function FileEntry({
   // last nonce we applied so we react only to new commands, never on mount.
   const appliedBulkRef = useRef(bulkDiffExpand?.nonce);
 
-  // Reset local state when the cache identity changes so a reused component
-  // instance doesn't show stale content from a previous identity.
-  useEffect(() => {
-    const cached = useDiffStore.getState().inlineDiffCache[cacheKey];
-    setDiffState(cached !== undefined ? { loading: false, data: cached } : null);
-    setShowAllLines(false);
-    setPreviewMode(false);
-    loadStartedRef.current = false;
-  }, [cacheKey, cacheVersion]);
-
-  useEffect(() => {
-    if (defaultExpandedProp) setExpanded(true);
-  }, [cacheKey, cacheVersion, defaultExpandedProp]);
-
   // Apply a bulk expand/collapse command once per nonce.
   useEffect(() => {
     if (!bulkDiffExpand || appliedBulkRef.current === bulkDiffExpand.nonce) return;
     appliedBulkRef.current = bulkDiffExpand.nonce;
+    // oxlint-disable-next-line react/set-state-in-effect -- The global bulk command is external state that virtualized rows must apply after they mount.
     setExpanded(bulkDiffExpand.expand);
     if (!bulkDiffExpand.expand) {
+      // oxlint-disable-next-line react/set-state-in-effect -- The same external collapse command must clear row-only display state.
       setShowAllLines(false);
+      // oxlint-disable-next-line react/set-state-in-effect -- The same external collapse command must clear row-only display state.
       setPreviewMode(false);
     }
   }, [bulkDiffExpand]);
@@ -142,6 +136,7 @@ export const FileEntry = memo(function FileEntry({
   useEffect(() => {
     if (jumpToken === undefined) return;
     // Expand first, but defer the scroll until the diff has loaded and laid out.
+    // oxlint-disable-next-line react/set-state-in-effect -- A parent-owned jump request must mount this virtualized row before the scroll can target it.
     setExpanded(true);
     // Scrolling before the async diff loads measures the file at its pre-load
     // (short) height, which lands a file near the bottom of the list at the
@@ -174,6 +169,7 @@ export const FileEntry = memo(function FileEntry({
 
   useEffect(() => {
     if (highlightToken === undefined) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- The timeout synchronizes the transient jump highlight with wall-clock time.
     setJumpHighlight(true);
     const timeout = setTimeout(() => setJumpHighlight(false), 1500);
     return () => clearTimeout(timeout);
@@ -189,19 +185,13 @@ export const FileEntry = memo(function FileEntry({
     };
   }, [filePath]);
 
-  // Load diff lazily on first expand. Reads the cache at effect time so a reused
-  // row with a new comparison id does not miss its fresh load.
+  // Load a diff lazily on first expand. The keyed row starts from the matching
+  // cache snapshot, so this request only starts when that snapshot is absent.
   useEffect(() => {
-    if (!expanded || loadStartedRef.current) return;
-    const cached = useDiffStore.getState().inlineDiffCache[cacheKey];
-    if (cached !== undefined) {
-      setDiffState({ loading: false, data: cached });
-      return;
-    }
+    if (!expanded || diffState !== null || loadStartedRef.current) return;
     loadStartedRef.current = true;
 
     let cancelled = false;
-    setDiffState({ loading: true });
 
     const load = async () => {
       try {
@@ -221,7 +211,7 @@ export const FileEntry = memo(function FileEntry({
       cancelled = true;
       loadStartedRef.current = false;
     };
-  }, [expanded, source, id, filePath, threadId, cacheKey, cacheVersion]);
+  }, [diffState, expanded, filePath, id, source, threadId]);
 
   const lines = useMemo(
     () =>
@@ -290,6 +280,16 @@ export const FileEntry = memo(function FileEntry({
     };
   }, [lines, isLargeDiff, showAllLines]);
 
+  const toggleExpanded = () => {
+    setExpanded((prev) => {
+      if (prev) {
+        setShowAllLines(false);
+        setPreviewMode(false);
+      }
+      return !prev;
+    });
+  };
+
   return (
     <div
       ref={rowRef}
@@ -301,42 +301,110 @@ export const FileEntry = memo(function FileEntry({
         jumpHighlight && "animate-flash-highlight",
       )}
     >
-      {/* Flat file header bar (no card): path on the left, stat + actions on
-          the right. Sticks below the FileList jump bar while its diff scrolls.
-          Opaque so scrolling code never ghosts through the stuck bar. */}
-      <div
-        data-jump-highlight={jumpHighlight ? "true" : undefined}
-        className={cn(
-          "sticky top-10 z-10 flex items-center gap-1",
-          // Bottom border separates the bar from its diff body and reads as a
-          // clean cut while the bar sticks; the list gap handles section
-          // separation, so a top border would just double up.
-          "border-b border-border/30 bg-muted",
-          "data-[jump-highlight=true]:bg-primary/10",
-        )}
-      >
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={expanded ? contentId : undefined}
-          onClick={() => {
-            setExpanded((prev) => {
-              if (prev) {
-                setShowAllLines(false);
-                setPreviewMode(false);
-              }
-              return !prev;
-            });
-          }}
-          className={cn(
-            "group flex min-h-9 min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition-colors",
-            // Hover/focus tint via a foreground overlay, not a muted tint: a
-            // muted/xx layer over the opaque muted bar resolves back to muted
-            // (no visible change). Inset focus ring for keyboard navigation.
-            "hover:bg-foreground/[0.05]",
-            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring/55",
-          )}
-          title={filePath}
+      <FileEntryHeader
+        contentId={contentId}
+        filePath={filePath}
+        expanded={expanded}
+        jumpHighlight={jumpHighlight}
+        parentPath={parentPath}
+        basename={basename}
+        isLoaded={isLoaded}
+        additions={stats.additions}
+        deletions={stats.deletions}
+        absolutePath={absolutePath}
+        absoluteDir={absoluteDir}
+        openAtLine={openAtLine}
+        isMarkdown={isMarkdown}
+        previewMode={previewMode}
+        onToggleExpanded={toggleExpanded}
+        onTogglePreview={() => setPreviewMode((preview) => !preview)}
+      />
+      {expanded ? (
+        <FileEntryDiffBody
+          contentId={contentId}
+          isLoaded={isLoaded}
+          previewMode={previewMode}
+          isMarkdown={isMarkdown}
+          lines={lines}
+          renderMode={renderMode}
+          isModeSwap={isModeSwap}
+          visibleLines={visibleLines}
+          filePath={filePath}
+          language={language}
+          leadingHiddenLines={leadingHiddenLines}
+          hiddenLineCount={hiddenLineCount}
+          onShowAllLines={() => setShowAllLines(true)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** Props for a file entry's sticky header. */
+interface FileEntryHeaderProps {
+  contentId: string;
+  filePath: string;
+  expanded: boolean;
+  jumpHighlight: boolean;
+  parentPath: string;
+  basename: string;
+  isLoaded: boolean;
+  additions: number;
+  deletions: number;
+  absolutePath?: string;
+  absoluteDir?: string;
+  openAtLine?: number;
+  isMarkdown: boolean;
+  previewMode: boolean;
+  onToggleExpanded: () => void;
+  onTogglePreview: () => void;
+}
+
+/** Renders a file entry's sticky file header and actions. */
+function FileEntryHeader({
+  contentId,
+  filePath,
+  expanded,
+  jumpHighlight,
+  parentPath,
+  basename,
+  isLoaded,
+  additions,
+  deletions,
+  absolutePath,
+  absoluteDir,
+  openAtLine,
+  isMarkdown,
+  previewMode,
+  onToggleExpanded,
+  onTogglePreview,
+}: FileEntryHeaderProps) {
+  const hasChanges = additions > 0 || deletions > 0;
+
+  return (
+    <div
+      data-jump-highlight={jumpHighlight ? "true" : undefined}
+      className={cn(
+        "sticky top-10 z-10 flex items-center gap-1",
+        "border-b border-border/30 bg-muted",
+        "data-[jump-highlight=true]:bg-primary/10",
+      )}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-controls={expanded ? contentId : undefined}
+              onClick={onToggleExpanded}
+              className={cn(
+                "group flex min-h-9 min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition-colors",
+                "hover:bg-foreground/[0.05]",
+                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring/55",
+              )}
+            />
+          }
         >
           <ChevronRight
             aria-hidden="true"
@@ -346,108 +414,186 @@ export const FileEntry = memo(function FileEntry({
               expanded && "rotate-90",
             )}
           />
-
           <FileTypeIcon filePath={filePath} size={16} />
-
-          {/* Full path: dimmed parent, emphasized basename — self-describing
-              now that the list is flat (no folder headers). Truncates gracefully
-              across the panel's whole width range (384px floor → wide): the
-              parent dir absorbs the deficit first (shrink-[100]) so the basename
-              stays fully visible, and only ellipsizes in the extreme case of a
-              very long name on a very narrow panel. Neither side hard-clips. */}
           <span className="flex min-w-0 flex-1 items-baseline gap-0.5 overflow-hidden font-mono text-xs">
-            {parentPath && (
-              <span className="min-w-0 shrink-[100] truncate text-muted-foreground">
-                {parentPath}
-              </span>
-            )}
+            {parentPath ? (
+              <span className="min-w-0 shrink-[100] truncate text-muted-foreground">{parentPath}</span>
+            ) : null}
             <span className="min-w-0 truncate font-medium text-foreground/90">{basename}</span>
           </span>
+          {isLoaded && hasChanges ? <DiffStat additions={additions} deletions={deletions} /> : null}
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">{filePath}</TooltipContent>
+      </Tooltip>
+      {expanded ? (
+        <FileActionBar
+          filePath={filePath}
+          absolutePath={absolutePath}
+          absoluteDir={absoluteDir}
+          openAtLine={openAtLine}
+          isMarkdown={isMarkdown}
+          previewMode={previewMode}
+          onTogglePreview={onTogglePreview}
+        />
+      ) : null}
+    </div>
+  );
+}
 
-          {isLoaded && (stats.additions > 0 || stats.deletions > 0) && (
-            <DiffStat additions={stats.additions} deletions={stats.deletions} />
-          )}
-        </button>
+/** Props for a file entry's expandable diff body. */
+interface FileEntryDiffBodyProps {
+  contentId: string;
+  isLoaded: boolean;
+  previewMode: boolean;
+  isMarkdown: boolean;
+  lines: ReturnType<typeof parseDiffLines>;
+  renderMode: "unified" | "side-by-side";
+  isModeSwap: boolean;
+  visibleLines: ReturnType<typeof parseDiffLines>;
+  filePath: string;
+  language: string;
+  leadingHiddenLines: number;
+  hiddenLineCount: number;
+  onShowAllLines: () => void;
+}
 
-        {/* Inline file actions live in the header bar, not an overlay rail.
-            Shown once the diff is open, sibling to the disclosure button so
-            the two never nest. */}
-        {expanded && (
-          <FileActionBar
-            filePath={filePath}
-            absolutePath={absolutePath}
-            absoluteDir={absoluteDir}
-            openAtLine={openAtLine}
-            isMarkdown={isMarkdown}
-            previewMode={previewMode}
-            onTogglePreview={() => setPreviewMode((p) => !p)}
-          />
-        )}
-      </div>
-
-      {/* Diff body — flush beneath the header bar, full width. Outer ScrollArea
-          owns vertical scroll. */}
-      {expanded && (
-        <div id={contentId} className="bg-background/40">
-          {!isLoaded ? (
-            <div className="flex items-center justify-center gap-1.5 py-3">
-              {[0, 150, 300].map((delay) => (
-                <div
-                  key={delay}
-                  className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
-                  style={{ animationDelay: `${delay}ms` }}
-                />
-              ))}
-            </div>
-          ) : previewMode && isMarkdown ? (
-            <DiffPreview lines={lines} />
-          ) : lines.length > 0 ? (
-            // Keyed by render mode so a unified<->split toggle remounts this
-            // block, replaying its settle-in; `isModeSwap` gates the class so the
-            // motion fires only on the swap, not on first expand or diff load.
+/** Renders the expanded diff, preview, loading state, or empty state. */
+function FileEntryDiffBody({
+  contentId,
+  isLoaded,
+  previewMode,
+  isMarkdown,
+  lines,
+  renderMode,
+  isModeSwap,
+  visibleLines,
+  filePath,
+  language,
+  leadingHiddenLines,
+  hiddenLineCount,
+  onShowAllLines,
+}: FileEntryDiffBodyProps) {
+  return (
+    <div id={contentId} className="bg-background/40">
+      {isLoaded ? (
+        <LoadedFileDiff
+          previewMode={previewMode}
+          isMarkdown={isMarkdown}
+          lines={lines}
+          renderMode={renderMode}
+          isModeSwap={isModeSwap}
+          visibleLines={visibleLines}
+          filePath={filePath}
+          language={language}
+          leadingHiddenLines={leadingHiddenLines}
+          hiddenLineCount={hiddenLineCount}
+          onShowAllLines={onShowAllLines}
+        />
+      ) : (
+        <div className="flex items-center justify-center gap-1.5 py-3">
+          {[0, 150, 300].map((delay) => (
             <div
-              key={renderMode}
-              className={cn(isModeSwap && "animate-diff-mode-swap")}
-            >
-              {renderMode === "unified" ? (
-                <UnifiedDiff
-                  lines={visibleLines}
-                  filePath={filePath}
-                  language={language}
-                  skipLeadingHunkSeparator={leadingHiddenLines > 0}
-                />
-              ) : (
-                <SideBySideDiff
-                  lines={visibleLines}
-                  filePath={filePath}
-                  language={language}
-                  skipLeadingHunkSeparator={leadingHiddenLines > 0}
-                />
-              )}
-
-              {/* Large diff expansion button */}
-              {hiddenLineCount > 0 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setShowAllLines(true)}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-none bg-muted/25 py-2 text-[10px] text-muted-foreground/70 hover:bg-muted/40 hover:text-foreground/70"
-                >
-                  <ChevronsDownUp size={11} />
-                  Show {hiddenLineCount} more lines
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center justify-center py-4">
-              <p className="text-[10px] text-muted-foreground">No changes</p>
-            </div>
-          )}
+              key={delay}
+              className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse"
+              style={{ animationDelay: `${delay}ms` }}
+            />
+          ))}
         </div>
       )}
     </div>
   );
-});
+}
+
+/** Props for an already loaded file diff. */
+type LoadedFileDiffProps = Omit<FileEntryDiffBodyProps, "contentId" | "isLoaded">;
+
+/** Renders preview, populated diff, or empty state after a file diff loads. */
+function LoadedFileDiff({
+  previewMode,
+  isMarkdown,
+  lines,
+  renderMode,
+  isModeSwap,
+  visibleLines,
+  filePath,
+  language,
+  leadingHiddenLines,
+  hiddenLineCount,
+  onShowAllLines,
+}: LoadedFileDiffProps) {
+  if (previewMode && isMarkdown) return <DiffPreview lines={lines} />;
+  if (lines.length === 0) return <EmptyDiffState />;
+
+  return (
+    <div key={renderMode} className={cn(isModeSwap && "animate-diff-mode-swap")}>
+      <FileDiffRenderer
+        renderMode={renderMode}
+        lines={visibleLines}
+        filePath={filePath}
+        language={language}
+        skipLeadingHunkSeparator={leadingHiddenLines > 0}
+      />
+      {hiddenLineCount > 0 ? (
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onShowAllLines}
+          className="flex w-full items-center justify-center gap-1.5 rounded-none bg-muted/25 py-2 text-[10px] text-muted-foreground/70 hover:bg-muted/40 hover:text-foreground/70"
+        >
+          <ChevronsDownUp size={11} />
+          Show {hiddenLineCount} more lines
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Props for the selected inline diff renderer. */
+interface FileDiffRendererProps {
+  renderMode: "unified" | "side-by-side";
+  lines: ReturnType<typeof parseDiffLines>;
+  filePath: string;
+  language: string;
+  skipLeadingHunkSeparator: boolean;
+}
+
+/** Selects the unified or split renderer for a loaded file diff. */
+function FileDiffRenderer({
+  renderMode,
+  lines,
+  filePath,
+  language,
+  skipLeadingHunkSeparator,
+}: FileDiffRendererProps) {
+  if (renderMode === "unified") {
+    return (
+      <UnifiedDiff
+        lines={lines}
+        filePath={filePath}
+        language={language}
+        skipLeadingHunkSeparator={skipLeadingHunkSeparator}
+      />
+    );
+  }
+
+  return (
+    <SideBySideDiff
+      lines={lines}
+      filePath={filePath}
+      language={language}
+      skipLeadingHunkSeparator={skipLeadingHunkSeparator}
+    />
+  );
+}
+
+/** Renders the empty loaded-diff state. */
+function EmptyDiffState() {
+  return (
+    <div className="flex items-center justify-center py-4">
+      <p className="text-[10px] text-muted-foreground">No changes</p>
+    </div>
+  );
+}
 
 /**
  * Tiny path joiner that picks the right separator without dragging in node:path.

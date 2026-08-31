@@ -3,7 +3,7 @@ import { MessageMentionSchema } from "../mention.js";
 
 describe("MessageMentionSchema", () => {
   it("preserves selected slash-command namespace metadata", () => {
-    const result = MessageMentionSchema.safeParse({
+    const result = MessageMentionSchema().safeParse({
       id: "command:plugin:figma:use",
       kind: "command",
       label: "figma:use",
@@ -23,7 +23,7 @@ describe("MessageMentionSchema", () => {
   });
 
   it("rejects unknown command namespaces", () => {
-    const result = MessageMentionSchema.safeParse({
+    const result = MessageMentionSchema().safeParse({
       id: "command:unknown:deploy",
       kind: "command",
       label: "deploy",
@@ -35,7 +35,7 @@ describe("MessageMentionSchema", () => {
   });
 
   it("preserves a Codex plugin mention target", () => {
-    const result = MessageMentionSchema.safeParse({
+    const result = MessageMentionSchema().safeParse({
       id: "mention-plugin-1",
       kind: "plugin",
       label: "Browser",
@@ -48,7 +48,7 @@ describe("MessageMentionSchema", () => {
   });
 
   it("rejects plugin mentions without Codex's plugin URI", () => {
-    const result = MessageMentionSchema.safeParse({
+    const result = MessageMentionSchema().safeParse({
       id: "mention-plugin-1",
       kind: "plugin",
       label: "Browser",

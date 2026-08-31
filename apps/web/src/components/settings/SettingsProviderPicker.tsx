@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import { tokenizeSearch, matchesAllTokens } from "@/lib/searchTokens";
 import { Button } from "@/components/ui/button";
@@ -69,9 +69,10 @@ export function SettingsProviderPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    if (!open) setQuery("");
-  }, [open]);
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen) setQuery("");
+  };
 
   const selected = useMemo(
     () =>
@@ -86,7 +87,7 @@ export function SettingsProviderPicker({
   }, [options, query]);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
         render={
           <Button
@@ -133,7 +134,7 @@ export function SettingsProviderPicker({
                   onSelect={() => {
                     if (opt.disabled) return;
                     onChange(opt.value);
-                    setOpen(false);
+                    handleOpenChange(false);
                   }}
                   className="text-xs"
                 >

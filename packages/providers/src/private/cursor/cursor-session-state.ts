@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import type * as NodeChildProcess from "node:child_process";
 import type { ClientSideConnection } from "@agentclientprotocol/sdk";
 import type {
   ProviderBrowserCredentialMetadata,
@@ -22,7 +22,7 @@ export type CursorBrowserLeaseHandle = ProviderBrowserLeaseHandle;
 export interface CursorAcpSessionEntry {
   mcodeSessionId: string;
   threadId: string;
-  child: ChildProcess;
+  child: NodeChildProcess.ChildProcess;
   connection: ClientSideConnection;
   acpRuntime: AcpSessionRuntime;
   acpSessionId: string;

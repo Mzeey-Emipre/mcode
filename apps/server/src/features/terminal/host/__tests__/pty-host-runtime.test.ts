@@ -7,6 +7,7 @@ import {
 } from "../pty-host-runtime.js";
 
 const SESSION_ID = "abcdef12-abcd-4abc-8abc-abcdefabcdef";
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64" } as const;
 
 class FakePty implements IPty {
   readonly pid = 123;
@@ -72,6 +73,7 @@ describe("PtyHostProcessRuntime", () => {
     const events: PtyHostEvent[] = [];
     const runtime = new PtyHostProcessRuntime({
       platform: "windows",
+      hostRuntime: TEST_HOST_RUNTIME,
       nativeAbi: "fake-v1",
       publish: (event) => events.push(event),
       spawnPty: vi.fn(() => pty),
@@ -164,6 +166,7 @@ describe("PtyHostProcessRuntime", () => {
     const events: PtyHostEvent[] = [];
     const runtime = new PtyHostProcessRuntime({
       platform: "windows",
+      hostRuntime: TEST_HOST_RUNTIME,
       nativeAbi: "fake-v1",
       publish: (event) => events.push(event),
       spawnPty: () => pty,

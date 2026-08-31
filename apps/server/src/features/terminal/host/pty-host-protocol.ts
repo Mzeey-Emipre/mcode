@@ -1,4 +1,4 @@
-import { Buffer } from "node:buffer";
+import * as NodeBuffer from "node:buffer";
 import { z } from "zod";
 import {
   TERMINAL_CONTRACT_VERSION,
@@ -39,14 +39,14 @@ const envSchema = z
     }).strict(),
   )
   .max(256)
-  .refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= 65_536, "env exceeds 64 KiB");
+  .refine((value) => NodeBuffer.Buffer.byteLength(JSON.stringify(value), "utf8") <= 65_536, "env exceeds 64 KiB");
 const dataBase64Schema = z
   .string()
   .min(4)
   .max(87_384)
   .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
   .refine((value) => {
-    const decoded = Buffer.from(value, "base64");
+    const decoded = NodeBuffer.Buffer.from(value, "base64");
     return decoded.length >= 1 && decoded.length <= PTY_HOST_MAX_DATA_BYTES && decoded.toString("base64") === value;
   }, "base64 payload exceeds 64 KiB or is noncanonical");
 const nativeAbi = z.string().regex(/^[A-Za-z0-9._-]{1,64}$/);
@@ -54,7 +54,7 @@ const processGroupId = z.string().min(1).max(128);
 const closeReason = z.enum(["user", "scope-reset", "workspace-delete", "app-shutdown"]);
 const exitReason = z.enum(["natural", "user-close", "host-crash", "containment-failure", "protocol-failure"]);
 const messageSize = <T extends z.ZodTypeAny>(schema: T): z.ZodEffects<T> =>
-  schema.refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= PTY_HOST_MAX_MESSAGE_BYTES, "PTY host message exceeds 128 KiB");
+  schema.refine((value) => NodeBuffer.Buffer.byteLength(JSON.stringify(value), "utf8") <= PTY_HOST_MAX_MESSAGE_BYTES, "PTY host message exceeds 128 KiB");
 
 /** Strict server-to-PTY-host protocol schema. */
 export const PtyHostServerMessageSchema = lazySchema(() => messageSize(z.discriminatedUnion("kind", [

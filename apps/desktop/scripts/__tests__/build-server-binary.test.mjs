@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, writeFile, readFile, mkdir, rm, stat } from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { buildServerBinary, resolveBinaryPaths } from "../desktop-packaging/target-package/build-server-binary.mjs";
 
 // ---------------------------------------------------------------------------
@@ -61,9 +61,9 @@ describe("resolveBinaryPaths", () => {
       electronPlatformName: "win32",
       productFilename: "Mcode",
     });
-    expect(result.srcBinary).toBe(path.join("C:\\dist\\win-unpacked", "Mcode.exe"));
+    expect(result.srcBinary).toBe(NodePath.join("C:\\dist\\win-unpacked", "Mcode.exe"));
     expect(result.dstBinary).toBe(
-      path.join("C:\\dist\\win-unpacked", "resources", "bin", "mcode-server.exe"),
+      NodePath.join("C:\\dist\\win-unpacked", "resources", "bin", "mcode-server.exe"),
     );
   });
 
@@ -73,9 +73,9 @@ describe("resolveBinaryPaths", () => {
       electronPlatformName: "darwin",
       productFilename: "MCode",
     });
-    expect(result.srcBinary).toBe(path.join("/dist/mac", "MCode.app", "Contents", "MacOS", "MCode"));
+    expect(result.srcBinary).toBe(NodePath.join("/dist/mac", "MCode.app", "Contents", "MacOS", "MCode"));
     expect(result.dstBinary).toBe(
-      path.join("/dist/mac", "MCode.app", "Contents", "Resources", "bin", "mcode-server"),
+      NodePath.join("/dist/mac", "MCode.app", "Contents", "Resources", "bin", "mcode-server"),
     );
   });
 
@@ -85,9 +85,9 @@ describe("resolveBinaryPaths", () => {
       electronPlatformName: "mas",
       productFilename: "MCode",
     });
-    expect(result.srcBinary).toBe(path.join("/dist/mas", "MCode.app", "Contents", "MacOS", "MCode"));
+    expect(result.srcBinary).toBe(NodePath.join("/dist/mas", "MCode.app", "Contents", "MacOS", "MCode"));
     expect(result.dstBinary).toBe(
-      path.join("/dist/mas", "MCode.app", "Contents", "Resources", "bin", "mcode-server"),
+      NodePath.join("/dist/mas", "MCode.app", "Contents", "Resources", "bin", "mcode-server"),
     );
   });
 
@@ -117,8 +117,8 @@ describe("resolveBinaryPaths", () => {
       electronPlatformName: "linux",
       productFilename: "mcode",
     });
-    expect(result.srcBinary).toBe(path.join("/dist/linux-unpacked", "mcode"));
-    expect(result.dstBinary).toBe(path.join("/dist/linux-unpacked", "resources", "bin", "mcode-server"));
+    expect(result.srcBinary).toBe(NodePath.join("/dist/linux-unpacked", "mcode"));
+    expect(result.dstBinary).toBe(NodePath.join("/dist/linux-unpacked", "resources", "bin", "mcode-server"));
   });
 });
 
@@ -126,16 +126,16 @@ describe("buildServerBinary (copy + chmod)", () => {
   let tmpDir;
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(path.join(os.tmpdir(), "build-server-binary-"));
+    tmpDir = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "build-server-binary-"));
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await NodeFSPromises.rm(tmpDir, { recursive: true, force: true });
   });
 
   it("copies the source binary to the destination and makes it executable on Unix", async () => {
-    const srcBinary = path.join(tmpDir, "mcode");
-    await writeFile(srcBinary, "#!/usr/bin/env true\n", { mode: 0o755 });
+    const srcBinary = NodePath.join(tmpDir, "mcode");
+    await NodeFSPromises.writeFile(srcBinary, "#!/usr/bin/env true\n", { mode: 0o755 });
 
     await buildServerBinary({
       appOutDir: tmpDir,
@@ -143,20 +143,20 @@ describe("buildServerBinary (copy + chmod)", () => {
       productFilename: "mcode",
     });
 
-    const dst = path.join(tmpDir, "resources", "bin", "mcode-server");
-    const dstContents = await readFile(dst);
-    const srcContents = await readFile(srcBinary);
+    const dst = NodePath.join(tmpDir, "resources", "bin", "mcode-server");
+    const dstContents = await NodeFSPromises.readFile(dst);
+    const srcContents = await NodeFSPromises.readFile(srcBinary);
     expect(dstContents.equals(srcContents)).toBe(true);
 
     if (process.platform !== "win32") {
-      const stats = await stat(dst);
+      const stats = await NodeFSPromises.stat(dst);
       expect(stats.mode & 0o100).toBeTruthy();
     }
   });
 
   it("creates the destination directory if it does not exist", async () => {
-    const srcBinary = path.join(tmpDir, "mcode");
-    await writeFile(srcBinary, "x", { mode: 0o755 });
+    const srcBinary = NodePath.join(tmpDir, "mcode");
+    await NodeFSPromises.writeFile(srcBinary, "x", { mode: 0o755 });
 
     await buildServerBinary({
       appOutDir: tmpDir,
@@ -164,8 +164,8 @@ describe("buildServerBinary (copy + chmod)", () => {
       productFilename: "mcode",
     });
 
-    const dst = path.join(tmpDir, "resources", "bin", "mcode-server");
-    const dstStat = await stat(dst);
+    const dst = NodePath.join(tmpDir, "resources", "bin", "mcode-server");
+    const dstStat = await NodeFSPromises.stat(dst);
     expect(dstStat.isFile()).toBe(true);
   });
 });
@@ -177,7 +177,7 @@ describe("stampWindowsVersionInfo", () => {
   let tmpDir;
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(path.join(os.tmpdir(), "stamp-version-info-"));
+    tmpDir = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "stamp-version-info-"));
     // Reset all mock call counts before each test
     const { __mocks, NtExecutable, NtExecutableResource, Resource } = await import("resedit");
     vi.clearAllMocks();
@@ -189,7 +189,7 @@ describe("stampWindowsVersionInfo", () => {
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await NodeFSPromises.rm(tmpDir, { recursive: true, force: true });
   });
 
   it("reads the exe file, stamps VERSIONINFO, and writes it back", async () => {
@@ -201,8 +201,8 @@ describe("stampWindowsVersionInfo", () => {
       Resource,
     } = await import("resedit");
 
-    const exePath = path.join(tmpDir, "mcode-server.exe");
-    await writeFile(exePath, Buffer.from([0x4d, 0x5a])); // minimal PE stub bytes
+    const exePath = NodePath.join(tmpDir, "mcode-server.exe");
+    await NodeFSPromises.writeFile(exePath, Buffer.from([0x4d, 0x5a])); // minimal PE stub bytes
 
     await stampWindowsVersionInfo(exePath, {
       fileDescription: "Mcode Server",
@@ -241,7 +241,7 @@ describe("stampWindowsVersionInfo", () => {
     expect(exeInstance.generate).toHaveBeenCalledTimes(1);
 
     // Verify the file was actually written back
-    const written = await readFile(exePath);
+    const written = await NodeFSPromises.readFile(exePath);
     expect(written.length).toBeGreaterThan(0);
   });
 
@@ -249,8 +249,8 @@ describe("stampWindowsVersionInfo", () => {
     const { stampWindowsVersionInfo } = await import("../desktop-packaging/target-package/build-server-binary.mjs");
     const { __mocks: { setStringValues } } = await import("resedit");
 
-    const exePath = path.join(tmpDir, "mcode-server.exe");
-    await writeFile(exePath, Buffer.from([0x4d, 0x5a]));
+    const exePath = NodePath.join(tmpDir, "mcode-server.exe");
+    await NodeFSPromises.writeFile(exePath, Buffer.from([0x4d, 0x5a]));
 
     await stampWindowsVersionInfo(exePath, {
       fileDescription: "Mcode Server",
@@ -271,10 +271,10 @@ describe("stampWindowsVersionInfo", () => {
     const { stampWindowsVersionInfo } = await import("../desktop-packaging/target-package/build-server-binary.mjs");
     const { __mocks: { fromEntries, replaceIconsForResource }, Data } = await import("resedit");
 
-    const exePath = path.join(tmpDir, "mcode-server.exe");
-    await writeFile(exePath, Buffer.from([0x4d, 0x5a]));
-    const iconPath = path.join(tmpDir, "icon.ico");
-    await writeFile(iconPath, Buffer.from([0x00, 0x00, 0x01, 0x00]));
+    const exePath = NodePath.join(tmpDir, "mcode-server.exe");
+    await NodeFSPromises.writeFile(exePath, Buffer.from([0x4d, 0x5a]));
+    const iconPath = NodePath.join(tmpDir, "icon.ico");
+    await NodeFSPromises.writeFile(iconPath, Buffer.from([0x00, 0x00, 0x01, 0x00]));
 
     await stampWindowsVersionInfo(exePath, {
       fileDescription: "Mcode Server",
@@ -301,8 +301,8 @@ describe("stampWindowsVersionInfo", () => {
     const { stampWindowsVersionInfo } = await import("../desktop-packaging/target-package/build-server-binary.mjs");
     const { __mocks: { replaceIconsForResource } } = await import("resedit");
 
-    const exePath = path.join(tmpDir, "mcode-server.exe");
-    await writeFile(exePath, Buffer.from([0x4d, 0x5a]));
+    const exePath = NodePath.join(tmpDir, "mcode-server.exe");
+    await NodeFSPromises.writeFile(exePath, Buffer.from([0x4d, 0x5a]));
 
     await stampWindowsVersionInfo(exePath, {
       fileDescription: "Mcode Server",
@@ -324,7 +324,7 @@ describe("buildServerBinary win32 VERSIONINFO stamping", () => {
   let tmpDir;
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(path.join(os.tmpdir(), "build-server-win32-"));
+    tmpDir = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "build-server-win32-"));
     const { __mocks, NtExecutable, NtExecutableResource, Resource } = await import("resedit");
     vi.clearAllMocks();
     NtExecutable.from.mockReturnValue(__mocks.exeInstance);
@@ -334,15 +334,15 @@ describe("buildServerBinary win32 VERSIONINFO stamping", () => {
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await NodeFSPromises.rm(tmpDir, { recursive: true, force: true });
   });
 
   it("calls stampWindowsVersionInfo when electronPlatformName is win32", async () => {
     const { __mocks: { setStringValues } } = await import("resedit");
 
     // Create a fake source .exe
-    const srcExe = path.join(tmpDir, "Mcode.exe");
-    await writeFile(srcExe, Buffer.from([0x4d, 0x5a]));
+    const srcExe = NodePath.join(tmpDir, "Mcode.exe");
+    await NodeFSPromises.writeFile(srcExe, Buffer.from([0x4d, 0x5a]));
 
     await buildServerBinary({
       appOutDir: tmpDir,
@@ -367,8 +367,8 @@ describe("buildServerBinary win32 VERSIONINFO stamping", () => {
   it("does NOT call stampWindowsVersionInfo on linux", async () => {
     const { __mocks: { setStringValues } } = await import("resedit");
 
-    const srcBinary = path.join(tmpDir, "mcode");
-    await writeFile(srcBinary, Buffer.from("ELF binary content"));
+    const srcBinary = NodePath.join(tmpDir, "mcode");
+    await NodeFSPromises.writeFile(srcBinary, Buffer.from("ELF binary content"));
 
     await buildServerBinary({
       appOutDir: tmpDir,
@@ -381,8 +381,8 @@ describe("buildServerBinary win32 VERSIONINFO stamping", () => {
   });
 
   it("throws when appVersion is missing on win32", async () => {
-    const srcExe = path.join(tmpDir, "Mcode.exe");
-    await writeFile(srcExe, Buffer.from([0x4d, 0x5a]));
+    const srcExe = NodePath.join(tmpDir, "Mcode.exe");
+    await NodeFSPromises.writeFile(srcExe, Buffer.from([0x4d, 0x5a]));
 
     await expect(
       buildServerBinary({
@@ -395,8 +395,8 @@ describe("buildServerBinary win32 VERSIONINFO stamping", () => {
   });
 
   it("throws when appVersion is not a numeric dotted quad on win32", async () => {
-    const srcExe = path.join(tmpDir, "Mcode.exe");
-    await writeFile(srcExe, Buffer.from([0x4d, 0x5a]));
+    const srcExe = NodePath.join(tmpDir, "Mcode.exe");
+    await NodeFSPromises.writeFile(srcExe, Buffer.from([0x4d, 0x5a]));
 
     await expect(
       buildServerBinary({
@@ -409,8 +409,8 @@ describe("buildServerBinary win32 VERSIONINFO stamping", () => {
   });
 
   it("throws when an appVersion segment exceeds the 16-bit max on win32", async () => {
-    const srcExe = path.join(tmpDir, "Mcode.exe");
-    await writeFile(srcExe, Buffer.from([0x4d, 0x5a]));
+    const srcExe = NodePath.join(tmpDir, "Mcode.exe");
+    await NodeFSPromises.writeFile(srcExe, Buffer.from([0x4d, 0x5a]));
 
     await expect(
       buildServerBinary({

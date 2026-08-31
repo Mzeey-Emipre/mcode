@@ -35,37 +35,48 @@ function bound(value: string | null | undefined, max: number): string | null {
   return String(value).slice(0, max);
 }
 
+function inaccessibleObservation(
+  address: string | null,
+  access: WebIframeBrowserSurfaceObservation["access"],
+): WebIframeBrowserSurfaceObservation {
+  return { address, title: null, favicon: null, access };
+}
+
+function sourceOriginDiffers(frame: HTMLIFrameElement, address: string | null): boolean {
+  if (!address) return false;
+  return new URL(address, frame.ownerDocument.location.href).origin !== frame.ownerDocument.location.origin;
+}
+
+function observedOriginDiffers(frame: HTMLIFrameElement): boolean {
+  const origin = frame.contentWindow?.location.origin;
+  return Boolean(origin && origin !== frame.ownerDocument.location.origin);
+}
+
+function observedDocumentObservation(
+  frame: HTMLIFrameElement,
+  ownerDocument: Document,
+): WebIframeBrowserSurfaceObservation {
+  const address = bound(ownerDocument.location?.href || frame.src, MAX_ADDRESS);
+  const icon = ownerDocument.querySelector<HTMLLinkElement>('link[rel~="icon"], link[rel="shortcut icon"]')?.href;
+  return {
+    address,
+    title: bound(ownerDocument.title, MAX_TITLE) || null,
+    favicon: bound(icon, MAX_FAVICON),
+    access: "same-origin",
+  };
+}
+
 function sameOriginObservation(frame: HTMLIFrameElement): WebIframeBrowserSurfaceObservation {
   const fallbackAddress = bound(frame.src, MAX_ADDRESS);
   try {
-    const sourceOrigin = fallbackAddress
-      ? new URL(fallbackAddress, frame.ownerDocument.location.href).origin
-      : null;
-    if (sourceOrigin && sourceOrigin !== frame.ownerDocument.location.origin) {
-      return { address: fallbackAddress, title: null, favicon: null, access: "cross-origin" };
-    }
-    const observedOrigin = frame.contentWindow?.location.origin;
-    if (observedOrigin && observedOrigin !== frame.ownerDocument.location.origin) {
-      return { address: fallbackAddress, title: null, favicon: null, access: "cross-origin" };
-    }
+    if (sourceOriginDiffers(frame, fallbackAddress)) return inaccessibleObservation(fallbackAddress, "cross-origin");
+    if (observedOriginDiffers(frame)) return inaccessibleObservation(fallbackAddress, "cross-origin");
     const frameDocument = frame.contentDocument;
-    if (!frameDocument) {
-      return { address: fallbackAddress, title: null, favicon: null, access: "unknown" };
-    }
-    const address = bound(frameDocument.location?.href || frame.src, MAX_ADDRESS);
-    const title = bound(frameDocument.title, MAX_TITLE);
-    const icon = frameDocument.querySelector<HTMLLinkElement>(
-      'link[rel~="icon"], link[rel="shortcut icon"]',
-    )?.href;
-    return {
-      address,
-      title: title || null,
-      favicon: bound(icon, MAX_FAVICON),
-      access: "same-origin",
-    };
+    if (!frameDocument) return inaccessibleObservation(fallbackAddress, "unknown");
+    return observedDocumentObservation(frame, frameDocument);
   } catch {
     // A cross-origin frame is observable only through the iframe element itself.
-    return { address: fallbackAddress, title: null, favicon: null, access: "cross-origin" };
+    return inaccessibleObservation(fallbackAddress, "cross-origin");
   }
 }
 
@@ -181,7 +192,7 @@ export class WebIframeBrowserSurfaceAdapter implements BrowserSurfaceAdapter {
   private emit(event: BrowserSurfaceAdapterEventPayload): void {
     if (this.disposed) return;
     const complete = { ...event, identity: this.identity, generation: this.generation } as BrowserSurfaceAdapterEvent;
-    for (const listener of [...this.listeners]) listener(complete);
+    for (const listener of this.listeners) listener(complete);
   }
 
   private readonly onLoad = (): void => {

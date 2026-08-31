@@ -147,72 +147,11 @@ function boundRecord(
   let messageBudget = maxBytes;
 
   while (true) {
-    const window = selectConversationWindow(record.messages, {
-      anchorMessageId: rememberedPosition?.anchorMessageId,
-      maxBytes: messageBudget,
-      maxMessages: RECORD_MESSAGE_CACHE_SIZE,
-      preference,
-    });
+    const window = boundedMessageWindow(record, rememberedPosition?.anchorMessageId, messageBudget, preference);
     const messages = window.messages;
-    const retainedMessageIds = new Set(messages.map((message) => message.id));
-    const windowWasTrimmed = window.evictedOlder || window.evictedNewer;
-    const withoutNarrative: ConversationCacheState = {
-      ...record,
-      messages,
-      oldestLoadedSequence: windowWasTrimmed
-        ? messages[0]?.sequence ?? record.oldestLoadedSequence
-        : record.oldestLoadedSequence,
-      newestLoadedSequence: windowWasTrimmed
-        ? messages.at(-1)?.sequence ?? record.newestLoadedSequence
-        : record.newestLoadedSequence,
-      hasMoreMessages: record.hasMoreMessages || window.evictedOlder,
-      hasNewerMessages: record.hasNewerMessages || window.evictedNewer,
-      persistedToolCallCounts: windowWasTrimmed ? filterMessageMetadata(
-        record.persistedToolCallCounts,
-        retainedMessageIds,
-      ) : record.persistedToolCallCounts,
-      persistedFilesChanged: windowWasTrimmed ? filterMessageMetadata(
-        record.persistedFilesChanged,
-        retainedMessageIds,
-      ) : record.persistedFilesChanged,
-      serverMessageIds: windowWasTrimmed
-        ? filterMessageMetadata(record.serverMessageIds, retainedMessageIds)
-        : record.serverMessageIds,
-      narrativeByMessage: {},
-      answeredPlanMessageIds: windowWasTrimmed
-        ? new Set(
-            [...record.answeredPlanMessageIds]
-              .filter((messageId) => retainedMessageIds.has(messageId)),
-          )
-        : record.answeredPlanMessageIds,
-      assistantResponseKeys: windowWasTrimmed
-        ? filterMessageMetadata(record.assistantResponseKeys, retainedMessageIds)
-        : record.assistantResponseKeys,
-      latestTurnWithChanges:
-        !windowWasTrimmed
-          || (record.latestTurnWithChanges
-            && retainedMessageIds.has(record.latestTurnWithChanges))
-          ? record.latestTurnWithChanges
-          : null,
-    };
-    const transientTextBytes = isActive ? transientTextByteSizes.get(threadId) ?? 0 : 0;
-    const narrativeBudget = isActive
-      ? Math.min(
-          CONVERSATION_NARRATIVE_BYTES,
-          Math.max(
-            0,
-            ACTIVE_CONVERSATION_BYTES - transientTextBytes - measureRecord(withoutNarrative),
-          ),
-        )
-      : CONVERSATION_NARRATIVE_BYTES;
-    const boundedRecord = {
-      ...withoutNarrative,
-      narrativeByMessage: pruneNarrative(
-        filterMessageMetadata(record.narrativeByMessage, retainedMessageIds),
-        messages,
-        narrativeBudget,
-      ),
-    };
+    const withoutNarrative = recordWithoutNarrative(record, messages, window);
+    const { narrativeBudget, transientTextBytes } = activeNarrativeBudget(threadId, withoutNarrative, isActive);
+    const boundedRecord = boundedRecordWithNarrative(record, withoutNarrative, narrativeBudget);
     const overflow = isActive
       ? measureRecord(boundedRecord) + transientTextBytes - ACTIVE_CONVERSATION_BYTES
       : 0;
@@ -388,31 +327,120 @@ export function hasPrefetchedHistoryPage(threadId: string, before: number): bool
   return entry?.before === before;
 }
 
+function boundedMessageWindow(
+  record: ConversationCacheState,
+  anchorMessageId: string | undefined,
+  messageBudget: number,
+  preference: "older" | "newer",
+) {
+  return selectConversationWindow(record.messages, {
+    anchorMessageId,
+    maxBytes: messageBudget,
+    maxMessages: RECORD_MESSAGE_CACHE_SIZE,
+    preference,
+  });
+}
+
+function trimMetadataForWindow<T>(metadata: Record<string, T>, retainedMessageIds: Set<string>, windowWasTrimmed: boolean): Record<string, T> {
+  return windowWasTrimmed ? filterMessageMetadata(metadata, retainedMessageIds) : metadata;
+}
+
+function windowMessageBounds(record: ConversationCacheState, messages: ConversationCacheState["messages"], window: ReturnType<typeof boundedMessageWindow>) {
+  const windowWasTrimmed = window.evictedOlder || window.evictedNewer;
+  return {
+    oldestLoadedSequence: windowWasTrimmed ? messages[0]?.sequence ?? record.oldestLoadedSequence : record.oldestLoadedSequence,
+    newestLoadedSequence: windowWasTrimmed ? messages.at(-1)?.sequence ?? record.newestLoadedSequence : record.newestLoadedSequence,
+    hasMoreMessages: record.hasMoreMessages || window.evictedOlder,
+    hasNewerMessages: record.hasNewerMessages || window.evictedNewer,
+    windowWasTrimmed,
+  };
+}
+
+function windowMetadata(record: ConversationCacheState, retainedMessageIds: Set<string>, windowWasTrimmed: boolean): Pick<ConversationCacheState, "persistedToolCallCounts" | "persistedFilesChanged" | "serverMessageIds" | "answeredPlanMessageIds" | "assistantResponseKeys" | "latestTurnWithChanges"> {
+  const latestTurnWithChanges = record.latestTurnWithChanges;
+  return {
+    persistedToolCallCounts: trimMetadataForWindow(record.persistedToolCallCounts, retainedMessageIds, windowWasTrimmed),
+    persistedFilesChanged: trimMetadataForWindow(record.persistedFilesChanged, retainedMessageIds, windowWasTrimmed),
+    serverMessageIds: trimMetadataForWindow(record.serverMessageIds, retainedMessageIds, windowWasTrimmed),
+    answeredPlanMessageIds: windowWasTrimmed ? new Set([...record.answeredPlanMessageIds].filter((messageId) => retainedMessageIds.has(messageId))) : record.answeredPlanMessageIds,
+    assistantResponseKeys: trimMetadataForWindow(record.assistantResponseKeys, retainedMessageIds, windowWasTrimmed),
+    latestTurnWithChanges: !windowWasTrimmed || (latestTurnWithChanges && retainedMessageIds.has(latestTurnWithChanges)) ? latestTurnWithChanges : null,
+  };
+}
+
+function recordWithoutNarrative(record: ConversationCacheState, messages: ConversationCacheState["messages"], window: ReturnType<typeof boundedMessageWindow>): ConversationCacheState {
+  const retainedMessageIds = new Set(messages.map((message) => message.id));
+  const { windowWasTrimmed, ...bounds } = windowMessageBounds(record, messages, window);
+  return {
+    ...record,
+    messages,
+    narrativeByMessage: {},
+    ...bounds,
+    ...windowMetadata(record, retainedMessageIds, windowWasTrimmed),
+  };
+}
+
+function activeNarrativeBudget(threadId: string, record: ConversationCacheState, isActive: boolean): { narrativeBudget: number; transientTextBytes: number } {
+  const transientTextBytes = isActive ? transientTextByteSizes.get(threadId) ?? 0 : 0;
+  const narrativeBudget = isActive
+    ? Math.min(CONVERSATION_NARRATIVE_BYTES, Math.max(0, ACTIVE_CONVERSATION_BYTES - transientTextBytes - measureRecord(record)))
+    : CONVERSATION_NARRATIVE_BYTES;
+  return { narrativeBudget, transientTextBytes };
+}
+
+function boundedRecordWithNarrative(
+  sourceRecord: ConversationCacheState,
+  boundedRecord: ConversationCacheState,
+  narrativeBudget: number,
+): ConversationCacheState {
+  const retainedMessageIds = new Set(boundedRecord.messages.map((message) => message.id));
+  return {
+    ...boundedRecord,
+    narrativeByMessage: pruneNarrative(
+      filterMessageMetadata(sourceRecord.narrativeByMessage, retainedMessageIds),
+      boundedRecord.messages,
+      narrativeBudget,
+    ),
+  };
+}
+
+function prefetchedPageMatchesIdentity(
+  entry: PrefetchedHistoryPage,
+  identity: ConversationOlderPageIdentity,
+): boolean {
+  if (entry.before !== identity.cursor.beforeSequence) return false;
+  if (!("identity" in entry.page)) return true;
+  const pageIdentity = entry.page.identity;
+  return pageIdentity.threadId === identity.threadId
+    && pageIdentity.cursor.beforeSequence === identity.cursor.beforeSequence
+    && pageIdentity.direction === identity.direction
+    && pageIdentity.generation === identity.generation
+    && pageIdentity.conversationRevision === identity.conversationRevision;
+}
+
+function consumedPrefetchedPage(
+  page: ConversationOlderPage | ConversationPage,
+  identity: ConversationOlderPageIdentity,
+): ConversationOlderPage {
+  return {
+    ...page,
+    identity,
+    nextCursor: page.hasMore && page.messages.length > 0
+      ? { version: 1, beforeSequence: page.messages[0].sequence }
+      : null,
+  };
+}
+
 /** Consume the warm older-history page for the requested cursor. */
 export function takePrefetchedHistoryPage(
   identity: ConversationOlderPageIdentity,
 ): ConversationOlderPage | undefined {
   const entry = prefetchedHistoryCache.get(identity.threadId);
-  if (
-    entry?.before !== identity.cursor.beforeSequence
-    || ("identity" in entry.page && (
-      entry.page.identity.threadId !== identity.threadId
-      || entry.page.identity.cursor.beforeSequence !== identity.cursor.beforeSequence
-      || entry.page.identity.direction !== identity.direction
-      || entry.page.identity.generation !== identity.generation
-      || entry.page.identity.conversationRevision !== identity.conversationRevision
-    ))
-  ) return undefined;
+  if (!entry || !prefetchedPageMatchesIdentity(entry, identity)) return undefined;
   prefetchedHistoryCache.delete(identity.threadId);
   prefetchByteSizes.delete(identity.threadId);
   prefetchNarrativeByteSizes.delete(identity.threadId);
-  return {
-    ...entry.page,
-    identity,
-    nextCursor: entry.page.hasMore && entry.page.messages.length > 0
-      ? { version: 1, beforeSequence: entry.page.messages[0].sequence }
-      : null,
-  };
+  return consumedPrefetchedPage(entry.page, identity);
 }
 
 /** Remove a single thread's cached record. No-op when absent. */

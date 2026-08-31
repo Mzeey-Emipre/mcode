@@ -371,9 +371,9 @@ export function ComposerModelPreferences({
   const state = getModelPreferenceState(selection, defaults, reasoningLevels);
   const actionProps = { threadId, branchFromMessageId, selection, defaults, onSelectionChange };
 
-  useEffect(() => {
-    if (!state.canShowPreferences) setShowPreferences(false);
-  }, [state.canShowPreferences]);
+  if (!state.canShowPreferences && showPreferences) {
+    setShowPreferences(false);
+  }
 
   useEffect(() => {
     const closePreferences = () => setShowPreferences(false);

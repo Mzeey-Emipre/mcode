@@ -5,9 +5,10 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { execFile, type ChildProcess } from "child_process";
+import * as NodeChildProcess from "node:child_process";
 import type { PrInfo, PrDetail, ChecksStatus, CheckRun } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import { killProcessTree } from "../../../runtime/process/containment/process-kill.js";
 
@@ -59,6 +60,7 @@ export class GithubService {
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
   ) {}
 
   /**
@@ -119,7 +121,7 @@ export class GithubService {
   }
 
   private trackProcess(
-    child: ChildProcess | undefined,
+    child: NodeChildProcess.ChildProcess | undefined,
     meta: { repoPath?: string | null; checkRunsKey?: string | null },
   ): TrackedGithubProcess | null {
     if (!child || typeof child.once !== "function") return null;
@@ -158,7 +160,7 @@ export class GithubService {
     await Promise.all(matches.map(async (tracked) => {
       const pid = tracked.child.pid;
       if (typeof pid === "number" && pid > 0) {
-        await killProcessTree(pid);
+        await killProcessTree(pid, { platform: this.hostRuntime.platform });
       }
       tracked.finish();
       await tracked.done;
@@ -194,7 +196,7 @@ export class GithubService {
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null> {
     return new Promise((resolve) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         ["pr", "view", branch, "--json", "number,url,state"],
         { cwd, encoding: "utf-8", timeout: 10_000, windowsHide: true },
@@ -238,7 +240,7 @@ export class GithubService {
 
     return new Promise((resolve) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         [
           "pr",
@@ -251,39 +253,7 @@ export class GithubService {
         { cwd: workspace.path, encoding: "utf-8", timeout: 15_000, windowsHide: true },
         (error, stdout) => {
           tracked?.finish();
-          if (error || !stdout) {
-            resolve([]);
-            return;
-          }
-          try {
-            const items = JSON.parse(stdout) as Array<{
-              number?: number;
-              title?: string;
-              headRefName?: string;
-              author?: { login?: string };
-              url?: string;
-              state?: string;
-            }>;
-            const results: PrDetail[] = [];
-            for (const item of items) {
-              if (
-                typeof item.number === "number" &&
-                typeof item.headRefName === "string"
-              ) {
-                results.push({
-                  number: item.number,
-                  title: item.title ?? "",
-                  branch: item.headRefName,
-                  author: item.author?.login ?? "",
-                  url: item.url ?? "",
-                  state: item.state ?? "OPEN",
-                });
-              }
-            }
-            resolve(results);
-          } catch {
-            resolve([]);
-          }
+          resolve(error || !stdout ? [] : parseGithubPrDetails(stdout));
         },
       );
       tracked = this.trackProcess(child, { repoPath: workspace.path });
@@ -317,7 +287,7 @@ export class GithubService {
 
     return new Promise((resolve, reject) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         args,
         { cwd: input.cwd, encoding: "utf-8", timeout: 30_000, windowsHide: true },
@@ -366,17 +336,6 @@ export class GithubService {
     const inflight = this.checkRunsInflight.get(inflightKey);
     if (inflight) return inflight.promise;
 
-    /** Explicit conclusion mapping - unknown values default to failure (conservative). */
-    const conclusionMap: Record<string, CheckRun["conclusion"]> = {
-      success: "success",
-      failure: "failure",
-      cancelled: "cancelled",
-      skipped: "skipped",
-      timed_out: "timed_out",
-      neutral: "neutral",
-      action_required: "failure", // blocks merge like a failure
-    };
-
     // Register before any await so deletion/shutdown can cancel queued or slug-resolving fetches.
     let resolvePromise!: (value: ChecksStatus) => void;
     const promise = new Promise<ChecksStatus>((res) => { resolvePromise = res; });
@@ -412,7 +371,7 @@ export class GithubService {
           return;
         }
 
-        const child = execFile(
+        const child = NodeChildProcess.execFile(
           "gh",
           [
             "api",
@@ -430,96 +389,7 @@ export class GithubService {
             }
             if (inflightController.cancelled) return;
             const now = Date.now();
-            if (error || !stdout) {
-              resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
-              return;
-            }
-            try {
-              const items = JSON.parse(stdout) as Array<{
-                name?: string;
-                status?: string;
-                conclusion?: string | null;
-                startedAt?: string | null;
-                completedAt?: string | null;
-                appId?: number | null;
-              }>;
-
-              if (items.length === 0) {
-                resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
-                return;
-              }
-
-              const rawRuns = items.map((item) => {
-                // M1: Missing status defaults to in_progress (not completed) to avoid false-green aggregate.
-                const status = (item.status ?? "in_progress") as CheckRun["status"];
-                // H1: Unknown conclusion values are mapped conservatively to failure.
-                const rawConclusion = item.conclusion ?? null;
-                const conclusion: CheckRun["conclusion"] = rawConclusion === null
-                  ? null
-                  : (conclusionMap[rawConclusion] ?? "failure");
-
-                let durationMs: number | null = null;
-                if (status === "completed" && item.startedAt && item.completedAt) {
-                  durationMs = new Date(item.completedAt).getTime() - new Date(item.startedAt).getTime();
-                }
-
-                return {
-                  name: item.name ?? "unknown",
-                  status,
-                  conclusion,
-                  durationMs,
-                  startedAt: item.startedAt ?? null,
-                  // appId is used only for dedup scoping; it is stripped before the result is returned.
-                  appId: typeof item.appId === "number" ? item.appId : 0,
-                };
-              });
-
-              // D1: Deduplicate runs with the same (name, appId), keeping the most recently started one.
-              // GitHub returns check runs from every check suite on a commit, so re-runs or
-              // workflows triggered by multiple events produce duplicate entries (e.g., a passing
-              // run from suite A alongside a failing run from the newly-triggered suite B).
-              // Without dedup the aggregate can be stale and the list shows ghost duplicates.
-              //
-              // The dedup key includes appId so that two different GitHub Apps that both create a
-              // check named "validate-pr" (e.g., GitHub Actions + Greptile) are NOT collapsed,
-              // only runs from the same app are candidates for deduplication.
-              //
-              // Tie-breaking: null startedAt maps to "" which is lexicographically less than any
-              // ISO string, so a run with a known timestamp always wins over one without. When
-              // two runs share the same timestamp (or both are null), the first in API response
-              // order is kept because GitHub does not guarantee ordering between suite siblings.
-              const dedupMap = new Map<string, typeof rawRuns[0]>();
-              for (const run of rawRuns) {
-                const key = `${run.name}\0${run.appId}`;
-                const existing = dedupMap.get(key);
-                const existingTs = existing?.startedAt ?? "";
-                const runTs = run.startedAt ?? "";
-                if (!existing || runTs > existingTs) {
-                  dedupMap.set(key, run);
-                }
-              }
-              // Strip the internal appId field before passing runs to the caller.
-              const runs: CheckRun[] = [...dedupMap.values()].map(({ appId: _appId, ...run }) => run);
-
-              let aggregate: "passing" | "failing" | "pending" | "no_checks";
-              if (runs.some((r) => r.conclusion === "failure" || r.conclusion === "timed_out")) {
-                aggregate = "failing";
-              } else if (runs.some((r) => r.status !== "completed")) {
-                aggregate = "pending";
-              } else {
-                aggregate = "passing";
-              }
-
-              // If all runs completed but none succeeded (all skipped/cancelled/neutral),
-              // treat as no_checks to avoid a misleading green badge.
-              if (aggregate === "passing" && !runs.some((r) => r.conclusion === "success")) {
-                aggregate = "no_checks";
-              }
-
-              resolvePromise({ aggregate, runs, fetchedAt: now });
-            } catch {
-              resolvePromise({ aggregate: "no_checks", runs: [], fetchedAt: now });
-            }
+            resolvePromise(error || !stdout ? noChecksAt(now) : parseGithubCheckRuns(stdout, now));
           },
         );
         activeProcess.current = this.trackProcess(child, {
@@ -570,8 +440,8 @@ export class GithubService {
       cancelled: false,
       cancelledRepoPaths: new Set(),
     };
-    const groupResults = new Array<PullRequestWatchSnapshot[] | undefined>(
-      repositoryGroups.length,
+    const groupResults = Array.from<PullRequestWatchSnapshot[] | undefined>(
+      { length: repositoryGroups.length },
     );
     let nextGroupIndex = 0;
     this.pullRequestWatchRequests.add(request);
@@ -616,14 +486,23 @@ export class GithubService {
     if (this.isPullRequestWatchCancelled(request, group.repoPath)) return [];
     const [owner, repository] = slug.split("/");
     if (!owner || !repository) throw new Error(`Unexpected repository slug: ${slug}`);
+    const targetsByPullRequest = watchTargetsByPullRequest(group.targets);
+    return this.fetchRepositoryWatchBatches(
+      group.repoPath,
+      owner,
+      repository,
+      targetsByPullRequest,
+      request,
+    );
+  }
 
-    const targetsByPullRequest = new Map<number, PullRequestWatchTarget[]>();
-    for (const target of group.targets) {
-      const matchingTargets = targetsByPullRequest.get(target.prNumber) ?? [];
-      matchingTargets.push(target);
-      targetsByPullRequest.set(target.prNumber, matchingTargets);
-    }
-
+  private async fetchRepositoryWatchBatches(
+    repoPath: string,
+    owner: string,
+    repository: string,
+    targetsByPullRequest: Map<number, PullRequestWatchTarget[]>,
+    request: PullRequestWatchRequest,
+  ): Promise<PullRequestWatchSnapshot[]> {
     const uniquePullRequestNumbers = [...targetsByPullRequest.keys()];
     const snapshots: PullRequestWatchSnapshot[] = [];
     for (
@@ -631,19 +510,19 @@ export class GithubService {
       offset < uniquePullRequestNumbers.length;
       offset += MAX_PULL_REQUESTS_PER_WATCH_BATCH
     ) {
-      if (this.isPullRequestWatchCancelled(request, group.repoPath)) return [];
+      if (this.isPullRequestWatchCancelled(request, repoPath)) return [];
       const batchNumbers = uniquePullRequestNumbers.slice(
         offset,
         offset + MAX_PULL_REQUESTS_PER_WATCH_BATCH,
       );
       const snapshotsByNumber = await this.runPullRequestWatchBatch(
-        group.repoPath,
+        repoPath,
         owner,
         repository,
         batchNumbers,
         request,
       );
-      if (this.isPullRequestWatchCancelled(request, group.repoPath)) return [];
+      if (this.isPullRequestWatchCancelled(request, repoPath)) return [];
       for (const [prNumber, snapshot] of snapshotsByNumber) {
         for (const target of targetsByPullRequest.get(prNumber) ?? []) {
           snapshots.push({ ...snapshot, threadId: target.threadId });
@@ -678,7 +557,7 @@ export class GithubService {
     if (this.isPullRequestWatchCancelled(request, repoPath)) return new Map();
     const stdout = await new Promise<string>((resolve, reject) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         args,
         {
@@ -724,7 +603,7 @@ export class GithubService {
 
     const pending = new Promise<string>((resolve, reject) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
         { cwd: repoPath, encoding: "utf-8", timeout: 10_000, windowsHide: true },
@@ -761,7 +640,7 @@ export class GithubService {
     const prNumber = match[2];
 
     return new Promise((resolve) => {
-      execFile(
+      NodeChildProcess.execFile(
         "gh",
         [
           "pr",
@@ -774,37 +653,7 @@ export class GithubService {
         ],
         { encoding: "utf-8", timeout: 15_000, windowsHide: true },
         (error, stdout) => {
-          if (error || !stdout) {
-            resolve(null);
-            return;
-          }
-          try {
-            const data = JSON.parse(stdout) as {
-              number?: number;
-              title?: string;
-              headRefName?: string;
-              author?: { login?: string };
-              url?: string;
-              state?: string;
-            };
-            if (
-              typeof data.number === "number" &&
-              typeof data.headRefName === "string"
-            ) {
-              resolve({
-                number: data.number,
-                title: data.title ?? "",
-                branch: data.headRefName,
-                author: data.author?.login ?? "",
-                url: data.url ?? "",
-                state: data.state ?? "OPEN",
-              });
-            } else {
-              resolve(null);
-            }
-          } catch {
-            resolve(null);
-          }
+          resolve(error || !stdout ? null : parseGithubPrDetail(stdout));
         },
       );
     });
@@ -812,7 +661,7 @@ export class GithubService {
 }
 
 interface TrackedGithubProcess {
-  child: ChildProcess;
+  child: NodeChildProcess.ChildProcess;
   repoPath: string | null;
   checkRunsKey: string | null;
   done: Promise<void>;
@@ -846,8 +695,123 @@ interface RawWatchCheckRun {
   appId: number;
 }
 
+interface GithubCheckRunInput {
+  name?: string;
+  status?: string;
+  conclusion?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  appId?: number | null;
+}
+
+interface GithubPrDetailInput {
+  number?: number;
+  title?: string;
+  headRefName?: string;
+  author?: { login?: string };
+  url?: string;
+  state?: string;
+}
+
+type GithubCheckRun = CheckRun & { appId: number };
+
+const githubCheckConclusionMap: Record<string, CheckRun["conclusion"]> = {
+  success: "success",
+  failure: "failure",
+  cancelled: "cancelled",
+  skipped: "skipped",
+  timed_out: "timed_out",
+  neutral: "neutral",
+  action_required: "failure",
+};
+
 function noChecks(): ChecksStatus {
-  return { aggregate: "no_checks", runs: [], fetchedAt: Date.now() };
+  return noChecksAt(Date.now());
+}
+
+function parseGithubPrDetails(stdout: string): PrDetail[] {
+  try {
+    const items = JSON.parse(stdout) as GithubPrDetailInput[];
+    return items.flatMap((item) => {
+      const detail = githubPrDetailFromInput(item);
+      return detail ? [detail] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function parseGithubPrDetail(stdout: string): PrDetail | null {
+  try {
+    return githubPrDetailFromInput(JSON.parse(stdout) as GithubPrDetailInput);
+  } catch {
+    return null;
+  }
+}
+
+function githubPrDetailFromInput(input: GithubPrDetailInput): PrDetail | null {
+  if (typeof input.number !== "number" || typeof input.headRefName !== "string") return null;
+  return {
+    number: input.number,
+    title: input.title ?? "",
+    branch: input.headRefName,
+    author: input.author?.login ?? "",
+    url: input.url ?? "",
+    state: input.state ?? "OPEN",
+  };
+}
+
+function noChecksAt(fetchedAt: number): ChecksStatus {
+  return { aggregate: "no_checks", runs: [], fetchedAt };
+}
+
+function parseGithubCheckRuns(stdout: string, fetchedAt: number): ChecksStatus {
+  try {
+    const items = JSON.parse(stdout) as GithubCheckRunInput[];
+    if (items.length === 0) return noChecksAt(fetchedAt);
+    const runs = deduplicateGithubCheckRuns(items.map(normalizeGithubCheckRun));
+    return { aggregate: githubCheckAggregate(runs), runs, fetchedAt };
+  } catch {
+    return noChecksAt(fetchedAt);
+  }
+}
+
+function normalizeGithubCheckRun(input: GithubCheckRunInput): GithubCheckRun {
+  const status = (input.status ?? "in_progress") as CheckRun["status"];
+  const rawConclusion = input.conclusion ?? null;
+  return {
+    name: input.name ?? "unknown",
+    status,
+    conclusion: rawConclusion === null ? null : githubCheckConclusionMap[rawConclusion] ?? "failure",
+    durationMs: githubCheckDuration(status, input.startedAt, input.completedAt),
+    startedAt: input.startedAt ?? null,
+    appId: typeof input.appId === "number" ? input.appId : 0,
+  };
+}
+
+function githubCheckDuration(
+  status: CheckRun["status"],
+  startedAt: string | null | undefined,
+  completedAt: string | null | undefined,
+): number | null {
+  if (status !== "completed" || !startedAt || !completedAt) return null;
+  return new Date(completedAt).getTime() - new Date(startedAt).getTime();
+}
+
+function deduplicateGithubCheckRuns(rawRuns: readonly GithubCheckRun[]): CheckRun[] {
+  const latest = new Map<string, GithubCheckRun>();
+  for (const run of rawRuns) {
+    const key = `${run.name}\0${run.appId}`;
+    const existing = latest.get(key);
+    if (!existing || (run.startedAt ?? "") > (existing.startedAt ?? "")) latest.set(key, run);
+  }
+  return [...latest.values()].map(({ appId: _appId, ...run }) => run);
+}
+
+function githubCheckAggregate(runs: readonly CheckRun[]): ChecksStatus["aggregate"] {
+  if (runs.some((run) => run.conclusion === "failure" || run.conclusion === "timed_out")) return "failing";
+  if (runs.some((run) => run.status !== "completed")) return "pending";
+  return runs.some((run) => run.conclusion === "success") ? "passing" : "no_checks";
 }
 
 function normalizeRepoPath(repoPath: string | null | undefined): string | null {
@@ -870,6 +834,18 @@ function groupWatchTargetsByRepository(
     groups.set(key, group);
   }
   return [...groups.values()];
+}
+
+function watchTargetsByPullRequest(
+  targets: readonly PullRequestWatchTarget[],
+): Map<number, PullRequestWatchTarget[]> {
+  const grouped = new Map<number, PullRequestWatchTarget[]>();
+  for (const target of targets) {
+    const matchingTargets = grouped.get(target.prNumber) ?? [];
+    matchingTargets.push(target);
+    grouped.set(target.prNumber, matchingTargets);
+  }
+  return grouped;
 }
 
 function buildPullRequestWatchQuery(prCount: number): string {
@@ -957,21 +933,32 @@ function readWatchCheckRuns(pullRequest: Record<string, unknown>): RawWatchCheck
   }
 
   return rollup.contexts.nodes.flatMap((node) => {
-    if (!isRecord(node) || node.__typename !== "CheckRun" || typeof node.name !== "string") {
-      return [];
-    }
-    const app = isRecord(node.checkSuite) && isRecord(node.checkSuite.app)
-      ? node.checkSuite.app
-      : null;
-    return [{
-      name: node.name,
-      status: typeof node.status === "string" ? node.status : "IN_PROGRESS",
-      conclusion: typeof node.conclusion === "string" ? node.conclusion : null,
-      startedAt: typeof node.startedAt === "string" ? node.startedAt : null,
-      completedAt: typeof node.completedAt === "string" ? node.completedAt : null,
-      appId: app && typeof app.databaseId === "number" ? app.databaseId : 0,
-    }];
+    const run = parseWatchCheckRun(node);
+    return run ? [run] : [];
   });
+}
+
+function parseWatchCheckRun(value: unknown): RawWatchCheckRun | null {
+  if (!isRecord(value)) return null;
+  if (value.__typename !== "CheckRun") return null;
+  if (typeof value.name !== "string") return null;
+  return {
+    name: value.name,
+    status: watchRecordString(value.status) ?? "IN_PROGRESS",
+    conclusion: watchRecordString(value.conclusion),
+    startedAt: watchRecordString(value.startedAt),
+    completedAt: watchRecordString(value.completedAt),
+    appId: watchCheckAppId(value),
+  };
+}
+
+function watchRecordString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function watchCheckAppId(value: Record<string, unknown>): number {
+  if (!isRecord(value.checkSuite) || !isRecord(value.checkSuite.app)) return 0;
+  return typeof value.checkSuite.app.databaseId === "number" ? value.checkSuite.app.databaseId : 0;
 }
 
 function summarizeWatchCheckRuns(

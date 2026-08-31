@@ -30,6 +30,7 @@ export type {
   ProviderGrantPort,
   ProviderHostPorts,
   ProviderProcessPort,
+  ProviderRuntimePort,
   ProviderThreadControlPort,
   ProviderThreadControlHttpConnection,
   ProviderThreadControlRequest,

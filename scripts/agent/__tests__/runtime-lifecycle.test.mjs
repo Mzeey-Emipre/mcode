@@ -1,20 +1,13 @@
 /**
  * Tests for agent runtime start/stop lifecycle helpers.
  */
-import { test } from "node:test";
-import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { once } from "node:events";
+import * as NodeTest from "node:test";
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeEvents from "node:events";
 
 import { agentDown } from "../agent-down.mjs";
 import { agentUp, setAgentUpTestHooks } from "../agent-up.mjs";
@@ -27,7 +20,7 @@ import {
 import { resolveDevSingleInstanceFlag } from "../single-instance-flag.mjs";
 import { stopRecordedPidFile } from "../runtime-processes.mjs";
 
-test("agentDown posts shutdown with seedLogin.authHeader and cleans only .dev/pids", async () => {
+NodeTest.test("agentDown posts shutdown with seedLogin.authHeader and cleans only .dev/pids", async () => {
   const repo = makeRepo();
   const originalFetch = globalThis.fetch;
   const fetchCalls = [];
@@ -52,28 +45,28 @@ test("agentDown posts shutdown with seedLogin.authHeader and cleans only .dev/pi
       },
     });
     writePortsFile(contract, repo);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    writeFileSync(join(paths.pidsDir, "server.pid"), "999998\n");
-    writeFileSync(join(paths.pidsDir, "web.pid"), "999999\n");
-    const outsidePid = join(paths.devDir, "web.pid");
-    writeFileSync(outsidePid, "999997\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(paths.pidsDir, "server.pid"), "999998\n");
+    NodeFS.writeFileSync(NodePath.join(paths.pidsDir, "web.pid"), "999999\n");
+    const outsidePid = NodePath.join(paths.devDir, "web.pid");
+    NodeFS.writeFileSync(outsidePid, "999997\n");
 
     await agentDown(repo, { stop: async () => {} });
 
-    assert.equal(fetchCalls.length, 1);
-    assert.equal(fetchCalls[0].url, "http://127.0.0.1:41123/shutdown");
-    assert.equal(fetchCalls[0].init.method, "POST");
-    assert.equal(fetchCalls[0].init.headers.Authorization, "Bearer seed-token");
-    assert.equal(existsSync(join(paths.pidsDir, "server.pid")), false);
-    assert.equal(existsSync(join(paths.pidsDir, "web.pid")), false);
-    assert.equal(readFileSync(outsidePid, "utf8"), "999997\n");
+    NodeAssertStrict.default.equal(fetchCalls.length, 1);
+    NodeAssertStrict.default.equal(fetchCalls[0].url, "http://127.0.0.1:41123/shutdown");
+    NodeAssertStrict.default.equal(fetchCalls[0].init.method, "POST");
+    NodeAssertStrict.default.equal(fetchCalls[0].init.headers.Authorization, "Bearer seed-token");
+    NodeAssertStrict.default.equal(NodeFS.existsSync(NodePath.join(paths.pidsDir, "server.pid")), false);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(NodePath.join(paths.pidsDir, "web.pid")), false);
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(outsidePid, "utf8"), "999997\n");
   } finally {
     globalThis.fetch = originalFetch;
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentDown falls back to PID cleanup when the shutdown request never settles", { timeout: 1_000 }, async () => {
+NodeTest.test("agentDown falls back to PID cleanup when the shutdown request never settles", { timeout: 1_000 }, async () => {
   const repo = makeRepo();
   const originalFetch = globalThis.fetch;
   let stopCalled = false;
@@ -94,9 +87,9 @@ test("agentDown falls back to PID cleanup when the shutdown request never settle
         cookieName: "mcode-auth",
       },
     }), repo);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    const pidFile = join(paths.pidsDir, "server.pid");
-    writeFileSync(pidFile, "999998\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = NodePath.join(paths.pidsDir, "server.pid");
+    NodeFS.writeFileSync(pidFile, "999998\n");
 
     const stopping = agentDown(repo, {
       shutdownTimeoutMs: 25,
@@ -114,14 +107,14 @@ test("agentDown falls back to PID cleanup when the shutdown request never settle
     });
     await stopping;
 
-    assert.equal(existsSync(pidFile), false);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), false);
   } finally {
     globalThis.fetch = originalFetch;
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentDown does not force-stop a server that exits gracefully", async () => {
+NodeTest.test("agentDown does not force-stop a server that exits gracefully", async () => {
   const repo = makeRepo();
   const originalFetch = globalThis.fetch;
   let forceStops = 0;
@@ -130,9 +123,9 @@ test("agentDown does not force-stop a server that exits gracefully", async () =>
   try {
     const paths = getRuntimePaths(repo);
     writeGracefulRuntimeContract(repo, 41_127);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    const pidFile = join(paths.pidsDir, "server.pid");
-    writeFileSync(pidFile, "700001\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = NodePath.join(paths.pidsDir, "server.pid");
+    NodeFS.writeFileSync(pidFile, "700001\n");
 
     await agentDown(repo, {
       serverGraceMs: 10,
@@ -142,15 +135,15 @@ test("agentDown does not force-stop a server that exits gracefully", async () =>
       stop: async () => { forceStops += 1; },
     });
 
-    assert.equal(forceStops, 0);
-    assert.equal(existsSync(pidFile), false);
+    NodeAssertStrict.default.equal(forceStops, 0);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), false);
   } finally {
     globalThis.fetch = originalFetch;
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentDown force-stops a server that ignores graceful shutdown", async () => {
+NodeTest.test("agentDown force-stops a server that ignores graceful shutdown", async () => {
   const repo = makeRepo();
   const originalFetch = globalThis.fetch;
   let forceStops = 0;
@@ -160,9 +153,9 @@ test("agentDown force-stops a server that ignores graceful shutdown", async () =
   try {
     const paths = getRuntimePaths(repo);
     writeGracefulRuntimeContract(repo, 41_129);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    const pidFile = join(paths.pidsDir, "server.pid");
-    writeFileSync(pidFile, "700002\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = NodePath.join(paths.pidsDir, "server.pid");
+    NodeFS.writeFileSync(pidFile, "700002\n");
 
     await agentDown(repo, {
       serverGraceMs: 10,
@@ -171,20 +164,20 @@ test("agentDown force-stops a server that ignores graceful shutdown", async () =
       sleep: async (durationMs) => { clock += durationMs; },
       stop: async (pid, signal) => {
         forceStops += 1;
-        assert.equal(pid, 700002);
-        assert.equal(signal, "SIGTERM");
+        NodeAssertStrict.default.equal(pid, 700002);
+        NodeAssertStrict.default.equal(signal, "SIGTERM");
       },
     });
 
-    assert.equal(forceStops, 1);
-    assert.equal(existsSync(pidFile), false);
+    NodeAssertStrict.default.equal(forceStops, 1);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), false);
   } finally {
     globalThis.fetch = originalFetch;
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentDown stops the web process before the server process", async () => {
+NodeTest.test("agentDown stops the web process before the server process", async () => {
   const repo = makeRepo();
   const originalFetch = globalThis.fetch;
   const stops = [];
@@ -194,9 +187,9 @@ test("agentDown stops the web process before the server process", async () => {
   try {
     const paths = getRuntimePaths(repo);
     writeGracefulRuntimeContract(repo, 41_131);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    writeFileSync(join(paths.pidsDir, "server.pid"), "700003\n");
-    writeFileSync(join(paths.pidsDir, "web.pid"), "700004\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(paths.pidsDir, "server.pid"), "700003\n");
+    NodeFS.writeFileSync(NodePath.join(paths.pidsDir, "web.pid"), "700004\n");
 
     await agentDown(repo, {
       serverGraceMs: 10,
@@ -206,14 +199,14 @@ test("agentDown stops the web process before the server process", async () => {
       stop: async (pid) => { stops.push(pid); },
     });
 
-    assert.deepEqual(stops, [700004, 700003]);
+    NodeAssertStrict.default.deepEqual(stops, [700004, 700003]);
   } finally {
     globalThis.fetch = originalFetch;
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentDown retains the server PID file until forced termination settles", async () => {
+NodeTest.test("agentDown retains the server PID file until forced termination settles", async () => {
   const repo = makeRepo();
   const originalFetch = globalThis.fetch;
   let releaseStop;
@@ -225,9 +218,9 @@ test("agentDown retains the server PID file until forced termination settles", a
   try {
     const paths = getRuntimePaths(repo);
     writeGracefulRuntimeContract(repo, 41_133);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    const pidFile = join(paths.pidsDir, "server.pid");
-    writeFileSync(pidFile, "700005\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = NodePath.join(paths.pidsDir, "server.pid");
+    NodeFS.writeFileSync(pidFile, "700005\n");
 
     const stopping = agentDown(repo, {
       serverGraceMs: 10,
@@ -245,18 +238,18 @@ test("agentDown retains the server PID file until forced termination settles", a
       intervalMs: 5,
       message: "forced server termination did not start",
     });
-    assert.equal(existsSync(pidFile), true);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), true);
 
     releaseStop();
     await stopping;
-    assert.equal(existsSync(pidFile), false);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), false);
   } finally {
     globalThis.fetch = originalFetch;
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentDown still cleans PID files when ports.json is malformed", async () => {
+NodeTest.test("agentDown still cleans PID files when ports.json is malformed", async () => {
   const repo = makeRepo();
   const originalFetch = globalThis.fetch;
   const originalWarn = console.warn;
@@ -267,61 +260,108 @@ test("agentDown still cleans PID files when ports.json is malformed", async () =
 
   try {
     const paths = getRuntimePaths(repo);
-    mkdirSync(paths.devDir, { recursive: true });
-    mkdirSync(paths.pidsDir, { recursive: true });
-    writeFileSync(paths.portsFile, "{not json");
-    writeFileSync(join(paths.pidsDir, "server.pid"), "999998\n");
+    NodeFS.mkdirSync(paths.devDir, { recursive: true });
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    NodeFS.writeFileSync(paths.portsFile, "{not json");
+    NodeFS.writeFileSync(NodePath.join(paths.pidsDir, "server.pid"), "999998\n");
 
     await agentDown(repo, { stop: async () => {} });
 
-    assert.equal(existsSync(join(paths.pidsDir, "server.pid")), false);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(NodePath.join(paths.pidsDir, "server.pid")), false);
   } finally {
     globalThis.fetch = originalFetch;
     console.warn = originalWarn;
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentUp removes stale PID files before launching server and web processes", async () => {
+NodeTest.test("agentUp removes stale PID files before launching server and web processes", async () => {
   const repo = makeRepo();
   let spawnAttempted = false;
   const restoreHooks = setAgentUpTestHooks({
     stopRecordedRuntimePids: async (receivedRepo) => {
-      rmSync(join(getRuntimePaths(receivedRepo).pidsDir, "server.pid"), { force: true });
+      NodeFS.rmSync(NodePath.join(getRuntimePaths(receivedRepo).pidsDir, "server.pid"), { force: true });
     },
-    seedFixtureRepo: () => join(repo, ".dev", "fixture-repo"),
+    seedFixtureRepo: () => NodePath.join(repo, ".dev", "fixture-repo"),
     computeAvailablePorts: async () => ({ serverPort: 41_223, webPort: 41_224 }),
     getElectronBinary: () => process.execPath,
     rebuildServerDevBundle: async () => {},
     spawnLogged: (_command, _args, options) => {
       spawnAttempted = true;
-      assert.equal(existsSync(join(getRuntimePaths(repo).pidsDir, "server.pid")), false);
-      assert.match(options.env.BETTER_SQLITE3_BINDING, /better_sqlite3\.electron\.node$/);
+      NodeAssertStrict.default.equal(NodeFS.existsSync(NodePath.join(getRuntimePaths(repo).pidsDir, "server.pid")), false);
+      NodeAssertStrict.default.match(options.env.BETTER_SQLITE3_BINDING, /better_sqlite3\.electron\.node$/);
       throw new Error("stop before real launch");
     },
   });
 
   try {
     const paths = getRuntimePaths(repo);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    writeFileSync(join(paths.pidsDir, "server.pid"), "999998\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(paths.pidsDir, "server.pid"), "999998\n");
 
-    await assert.rejects(() => agentUp(repo), /stop before real launch/);
+    await NodeAssertStrict.default.rejects(() => agentUp(repo), /stop before real launch/);
 
-    assert.equal(spawnAttempted, true);
-    assert.equal(existsSync(join(paths.pidsDir, "server.pid")), false);
+    NodeAssertStrict.default.equal(spawnAttempted, true);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(NodePath.join(paths.pidsDir, "server.pid")), false);
   } finally {
     restoreHooks();
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentUp hides the console window for runtime child processes", async () => {
+NodeTest.test("agentUp prepares fresh runtime directories before recording child PIDs", async () => {
+  const repo = makeRepo();
+  const paths = getRuntimePaths(repo);
+  const runtimeDirectories = [
+    paths.dbDir,
+    paths.logsDir,
+    paths.pidsDir,
+    paths.playwrightScratchDir,
+    paths.electronDir,
+  ];
+  const originalFetch = globalThis.fetch;
+  let spawnCalls = 0;
+  const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async () => {},
+    seedFixtureRepo: () => NodePath.join(repo, ".dev", "fixture-repo"),
+    computeAvailablePorts: async () => ({ serverPort: 41_225, webPort: 41_226 }),
+    getElectronBinary: () => process.execPath,
+    rebuildServerDevBundle: async () => {},
+    spawnLogged: () => {
+      for (const directory of runtimeDirectories) {
+        NodeAssertStrict.default.equal(
+          NodeFS.existsSync(directory),
+          true,
+          `agentUp must create ${directory} before it starts runtime processes`,
+        );
+      }
+      spawnCalls += 1;
+      return { pid: 80_000 + spawnCalls };
+    },
+  });
+  globalThis.fetch = async () => new Response("", { status: 200 });
+  process.argv.push("--quiet");
+
+  try {
+    await agentUp(repo);
+
+    NodeAssertStrict.default.equal(spawnCalls, 2);
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(NodePath.join(paths.pidsDir, "server.pid"), "utf8"), "80001\n");
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(NodePath.join(paths.pidsDir, "web.pid"), "utf8"), "80002\n");
+  } finally {
+    process.argv.pop();
+    globalThis.fetch = originalFetch;
+    restoreHooks();
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+NodeTest.test("agentUp hides the console window for runtime child processes", async () => {
   const repo = makeRepo();
   const spawnOptions = [];
   const restoreHooks = setAgentUpTestHooks({
     stopRecordedRuntimePids: async () => {},
-    seedFixtureRepo: () => join(repo, ".dev", "fixture-repo"),
+    seedFixtureRepo: () => NodePath.join(repo, ".dev", "fixture-repo"),
     computeAvailablePorts: async () => ({ serverPort: 41_227, webPort: 41_228 }),
     getElectronBinary: () => process.execPath,
     rebuildServerDevBundle: async () => {},
@@ -332,45 +372,45 @@ test("agentUp hides the console window for runtime child processes", async () =>
   });
 
   try {
-    await assert.rejects(() => agentUp(repo), /stop before real launch/);
-    assert.equal(spawnOptions.length, 1);
-    assert.equal(spawnOptions[0].windowsHide, true);
+    await NodeAssertStrict.default.rejects(() => agentUp(repo), /stop before real launch/);
+    NodeAssertStrict.default.equal(spawnOptions.length, 1);
+    NodeAssertStrict.default.equal(spawnOptions[0].windowsHide, true);
   } finally {
     restoreHooks();
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentReset deletes only .dev/db between shutdown and restart", async () => {
+NodeTest.test("agentReset deletes only .dev/db between shutdown and restart", async () => {
   const repo = makeRepo();
   try {
     const calls = [];
     const paths = getRuntimePaths(repo);
-    mkdirSync(paths.dbDir, { recursive: true });
-    mkdirSync(paths.logsDir, { recursive: true });
-    mkdirSync(paths.pidsDir, { recursive: true });
-    writeFileSync(join(paths.dbDir, "app.sqlite"), "");
-    writeFileSync(join(paths.logsDir, "server.log"), "keep\n");
-    writeFileSync(join(paths.pidsDir, "web.pid"), "999999\n");
+    NodeFS.mkdirSync(paths.dbDir, { recursive: true });
+    NodeFS.mkdirSync(paths.logsDir, { recursive: true });
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(paths.dbDir, "app.sqlite"), "");
+    NodeFS.writeFileSync(NodePath.join(paths.logsDir, "server.log"), "keep\n");
+    NodeFS.writeFileSync(NodePath.join(paths.pidsDir, "web.pid"), "999999\n");
 
     await agentReset(repo, {
       down: async (receivedRepo) => calls.push(["down", receivedRepo]),
       up: async (receivedRepo) => calls.push(["up", receivedRepo]),
     });
 
-    assert.deepEqual(calls, [
+    NodeAssertStrict.default.deepEqual(calls, [
       ["down", repo],
       ["up", repo],
     ]);
-    assert.equal(existsSync(paths.dbDir), false);
-    assert.equal(readFileSync(join(paths.logsDir, "server.log"), "utf8"), "keep\n");
-    assert.equal(readFileSync(join(paths.pidsDir, "web.pid"), "utf8"), "999999\n");
+    NodeAssertStrict.default.equal(NodeFS.existsSync(paths.dbDir), false);
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(NodePath.join(paths.logsDir, "server.log"), "utf8"), "keep\n");
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(NodePath.join(paths.pidsDir, "web.pid"), "utf8"), "999999\n");
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("PID records remain until owned termination completes", async () => {
+NodeTest.test("PID records remain until owned termination completes", async () => {
   const repo = makeRepo();
   let releaseTermination;
   let terminationStarted = false;
@@ -380,9 +420,9 @@ test("PID records remain until owned termination completes", async () => {
 
   try {
     const paths = getRuntimePaths(repo);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    const pidFile = join(paths.pidsDir, "server.pid");
-    writeFileSync(pidFile, "999998\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = NodePath.join(paths.pidsDir, "server.pid");
+    NodeFS.writeFileSync(pidFile, "999998\n");
 
     const stopping = stopRecordedPidFile(pidFile, {
       repoRoot: repo,
@@ -397,25 +437,25 @@ test("PID records remain until owned termination completes", async () => {
       intervalMs: 5,
       message: "owned termination did not start",
     });
-    assert.equal(existsSync(pidFile), true);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), true);
 
     releaseTermination();
     await stopping;
-    assert.equal(existsSync(pidFile), false);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), false);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("PID records remain when owned termination fails", async () => {
+NodeTest.test("PID records remain when owned termination fails", async () => {
   const repo = makeRepo();
   try {
     const paths = getRuntimePaths(repo);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    const pidFile = join(paths.pidsDir, "server.pid");
-    writeFileSync(pidFile, "999998\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = NodePath.join(paths.pidsDir, "server.pid");
+    NodeFS.writeFileSync(pidFile, "999998\n");
 
-    await assert.rejects(
+    await NodeAssertStrict.default.rejects(
       () => stopRecordedPidFile(pidFile, {
         repoRoot: repo,
         stop: async () => {
@@ -424,13 +464,13 @@ test("PID records remain when owned termination fails", async () => {
       }),
       /permission denied/,
     );
-    assert.equal(existsSync(pidFile), true);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), true);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentDown waits for owned termination before returning", async () => {
+NodeTest.test("agentDown waits for owned termination before returning", async () => {
   const repo = makeRepo();
   let releaseTermination;
   let terminationStarted = false;
@@ -440,9 +480,9 @@ test("agentDown waits for owned termination before returning", async () => {
 
   try {
     const paths = getRuntimePaths(repo);
-    mkdirSync(paths.pidsDir, { recursive: true });
-    const pidFile = join(paths.pidsDir, "server.pid");
-    writeFileSync(pidFile, "999998\n");
+    NodeFS.mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = NodePath.join(paths.pidsDir, "server.pid");
+    NodeFS.writeFileSync(pidFile, "999998\n");
 
     const stopping = agentDown(repo, {
       stop: async () => {
@@ -456,17 +496,17 @@ test("agentDown waits for owned termination before returning", async () => {
       intervalMs: 5,
       message: "owned shutdown did not start",
     });
-    assert.equal(existsSync(pidFile), true);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), true);
 
     releaseTermination();
     await stopping;
-    assert.equal(existsSync(pidFile), false);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(pidFile), false);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("agentReset does not start replacement before shutdown completes", async () => {
+NodeTest.test("agentReset does not start replacement before shutdown completes", async () => {
   const repo = makeRepo();
   let releaseShutdown;
   let shutdownStarted = false;
@@ -476,8 +516,8 @@ test("agentReset does not start replacement before shutdown completes", async ()
 
   try {
     const paths = getRuntimePaths(repo);
-    mkdirSync(paths.dbDir, { recursive: true });
-    writeFileSync(join(paths.dbDir, "app.sqlite"), "keep\n");
+    NodeFS.mkdirSync(paths.dbDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(paths.dbDir, "app.sqlite"), "keep\n");
 
     const resetting = agentReset(repo, {
       down: async () => {
@@ -485,7 +525,7 @@ test("agentReset does not start replacement before shutdown completes", async ()
         await shutdown;
       },
       up: async () => {
-        assert.equal(existsSync(paths.dbDir), false);
+        NodeAssertStrict.default.equal(NodeFS.existsSync(paths.dbDir), false);
       },
     });
 
@@ -494,25 +534,25 @@ test("agentReset does not start replacement before shutdown completes", async ()
       intervalMs: 5,
       message: "shutdown did not start",
     });
-    assert.equal(existsSync(paths.dbDir), true);
+    NodeAssertStrict.default.equal(NodeFS.existsSync(paths.dbDir), true);
 
     releaseShutdown();
     await resetting;
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("dev web single-instance flag preserves explicit false legacy mode", () => {
-  assert.equal(resolveDevSingleInstanceFlag("false"), false);
-  assert.equal(resolveDevSingleInstanceFlag("0"), false);
-  assert.equal(resolveDevSingleInstanceFlag("no"), false);
-  assert.equal(resolveDevSingleInstanceFlag("off"), false);
+NodeTest.test("dev web single-instance flag preserves explicit false legacy mode", () => {
+  NodeAssertStrict.default.equal(resolveDevSingleInstanceFlag("false"), false);
+  NodeAssertStrict.default.equal(resolveDevSingleInstanceFlag("0"), false);
+  NodeAssertStrict.default.equal(resolveDevSingleInstanceFlag("no"), false);
+  NodeAssertStrict.default.equal(resolveDevSingleInstanceFlag("off"), false);
 });
 
-test("dev:server SIGTERM stops the Electron server without a Vite reference error", { timeout: 75_000 }, async () => {
-  const child = spawn(process.execPath, ["scripts/dev-web.mjs", "--server-only"], {
-    cwd: resolve(process.cwd()),
+NodeTest.test("dev:server SIGTERM stops the Electron server without a Vite reference error", { timeout: 75_000 }, async () => {
+  const child = NodeChildProcess.spawn(process.execPath, ["scripts/dev-web.mjs", "--server-only"], {
+    cwd: NodePath.resolve(process.cwd()),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -527,19 +567,19 @@ test("dev:server SIGTERM stops the Electron server without a Vite reference erro
   try {
     const port = await waitForServerPort(() => output);
     const health = await fetch(`http://127.0.0.1:${port}/health`);
-    assert.equal(health.ok, true);
+    NodeAssertStrict.default.equal(health.ok, true);
 
     child.kill("SIGTERM");
-    await once(child, "exit");
+    await NodeEvents.once(child, "exit");
 
     await waitForServerStop(port);
-    assert.doesNotMatch(errors, /ReferenceError.*vite/i);
+    NodeAssertStrict.default.doesNotMatch(errors, /ReferenceError.*vite/i);
   } finally {
     if (child.exitCode === null) child.kill("SIGTERM");
   }
 });
 
-test("server stop polling does not treat a self-caused probe timeout as stopped", { timeout: 2_000 }, async () => {
+NodeTest.test("server stop polling does not treat a self-caused probe timeout as stopped", { timeout: 2_000 }, async () => {
   const originalFetch = globalThis.fetch;
   let probes = 0;
   globalThis.fetch = async (_url, { signal }) => {
@@ -554,11 +594,11 @@ test("server stop polling does not treat a self-caused probe timeout as stopped"
   };
 
   try {
-    await assert.rejects(
+    await NodeAssertStrict.default.rejects(
       () => waitForServerStop(41_999, { timeoutMs: 120, intervalMs: 5, probeTimeoutMs: 20 }),
       /dev:server still responds on port 41999 after SIGTERM/,
     );
-    assert.ok(probes >= 1);
+    NodeAssertStrict.default.ok(probes >= 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -620,10 +660,10 @@ async function waitUntil(predicate, { timeoutMs, intervalMs, message }) {
  * @returns {string}
  */
 function makeRepo() {
-  const dir = mkdtempSync(resolve(tmpdir(), "runtime-lifecycle-"));
-  mkdirSync(dir, { recursive: true });
-  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
-  writeFileSync(join(dir, ".gitignore"), ".dev/\n");
+  const dir = NodeFS.mkdtempSync(NodePath.resolve(NodeOS.tmpdir(), "runtime-lifecycle-"));
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
+  NodeFS.writeFileSync(NodePath.join(dir, ".gitignore"), ".dev/\n");
   return dir;
 }
 

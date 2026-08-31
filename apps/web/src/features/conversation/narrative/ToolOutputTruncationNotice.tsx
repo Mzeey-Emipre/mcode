@@ -1,4 +1,5 @@
 import type { ToolCall } from "@/transport/types";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ToolOutputTruncationNoticeProps {
   /** Tool call whose output metadata should be summarized. */
@@ -16,14 +17,22 @@ export function ToolOutputTruncationNotice({ toolCall }: ToolOutputTruncationNot
     : "";
   const saved = toolCall.outputArtifactPath ? " · full output saved" : "";
 
-  return (
+  const notice = (
     <div
       className="max-w-full truncate font-mono text-xs font-normal leading-5 text-muted-foreground/65"
-      title={toolCall.outputArtifactPath}
       aria-label={`Output truncated${total}${saved}`}
     >
       Output truncated{total}{saved}
     </div>
+  );
+
+  if (!toolCall.outputArtifactPath) return notice;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={notice} />
+      <TooltipContent>{toolCall.outputArtifactPath}</TooltipContent>
+    </Tooltip>
   );
 }
 

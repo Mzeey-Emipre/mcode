@@ -402,32 +402,61 @@ function validateScenarioSchedule(
   seed: number,
   commandCount: number,
 ): void {
-  if (schedule.version !== BROWSER_CONFORMANCE_SCENARIO_VERSION
-    || schedule.generatorVersion !== BROWSER_CONFORMANCE_GENERATOR_VERSION
-    || schedule.seed !== seed) {
+  if (!hasMatchingScheduleMetadata(schedule, seed)) {
     throw new RangeError("Browser conformance schedule metadata does not match the scenario");
   }
-  const bounds = schedule.bounds;
-  if (commandCount > BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS
-    || !isBound(bounds.maxCommands, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS)
-    || !isBound(bounds.maxEvents, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS)
-    || !isBound(bounds.maxCheckpoints, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS)
-    || !isBound(bounds.maxTick, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK)
-    || commandCount > bounds.maxCommands || schedule.events.length > bounds.maxEvents
-    || schedule.checkpoints.length > bounds.maxCheckpoints) {
+  if (exceedsScheduleBounds(schedule, commandCount)) {
     throw new RangeError("Browser conformance schedule exceeds its declared bounds");
   }
   const orders = new Set<string>();
+  validateScheduledEvents(schedule, orders);
+  validateScheduledCheckpoints(schedule, orders);
+}
+
+function hasMatchingScheduleMetadata(schedule: BrowserConformanceSchedule, seed: number): boolean {
+  return schedule.version === BROWSER_CONFORMANCE_SCENARIO_VERSION
+    && schedule.generatorVersion === BROWSER_CONFORMANCE_GENERATOR_VERSION
+    && schedule.seed === seed;
+}
+
+function exceedsScheduleBounds(schedule: BrowserConformanceSchedule, commandCount: number): boolean {
+  const { bounds } = schedule;
+  if (commandCount > BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS || !hasValidScheduleBounds(bounds)) {
+    return true;
+  }
+  return commandCount > bounds.maxCommands
+    || schedule.events.length > bounds.maxEvents
+    || schedule.checkpoints.length > bounds.maxCheckpoints;
+}
+
+function hasValidScheduleBounds(bounds: BrowserConformanceScheduleBounds): boolean {
+  const values = [
+    [bounds.maxCommands, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS],
+    [bounds.maxEvents, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS],
+    [bounds.maxCheckpoints, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS],
+    [bounds.maxTick, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK],
+  ] as const;
+  return values.every(([value, maximum]) => isBound(value, maximum));
+}
+
+function validateScheduledEvents(schedule: BrowserConformanceSchedule, orders: Set<string>): void {
   for (const event of schedule.events) {
-    validateOrder(event.order, bounds.maxTick, orders);
-    if (!BROWSER_CONFORMANCE_EVENT_KINDS.includes(event.kind)) throw new RangeError("Browser conformance event kind is invalid");
+    validateOrder(event.order, schedule.bounds.maxTick, orders);
+    if (!BROWSER_CONFORMANCE_EVENT_KINDS.includes(event.kind)) {
+      throw new RangeError("Browser conformance event kind is invalid");
+    }
     if (event.revision !== undefined && !BROWSER_CONFORMANCE_REVISION_KEYS.includes(event.revision)) {
       throw new RangeError("Browser conformance event revision is invalid");
     }
   }
+}
+
+function validateScheduledCheckpoints(schedule: BrowserConformanceSchedule, orders: Set<string>): void {
   for (const checkpoint of schedule.checkpoints) {
-    validateOrder(checkpoint.order, bounds.maxTick, orders);
-    if (checkpoint.id.length === 0 || checkpoint.label.length === 0) throw new RangeError("Browser conformance checkpoint is invalid");
+    validateOrder(checkpoint.order, schedule.bounds.maxTick, orders);
+    if (checkpoint.id.length === 0 || checkpoint.label.length === 0) {
+      throw new RangeError("Browser conformance checkpoint is invalid");
+    }
     validateRevisionVector(checkpoint.expectedRevisions, "checkpoint revisions");
   }
 }

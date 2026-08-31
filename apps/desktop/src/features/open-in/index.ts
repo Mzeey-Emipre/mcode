@@ -1,11 +1,10 @@
 /**
  * Production wiring for the Open-in app registry. Declares the known editors,
- * git GUIs, terminals, and File Explorer as adapters and exports a singleton
- * registry the IPC layer reads from. Adding an openable app means adding an
- * adapter here — nowhere else.
+ * git GUIs, terminals, and File Explorer as adapters. Adding an openable app
+ * means adding an adapter here — nowhere else.
  */
 
-import { join } from "path";
+import * as NodePath from "node:path";
 import { createEditorAdapter, type EditorAdapterConfig } from "./adapters/editor.js";
 import { createGitGuiAdapter, type GitGuiAdapterConfig } from "./adapters/git-gui.js";
 import { createFileExplorerAdapter } from "./adapters/file-explorer.js";
@@ -25,8 +24,8 @@ import { OpenInRegistry } from "./registry/registry.js";
  */
 function visualStudioPaths(): string[] {
   const roots = [
-    join(process.env.ProgramFiles ?? "C:\\Program Files", "Microsoft Visual Studio"),
-    join(
+    NodePath.join(process.env.ProgramFiles ?? "C:\\Program Files", "Microsoft Visual Studio"),
+    NodePath.join(
       process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
       "Microsoft Visual Studio",
     ),
@@ -37,7 +36,7 @@ function visualStudioPaths(): string[] {
   for (const root of roots) {
     for (const year of years) {
       for (const edition of editions) {
-        paths.push(join(root, year, edition, "Common7", "IDE", "devenv.exe"));
+        paths.push(NodePath.join(root, year, edition, "Common7", "IDE", "devenv.exe"));
       }
     }
   }
@@ -51,7 +50,7 @@ const EDITOR_CONFIGS: readonly EditorAdapterConfig[] = [
     label: "VS Code",
     iconKey: "vscode",
     windowsPaths: [
-      join(
+      NodePath.join(
         process.env.LOCALAPPDATA ?? "",
         "Programs",
         "Microsoft VS Code",
@@ -71,7 +70,7 @@ const EDITOR_CONFIGS: readonly EditorAdapterConfig[] = [
     label: "Cursor",
     iconKey: "cursor",
     windowsPaths: [
-      join(
+      NodePath.join(
         process.env.LOCALAPPDATA ?? "",
         "Programs",
         "cursor",
@@ -80,7 +79,7 @@ const EDITOR_CONFIGS: readonly EditorAdapterConfig[] = [
         "bin",
         "cursor.cmd",
       ),
-      join(
+      NodePath.join(
         process.env.LOCALAPPDATA ?? "",
         "Programs",
         "Cursor",
@@ -96,8 +95,8 @@ const EDITOR_CONFIGS: readonly EditorAdapterConfig[] = [
     label: "Zed",
     iconKey: "zed",
     windowsPaths: [
-      join(process.env.LOCALAPPDATA ?? "", "Programs", "Zed", "bin", "zed.exe"),
-      join(process.env.LOCALAPPDATA ?? "", "Zed", "bin", "zed.exe"),
+      NodePath.join(process.env.LOCALAPPDATA ?? "", "Programs", "Zed", "bin", "zed.exe"),
+      NodePath.join(process.env.LOCALAPPDATA ?? "", "Zed", "bin", "zed.exe"),
     ],
   },
 ];
@@ -110,7 +109,7 @@ const GIT_GUI_CONFIGS: readonly GitGuiAdapterConfig[] = [
     iconKey: "githubDesktop",
     command: "github",
     windowsPaths: [
-      join(process.env.LOCALAPPDATA ?? "", "GitHubDesktop", "bin", "github.bat"),
+      NodePath.join(process.env.LOCALAPPDATA ?? "", "GitHubDesktop", "bin", "github.bat"),
     ],
   },
 ];
@@ -126,7 +125,7 @@ const TERMINAL_CONFIGS: readonly TerminalAdapterConfig[] = [
     iconKey: "windows-terminal",
     command: "wt",
     windowsPaths: [
-      join(
+      NodePath.join(
         process.env.LOCALAPPDATA ?? "",
         "Microsoft",
         "WindowsApps",
@@ -140,9 +139,9 @@ const TERMINAL_CONFIGS: readonly TerminalAdapterConfig[] = [
     iconKey: "git-bash",
     command: "git-bash",
     windowsPaths: [
-      join(process.env.ProgramFiles ?? "", "Git", "git-bash.exe"),
-      join(process.env["ProgramFiles(x86)"] ?? "", "Git", "git-bash.exe"),
-      join(
+      NodePath.join(process.env.ProgramFiles ?? "", "Git", "git-bash.exe"),
+      NodePath.join(process.env["ProgramFiles(x86)"] ?? "", "Git", "git-bash.exe"),
+      NodePath.join(
         process.env.LOCALAPPDATA ?? "",
         "Programs",
         "Git",
@@ -156,25 +155,32 @@ const TERMINAL_CONFIGS: readonly TerminalAdapterConfig[] = [
     iconKey: "wsl",
     command: "wsl",
     windowsPaths: [
-      join(process.env.SystemRoot ?? "", "System32", "wsl.exe"),
+      NodePath.join(process.env.SystemRoot ?? "", "System32", "wsl.exe"),
     ],
   },
 ];
 
 /**
- * Singleton registry: editors, then git GUIs, then terminals, then File Explorer
- * (menu order).
+ * Create the registry in menu order for the platform selected by app composition.
  */
-export const openInRegistry = new OpenInRegistry([
-  ...EDITOR_CONFIGS.map(createEditorAdapter),
-  ...GIT_GUI_CONFIGS.map(createGitGuiAdapter),
-  ...TERMINAL_CONFIGS.map((c) => createTerminalAdapter(c)),
-  createFileExplorerAdapter(),
-]);
+export function createOpenInRegistry(platform: NodeJS.Platform): OpenInRegistry {
+  return new OpenInRegistry([
+    ...EDITOR_CONFIGS.map((config) => createEditorAdapter(config, platform)),
+    ...GIT_GUI_CONFIGS.map((config) => createGitGuiAdapter(config, platform)),
+    ...TERMINAL_CONFIGS.map((config) => createTerminalAdapter(config, platform)),
+    createFileExplorerAdapter(),
+  ]);
+}
 
 /** Register Open In handlers with the configured registry. */
-export function registerOpenInHandlers(ipcMain: OpenInIpc): void {
-  registerOpenInHandlersForRegistry({ ipcMain, registry: openInRegistry });
+export function registerOpenInHandlers(
+  ipcMain: OpenInIpc,
+  platform: NodeJS.Platform,
+): void {
+  registerOpenInHandlersForRegistry({
+    ipcMain,
+    registry: createOpenInRegistry(platform),
+  });
 }
 
 export { OpenInRegistry } from "./registry/registry.js";

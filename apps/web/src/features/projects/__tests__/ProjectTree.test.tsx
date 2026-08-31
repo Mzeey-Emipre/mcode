@@ -94,9 +94,10 @@ function buildMockThreadStoreState() {
     ...Object.keys(threadStoreOverrides.runtimeByThread ?? {}),
   ]);
   for (const id of recordIds) {
+    const runtime = threadStoreOverrides.runtimeByThread?.[id];
     records.set(id, {
       permissions: threadStoreOverrides.permissionsByThread?.[id] ?? [],
-      ...(threadStoreOverrides.runtimeByThread?.[id] ?? {}),
+      ...runtime,
     });
   }
   return {
@@ -164,7 +165,7 @@ vi.mock("@tanstack/react-virtual", () => ({
           : (initialOffset ?? 0);
       scrollElement.scrollTop = offset;
       if (!hasMounted) setHasMounted(true);
-    });
+    }, [getScrollElement, hasMounted, initialOffset]);
 
     return {
       getTotalSize: () => count * 32,
@@ -253,55 +254,21 @@ const WORKSPACE = {
 };
 
 /** Wire up store mocks so ProjectTree renders a workspace with one thread. */
-function setupStoreMocks({
-  thread = makeThread(),
-  threads,
-  workspaces = [WORKSPACE],
-  setActiveThread = vi.fn(),
-  setActiveWorkspace = vi.fn(),
-  beginNewThread = vi.fn(),
-  updateThreadTitle = vi.fn(),
-  completeThread = vi.fn().mockResolvedValue(undefined),
-  reopenThread = vi.fn().mockResolvedValue(undefined),
-  retryThreadCleanup = vi.fn().mockResolvedValue(undefined),
-}: {
-  thread?: Thread | null;
-  threads?: Thread[];
-  workspaces?: typeof WORKSPACE[];
-  setActiveThread?: ReturnType<typeof vi.fn>;
-  setActiveWorkspace?: ReturnType<typeof vi.fn>;
-  beginNewThread?: ReturnType<typeof vi.fn>;
-  updateThreadTitle?: ReturnType<typeof vi.fn>;
-  completeThread?: ReturnType<typeof vi.fn>;
-  reopenThread?: ReturnType<typeof vi.fn>;
-  retryThreadCleanup?: ReturnType<typeof vi.fn>;
-} = {}) {
-  const state = {
-    workspaces,
-    activeWorkspaceId: "ws-1",
-    activeThreadId: null,
-    threads: threads ?? (thread ? [thread] : []),
-    loadWorkspaces: vi.fn(),
-    loadThreads: vi.fn(),
-    setActiveWorkspace,
-    renameWorkspace: vi.fn(),
-    setActiveThread,
-    createWorkspace: vi.fn(),
-    deleteWorkspace: vi.fn(),
-    deleteThread: vi.fn(),
-    completeThread,
-    reopenThread,
-    retryThreadCleanup,
-    beginNewThread,
-    updateThreadTitle,
-    loadWorktrees: vi.fn(),
-    worktrees: [],
-    worktreesLoadedForWorkspace: null,
-    checksById: {},
-    error: null,
-  };
+interface ProjectTreeStoreMockOptions {
+  readonly thread?: Thread | null;
+  readonly threads?: Thread[];
+  readonly workspaces?: typeof WORKSPACE[];
+  readonly setActiveThread?: ReturnType<typeof vi.fn>;
+  readonly setActiveWorkspace?: ReturnType<typeof vi.fn>;
+  readonly beginNewThread?: ReturnType<typeof vi.fn>;
+  readonly updateThreadTitle?: ReturnType<typeof vi.fn>;
+  readonly completeThread?: ReturnType<typeof vi.fn>;
+  readonly reopenThread?: ReturnType<typeof vi.fn>;
+  readonly retryThreadCleanup?: ReturnType<typeof vi.fn>;
+}
 
-  // Cast via unknown to avoid requiring every field of WorkspaceState in the fixture.
+function setupStoreMocks(options: ProjectTreeStoreMockOptions = {}) {
+  const state = createProjectTreeStoreMock(options);
   (
     useWorkspaceStore as unknown as {
       mockImplementation: (
@@ -309,8 +276,49 @@ function setupStoreMocks({
       ) => void;
     }
   ).mockImplementation((selector) => selector(state));
-
   return state;
+}
+
+function createProjectTreeStoreMock(options: ProjectTreeStoreMockOptions) {
+  const data = projectTreeMockData(options);
+  const actions = projectTreeMockActions(options);
+  return {
+    ...data,
+    activeWorkspaceId: "ws-1",
+    activeThreadId: null,
+    loadWorkspaces: vi.fn(),
+    loadThreads: vi.fn(),
+    renameWorkspace: vi.fn(),
+    createWorkspace: vi.fn(),
+    deleteWorkspace: vi.fn(),
+    deleteThread: vi.fn(),
+    ...actions,
+    loadWorktrees: vi.fn(),
+    worktrees: [],
+    worktreesLoadedForWorkspace: null,
+    checksById: {},
+    error: null,
+  };
+}
+
+function projectTreeMockData(options: ProjectTreeStoreMockOptions) {
+  const thread = options.thread === undefined ? makeThread() : options.thread;
+  return {
+    workspaces: options.workspaces ?? [WORKSPACE],
+    threads: options.threads ?? (thread ? [thread] : []),
+  };
+}
+
+function projectTreeMockActions(options: ProjectTreeStoreMockOptions) {
+  return {
+    setActiveThread: options.setActiveThread ?? vi.fn(),
+    setActiveWorkspace: options.setActiveWorkspace ?? vi.fn(),
+    beginNewThread: options.beginNewThread ?? vi.fn(),
+    updateThreadTitle: options.updateThreadTitle ?? vi.fn(),
+    completeThread: options.completeThread ?? vi.fn().mockResolvedValue(undefined),
+    reopenThread: options.reopenThread ?? vi.fn().mockResolvedValue(undefined),
+    retryThreadCleanup: options.retryThreadCleanup ?? vi.fn().mockResolvedValue(undefined),
+  };
 }
 
 describe("ProjectTree thread interactions", () => {
@@ -1430,7 +1438,7 @@ describe("ProjectTree action-required indicator", () => {
     const titleCluster = screen.getByTestId("thread-title").parentElement;
     expect(titleCluster?.className).toContain("opacity-[0.72]");
 
-    const prIcon = screen.getByTitle(/PR #42/);
+    const prIcon = screen.getByLabelText(/PR #42/);
     expect(prIcon.className).not.toContain("opacity-[0.72]");
   });
 });
@@ -1511,7 +1519,7 @@ describe("ProjectTree PR-ability gating by mode", () => {
     renderWithThread(
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "merged" }),
     );
-    expect(screen.getByTitle("PR #42, merged")).toBeInTheDocument();
+    expect(screen.getByLabelText("PR #42, merged")).toBeInTheDocument();
   });
 
   it.each([

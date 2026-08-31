@@ -1,6 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 import {
   type Settings,
   type TerminalProfileReference,
@@ -99,6 +99,7 @@ export type TerminalCommandPreparation =
 
 /** Injectable dependencies for isolated one-shot Terminal command execution. */
 export interface TerminalCommandServiceDependencies extends TerminalScopeResolverDependencies {
+  readonly platform: NodeJS.Platform;
   readonly profiles: TerminalCommandProfileResolver;
   readonly env: { getEnv(): Record<string, string> };
   readonly settings: { get(): Settings };
@@ -130,7 +131,8 @@ export class TerminalCommandService {
 
   constructor(private readonly deps: TerminalCommandServiceDependencies) {
     this.spawn = deps.spawn ?? spawnTerminalCommand;
-    this.kill = deps.killProcessTree ?? killProcessTree;
+    this.kill = deps.killProcessTree
+      ?? ((pid) => killProcessTree(pid, { platform: deps.platform }));
     this.schedule = deps.setTimeout ?? setTimeout;
     this.cancel = deps.clearTimeout ?? clearTimeout;
   }
@@ -278,6 +280,54 @@ export class TerminalCommandService {
       });
       return containmentPromise;
     };
+    const spawnChild = (): TerminalCommandProcess | null => {
+      if (!terminal || !checkoutPath) return null;
+      try {
+        return this.spawn(terminal.executable, terminal.arguments, {
+          cwd: checkoutPath,
+          env: this.deps.env.getEnv(),
+          stdio: ["ignore", "pipe", "pipe"],
+          shell: false,
+          windowsHide: true,
+          detached: this.deps.platform !== "win32",
+        });
+      } catch {
+        return null;
+      }
+    };
+    const registerChild = (process: TerminalCommandProcess): void => {
+      if (typeof process.pid !== "number" || process.pid <= 0 || !this.deps.pidRegistry) return;
+      registeredCommandId = `terminal-command:${this.deps.createCommandId?.() ?? NodeCrypto.randomUUID()}`;
+      this.deps.pidRegistry.register(registeredCommandId, process.pid, terminal!.executable);
+    };
+    const observeChild = (process: TerminalCommandProcess): void => {
+      if (!process.stdout || !process.stderr) {
+        void close();
+        return;
+      }
+      process.stdout.on("data", (chunk: Uint8Array) => capture.append(chunk));
+      process.stderr.on("data", (chunk: Uint8Array) => capture.append(chunk));
+      timeout = this.schedule(() => {
+        timedOut = true;
+        void close();
+      }, timeoutMs);
+      process.once("error", () => {
+        if (containmentInFlight || containmentFailed) return;
+        deregister();
+        release();
+        settle(timedOut
+          ? { kind: "timeout", ...capture.result() }
+          : { kind: "launch_failure", ...capture.result() });
+      });
+      process.once("close", (exitCode) => {
+        if (containmentInFlight || containmentFailed) return;
+        deregister();
+        release();
+        settle(timedOut
+          ? { kind: "timeout", ...capture.result() }
+          : { kind: "exited", exitCode, ...capture.result() });
+      });
+    };
 
     return Object.freeze({
       snapshot,
@@ -287,55 +337,14 @@ export class TerminalCommandService {
           return Promise.resolve<TerminalCommandCompletion>({ kind: "launch_failure", ...capture.result() });
         }
         startPromise = new Promise<TerminalCommandCompletion>((resolve) => { completionResolve = resolve; });
-        if (!terminal || !checkoutPath) {
+        child = spawnChild();
+        if (!child) {
           settle({ kind: "launch_failure", ...capture.result() });
           release();
           return startPromise;
         }
-        try {
-          child = this.spawn(terminal.executable, terminal.arguments, {
-            cwd: checkoutPath,
-            env: this.deps.env.getEnv(),
-            stdio: ["ignore", "pipe", "pipe"],
-            shell: false,
-            windowsHide: true,
-            detached: process.platform !== "win32",
-          });
-        } catch {
-          settle({ kind: "launch_failure", ...capture.result() });
-          release();
-          return startPromise;
-        }
-        if (typeof child.pid === "number" && child.pid > 0 && this.deps.pidRegistry) {
-          registeredCommandId = `terminal-command:${this.deps.createCommandId?.() ?? randomUUID()}`;
-          this.deps.pidRegistry.register(registeredCommandId, child.pid, terminal.executable);
-        }
-        if (!child.stdout || !child.stderr) {
-          void close();
-          return startPromise;
-        }
-        child.stdout.on("data", (chunk: Uint8Array) => capture.append(chunk));
-        child.stderr.on("data", (chunk: Uint8Array) => capture.append(chunk));
-        timeout = this.schedule(() => {
-          timedOut = true;
-          void close();
-        }, timeoutMs);
-        child.once("error", () => {
-          if (containmentInFlight || containmentFailed) return;
-          deregister();
-          release();
-          settle(timedOut
-            ? { kind: "timeout", ...capture.result() }
-            : { kind: "launch_failure", ...capture.result() });
-        });
-        child.once("close", (exitCode) => {
-          if (containmentInFlight || containmentFailed) return;
-          deregister();
-          release();
-          settle(timedOut
-            ? { kind: "timeout", ...capture.result() }
-            : { kind: "exited", exitCode, ...capture.result() });
-        });
+        registerChild(child);
+        observeChild(child);
         return startPromise;
       },
       close,
@@ -350,21 +359,37 @@ export function noninteractiveLaunch(
   profile: TerminalResolvedProfile,
   script: string,
 ): { readonly executable: string; readonly arguments: readonly string[] } | null {
-  const executable = basename(profile.executable).toLowerCase();
+  const executable = NodePath.basename(profile.executable).toLowerCase();
   const arguments_ = [...profile.arguments];
-  if (executable === "powershell.exe" || executable === "powershell" || executable === "pwsh.exe" || executable === "pwsh") {
+  if (isPowerShell(executable)) {
     return { executable: profile.executable, arguments: [...arguments_, "-NoLogo", "-NonInteractive", "-Command", script] };
   }
-  if (executable === "cmd.exe" || executable === "cmd") {
+  if (isWindowsCommandShell(executable)) {
     return { executable: profile.executable, arguments: [...arguments_, "/d", "/s", "/c", script] };
   }
-  if (executable === "bash" || executable === "bash.exe" || executable === "zsh" || executable === "zsh.exe" || executable === "sh" || executable === "sh.exe") {
+  if (isPosixShell(executable)) {
     return { executable: profile.executable, arguments: [...arguments_, "-lc", script] };
   }
-  if (executable === "wsl" || executable === "wsl.exe") {
+  if (isWindowsSubsystemForLinux(executable)) {
     return { executable: profile.executable, arguments: [...arguments_, "--exec", "sh", "-lc", script] };
   }
   return null;
+}
+
+function isPowerShell(executable: string): boolean {
+  return ["powershell.exe", "powershell", "pwsh.exe", "pwsh"].includes(executable);
+}
+
+function isWindowsCommandShell(executable: string): boolean {
+  return executable === "cmd.exe" || executable === "cmd";
+}
+
+function isPosixShell(executable: string): boolean {
+  return ["bash", "bash.exe", "zsh", "zsh.exe", "sh", "sh.exe"].includes(executable);
+}
+
+function isWindowsSubsystemForLinux(executable: string): boolean {
+  return executable === "wsl" || executable === "wsl.exe";
 }
 
 function unavailablePreparation(output: string, checkoutPath: string | null = null): TerminalCommandPreparation {
@@ -387,7 +412,7 @@ function spawnTerminalCommand(
     readonly detached: boolean;
   },
 ): TerminalCommandProcess {
-  return spawn(executable, [...arguments_], { ...options, stdio: [...options.stdio] }) as ChildProcess;
+  return NodeChildProcess.spawn(executable, [...arguments_], { ...options, stdio: [...options.stdio] }) as NodeChildProcess.ChildProcess;
 }
 
 class TerminalOutputCapture {

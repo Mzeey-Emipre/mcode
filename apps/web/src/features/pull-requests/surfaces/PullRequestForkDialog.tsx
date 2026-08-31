@@ -124,6 +124,103 @@ function targetFromResult(
   };
 }
 
+function prepareForkTask(
+  detail: PullRequestDetail,
+  workspaceId: string | undefined,
+  transport: PullRequestReviewTaskTransport | undefined,
+): Promise<PullRequestCreateReviewTaskResult> {
+  return prepareWithinTimeout(
+    (transport ?? getPullRequestReviewTaskTransport()).createReviewTask({
+      action: "prepare",
+      operationId: createOperationId(),
+      identity: detail.identity,
+      ...(workspaceId ? { workspaceId } : {}),
+    }),
+  );
+}
+
+function preparationError(caught: unknown): PullRequestError {
+  return {
+    code: "remote_unavailable",
+    message: caught instanceof Error
+      ? caught.message.slice(0, 512)
+      : "Pull request fork preparation failed.",
+  };
+}
+
+function PullRequestForkPreparing() {
+  return (
+    <div className="flex min-h-56 items-center justify-center gap-2 text-xs text-muted-foreground">
+      <Spinner size="xs" aria-hidden />
+      <span role="status">Finding the matching project and worktree</span>
+    </div>
+  );
+}
+
+function PullRequestForkError({
+  error,
+  selectedWorkspaceId,
+  setSelectedWorkspaceId,
+  onClose,
+  onPrepare,
+}: {
+  error: PullRequestError;
+  selectedWorkspaceId: string | null;
+  setSelectedWorkspaceId: (workspaceId: string | null) => void;
+  onClose: () => void;
+  onPrepare: (workspaceId?: string) => void;
+}) {
+  const candidates = error.workspaceCandidates ?? [];
+  const selectedWorkspace = candidates.find((candidate) => candidate.id === selectedWorkspaceId);
+  return (
+    <div className="space-y-4 px-5 py-5">
+      <div role="alert" className="flex items-start gap-2 bg-destructive/8 px-3 py-2.5 text-xs"><AlertCircle size={14} aria-hidden className="mt-0.5 shrink-0 text-destructive" /><p className="text-foreground/85">{errorCopy(error)}</p></div>
+      {error.code === "workspace_mapping_ambiguous" && candidates.length > 0 ? <div className="space-y-1.5"><label className="text-xs text-muted-foreground" htmlFor="fork-workspace">Project</label><Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}><SelectTrigger id="fork-workspace" className="w-full"><SelectValue>{selectedWorkspace ? selectedWorkspace.name : "Choose a project"}</SelectValue></SelectTrigger><SelectContent>{candidates.map((candidate: PullRequestWorkspaceCandidate) => <SelectItem key={candidate.id} value={candidate.id}>{candidate.name}</SelectItem>)}</SelectContent></Select></div> : null}
+      <div className="flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>Cancel</Button>{error.code === "workspace_mapping_missing" ? <Button onClick={() => { onClose(); requestAnimationFrame(() => { useCommandPaletteStore.getState().open({ intent: "addProject" }); }); }}>Add project</Button> : <Button disabled={error.code === "workspace_mapping_ambiguous" && !selectedWorkspaceId} onClick={() => onPrepare(selectedWorkspaceId ?? undefined)}>Retry</Button>}</div>
+    </div>
+  );
+}
+
+function PullRequestForkComposer({
+  target,
+  mode,
+  onThreadCreated,
+}: {
+  target: ForkTarget;
+  mode: PullRequestForkMode;
+  onThreadCreated: (thread: Thread) => void;
+}) {
+  return (
+    <div className="min-h-0 bg-background"><div className="flex items-center gap-2 border-b border-border/35 px-5 py-2 text-xs text-muted-foreground"><span className="font-medium text-foreground/85">{target.mode === "existing-worktree" ? "Existing worktree" : "New worktree"}</span><span aria-hidden>·</span><span className="min-w-0 truncate font-mono">{target.branch}</span>{mode === "background" ? <span className="ml-auto shrink-0">The pull request stays open</span> : null}</div><Composer isNewThread workspaceId={target.workspaceId} onThreadCreated={onThreadCreated} /></div>
+  );
+}
+
+function PullRequestForkDialogStatus({
+  preparing,
+  error,
+  target,
+  selectedWorkspaceId,
+  setSelectedWorkspaceId,
+  onClose,
+  onPrepare,
+  mode,
+  onThreadCreated,
+}: {
+  preparing: boolean;
+  error: PullRequestError | null;
+  target: ForkTarget | null;
+  selectedWorkspaceId: string | null;
+  setSelectedWorkspaceId: (workspaceId: string | null) => void;
+  onClose: () => void;
+  onPrepare: (workspaceId?: string) => void;
+  mode: PullRequestForkMode;
+  onThreadCreated: (thread: Thread) => void;
+}) {
+  if (preparing) return <PullRequestForkPreparing />;
+  if (error) return <PullRequestForkError error={error} selectedWorkspaceId={selectedWorkspaceId} setSelectedWorkspaceId={setSelectedWorkspaceId} onClose={onClose} onPrepare={onPrepare} />;
+  return target ? <PullRequestForkComposer target={target} mode={mode} onThreadCreated={onThreadCreated} /> : null;
+}
+
 /** Props for the pull request fork composer. */
 export interface PullRequestForkDialogProps {
   open: boolean;
@@ -194,14 +291,7 @@ export function PullRequestForkDialog({
       setTarget(null);
       setError(null);
       try {
-        const result = await prepareWithinTimeout(
-          (transport ?? getPullRequestReviewTaskTransport()).createReviewTask({
-            action: "prepare",
-            operationId: createOperationId(),
-            identity: detail.identity,
-            ...(workspaceId ? { workspaceId } : {}),
-          }),
-        );
+        const result = await prepareForkTask(detail, workspaceId, transport);
         if (generationRef.current !== generation) return;
         if (!result.ok) {
           setError(result.error);
@@ -214,17 +304,11 @@ export function PullRequestForkDialog({
         configureComposer(targetFromResult(result));
       } catch (caught) {
         if (generationRef.current !== generation) return;
-        setError({
-          code: "remote_unavailable",
-          message:
-            caught instanceof Error
-              ? caught.message.slice(0, 512)
-              : "Pull request fork preparation failed.",
-        });
+        setError(preparationError(caught));
         setPreparing(false);
       }
     },
-    [configureComposer, detail.identity, transport],
+    [configureComposer, detail, transport],
   );
 
   useEffect(() => {
@@ -238,6 +322,7 @@ export function PullRequestForkDialog({
       threadId: workspace.activeThreadId,
     };
     completedRef.current = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- Opening the dialog starts a new fork-preparation transport request.
     setSelectedWorkspaceId(null);
     void prepare();
   }, [open, prepare]);
@@ -290,11 +375,6 @@ export function PullRequestForkDialog({
     ],
   );
 
-  const candidates = error?.workspaceCandidates ?? [];
-  const selectedWorkspace = candidates.find(
-    (candidate) => candidate.id === selectedWorkspaceId,
-  );
-
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="w-[min(96vw,860px)] gap-0 overflow-hidden p-0 sm:max-w-[860px]">
@@ -316,113 +396,7 @@ export function PullRequestForkDialog({
           </div>
         </header>
 
-        {preparing ? (
-          <div className="flex min-h-56 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Spinner size="xs" aria-hidden />
-            <span role="status">Finding the matching project and worktree</span>
-          </div>
-        ) : error ? (
-          <div className="space-y-4 px-5 py-5">
-            <div
-              role="alert"
-              className="flex items-start gap-2 bg-destructive/8 px-3 py-2.5 text-xs"
-            >
-              <AlertCircle
-                size={14}
-                aria-hidden
-                className="mt-0.5 shrink-0 text-destructive"
-              />
-              <p className="text-foreground/85">{errorCopy(error)}</p>
-            </div>
-
-            {error.code === "workspace_mapping_ambiguous" &&
-            candidates.length > 0 ? (
-              <div className="space-y-1.5">
-                <label
-                  className="text-xs text-muted-foreground"
-                  htmlFor="fork-workspace"
-                >
-                  Project
-                </label>
-                <Select
-                  value={selectedWorkspaceId}
-                  onValueChange={setSelectedWorkspaceId}
-                >
-                  <SelectTrigger id="fork-workspace" className="w-full">
-                    <SelectValue>
-                      {selectedWorkspace
-                        ? selectedWorkspace.name
-                        : "Choose a project"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {candidates.map(
-                      (candidate: PullRequestWorkspaceCandidate) => (
-                        <SelectItem key={candidate.id} value={candidate.id}>
-                          {candidate.name}
-                        </SelectItem>
-                      ),
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-
-            <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => close(false)}>
-                Cancel
-              </Button>
-              {error.code === "workspace_mapping_missing" ? (
-                <Button
-                  onClick={() => {
-                    close(false);
-                    requestAnimationFrame(() => {
-                      useCommandPaletteStore
-                        .getState()
-                        .open({ intent: "addProject" });
-                    });
-                  }}
-                >
-                  Add project
-                </Button>
-              ) : (
-                <Button
-                  disabled={
-                    error.code === "workspace_mapping_ambiguous" &&
-                    !selectedWorkspaceId
-                  }
-                  onClick={() => void prepare(selectedWorkspaceId ?? undefined)}
-                >
-                  Retry
-                </Button>
-              )}
-            </div>
-          </div>
-        ) : target ? (
-          <div className="min-h-0 bg-background">
-            <div className="flex items-center gap-2 border-b border-border/35 px-5 py-2 text-xs text-muted-foreground">
-              <span className="font-medium text-foreground/85">
-                {target.mode === "existing-worktree"
-                  ? "Existing worktree"
-                  : "New worktree"}
-              </span>
-              <span aria-hidden>·</span>
-              <span className="min-w-0 truncate font-mono">
-                {target.branch}
-              </span>
-              {mode === "background" ? (
-                <span className="ml-auto shrink-0">
-                  The pull request stays open
-                </span>
-              ) : null}
-            </div>
-            <Composer
-              isNewThread
-              workspaceId={target.workspaceId}
-              onThreadCreated={handleThreadCreated}
-            />
-          </div>
-        ) : null}
+        <PullRequestForkDialogStatus preparing={preparing} error={error} target={target} selectedWorkspaceId={selectedWorkspaceId} setSelectedWorkspaceId={setSelectedWorkspaceId} onClose={() => close(false)} onPrepare={(workspaceId) => void prepare(workspaceId)} mode={mode} onThreadCreated={handleThreadCreated} />
       </DialogContent>
     </Dialog>
   );

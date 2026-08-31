@@ -1,5 +1,5 @@
-import path from "node:path";
-import { existsSync } from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
 
 /** Inputs that determine which binary the server child should use. */
 export interface ResolveServerBinaryInput {
@@ -9,7 +9,7 @@ export interface ResolveServerBinaryInput {
   execPath: string;
   /** `process.resourcesPath` — only meaningful when packaged. */
   resourcesPath: string;
-  /** `process.platform` — controls extension and image-name expectations. */
+  /** Host platform that controls extension and image-name expectations. */
   platform: NodeJS.Platform;
 }
 
@@ -31,8 +31,8 @@ function renamedBinaryName(platform: NodeJS.Platform): string {
 export function resolveServerBinary(input: ResolveServerBinaryInput): string {
   if (!input.isPackaged) return input.execPath;
 
-  const renamed = path.join(input.resourcesPath, "bin", renamedBinaryName(input.platform));
-  if (existsSync(renamed)) return renamed;
+  const renamed = NodePath.join(input.resourcesPath, "bin", renamedBinaryName(input.platform));
+  if (NodeFS.existsSync(renamed)) return renamed;
 
   return input.execPath;
 }

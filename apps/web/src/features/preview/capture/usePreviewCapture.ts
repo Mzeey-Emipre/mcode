@@ -2,29 +2,21 @@ import { useCallback, useState } from "react";
 import { useToastStore } from "@/stores/toastStore";
 import { usePreviewReferenceQueueStore } from "../state/previewReferenceQueueStore";
 import { MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME } from "@mcode/contracts";
-import type { McodeBrowserCapture, PreviewAnnotationPayload } from "@mcode/contracts";
-import type { PreviewAnnotationSnapshotRequest } from "@/transport/desktop-bridge";
+import type {
+  McodeBrowserCaptureV2,
+  PreviewAnnotationPayload,
+} from "@mcode/contracts";
+import type {
+  PreviewAnnotationSnapshotRequest,
+  PreviewContextReferenceResult,
+  PreviewPictureReferenceResult,
+} from "@/transport/desktop-bridge";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
 import { normalizePreviewPageIdentity, usePreviewAnnotationStore } from "../state/previewAnnotationStore";
 
-type CaptureResult =
-  | {
-      ok: true;
-      meta: {
-        id: string;
-        name: string;
-        mimeType: string;
-        sizeBytes: number;
-        sourcePath: string;
-      };
-      previewBytes: Uint8Array;
-      capture: McodeBrowserCapture;
-    }
-  | { ok: false; error: string };
+type CaptureResult = PreviewPictureReferenceResult;
 
-type ContextCaptureResult =
-  | { ok: true; capture: McodeBrowserCapture }
-  | { ok: false; error: string };
+type ContextCaptureResult = PreviewContextReferenceResult;
 
 const CAPTURE_ERROR_SILENT = new Set(["cancelled", "capture-interrupted", "navigated-away"]);
 
@@ -119,7 +111,7 @@ export function usePreviewCapture({
 
       let res: CaptureResult;
       try {
-        res = (await preview.capturePictureReference()) as CaptureResult;
+        res = await preview.capturePictureReference();
       } catch {
         useToastStore.getState().show("error", "Could not capture preview", "Screenshot failed.");
         return;
@@ -157,7 +149,7 @@ export function usePreviewCapture({
 
       let res: CaptureResult;
       try {
-        res = (await preview.capturePictureReferenceRegion()) as CaptureResult;
+        res = await preview.capturePictureReferenceRegion();
       } catch {
         useToastStore.getState().show("error", "Could not capture preview", "Screenshot failed.");
         return;
@@ -195,7 +187,7 @@ export function usePreviewCapture({
 
       let res: CaptureResult;
       try {
-        res = (await preview.capturePictureReferenceElementPick()) as CaptureResult;
+        res = await preview.capturePictureReferenceElementPick();
       } catch {
         useToastStore.getState().show("error", "Could not capture preview", "Screenshot failed.");
         return { ok: false };
@@ -234,7 +226,7 @@ export function usePreviewCapture({
 
       let res: ContextCaptureResult;
       try {
-        res = (await preview.capturePageContext()) as ContextCaptureResult;
+        res = await preview.capturePageContext();
       } catch {
         useToastStore.getState().show("error", "Could not capture preview", "Context capture failed.");
         return;
@@ -270,7 +262,7 @@ export function usePreviewCapture({
     await pushSync(true);
     let res: CaptureResult;
     try {
-      res = (await preview.captureAnnotationSnapshot(overlay)) as CaptureResult;
+      res = await preview.captureAnnotationSnapshot(overlay);
     } catch {
       useToastStore.getState().show("error", "Could not save annotation", "Screenshot failed.");
       return null;
@@ -287,44 +279,48 @@ export function usePreviewCapture({
     };
   }, [pushSync, threadId]);
 
-  const onAddElementAnnotation = useCallback(async (): Promise<{ ok: boolean }> => {
+  const captureElementPick = useCallback(async (): Promise<CaptureResult | null> => {
     const preview = window.desktopBridge?.preview;
-    if (!preview?.capturePictureReferenceElementPick || !threadId) return { ok: false };
+    if (!preview?.capturePictureReferenceElementPick || !threadId) return null;
+    try {
+      return await preview.capturePictureReferenceElementPick();
+    } catch {
+      useToastStore.getState().show("error", "Could not capture preview", "Screenshot failed.");
+      return null;
+    }
+  }, [threadId]);
 
+  const saveElementAnnotation = useCallback((capture: McodeBrowserCaptureV2): void => {
+    const elementStyle = capture.elementStyle && Object.keys(capture.elementStyle).length > 0
+      ? capture.elementStyle
+      : undefined;
+    usePreviewAnnotationStore.getState().setDraft(threadId, {
+      threadId,
+      pageIdentity: normalizePreviewPageIdentity(capture.pageUrl),
+      bounds: capture.bounds,
+      selectorHint: capture.selectorHint ?? null,
+      label: capture.selectorHint ?? null,
+      pageContext: capture,
+      ...(elementStyle ? { elementStyle } : {}),
+      note: "",
+    });
+  }, [threadId]);
+
+  const onAddElementAnnotation = useCallback(async (): Promise<{ ok: boolean }> => {
     setElementPickBusy(true);
     try {
       await pushSync(true);
-      let res: CaptureResult;
-      try {
-        res = (await preview.capturePictureReferenceElementPick()) as CaptureResult;
-      } catch {
-        useToastStore.getState().show("error", "Could not capture preview", "Screenshot failed.");
-        return { ok: false };
-      }
-
+      const res = await captureElementPick();
+      if (!res) return { ok: false };
       showCaptureErrorIfNeeded(res);
       if (!res.ok || res.capture.schemaVersion !== 2) return { ok: false };
-
-      const elementStyle =
-        res.capture.elementStyle && Object.keys(res.capture.elementStyle).length > 0
-          ? res.capture.elementStyle
-          : undefined;
-      usePreviewAnnotationStore.getState().setDraft(threadId, {
-        threadId,
-        pageIdentity: normalizePreviewPageIdentity(res.capture.pageUrl),
-        bounds: res.capture.bounds,
-        selectorHint: res.capture.selectorHint ?? null,
-        label: res.capture.selectorHint ?? null,
-        pageContext: res.capture,
-        ...(elementStyle ? { elementStyle } : {}),
-        note: "",
-      });
+      saveElementAnnotation(res.capture);
       onSuccess?.("element");
       return { ok: true };
     } finally {
       setElementPickBusy(false);
     }
-  }, [pushSync, threadId, onSuccess]);
+  }, [captureElementPick, pushSync, saveElementAnnotation, onSuccess]);
 
   return {
     captureBusy,

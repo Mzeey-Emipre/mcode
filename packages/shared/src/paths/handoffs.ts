@@ -3,8 +3,8 @@
  * ULID-based directory naming gives lexicographically sortable, time-ordered handoff history.
  */
 
-import { randomBytes } from "crypto";
-import { join } from "path";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -21,7 +21,7 @@ export function newHandoffUlid(): string {
     timePart = CROCKFORD[t % 32] + timePart;
     t = Math.floor(t / 32);
   }
-  const rand = randomBytes(16);
+  const rand = NodeCrypto.randomBytes(16);
   let randPart = "";
   for (let i = 0; i < 16; i++) {
     randPart += CROCKFORD[rand[i] % 32];
@@ -36,7 +36,7 @@ export function resolveThreadHandoffsDir(
   mcodeDir: string,
   threadId: string,
 ): string {
-  return join(mcodeDir, "threads", threadId, "handoffs");
+  return NodePath.join(mcodeDir, "threads", threadId, "handoffs");
 }
 
 /**
@@ -47,7 +47,7 @@ export function resolveHandoffDir(
   threadId: string,
   ulid: string,
 ): string {
-  return join(resolveThreadHandoffsDir(mcodeDir, threadId), ulid);
+  return NodePath.join(resolveThreadHandoffsDir(mcodeDir, threadId), ulid);
 }
 
 /**
@@ -57,5 +57,5 @@ export function resolveThreadAttachmentsDir(
   mcodeDir: string,
   threadId: string,
 ): string {
-  return join(mcodeDir, "threads", threadId, "attachments");
+  return NodePath.join(mcodeDir, "threads", threadId, "attachments");
 }

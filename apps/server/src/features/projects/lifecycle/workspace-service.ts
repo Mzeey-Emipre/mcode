@@ -3,8 +3,8 @@
  * Orchestrates two-phase workspace deletion: soft-delete + async cleanup.
  */
 
-import { existsSync } from "fs";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { injectable, inject, delay } from "tsyringe";
 import type { Workspace } from "@mcode/contracts";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
@@ -201,7 +201,7 @@ export class WorkspaceService {
     } catch {
       // Fall back to filesystem check when git is unavailable or fails to run
       // (e.g. git not in PATH in the server process on some platforms).
-      if (existsSync(join(path, ".git"))) {
+      if (NodeFS.existsSync(NodePath.join(path, ".git"))) {
         return true;
       }
       logger.info("WorkspaceService: path is not a git repo", { path });

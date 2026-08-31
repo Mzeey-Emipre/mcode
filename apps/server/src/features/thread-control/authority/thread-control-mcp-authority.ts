@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type { InternalThreadControlAuthority } from "@mcode/thread-orchestration";
 
 /** Mutable server-owned lease for an internal provider-session MCP credential. */
@@ -34,7 +34,7 @@ export interface InternalThreadControlMcpLease {
 export function constantTimeCredentialEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
-  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+  return leftBuffer.length === rightBuffer.length && NodeCrypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 /** Owns opaque credentials and revocable authority for internal MCP sessions. */
@@ -43,7 +43,7 @@ export class InternalThreadControlMcpAuthority {
 
   /** Activates a turn lease without rotating its pooled session credential. */
   activate(input: ActivateInternalThreadControlMcpLease): InternalThreadControlMcpLease {
-    const entry = this.leases.get(input.sessionId) ?? { credential: randomBytes(32).toString("base64url") };
+    const entry = this.leases.get(input.sessionId) ?? { credential: NodeCrypto.randomBytes(32).toString("base64url") };
     entry.active?.controller.abort();
     entry.active = {
       sourceThreadId: input.sourceThreadId,

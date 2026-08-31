@@ -1,6 +1,6 @@
-import { statSync } from "node:fs";
-import { isAbsolute } from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import which from "which";
 import {
   TerminalCustomProfileSchema,
@@ -14,6 +14,7 @@ import {
 } from "@mcode/contracts";
 import type { SettingsService } from "../../settings/settings-service.js";
 import type { WorkspaceTerminalPreferencesService } from "../preferences/workspace-terminal-preferences-service.js";
+import { terminalPlatform } from "../terminal-platform.js";
 
 interface CertifiedProfileDefinition {
   readonly id: Exclude<TerminalProfileReference, "automatic" | `custom:${string}`>;
@@ -82,25 +83,22 @@ export class TerminalProfileInUseError extends Error {
 }
 
 /** Creates the production profile discovery probes for this server process. */
-export function createTerminalProfileServiceOptions(): TerminalProfileServiceOptions {
-  const platform: TerminalPlatform = process.platform === "win32"
-    ? "windows"
-    : process.platform === "darwin"
-      ? "macos"
-      : "linux";
+export function createTerminalProfileServiceOptions(
+  platform: NodeJS.Platform,
+): TerminalProfileServiceOptions {
   return {
-    platform,
+    platform: terminalPlatform(platform),
     resolveExecutable: async (executable) => {
-      if (isAbsolute(executable)) {
+      if (NodePath.isAbsolute(executable)) {
         try {
-          return statSync(executable).isFile() ? executable : null;
+          return NodeFS.statSync(executable).isFile() ? executable : null;
         } catch {
           return null;
         }
       }
       return await which(executable, { nothrow: true });
     },
-    createId: randomUUID,
+    createId: NodeCrypto.randomUUID,
   };
 }
 
@@ -109,7 +107,7 @@ export class TerminalProfileService {
   constructor(
     private readonly settings: SettingsService,
     private readonly workspacePreferences: WorkspaceTerminalPreferencesService,
-    private readonly options: TerminalProfileServiceOptions = createTerminalProfileServiceOptions(),
+    private readonly options: TerminalProfileServiceOptions,
   ) {}
 
   /** Lists available certified profiles and persisted custom profiles. */

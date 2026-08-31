@@ -3,7 +3,7 @@
  * Provides creation and retrieval operations for persisted hook executions.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { HookExecutionRecord } from "@mcode/contracts";
@@ -85,7 +85,7 @@ export class HookExecutionRepo {
 
   /** Create a single hook execution record and return the fully-populated record. */
   create(input: CreateHookExecutionInput): HookExecutionRecord {
-    const id = input.id ?? randomUUID();
+    const id = input.id ?? NodeCrypto.randomUUID();
     this.stmtInsert.run(
       id,
       input.messageId,
@@ -120,7 +120,7 @@ export class HookExecutionRepo {
     const tx = this.db.transaction((items: CreateHookExecutionInput[]) => {
       for (const item of items) {
         this.stmtInsert.run(
-          item.id ?? randomUUID(),
+          item.id ?? NodeCrypto.randomUUID(),
           item.messageId,
           item.hookName,
           item.toolName,
@@ -149,7 +149,7 @@ export class HookExecutionRepo {
       byteLength: (item) => Buffer.byteLength(JSON.stringify(item), "utf8"),
       write: (item) => {
         this.stmtInsert.run(
-          item.id ?? randomUUID(),
+          item.id ?? NodeCrypto.randomUUID(),
           item.messageId,
           item.hookName,
           item.toolName,

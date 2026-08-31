@@ -1,12 +1,12 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 const MAX_METADATA_BYTES = 256 * 1024;
 const MAX_FILE_ENTRIES = 32;
 
 function readBounded(filePath) {
-  const value = readFileSync(filePath, "utf8");
+  const value = NodeFS.readFileSync(filePath, "utf8");
   if (Buffer.byteLength(value) > MAX_METADATA_BYTES) {
     throw new Error(
       `Electron update metadata exceeds ${MAX_METADATA_BYTES} bytes: ${filePath}`,
@@ -16,30 +16,51 @@ function readBounded(filePath) {
 }
 
 function parseFileEntries(source) {
-  const lines = source.split(/\r?\n/);
+  if (typeof source !== "string") {
+    throw new TypeError("Electron update metadata must be text");
+  }
+  return collectFileEntries(source.split(/\r?\n/));
+}
+
+function collectFileEntries(lines) {
   const entries = [];
-  let inFiles = false;
+  const fileLines = lines.slice(findFilesSectionStart(lines) + 1);
+  let current = collectCurrentFileEntry(fileLines, entries);
+  if (current.length > 0) entries.push(current.join("\n").replace(/\n+$/, ""));
+  return assertFileEntries(entries);
+}
+
+function findFilesSectionStart(lines) {
+  const filesStart = lines.findIndex((line) => line === "files:");
+  if (filesStart < 0) throw new Error("Electron update metadata has no files section");
+  return filesStart;
+}
+
+function collectCurrentFileEntry(lines, entries) {
   let current = [];
   for (const line of lines) {
-    if (line === "files:") {
-      inFiles = true;
-      continue;
-    }
-    if (!inFiles) continue;
-    if (/^  - url:/.test(line)) {
+    const operation = fileEntryLineOperation(line, current.length > 0);
+    if (operation.kind === "stop") return current;
+    if (operation.kind === "new") {
       if (current.length > 0) entries.push(current.join("\n"));
       current = [line];
-    } else if (/^    \S/.test(line) && current.length > 0) {
-      current.push(line);
-    } else if (/^\S/.test(line) && line.trim()) {
-      break;
-    } else if (current.length > 0) {
-      current.push(line);
     }
-    if (entries.length > MAX_FILE_ENTRIES)
+    if (operation.kind === "append") current.push(line);
+    if (entries.length > MAX_FILE_ENTRIES) {
       throw new Error("Electron update metadata has too many file entries");
+    }
   }
-  if (current.length > 0) entries.push(current.join("\n").replace(/\n+$/, ""));
+  return current;
+}
+
+function fileEntryLineOperation(line, hasCurrentEntry) {
+  if (line.startsWith("  - url:")) return { kind: "new" };
+  if (/^    \S/.test(line) && hasCurrentEntry) return { kind: "append" };
+  if (/^\S/.test(line) && line.trim()) return { kind: "stop" };
+  return hasCurrentEntry ? { kind: "append" } : { kind: "ignore" };
+}
+
+function assertFileEntries(entries) {
   if (entries.length === 0 || entries.length > MAX_FILE_ENTRIES) {
     throw new Error(
       "Electron update metadata must contain bounded file entries",
@@ -68,7 +89,7 @@ export function mergeElectronUpdateMetadata(
     (entry) => !knownUrls.has(entryUrl(entry)),
   );
   if (additions.length === 0) {
-    writeFileSync(outputPath, primary);
+    NodeFS.writeFileSync(outputPath, primary);
     return { added: 0 };
   }
   const lines = primary.split(/\r?\n/);
@@ -83,13 +104,13 @@ export function mergeElectronUpdateMetadata(
     }
   }
   lines.splice(insertAt, 0, ...additions.flatMap((entry) => entry.split("\n")));
-  writeFileSync(outputPath, lines.join("\n"));
+  NodeFS.writeFileSync(outputPath, lines.join("\n"));
   return { added: additions.length };
 }
 
 if (
   process.argv[1] &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+  NodeURL.fileURLToPath(import.meta.url) === NodePath.resolve(process.argv[1])
 ) {
   const [primaryPath, secondaryPath, outputPath] = process.argv.slice(2);
   if (!primaryPath || !secondaryPath || !outputPath) {

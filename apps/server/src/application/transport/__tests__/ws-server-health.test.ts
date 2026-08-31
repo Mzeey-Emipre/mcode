@@ -6,7 +6,7 @@
 
 import "reflect-metadata";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import http from "http";
+import * as NodeHTTP from "node:http";
 import { WebSocket } from "ws";
 import { createWsServer } from "../ws-server.js";
 import type { RouterDeps } from "../ws-router.js";
@@ -68,13 +68,13 @@ function makeMinimalDeps(
 }
 
 /** Issue a GET /health request to the given server and return status + parsed body. */
-function getHealth(server: http.Server): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
+function getHealth(server: NodeHTTP.Server): Promise<{ status: number; body: unknown; headers: NodeHTTP.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     if (!addr || typeof addr === "string") {
       return reject(new Error("Server not listening on a TCP port"));
     }
-    const req = http.get(
+    const req = NodeHTTP.get(
       { host: "127.0.0.1", port: addr.port, path: "/health" },
       (res) => {
         let raw = "";
@@ -94,7 +94,7 @@ function getHealth(server: http.Server): Promise<{ status: number; body: unknown
 
 /** Issue a POST /shutdown request to the given server. */
 function postShutdown(
-  server: http.Server,
+  server: NodeHTTP.Server,
   token?: string,
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
@@ -102,7 +102,7 @@ function postShutdown(
     if (!addr || typeof addr === "string") {
       return reject(new Error("Server not listening on a TCP port"));
     }
-    const req = http.request(
+    const req = NodeHTTP.request(
       {
         host: "127.0.0.1",
         port: addr.port,
@@ -128,7 +128,7 @@ function postShutdown(
 }
 
 function providerCatalogRpc(
-  server: http.Server,
+  server: NodeHTTP.Server,
   token: string,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -158,7 +158,7 @@ function providerCatalogRpc(
 }
 
 describe("/health endpoint", () => {
-  let server: http.Server;
+  let server: NodeHTTP.Server;
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -276,7 +276,7 @@ describe("/health endpoint", () => {
 });
 
 describe("single-instance WebSocket attachment", () => {
-  let server: http.Server;
+  let server: NodeHTTP.Server;
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -322,7 +322,7 @@ describe("single-instance WebSocket attachment", () => {
 });
 
 describe("authenticated WebSocket provider catalog", () => {
-  let server: http.Server;
+  let server: NodeHTTP.Server;
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -397,7 +397,7 @@ describe("authenticated WebSocket provider catalog", () => {
 });
 
 describe("/shutdown endpoint", () => {
-  let server: http.Server;
+  let server: NodeHTTP.Server;
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));

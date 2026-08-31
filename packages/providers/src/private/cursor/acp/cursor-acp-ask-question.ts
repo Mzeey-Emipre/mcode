@@ -58,65 +58,47 @@ export function buildCursorAskQuestionExtResponse(
   autoAnswer: boolean,
   onAutoSummary?: (payload: CursorEchoAskQuestions) => void,
 ): Record<string, unknown> {
-  if (!autoAnswer) {
-    return {
-      outcome: {
-        outcome: "skipped",
-        reason: "Mcode settings disabled auto answers for cursor/ask_question.",
-      },
-    };
-  }
-
+  if (!autoAnswer) return skippedCursorQuestionResponse("Mcode settings disabled auto answers for cursor/ask_question.");
   const rawQuestions = params.questions;
-  if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) {
-    return {
-      outcome: {
-        outcome: "skipped",
-        reason: "cursor/ask_question payload missing questions[]",
-      },
-    };
-  }
+  if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) return skippedCursorQuestionResponse("cursor/ask_question payload missing questions[]");
+  const collected = collectCursorQuestionAnswers(rawQuestions);
+  if (collected.kind === "skipped") return skippedCursorQuestionResponse(collected.reason);
+  onAutoSummary?.(collected.payload);
+  return { outcome: { outcome: "answered", answers: collected.payload.answers } };
+}
 
+function collectCursorQuestionAnswers(rawQuestions: unknown[]):
+  | { kind: "answered"; payload: CursorEchoAskQuestions }
+  | { kind: "skipped"; reason: string } {
   const answers: Array<{ questionId: string; selectedOptionIds: string[] }> = [];
   const lines: string[] = [];
-
-  for (const q of rawQuestions) {
-    if (!q || typeof q !== "object" || Array.isArray(q)) continue;
-    const item = q as CursorAskQuestionItem;
-    const qid = typeof item.id === "string" && item.id.length > 0 ? item.id : `q${answers.length}`;
+  for (const question of rawQuestions) {
+    const item = asCursorAskQuestionItem(question);
+    if (!item) continue;
+    const qid = cursorQuestionId(item, answers.length);
     const picks = pickCursorAskQuestionOptionIds(item);
-    if (picks.length === 0) {
-      return {
-        outcome: {
-          outcome: "skipped",
-          reason: `Question ${qid} had no selectable option ids`,
-        },
-      };
-    }
+    if (picks.length === 0) return { kind: "skipped", reason: `Question ${qid} had no selectable option ids` };
     answers.push({ questionId: qid, selectedOptionIds: picks });
-    const promptText = typeof item.prompt === "string" ? item.prompt.trim() : "";
-    lines.push(
-      promptText
-        ? `${promptText} → ${picks.join(", ")}`
-        : `Question ${qid} → ${picks.join(", ")}`,
-    );
+    lines.push(cursorQuestionSummary(item, qid, picks));
   }
+  if (answers.length === 0) return { kind: "skipped", reason: "cursor/ask_question had no usable question objects" };
+  return { kind: "answered", payload: { lines, answers } };
+}
 
-  if (answers.length === 0) {
-    return {
-      outcome: {
-        outcome: "skipped",
-        reason: "cursor/ask_question had no usable question objects",
-      },
-    };
-  }
+function asCursorAskQuestionItem(value: unknown): CursorAskQuestionItem | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as CursorAskQuestionItem;
+}
 
-  onAutoSummary?.({ lines, answers });
+function cursorQuestionId(item: CursorAskQuestionItem, index: number): string {
+  return typeof item.id === "string" && item.id.length > 0 ? item.id : `q${index}`;
+}
 
-  return {
-    outcome: {
-      outcome: "answered",
-      answers,
-    },
-  };
+function cursorQuestionSummary(item: CursorAskQuestionItem, questionId: string, picks: string[]): string {
+  const prompt = typeof item.prompt === "string" ? item.prompt.trim() : "";
+  return prompt ? `${prompt} → ${picks.join(", ")}` : `Question ${questionId} → ${picks.join(", ")}`;
+}
+
+function skippedCursorQuestionResponse(reason: string): Record<string, unknown> {
+  return { outcome: { outcome: "skipped", reason } };
 }

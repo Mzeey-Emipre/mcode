@@ -136,7 +136,7 @@ describe("MessageRepo", () => {
 
   describe("listByThread", () => {
     it("returns tool_call_count per message via indexed lookup", () => {
-      const m1 = repo.create("thread-1", "user", "a", 1);
+      repo.create("thread-1", "user", "a", 1);
       const m2 = repo.create("thread-1", "assistant", "b", 2);
       db.prepare(
         "INSERT INTO tool_call_records (id, message_id, name) VALUES (?, ?, ?)",

@@ -9,16 +9,7 @@ import type { BrowserPerfCounters } from "@mcode/contracts";
  */
 export function PreviewPerfHud() {
   const [counters, setCounters] = useState<BrowserPerfCounters | null>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    try {
-      const p = new URLSearchParams(window.location.search);
-      setVisible(p.get("previewPerf") === "1");
-    } catch {
-      setVisible(false);
-    }
-  }, []);
+  const visible = new URLSearchParams(window.location.search).get("previewPerf") === "1";
 
   useEffect(() => {
     if (!visible) return;

@@ -8,6 +8,7 @@ import {
   type TerminalBinaryFrame,
   type TerminalBackendCapabilities,
   type TerminalGap,
+  type TerminalHydrationDescriptor,
   type TerminalScope,
   type TerminalSessionSnapshot,
   TerminalDiagnosticsBundleSchema,
@@ -37,13 +38,11 @@ interface ClientAttachment {
   hydrationChunkCount: number | null;
   hydrationOutputCount: number;
   hydrated: boolean;
-  hydrationDescriptor: {
-    readonly mode: "delta" | "checkpoint-delta" | "reset-tail-gap";
-    readonly checkpointThroughSeq: string | null;
-    readonly lastOutputSeq: string | null;
-  } | null;
+  hydrationDescriptor: TerminalHydrationDescriptor | null;
   hydrationPayload: Uint8Array | null;
 }
+
+type HydrationDescriptor = TerminalHydrationDescriptor;
 
 /** Sends one encoded Terminal v1 binary frame to the server. */
 export type TerminalBinarySend = (frame: Uint8Array) => void;
@@ -161,60 +160,15 @@ export class ModernTerminalClient implements TerminalClient {
 
   /** Acquires a new controller epoch and consumes hidden hydration frames. */
   async reattach(ptyId: string, lastSeq: number): Promise<TerminalClientReattachResult> {
-    const session = this.sessions.get(ptyId);
-    const attachment: ClientAttachment = {
-      sessionId: ptyId,
-      attachmentId: crypto.randomUUID(),
-      hostGeneration: session?.hostGeneration ?? this.capabilities.host.generation,
-      attachmentEpoch: "0",
-      hydrationId: crypto.randomUUID(),
-      commandSeq: BigInt(session?.lastCommandSeq ?? "0"),
-      lastOutputSeq: BigInt(Math.max(0, lastSeq)),
-      hydrationChunks: new Map(),
-      pendingOutput: [],
-      hydrationChunkCount: null,
-      hydrationOutputCount: 0,
-      hydrated: false,
-      hydrationDescriptor: null,
-      hydrationPayload: null,
-    };
+    const attachment = this.createAttachment(ptyId, lastSeq);
     this.attachments.set(ptyId, attachment);
-    let descriptor: { attachmentEpoch: string; hydrationId: string };
     try {
-      descriptor = await this.rpc<{
-        attachmentEpoch: string;
-        hydrationId: string;
-      }>("terminal.session.attach", {
-        sessionId: ptyId,
-        attachmentId: attachment.attachmentId,
-        hostGeneration: attachment.hostGeneration,
-        lastOutputSeq: attachment.lastOutputSeq.toString(),
-        lastCommandSeq: attachment.commandSeq.toString(),
-        ...(this.checkpointThroughSeq.has(ptyId)
-          ? { checkpointSeq: this.checkpointThroughSeq.get(ptyId) }
-          : {}),
-      });
+      this.applyAttachmentDescriptor(attachment, await this.attachSession(attachment));
     } catch (error) {
-      this.checkpointThroughSeq.delete(ptyId);
-      if (this.attachments.get(ptyId) === attachment) this.attachments.delete(ptyId);
+      this.discardAttachment(ptyId, attachment);
       throw error;
     }
-    attachment.attachmentEpoch = descriptor.attachmentEpoch;
-    attachment.hydrationId = descriptor.hydrationId;
-    const hydration = attachment.hydrationDescriptor;
-    if (!hydration) return { mode: "delta" };
-    if (hydration.mode === "checkpoint-delta") {
-      return {
-        mode: "checkpoint",
-        checkpoint: new TextDecoder().decode(attachment.hydrationPayload ?? new Uint8Array()),
-        checkpointThrough: Number(hydration.checkpointThroughSeq ?? "0"),
-      };
-    }
-    if (hydration.mode === "reset-tail-gap") {
-      this.checkpointThroughSeq.delete(ptyId);
-      return { mode: "reset", discardThrough: Number(hydration.lastOutputSeq ?? "0") };
-    }
-    return { mode: "delta" };
+    return this.reattachResult(ptyId, attachment);
   }
 
   /** Uploads one bounded renderer checkpoint through the v1 authority. */
@@ -285,87 +239,181 @@ export class ModernTerminalClient implements TerminalClient {
   /** Applies a server v1 frame to the exact client-owned attachment. */
   handleFrame(bytes: Uint8Array): void {
     const frame = decodeTerminalFrame(bytes);
-    const attachment = this.attachments.get(frame.sessionId);
-    if (!attachment || attachment.attachmentId !== frame.attachmentId) return;
-    if (!this.acceptFrameIdentity(attachment, frame)) return;
-    if (frame.kind === "hydrationChunk") {
-      const index = Number(frame.primarySeq);
-      const count = Number(frame.relatedSeq);
-      if (!Number.isSafeInteger(index) || !Number.isSafeInteger(count) || attachment.hydrationChunks.has(index)) {
-        throw new Error("Terminal hydration chunk sequence is invalid");
-      }
-      if (attachment.hydrationChunkCount !== null && attachment.hydrationChunkCount !== count) {
-        throw new Error("Terminal hydration chunk count changed");
-      }
-      attachment.hydrationChunkCount = count;
-      attachment.hydrationChunks.set(index, Uint8Array.from(frame.payload));
-      return;
-    }
-    if (frame.kind === "hydrationComplete") {
-      const descriptor = TerminalHydrationDescriptorSchema().parse(
-        JSON.parse(new TextDecoder().decode(frame.payload)),
-      );
-      if (descriptor.hydrationId !== frame.hydrationId) return;
-      const declaredChunks = attachment.hydrationChunkCount ?? 0;
-      if (
-        !Number.isInteger(declaredChunks) ||
-        declaredChunks < 0 ||
-        attachment.hydrationChunks.size + attachment.hydrationOutputCount !== descriptor.chunkCount
-      ) {
-        throw new Error("Terminal hydration is incomplete");
-      }
-      for (let index = 0; index < declaredChunks; index += 1) {
-        if (!attachment.hydrationChunks.has(index)) throw new Error("Terminal hydration chunks are not contiguous");
-      }
-      attachment.hydrated = true;
-      const payload = concatBytes([...attachment.hydrationChunks.entries()].sort(([a], [b]) => a - b).map(([, chunk]) => chunk));
-      attachment.hydrationChunks.clear();
-      attachment.hydrationDescriptor = descriptor;
-      attachment.hydrationPayload = descriptor.mode === "checkpoint-delta" ? payload : null;
-      const outputSeq = descriptor.lastOutputSeq ?? attachment.lastOutputSeq.toString();
-      attachment.lastOutputSeq = BigInt(outputSeq);
-      if (payload.byteLength > 0 && descriptor.mode !== "checkpoint-delta") {
-        this.emitData({ ptyId: frame.sessionId, payload, seq: Number(outputSeq) });
-      }
-      if (descriptor.gap) this.emitReconnectGap(frame.sessionId, descriptor.gap);
-      for (const output of attachment.pendingOutput.splice(0)) {
-        attachment.lastOutputSeq = BigInt(output.seq);
-        this.emitData({ ptyId: frame.sessionId, payload: output.data, seq: Number(output.seq) });
-      }
-      return;
-    }
-    if (frame.kind === "output") {
-      if (!attachment.hydrated) {
-        attachment.hydrationOutputCount += 1;
-        attachment.pendingOutput.push({ seq: frame.primarySeq, data: Uint8Array.from(frame.payload) });
+    const attachment = this.attachmentForFrame(frame);
+    if (!attachment) return;
+    switch (frame.kind) {
+      case "hydrationChunk":
+        this.handleHydrationChunk(attachment, frame);
         return;
+      case "hydrationComplete":
+        this.handleHydrationComplete(attachment, frame);
+        return;
+      case "output":
+        this.handleOutput(attachment, frame);
+        return;
+      case "gap":
+        this.handleGap(frame);
+        return;
+      case "exitBarrier":
+        this.handleExitBarrier(frame);
+        return;
+      case "commandAck":
+      case "state":
+        return;
+    }
+  }
+
+  private attachmentForFrame(frame: TerminalBinaryFrame): ClientAttachment | null {
+    const attachment = this.attachments.get(frame.sessionId);
+    if (!attachment || attachment.attachmentId !== frame.attachmentId) return null;
+    return this.acceptFrameIdentity(attachment, frame) ? attachment : null;
+  }
+
+  private createAttachment(ptyId: string, lastSeq: number): ClientAttachment {
+    const session = this.sessions.get(ptyId);
+    return {
+      sessionId: ptyId,
+      attachmentId: crypto.randomUUID(),
+      hostGeneration: session?.hostGeneration ?? this.capabilities.host.generation,
+      attachmentEpoch: "0",
+      hydrationId: crypto.randomUUID(),
+      commandSeq: BigInt(session?.lastCommandSeq ?? "0"),
+      lastOutputSeq: BigInt(Math.max(0, lastSeq)),
+      hydrationChunks: new Map(),
+      pendingOutput: [],
+      hydrationChunkCount: null,
+      hydrationOutputCount: 0,
+      hydrated: false,
+      hydrationDescriptor: null,
+      hydrationPayload: null,
+    };
+  }
+
+  private attachSession(attachment: ClientAttachment): Promise<{ attachmentEpoch: string; hydrationId: string }> {
+    return this.rpc("terminal.session.attach", {
+      sessionId: attachment.sessionId,
+      attachmentId: attachment.attachmentId,
+      hostGeneration: attachment.hostGeneration,
+      lastOutputSeq: attachment.lastOutputSeq.toString(),
+      lastCommandSeq: attachment.commandSeq.toString(),
+      ...(this.checkpointThroughSeq.has(attachment.sessionId)
+        ? { checkpointSeq: this.checkpointThroughSeq.get(attachment.sessionId) }
+        : {}),
+    });
+  }
+
+  private applyAttachmentDescriptor(
+    attachment: ClientAttachment,
+    descriptor: { attachmentEpoch: string; hydrationId: string },
+  ): void {
+    attachment.attachmentEpoch = descriptor.attachmentEpoch;
+    attachment.hydrationId = descriptor.hydrationId;
+  }
+
+  private discardAttachment(ptyId: string, attachment: ClientAttachment): void {
+    this.checkpointThroughSeq.delete(ptyId);
+    if (this.attachments.get(ptyId) === attachment) this.attachments.delete(ptyId);
+  }
+
+  private reattachResult(ptyId: string, attachment: ClientAttachment): TerminalClientReattachResult {
+    const hydration = attachment.hydrationDescriptor;
+    if (!hydration || hydration.mode === "delta") return { mode: "delta" };
+    if (hydration.mode === "reset-tail-gap") {
+      this.checkpointThroughSeq.delete(ptyId);
+      return { mode: "reset", discardThrough: Number(hydration.lastOutputSeq ?? "0") };
+    }
+    return {
+      mode: "checkpoint",
+      checkpoint: new TextDecoder().decode(attachment.hydrationPayload ?? new Uint8Array()),
+      checkpointThrough: Number(hydration.checkpointThroughSeq ?? "0"),
+    };
+  }
+
+  private handleHydrationChunk(attachment: ClientAttachment, frame: TerminalBinaryFrame): void {
+    const index = Number(frame.primarySeq);
+    const count = Number(frame.relatedSeq);
+    if (!isValidHydrationChunk(attachment, index, count)) {
+      throw new Error("Terminal hydration chunk sequence is invalid");
+    }
+    if (attachment.hydrationChunkCount !== null && attachment.hydrationChunkCount !== count) {
+      throw new Error("Terminal hydration chunk count changed");
+    }
+    attachment.hydrationChunkCount = count;
+    attachment.hydrationChunks.set(index, Uint8Array.from(frame.payload));
+  }
+
+  private handleHydrationComplete(attachment: ClientAttachment, frame: TerminalBinaryFrame): void {
+    const descriptor = TerminalHydrationDescriptorSchema().parse(
+      JSON.parse(new TextDecoder().decode(frame.payload)),
+    );
+    if (descriptor.hydrationId !== frame.hydrationId) return;
+    this.validateHydrationComplete(attachment, descriptor.chunkCount);
+    const payload = collectHydrationPayload(attachment);
+    this.applyHydration(attachment, frame.sessionId, descriptor, payload);
+  }
+
+  private validateHydrationComplete(attachment: ClientAttachment, expectedChunkCount: number): void {
+    const declaredChunks = attachment.hydrationChunkCount ?? 0;
+    if (!hasCompleteHydration(attachment, declaredChunks, expectedChunkCount)) {
+      throw new Error("Terminal hydration is incomplete");
+    }
+    for (let index = 0; index < declaredChunks; index += 1) {
+      if (!attachment.hydrationChunks.has(index)) {
+        throw new Error("Terminal hydration chunks are not contiguous");
       }
-      attachment.lastOutputSeq = BigInt(frame.primarySeq);
-      this.emitData({ ptyId: frame.sessionId, payload: frame.payload, seq: Number(frame.primarySeq) });
+    }
+  }
+
+  private applyHydration(
+    attachment: ClientAttachment,
+    sessionId: string,
+    descriptor: HydrationDescriptor,
+    payload: Uint8Array,
+  ): void {
+    attachment.hydrated = true;
+    attachment.hydrationChunks.clear();
+    attachment.hydrationDescriptor = descriptor;
+    attachment.hydrationPayload = descriptor.mode === "checkpoint-delta" ? payload : null;
+    const outputSeq = descriptor.lastOutputSeq ?? attachment.lastOutputSeq.toString();
+    attachment.lastOutputSeq = BigInt(outputSeq);
+    if (payload.byteLength > 0 && descriptor.mode !== "checkpoint-delta") {
+      this.emitData({ ptyId: sessionId, payload, seq: Number(outputSeq) });
+    }
+    if (descriptor.gap) this.emitReconnectGap(sessionId, descriptor.gap);
+    this.emitPendingOutput(attachment, sessionId);
+  }
+
+  private emitPendingOutput(attachment: ClientAttachment, sessionId: string): void {
+    for (const output of attachment.pendingOutput.splice(0)) {
+      attachment.lastOutputSeq = BigInt(output.seq);
+      this.emitData({ ptyId: sessionId, payload: output.data, seq: Number(output.seq) });
+    }
+  }
+
+  private handleOutput(attachment: ClientAttachment, frame: TerminalBinaryFrame): void {
+    if (!attachment.hydrated) {
+      attachment.hydrationOutputCount += 1;
+      attachment.pendingOutput.push({ seq: frame.primarySeq, data: Uint8Array.from(frame.payload) });
       return;
     }
-    if (frame.kind === "commandAck" || frame.kind === "state") return;
-    if (frame.kind === "gap") {
-      const gap = TerminalGapSchema().parse(
-        JSON.parse(new TextDecoder().decode(frame.payload)),
-      );
-      this.emitReconnectGap(frame.sessionId, gap);
-      return;
-    }
-    if (frame.kind === "exitBarrier") {
-      const value = JSON.parse(new TextDecoder().decode(frame.payload)) as { exit: unknown };
-      const exit = TerminalExitMetadataSchema().parse(value.exit);
-      this.emitExit({
-        ptyId: frame.sessionId,
-        code: exit.code ?? 0,
-        state: exit.reason === "host-crash" ||
-            exit.reason === "containment-failure" ||
-            exit.reason === "protocol-failure"
-          ? "failed"
-          : "exited",
-        exit,
-      });
-    }
+    attachment.lastOutputSeq = BigInt(frame.primarySeq);
+    this.emitData({ ptyId: frame.sessionId, payload: frame.payload, seq: Number(frame.primarySeq) });
+  }
+
+  private handleGap(frame: TerminalBinaryFrame): void {
+    const gap = TerminalGapSchema().parse(JSON.parse(new TextDecoder().decode(frame.payload)));
+    this.emitReconnectGap(frame.sessionId, gap);
+  }
+
+  private handleExitBarrier(frame: TerminalBinaryFrame): void {
+    const value = JSON.parse(new TextDecoder().decode(frame.payload)) as { exit: unknown };
+    const exit = TerminalExitMetadataSchema().parse(value.exit);
+    this.emitExit({
+      ptyId: frame.sessionId,
+      code: exit.code ?? 0,
+      state: isFailedTerminalExit(exit.reason) ? "failed" : "exited",
+      exit,
+    });
   }
 
   private acceptFrameIdentity(
@@ -444,6 +492,39 @@ export class ModernTerminalClient implements TerminalClient {
       payload,
     }));
   }
+}
+
+function isValidHydrationChunk(
+  attachment: ClientAttachment,
+  index: number,
+  count: number,
+): boolean {
+  return Number.isSafeInteger(index)
+    && Number.isSafeInteger(count)
+    && !attachment.hydrationChunks.has(index);
+}
+
+function hasCompleteHydration(
+  attachment: ClientAttachment,
+  declaredChunks: number,
+  expectedChunkCount: number,
+): boolean {
+  return Number.isInteger(declaredChunks)
+    && declaredChunks >= 0
+    && attachment.hydrationChunks.size + attachment.hydrationOutputCount === expectedChunkCount;
+}
+
+function collectHydrationPayload(attachment: ClientAttachment): Uint8Array {
+  const chunks = [...attachment.hydrationChunks.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, chunk]) => chunk);
+  return concatBytes(chunks);
+}
+
+function isFailedTerminalExit(reason: string): boolean {
+  return reason === "host-crash"
+    || reason === "containment-failure"
+    || reason === "protocol-failure";
 }
 
 function concatBytes(values: readonly Uint8Array[]): Uint8Array {

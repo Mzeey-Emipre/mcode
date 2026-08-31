@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type {
   TerminalAttachmentDescriptor,
   TerminalErrorCode,
@@ -233,7 +233,7 @@ export class TerminalSessionRuntimeError extends Error {
   constructor(
     readonly code: TerminalErrorCode,
     readonly retry: TerminalRetryClass,
-    createCorrelationId: () => string = () => `corr-${randomUUID()}`,
+    createCorrelationId: () => string = () => `corr-${NodeCrypto.randomUUID()}`,
   ) {
     super(ERROR_MESSAGES[code] ?? "The Terminal runtime rejected the operation");
     this.name = "TerminalSessionRuntimeError";
@@ -254,8 +254,8 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
 
   constructor(private readonly options: ModernTerminalSessionRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
-    this.createHydrationId = options.createHydrationId ?? randomUUID;
-    this.createCorrelationId = options.createCorrelationId ?? (() => `corr-${randomUUID()}`);
+    this.createHydrationId = options.createHydrationId ?? NodeCrypto.randomUUID;
+    this.createCorrelationId = options.createCorrelationId ?? (() => `corr-${NodeCrypto.randomUUID()}`);
     this.initialDimensions = options.initialDimensions ?? DEFAULT_INITIAL_DIMENSIONS;
     validateDimensions(this.initialDimensions, this.protocolError.bind(this));
     this.unsubscribeHost = options.host.subscribe((event) => this.onHostEvent(event));
@@ -263,37 +263,13 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
 
   /** Creates one contained PTY and exposes it only after the host reports readiness. */
   async createSession(input: CreateRuntimeSession): Promise<TerminalSessionSnapshot> {
-    const sessionId = parseContract(uuid, input.sessionId, this.protocolError.bind(this));
-    const hostGeneration = parseContract(u64, input.hostGeneration, this.protocolError.bind(this));
-    const scope = parseContract(TerminalScopeSchema(), input.scope, this.protocolError.bind(this));
-    const launch = parseContract(
-      TerminalLaunchSnapshotSchema(),
-      input.launch,
-      this.protocolError.bind(this),
-    );
-    if (JSON.stringify(scope) !== JSON.stringify(launch.scope)) {
-      throw this.protocolError();
-    }
-    if (this.sessions.has(sessionId)) throw this.protocolError();
-    const hostCreateMessage = PtyHostServerMessageSchema().safeParse({
-      contractVersion: 1,
-      kind: "create",
-      sessionId,
-      hostGeneration,
-      scope,
-      executable: launch.resolvedProfile.executable,
-      arguments: launch.arguments,
-      cwd: input.cwd,
-      cols: this.initialDimensions.cols,
-      rows: this.initialDimensions.rows,
-      env: input.protectedEnv,
-    });
-    if (!hostCreateMessage.success) throw this.protocolError();
+    const request = this.parseCreateRequest(input);
+    if (this.sessions.has(request.sessionId)) throw this.protocolError();
     const record: RuntimeSession = {
-      sessionId,
-      scope: freezeScope(scope),
-      launch: freezeLaunch(launch),
-      hostGeneration,
+      sessionId: request.sessionId,
+      scope: freezeScope(request.scope),
+      launch: freezeLaunch(request.launch),
+      hostGeneration: request.hostGeneration,
       createdAt: parseContract(
         TerminalTimestampSchema(),
         this.now().toISOString(),
@@ -319,19 +295,19 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       pendingExit: null,
       exit: null,
     };
-    this.sessions.set(sessionId, record);
+    this.sessions.set(request.sessionId, record);
     try {
       const running = await this.options.host.create({
-        sessionId,
-        hostGeneration,
+        sessionId: request.sessionId,
+        hostGeneration: request.hostGeneration,
         launch: record.launch,
         cwd: input.cwd,
         protectedEnv: input.protectedEnv,
         ...this.initialDimensions,
       });
       if (
-        running.sessionId !== sessionId ||
-        running.hostGeneration !== hostGeneration ||
+        running.sessionId !== request.sessionId ||
+        running.hostGeneration !== request.hostGeneration ||
         running.state !== "running"
       ) {
         throw this.protocolError();
@@ -341,11 +317,53 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       this.applyPendingExit(record);
       return this.snapshot(record);
     } catch (error) {
-      this.sessions.delete(sessionId);
+      this.sessions.delete(request.sessionId);
       throw error instanceof TerminalSessionRuntimeError
         ? error
         : this.mapHostError(error, "HOST_UNHEALTHY", "NEW_SESSION");
     }
+  }
+
+  private parseCreateRequest(input: CreateRuntimeSession): {
+    readonly sessionId: string;
+    readonly hostGeneration: string;
+    readonly scope: ReturnType<typeof TerminalScopeSchema>["_output"];
+    readonly launch: ReturnType<typeof TerminalLaunchSnapshotSchema>["_output"];
+  } {
+    const sessionId = parseContract(uuid, input.sessionId, this.protocolError.bind(this));
+    const hostGeneration = parseContract(u64, input.hostGeneration, this.protocolError.bind(this));
+    const scope = parseContract(TerminalScopeSchema(), input.scope, this.protocolError.bind(this));
+    const launch = parseContract(
+      TerminalLaunchSnapshotSchema(),
+      input.launch,
+      this.protocolError.bind(this),
+    );
+    if (JSON.stringify(scope) !== JSON.stringify(launch.scope)) throw this.protocolError();
+    this.validateHostCreateMessage(sessionId, hostGeneration, scope, launch, input);
+    return { sessionId, hostGeneration, scope, launch };
+  }
+
+  private validateHostCreateMessage(
+    sessionId: string,
+    hostGeneration: string,
+    scope: ReturnType<typeof TerminalScopeSchema>["_output"],
+    launch: ReturnType<typeof TerminalLaunchSnapshotSchema>["_output"],
+    input: CreateRuntimeSession,
+  ): void {
+    const parsed = PtyHostServerMessageSchema().safeParse({
+      contractVersion: 1,
+      kind: "create",
+      sessionId,
+      hostGeneration,
+      scope,
+      executable: launch.resolvedProfile.executable,
+      arguments: launch.arguments,
+      cwd: input.cwd,
+      cols: this.initialDimensions.cols,
+      rows: this.initialDimensions.rows,
+      env: input.protectedEnv,
+    });
+    if (!parsed.success) throw this.protocolError();
   }
 
   /** Acquires a new controller epoch and revokes the prior attachment. */
@@ -476,7 +494,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       checkpoint.data.byteLength > MAX_CHECKPOINT_BYTES ||
       baseOutputSeq > record.receivedOutputSeq ||
       !/^[a-f0-9]{64}$/.test(checkpoint.sha256) ||
-      createHash("sha256").update(checkpoint.data).digest("hex") !== checkpoint.sha256
+      NodeCrypto.createHash("sha256").update(checkpoint.data).digest("hex") !== checkpoint.sha256
     ) {
       throw this.error("CHECKPOINT_REJECTED", "REATTACH");
     }
@@ -630,125 +648,157 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     record: RuntimeSession,
     command: TerminalAttachmentCommand,
   ): Promise<void> {
-    this.requireGeneration(record, command.hostGeneration);
-    const attachment = this.requireAttachment(record, command.attachmentEpoch, "REATTACH");
-    if (!attachment.hydrationComplete) {
-      throw this.error("SESSION_NOT_RUNNING", "REATTACH");
-    }
-    const sequence = parseSequence(command.commandSeq, this.protocolError.bind(this));
-    if (sequence !== record.acceptedCommandSeq + 1n) {
-      throw this.error("COMMAND_OUT_OF_ORDER", "REATTACH");
-    }
-    if (command.kind === "input") {
-      if (command.data.byteLength < 1 || command.data.byteLength > MAX_COMMAND_BYTES) {
-        throw this.protocolError();
-      }
-      if (
-        record.unacknowledgedInputBytes + command.data.byteLength >
-        MAX_UNACKNOWLEDGED_INPUT_BYTES
-      ) {
-        throw this.error("INPUT_STALLED", "REATTACH");
-      }
-    } else {
-      validateDimensions(command.data, this.protocolError.bind(this));
-    }
-    if (command.kind === "input" && record.deliveryUnknown) {
-      throw this.error("INPUT_DELIVERY_UNKNOWN", "UNKNOWN_DELIVERY");
-    }
-    if (record.attachmentEpochBySequence.size >= PTY_HOST_MAX_RETAINED_RECORDS) {
-      throw this.error("INPUT_STALLED", "REATTACH");
-    }
-    record.acceptedCommandSeq = sequence;
-    record.attachmentEpochBySequence.set(sequence, BigInt(command.attachmentEpoch));
-    if (command.kind === "input") {
-      record.inputBytesBySequence.set(sequence, command.data.byteLength);
-      record.unacknowledgedInputBytes += command.data.byteLength;
-      this.startInputStallTimer(record);
-    }
+    const sequence = this.validateOrderedCommand(record, command);
+    this.recordOrderedCommand(record, command, sequence);
     try {
       await this.options.host.send(command);
     } catch (error) {
-      if (record.appliedCommandSeq < sequence) {
-        record.acceptedCommandSeq -= 1n;
-        record.attachmentEpochBySequence.delete(sequence);
-        const bytes = record.inputBytesBySequence.get(sequence) ?? 0;
-        record.inputBytesBySequence.delete(sequence);
-        record.unacknowledgedInputBytes -= bytes;
-        if (record.unacknowledgedInputBytes === 0) {
-          this.clearInputStallTimer(record);
-          record.deliveryUnknown = false;
-          record.revokedAttachmentEpoch = null;
-        }
-      }
+      this.rollbackUnappliedCommand(record, sequence);
       throw this.mapHostError(error, "HOST_UNHEALTHY", "REATTACH");
     }
   }
 
-  private onHostEvent(event: PtyHostEvent): void {
-    if (event.kind === "failure" && event.code === "HOST_UNHEALTHY") {
-      for (const record of this.sessions.values()) {
-        if (
-          record.hostGeneration === event.hostGeneration &&
-          (record.state === "running" || record.state === "exiting")
-        ) {
-          this.failSessionForHostCrash(record);
-        }
-      }
+  private validateOrderedCommand(
+    record: RuntimeSession,
+    command: TerminalAttachmentCommand,
+  ): bigint {
+    this.requireGeneration(record, command.hostGeneration);
+    const attachment = this.requireAttachment(record, command.attachmentEpoch, "REATTACH");
+    if (!attachment.hydrationComplete) throw this.error("SESSION_NOT_RUNNING", "REATTACH");
+    const sequence = parseSequence(command.commandSeq, this.protocolError.bind(this));
+    if (sequence !== record.acceptedCommandSeq + 1n) {
+      throw this.error("COMMAND_OUT_OF_ORDER", "REATTACH");
+    }
+    this.validateCommandPayload(record, command);
+    if (record.attachmentEpochBySequence.size >= PTY_HOST_MAX_RETAINED_RECORDS) {
+      throw this.error("INPUT_STALLED", "REATTACH");
+    }
+    return sequence;
+  }
+
+  private validateCommandPayload(
+    record: RuntimeSession,
+    command: TerminalAttachmentCommand,
+  ): void {
+    if (command.kind !== "input") {
+      validateDimensions(command.data, this.protocolError.bind(this));
       return;
     }
+    if (command.data.byteLength < 1 || command.data.byteLength > MAX_COMMAND_BYTES) {
+      throw this.protocolError();
+    }
+    if (record.unacknowledgedInputBytes + command.data.byteLength > MAX_UNACKNOWLEDGED_INPUT_BYTES) {
+      throw this.error("INPUT_STALLED", "REATTACH");
+    }
+    if (record.deliveryUnknown) {
+      throw this.error("INPUT_DELIVERY_UNKNOWN", "UNKNOWN_DELIVERY");
+    }
+  }
+
+  private recordOrderedCommand(
+    record: RuntimeSession,
+    command: TerminalAttachmentCommand,
+    sequence: bigint,
+  ): void {
+    record.acceptedCommandSeq = sequence;
+    record.attachmentEpochBySequence.set(sequence, BigInt(command.attachmentEpoch));
+    if (command.kind !== "input") return;
+    record.inputBytesBySequence.set(sequence, command.data.byteLength);
+    record.unacknowledgedInputBytes += command.data.byteLength;
+    this.startInputStallTimer(record);
+  }
+
+  private rollbackUnappliedCommand(record: RuntimeSession, sequence: bigint): void {
+    if (record.appliedCommandSeq >= sequence) return;
+    record.acceptedCommandSeq -= 1n;
+    record.attachmentEpochBySequence.delete(sequence);
+    const bytes = record.inputBytesBySequence.get(sequence) ?? 0;
+    record.inputBytesBySequence.delete(sequence);
+    record.unacknowledgedInputBytes -= bytes;
+    if (record.unacknowledgedInputBytes !== 0) return;
+    this.clearInputStallTimer(record);
+    record.deliveryUnknown = false;
+    record.revokedAttachmentEpoch = null;
+  }
+
+  private onHostEvent(event: PtyHostEvent): void {
+    if (this.handleHostFailureEvent(event)) return;
     if (!("sessionId" in event)) return;
     const record = this.sessions.get(event.sessionId);
     if (!record || event.hostGeneration !== record.hostGeneration) return;
-    if (event.kind === "commandAck") {
-      this.applyCommandAcknowledgement(record, event);
-      if (record.attachment?.epoch.toString() === event.attachmentEpoch) {
-        this.publishDelivery({
-          kind: "commandAck",
-          sessionId: record.sessionId,
-          hostGeneration: record.hostGeneration,
-          attachmentEpoch: event.attachmentEpoch,
-          commandSeq: event.appliedCommandSeq,
-          outputSeq: event.appliedOutputSeq,
-        });
+    if (event.kind === "commandAck") return this.handleCommandAck(record, event);
+    if (event.kind === "output") return this.handleOutput(record, event);
+    if (event.kind === "exit") this.handleExit(record, event);
+  }
+
+  private handleHostFailureEvent(event: PtyHostEvent): boolean {
+    if (event.kind !== "failure" || event.code !== "HOST_UNHEALTHY") return false;
+    for (const record of this.sessions.values()) {
+      if (record.hostGeneration === event.hostGeneration && this.isHostCrashCandidate(record)) {
+        this.failSessionForHostCrash(record);
       }
-      return;
     }
-    if (event.kind === "output") {
-      if (
-        record.state !== "starting" &&
-        record.state !== "running" &&
-        record.state !== "exiting"
-      ) return;
+    return true;
+  }
+
+  private isHostCrashCandidate(record: RuntimeSession): boolean {
+    return record.state === "running" || record.state === "exiting";
+  }
+
+  private handleCommandAck(
+    record: RuntimeSession,
+    event: Extract<PtyHostEvent, { kind: "commandAck" }>,
+  ): void {
+    this.applyCommandAcknowledgement(record, event);
+    if (record.attachment?.epoch.toString() !== event.attachmentEpoch) return;
+    this.publishDelivery({
+      kind: "commandAck",
+      sessionId: record.sessionId,
+      hostGeneration: record.hostGeneration,
+      attachmentEpoch: event.attachmentEpoch,
+      commandSeq: event.appliedCommandSeq,
+      outputSeq: event.appliedOutputSeq,
+    });
+  }
+
+  private handleOutput(record: RuntimeSession, event: Extract<PtyHostEvent, { kind: "output" }>): void {
+    if (!this.acceptsOutput(record)) return;
+    try {
       const sequence = BigInt(event.outputSeq);
-      try {
-        const data = Buffer.from(event.dataBase64, "base64");
-        record.replay.append(sequence, data);
-        record.receivedOutputSeq = sequence;
-        this.publishHeadless({ kind: "output", sessionId: record.sessionId, data: Uint8Array.from(data) });
-        if (record.attachment) {
-          this.publishDelivery({
-            kind: "output",
-            sessionId: record.sessionId,
-            hostGeneration: record.hostGeneration,
-            attachmentEpoch: record.attachment.epoch.toString(),
-            outputSeq: sequence.toString(),
-            data: Uint8Array.from(data),
-          });
-        }
-      } catch {
-        this.failSession(record, "protocol-failure");
-      }
+      const data = Buffer.from(event.dataBase64, "base64");
+      record.replay.append(sequence, data);
+      record.receivedOutputSeq = sequence;
+      this.publishHeadless({ kind: "output", sessionId: record.sessionId, data: Uint8Array.from(data) });
+      this.publishAttachedOutput(record, sequence, data);
+    } catch {
+      this.failSession(record, "protocol-failure");
+    }
+  }
+
+  private acceptsOutput(record: RuntimeSession): boolean {
+    return record.state === "starting" || record.state === "running" || record.state === "exiting";
+  }
+
+  private publishAttachedOutput(record: RuntimeSession, sequence: bigint, data: Uint8Array): void {
+    if (!record.attachment) return;
+    this.publishDelivery({
+      kind: "output",
+      sessionId: record.sessionId,
+      hostGeneration: record.hostGeneration,
+      attachmentEpoch: record.attachment.epoch.toString(),
+      outputSeq: sequence.toString(),
+      data: Uint8Array.from(data),
+    });
+  }
+
+  private handleExit(record: RuntimeSession, event: Extract<PtyHostEvent, { kind: "exit" }>): void {
+    if (record.state === "starting") {
+      this.queueExit(record, event);
       return;
     }
-    if (event.kind === "exit") {
-      if (record.state === "starting") {
-        this.queueExit(record, event);
-        return;
-      }
-      if (record.state === "running" || (record.state === "exiting" && !record.pendingExit)) {
-        this.queueExit(record, event);
-        this.applyPendingExit(record);
-      }
+    if (record.state === "running" || (record.state === "exiting" && !record.pendingExit)) {
+      this.queueExit(record, event);
+      this.applyPendingExit(record);
     }
   }
 

@@ -4,6 +4,7 @@ import { Command as CommandPrimitive } from "cmdk";
 import { Plus, SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Command } from "@/components/ui/command";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { setContext } from "@/lib/context-tracker";
 import { RootView } from "./views/RootView";
@@ -13,6 +14,47 @@ import { SelectionListView } from "./views/SelectionListView";
 import { ThreadSearchView } from "./views/ThreadSearchView";
 import { isBrowseQuery, getPaletteMode } from "./CommandPalette.logic";
 import { cn } from "@/lib/utils";
+
+type PaletteView = ReturnType<typeof useCommandPaletteStore.getState>["viewStack"][number];
+
+function isPaletteFocused(): boolean {
+  return document.querySelector<HTMLElement>('[data-testid="command-palette"]')?.contains(document.activeElement) ?? false;
+}
+
+function consumePendingConfirm(event: KeyboardEvent): boolean {
+  if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return false;
+  const confirm = useCommandPaletteStore.getState().pendingConfirm;
+  if (!confirm) return false;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  confirm();
+  return true;
+}
+
+function consumePendingBack(event: KeyboardEvent): void {
+  if (event.key !== "ArrowUp" || !event.altKey) return;
+  const back = useCommandPaletteStore.getState().pendingBack;
+  if (!back) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  back();
+}
+
+function getPaletteDetails(browseMode: boolean, top: PaletteView | undefined, query: string): { placeholder: string; inputLabel: string; modeLabel: string; widthClass: string } {
+  if (browseMode) return { placeholder: "Type a path or filter…", inputLabel: "Folder path or folder filter", modeLabel: "browse", widthClass: "max-w-[680px]" };
+  if (top?.kind === "projects") return { placeholder: "Search projects…", inputLabel: "Command palette search", modeLabel: "projects", widthClass: "max-w-2xl" };
+  if (top?.kind === "threadSearch") return { placeholder: "Search threads, projects, branches, worktrees…", inputLabel: "Search threads", modeLabel: "threads", widthClass: "max-w-3xl" };
+  if (top?.kind === "selectionList") return { placeholder: `Search ${top.title.toLowerCase()}…`, inputLabel: "Command palette search", modeLabel: getPaletteMode(query), widthClass: "max-w-xl" };
+  return { placeholder: "Search commands, type ~/ to browse, > for actions only…", inputLabel: "Command palette search", modeLabel: getPaletteMode(query), widthClass: "max-w-xl" };
+}
+
+function PaletteViewContent({ browseMode, top }: { browseMode: boolean; top: PaletteView | undefined }) {
+  if (browseMode) return <BrowseView />;
+  if (top?.kind === "projects") return <ProjectsView />;
+  if (top?.kind === "threadSearch") return <ThreadSearchView />;
+  if (top?.kind === "selectionList") return <SelectionListView view={top} />;
+  return <RootView />;
+}
 
 /**
  * Top-center floating command palette overlay — the single shell that handles
@@ -47,50 +89,16 @@ export function CommandPalette() {
     if (!isOpen) return;
 
     const handleBrowseShortcut = (event: KeyboardEvent) => {
-      const palette = document.querySelector<HTMLElement>('[data-testid="command-palette"]');
-      if (!palette?.contains(document.activeElement)) {
-        return;
-      }
-
-      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-        const confirm = useCommandPaletteStore.getState().pendingConfirm;
-        if (!confirm) return;
-        // cmdk handles Enter before React's input handler runs. Capturing the
-        // event at the window prevents the highlighted folder from opening.
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        confirm();
-        return;
-      }
-
-      if (browseMode && event.altKey && event.key === "ArrowUp") {
-        const back = useCommandPaletteStore.getState().pendingBack;
-        if (!back) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        back();
-      }
+      if (!isPaletteFocused()) return;
+      if (consumePendingConfirm(event)) return;
+      if (browseMode) consumePendingBack(event);
     };
 
     window.addEventListener("keydown", handleBrowseShortcut, true);
     return () => window.removeEventListener("keydown", handleBrowseShortcut, true);
   }, [browseMode, isOpen]);
 
-  // The placeholder hints at what the input does in the current view/mode.
-  const placeholder = browseMode
-    ? "Type a path or filter…"
-    : top?.kind === "projects"
-      ? "Search projects…"
-      : top?.kind === "threadSearch"
-        ? "Search threads, projects, branches, worktrees…"
-      : top?.kind === "selectionList"
-        ? `Search ${top.title.toLowerCase()}…`
-        : "Search commands, type ~/ to browse, > for actions only…";
-  const inputLabel = browseMode
-    ? "Folder path or folder filter"
-    : top?.kind === "threadSearch"
-      ? "Search threads"
-      : "Command palette search";
+  const paletteDetails = getPaletteDetails(browseMode, top, query);
 
   return (
     <DialogPrimitive.Root open={isOpen} onOpenChange={(o) => !o && close()} modal="trap-focus">
@@ -99,16 +107,7 @@ export function CommandPalette() {
         <DialogPrimitive.Popup
           data-testid="command-palette"
           aria-label="Command palette"
-          className={cn(
-            "fixed left-1/2 top-[clamp(4rem,14vh,8rem)] z-50 w-full -translate-x-1/2 px-4 outline-none duration-150 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 motion-reduce:animate-none",
-            browseMode
-              ? "max-w-[680px]"
-              : top?.kind === "threadSearch"
-                ? "max-w-3xl"
-                : top?.kind === "projects"
-                  ? "max-w-2xl"
-                : "max-w-xl",
-          )}
+          className={cn("fixed left-1/2 top-[clamp(4rem,14vh,8rem)] z-50 w-full -translate-x-1/2 px-4 outline-none duration-150 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 motion-reduce:animate-none", paletteDetails.widthClass)}
         >
           <Command
             className="overflow-hidden rounded-xl bg-popover shadow-lg ring-1 ring-foreground/10"
@@ -121,13 +120,13 @@ export function CommandPalette() {
             loop
           >
             <PaletteInput
-              placeholder={placeholder}
+              placeholder={paletteDetails.placeholder}
               query={query}
               setQuery={setQuery}
               browseMode={browseMode}
               canAdd={pendingConfirm != null}
-              inputLabel={inputLabel}
-              modeLabel={browseMode ? "browse" : top?.kind === "projects" ? "projects" : top?.kind === "threadSearch" ? "threads" : getPaletteMode(query)}
+              inputLabel={paletteDetails.inputLabel}
+              modeLabel={paletteDetails.modeLabel}
               onKeyDown={(e) => {
                 // Backspace on empty input pops the view stack.
                 if (e.key === "Backspace" && query === "" && viewStack.length > 1) {
@@ -138,17 +137,7 @@ export function CommandPalette() {
               onAddClick={() => pendingConfirm?.()}
             />
 
-            {browseMode ? (
-              <BrowseView />
-            ) : top?.kind === "projects" ? (
-              <ProjectsView />
-            ) : top?.kind === "threadSearch" ? (
-              <ThreadSearchView />
-            ) : top?.kind === "selectionList" ? (
-              <SelectionListView view={top} />
-            ) : (
-              <RootView />
-            )}
+            <PaletteViewContent browseMode={browseMode} top={top} />
           </Command>
         </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>
@@ -207,23 +196,33 @@ function PaletteInput({
         )}
       />
       {browseMode && (
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          data-testid="palette-add-folder"
-          disabled={!canAdd}
-          onMouseDown={(e) => {
-            // Prevent the input from losing focus, which would dismiss cmdk highlight.
-            e.preventDefault();
-          }}
-          onClick={onAddClick}
-          title={canAdd ? "Add this folder as a project" : "Choose a folder before adding a project"}
-          className="absolute end-[16px] top-1/2 h-[36px] min-w-[132px] -translate-y-1/2 gap-[8px] px-[16px] text-[14px] leading-none"
-        >
-          <Plus size={14} />
-          Add project
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="absolute end-[16px] top-1/2 inline-flex -translate-y-1/2">
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  data-testid="palette-add-folder"
+                  disabled={!canAdd}
+                  onMouseDown={(e) => {
+                    // Prevent the input from losing focus, which would dismiss cmdk highlight.
+                    e.preventDefault();
+                  }}
+                  onClick={onAddClick}
+                  className="h-[36px] min-w-[132px] gap-[8px] px-[16px] text-[14px] leading-none"
+                >
+                  <Plus size={14} />
+                  Add project
+                </Button>
+              </span>
+            }
+          />
+          <TooltipContent>
+            {canAdd ? "Add this folder as a project" : "Choose a folder before adding a project"}
+          </TooltipContent>
+        </Tooltip>
       )}
     </div>
   );

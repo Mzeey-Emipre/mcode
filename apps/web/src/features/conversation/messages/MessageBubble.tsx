@@ -73,39 +73,53 @@ function MentionedUserText({
   const sorted = [...mentions].sort((a, b) => a.range.start - b.range.start);
 
   for (const mention of sorted) {
-    const rawMention = mention.kind === "command" ? `/${mention.label}` : `@${mention.label}`;
-    if (
-      mention.range.start < cursor ||
-      mention.range.end > text.length ||
-      text.slice(mention.range.start, mention.range.end) !== rawMention
-    ) {
-      continue;
-    }
-    if (mention.range.start > cursor) {
-      nodes.push(text.slice(cursor, mention.range.start));
-    }
-    nodes.push(
-      <EntityToken
-        key={`${mention.id}-${mention.range.start}`}
-        kind={mention.kind === "command" ? mention.namespace : mention.kind}
-        label={
-          mention.kind === "command"
-            ? rawMention
-            : mention.kind === "file"
-              ? `@${basename(mention.path)}`
-              : rawMention
-        }
-        filePath={mention.kind === "file" ? mention.path : undefined}
-        title={rawMention}
-        tone="user"
-        invocation={mention.kind === "command"}
-      />,
-    );
+    const rawMention = getRawMention(mention);
+    if (!isVisibleMention(text, cursor, mention.range, rawMention)) continue;
+    addLeadingText(nodes, text, cursor, mention.range.start);
+    nodes.push(createMentionToken(mention, rawMention));
     cursor = mention.range.end;
   }
 
   if (cursor < text.length) nodes.push(text.slice(cursor));
   return <p className="mb-2 whitespace-pre-wrap leading-relaxed">{nodes}</p>;
+}
+
+/** Gets the unmodified transcript text for a mention. */
+function getRawMention(mention: NonNullable<Message["mentions"]>[number]): string {
+  return mention.kind === "command" ? `/${mention.label}` : `@${mention.label}`;
+}
+
+/** Checks that a mention range still points at the user-entered mention text. */
+function isVisibleMention(
+  text: string,
+  cursor: number,
+  range: { start: number; end: number },
+  rawMention: string,
+): boolean {
+  return range.start >= cursor
+    && range.end <= text.length
+    && text.slice(range.start, range.end) === rawMention;
+}
+
+/** Appends text that appears before the next mention token. */
+function addLeadingText(nodes: ReactNode[], text: string, cursor: number, mentionStart: number): void {
+  if (mentionStart > cursor) nodes.push(text.slice(cursor, mentionStart));
+}
+
+/** Creates the user-tone entity token for one valid mention. */
+function createMentionToken(mention: NonNullable<Message["mentions"]>[number], rawMention: string): ReactNode {
+  const label = mention.kind === "file" ? `@${basename(mention.path)}` : rawMention;
+  return (
+    <EntityToken
+      key={`${mention.id}-${mention.range.start}`}
+      kind={mention.kind === "command" ? mention.namespace : mention.kind}
+      label={label}
+      filePath={mention.kind === "file" ? mention.path : undefined}
+      title={rawMention}
+      tone="user"
+      invocation={mention.kind === "command"}
+    />
+  );
 }
 
 /**
@@ -237,17 +251,23 @@ function GoalPill({ label, condition, hint }: { label: string; condition?: strin
         {iconEl}
         {labelEl}
         {condition && (
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            aria-expanded="false"
-            aria-label="Expand full goal condition"
-            title={condition}
-            dir="auto"
-            className="min-w-0 cursor-pointer truncate text-left font-serif text-sm italic leading-snug text-foreground hover:text-foreground/80"
-          >
-            &ldquo;{condition}&rdquo;
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => setExpanded(true)}
+                  aria-expanded="false"
+                  aria-label="Expand full goal condition"
+                  dir="auto"
+                  className="min-w-0 cursor-pointer truncate text-left font-serif text-sm italic leading-snug text-foreground hover:text-foreground/80"
+                >
+                  &ldquo;{condition}&rdquo;
+                </button>
+              }
+            />
+            <TooltipContent>{condition}</TooltipContent>
+          </Tooltip>
         )}
         {hintEl}
       </div>
@@ -495,8 +515,544 @@ function SelectedTextCommentCard({
   );
 }
 
-/** Renders a single chat message (system, user, or assistant). Memoized to prevent re-renders when the message ref is unchanged. */
-export const MessageBubble = memo(function MessageBubble({
+type Attachment = NonNullable<Message["attachments"]>[number];
+
+const IMAGE_ATTACHMENT_ALIGNMENT_CLASS = {
+  start: "flex justify-start gap-1.5",
+  end: "flex justify-end gap-1.5",
+} as const;
+
+const FILE_ATTACHMENT_ALIGNMENT_CLASS = {
+  start: "flex flex-wrap justify-start gap-2",
+  end: "flex flex-wrap justify-end gap-2",
+} as const;
+
+/** Separates a message's image and file attachments and derives its preview slides. */
+function useMessageAttachments(message: Message) {
+  const attachmentTransportUrl = useSyncExternalStore(
+    subscribeToAttachmentTransportUrl,
+    getAttachmentTransportUrlSnapshot,
+    getAttachmentTransportUrlSnapshot,
+  );
+  const imageAttachments = useMemo(
+    () => message.attachments?.filter((attachment) => attachment.mimeType.startsWith("image/")) ?? [],
+    [message.attachments],
+  );
+  const fileAttachments = useMemo(
+    () => message.attachments?.filter((attachment) => !attachment.mimeType.startsWith("image/")) ?? [],
+    [message.attachments],
+  );
+  const imageSlides = useMemo(
+    () => {
+      void attachmentTransportUrl;
+      return imageAttachments.map((image) => ({
+        src: buildStoredAttachmentImageSrc(message.thread_id, image.id, image.mimeType),
+        title: image.name,
+      }));
+    },
+    [attachmentTransportUrl, imageAttachments, message.thread_id],
+  );
+  return { imageAttachments, fileAttachments, imageSlides };
+}
+
+/** Renders the image attachment strip for a transcript message. */
+function MessageImageAttachments({
+  message,
+  images,
+  align,
+  testId,
+  interactive = true,
+  onOpenPreview,
+}: {
+  message: Message;
+  images: Attachment[];
+  align: "start" | "end";
+  testId?: string;
+  interactive?: boolean;
+  onOpenPreview: (index: number) => void;
+}) {
+  if (images.length === 0) return null;
+  const className = cn(
+    IMAGE_ATTACHMENT_ALIGNMENT_CLASS[align],
+    images.length > 2 ? "flex-wrap" : "",
+  );
+  return (
+    <div className={className} data-testid={testId}>
+      {images.map((image, index) => (
+        <ImageThumbnail
+          key={image.id}
+          src={buildStoredAttachmentImageSrc(message.thread_id, image.id, image.mimeType)}
+          name={image.name}
+          single={images.length === 1}
+          onOpenPreview={interactive ? () => onOpenPreview(index) : undefined}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Renders non-image attachments outside a message bubble. */
+function MessageFileAttachments({ files, align }: { files: Attachment[]; align: "start" | "end" }) {
+  if (files.length === 0) return null;
+  return (
+    <div className={FILE_ATTACHMENT_ALIGNMENT_CLASS[align]}>
+      {files.map((file) => (
+        <FileAttachmentTile
+          key={file.id}
+          variant="transcript"
+          name={file.name}
+          sizeBytes={file.sizeBytes}
+          mimeType={file.mimeType}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Closes the message image lightbox without clearing an open preview. */
+function MessageImageLightbox({
+  imagePreviewIndex,
+  imageSlides,
+  onClose,
+}: {
+  imagePreviewIndex: number | null;
+  imageSlides: { src: string; title: string }[];
+  onClose: () => void;
+}) {
+  return (
+    <ImageAttachmentLightbox
+      open={imagePreviewIndex !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      items={imageSlides}
+      initialIndex={imagePreviewIndex ?? 0}
+    />
+  );
+}
+
+/** Returns the fallback reply text for a message without user-entered text. */
+function getUserReplyFallback(message: Message, hasPreviewAnnotations: boolean): string {
+  if (hasPreviewAnnotations && message.previewAnnotations) {
+    return composerFeedbackReplyFallback(message.previewAnnotations);
+  }
+  const attachment = message.attachments?.[0];
+  if (attachment?.mimeType.startsWith("image/")) return "[Image attachment]";
+  if (attachment?.mimeType === "application/pdf") return "[PDF attachment]";
+  if (attachment) return "[File attachment]";
+  return "[Attachment]";
+}
+
+/** Renders actions and the timestamp for a user message. */
+function UserMessageFooter({
+  message,
+  displayText,
+  formattedTime,
+  hasPreviewAnnotations,
+  interactive,
+  onBranch,
+  onReply,
+  userGoal,
+}: {
+  message: Message;
+  displayText: string;
+  formattedTime: string;
+  hasPreviewAnnotations: boolean;
+  interactive: boolean;
+  onBranch?: (messageId: string) => void;
+  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
+  userGoal: { condition: string } | null;
+}) {
+  const replyContent = displayText.trim() || getUserReplyFallback(message, hasPreviewAnnotations);
+  return (
+    <div className="flex flex-col items-end gap-0.5 pr-1">
+      <UserMessageActions
+        message={message}
+        displayText={displayText}
+        replyContent={replyContent}
+        interactive={interactive}
+        onBranch={onBranch}
+        onReply={onReply}
+      />
+      <div className="flex items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground/55">
+        {userGoal && <GoalReceipt label="Sent as goal" tone="muted" />}
+        <span>{formattedTime}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Renders the text content inside a user message bubble. */
+function UserMessageText({ message, displayText, userGoal }: { message: Message; displayText: string; userGoal: { condition: string } | null }) {
+  if (!displayText.trim()) return null;
+  const hasMentions = !userGoal && Boolean(message.mentions?.length);
+  return (
+    <div
+      className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground"
+      data-selected-text-content
+      data-selected-text-eligible="true"
+    >
+      {hasMentions ? (
+        <MentionedUserText text={displayText} mentions={message.mentions!} />
+      ) : (
+        <Suspense fallback={null}>
+          <LazyMarkdownContent content={displayText} isStreaming={false} variant="user" />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+
+/** Renders the quoted source above a user message. */
+function UserMessageQuote({
+  message,
+  onScrollToMessage,
+}: {
+  message: Message;
+  onScrollToMessage?: (messageId: string) => void;
+}) {
+  if (!message.reply_to_message_id) return null;
+  return (
+    <QuoteBlock
+      quotedText={message.quoted_text ?? ""}
+      available={!!message.quoted_text}
+      onClick={() => onScrollToMessage?.(message.reply_to_message_id!)}
+    />
+  );
+}
+
+/** Renders preview annotation feedback and parent-agent provenance. */
+function UserMessageFeedback({
+  message,
+  showParentAgentProvenance,
+  provenanceDetails,
+}: {
+  message: Message;
+  showParentAgentProvenance: boolean;
+  provenanceDetails: string;
+}) {
+  const provenance = message.parentAgentProvenance;
+  return (
+    <>
+      {message.previewAnnotations && (
+        <div className="flex justify-end">
+          <PreviewAnnotationBundleChip bundle={message.previewAnnotations} threadId={message.thread_id} testId="sent-preview-annotation-bundle-chip" />
+        </div>
+      )}
+      {showParentAgentProvenance && provenance && (
+        <div className="flex justify-end" role="note" aria-label={`Parent agent provenance: ${provenanceDetails}`} data-testid="parent-agent-provenance">
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="font-mono text-xs text-muted-foreground/70">Parent agent</span>}
+            />
+            <TooltipContent>{provenanceDetails}</TooltipContent>
+          </Tooltip>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Renders persisted selected-text comments below a user message. */
+function UserMessageComments({ message }: { message: Message }) {
+  return message.selectedTextComments?.map((comment) => (
+    <SelectedTextCommentCard key={comment.id} quote={comment.source.quote} note={comment.note} displayNumber={comment.displayNumber} />
+  ));
+}
+
+/** Renders the user message action controls. */
+function UserMessageActions({
+  message,
+  displayText,
+  replyContent,
+  interactive,
+  onBranch,
+  onReply,
+}: {
+  message: Message;
+  displayText: string;
+  replyContent: string;
+  interactive: boolean;
+  onBranch?: (messageId: string) => void;
+  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {interactive && onReply && <ReplyButton onClick={() => onReply(message.id, replyContent, "user")} />}
+      {interactive && onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
+      {interactive && displayText.trim() && <CopyButton content={displayText} />}
+    </div>
+  );
+}
+
+/** Renders a user message, including attachments and composer feedback. */
+function UserMessageContent({
+  message,
+  interactive,
+  onBranch,
+  onReply,
+  onScrollToMessage,
+  showParentAgentProvenance,
+}: MessageBubbleProps & { interactive: boolean; showParentAgentProvenance: boolean }) {
+  const [imagePreviewIndex, setImagePreviewIndex] = useState<number | null>(null);
+  const { imageAttachments, fileAttachments, imageSlides } = useMessageAttachments(message);
+  const textContent = useMemo(() => stripInjectedFiles(message.content), [message.content]);
+  const userGoal = parseUserGoalCommand(textContent);
+  const hasPreviewAnnotations = (message.previewAnnotations?.annotations.length ?? 0) > 0;
+  const hasAttachments = imageAttachments.length > 0 || fileAttachments.length > 0;
+  const formattedTime = useMemo(
+    () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    [message.timestamp],
+  );
+  if (!hasAttachments && !hasPreviewAnnotations && textContent.startsWith(PLAN_ANSWER_MESSAGE_PREFIX)) return null;
+  const displayText = userGoal ? userGoal.condition : textContent;
+  const provenance = message.parentAgentProvenance;
+  const provenanceDetails = provenance ? [
+    `Thread ${provenance.parentThreadId}`,
+    `Turn ${provenance.parentTurnId}`,
+    `Item ${provenance.parentItemId}`,
+    ...provenance.providerIdentities.map((identity) =>
+      `${identity.providerId} ${identity.scope}: ${identity.value} (${identity.provenance})`,
+    ),
+  ].join(" · ") : "";
+  return (
+    <>
+      <div className="group/msg flex justify-end" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
+        <div className="min-w-0 max-w-[min(82%,56rem)] space-y-1.5">
+          <UserMessageQuote message={message} onScrollToMessage={onScrollToMessage} />
+          <MessageImageAttachments message={message} images={imageAttachments} align="end" interactive={interactive} onOpenPreview={setImagePreviewIndex} />
+          <MessageFileAttachments files={fileAttachments} align="end" />
+          <UserMessageFeedback message={message} showParentAgentProvenance={showParentAgentProvenance} provenanceDetails={provenanceDetails} />
+          <UserMessageText message={message} displayText={displayText} userGoal={userGoal} />
+          <UserMessageComments message={message} />
+          <UserMessageFooter
+            message={message}
+            displayText={displayText}
+            formattedTime={formattedTime}
+            hasPreviewAnnotations={hasPreviewAnnotations}
+            interactive={interactive}
+            onBranch={onBranch}
+            onReply={onReply}
+            userGoal={userGoal}
+          />
+        </div>
+      </div>
+      <MessageImageLightbox imagePreviewIndex={imagePreviewIndex} imageSlides={imageSlides} onClose={() => setImagePreviewIndex(null)} />
+    </>
+  );
+}
+
+/** Renders a system message, including structured handoffs and synthetic agent errors. */
+function SystemMessageContent({ message }: Pick<MessageBubbleProps, "message">) {
+  if (isHandoffMessage(message.role, message.content) && parseHandoffJson(message.content)) {
+    return <HandoffCard content={message.content} />;
+  }
+  const agentError = parseAgentError(message.content);
+  if (agentError) {
+    return (
+      <div className="flex items-start gap-2.5 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm">
+        <AlertCircle size={14} className="mt-0.5 shrink-0 text-destructive/60" />
+        <p className="text-muted-foreground leading-relaxed">{agentError}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-3 py-2" role="note">
+      <div className="h-px flex-1 bg-border" aria-hidden="true" />
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <RotateCcw size={12} aria-hidden="true" />
+        <span>{message.content}</span>
+      </div>
+      <div className="h-px flex-1 bg-border" aria-hidden="true" />
+    </div>
+  );
+}
+
+/** Renders assistant goal control notices outside the normal assistant response. */
+function AssistantGoalNotice({ goal }: { goal: NonNullable<ReturnType<typeof parseGoalStatusNotice>> }) {
+  if (!goal) return null;
+  if (goal.label === "Goal achieved") {
+    return (
+      <div className="flex py-1.5" role="note" aria-label={goal.hint ? `Goal achieved in ${goal.hint}` : "Goal achieved"}>
+        <GoalReceipt label="Goal achieved" suffix={goal.hint ? `in ${goal.hint}` : undefined} />
+      </div>
+    );
+  }
+  return <GoalPill label={goal.label} condition={goal.condition} hint={goal.hint} />;
+}
+
+/** Renders the assistant response text without metadata or action controls. */
+function AssistantResponseText({
+  message,
+  assistantContentEmpty,
+  agentDisplayState,
+  isAgentResponseComplete,
+}: {
+  message: Message;
+  assistantContentEmpty: boolean;
+  agentDisplayState?: AgentDisplayState;
+  isAgentResponseComplete: boolean;
+}) {
+  if (assistantContentEmpty) return null;
+  const isStreaming = agentDisplayState?.phase === "streaming";
+  const renderDelta = isStreaming || agentDisplayState?.phase === "finalizing";
+  return (
+    <div className="text-sm text-foreground" data-testid="assistant-response-text" data-selected-text-content data-selected-text-eligible={isAgentResponseComplete ? "true" : "false"}>
+      {renderDelta ? (
+        <DeltaBlock text={message.content} isStreaming={isStreaming} showCursor={isStreaming} />
+      ) : (
+        <Suspense fallback={null}>
+          <LazyMarkdownContent content={message.content} isStreaming={false} threadId={message.thread_id} chatHighlighting />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+
+/** Resolves the catalog display label for an assistant message model. */
+function useAssistantModelDisplayLabel(message: Message): string | null {
+  const threadProvider = useWorkspaceStore((state) =>
+    state.threads.find((thread) => thread.id === message.thread_id)?.provider,
+  );
+  const providerCatalog = useProviderModelsStore((state) => threadProvider ? state.models[threadProvider] : undefined);
+  return useMemo(
+    () => message.model ? resolveModelDisplayLabel(message.model, { catalog: providerCatalog }) : null,
+    [message.model, providerCatalog],
+  );
+}
+
+/** Renders completed assistant message controls and provenance metadata. */
+function AssistantMessageFooter({
+  message,
+  textContent,
+  formattedTime,
+  modelDisplayLabel,
+  isAgentResponseComplete,
+  hasImageAttachments,
+  onBranch,
+  onReply,
+}: {
+  message: Message;
+  textContent: string;
+  formattedTime: string;
+  modelDisplayLabel: string | null;
+  isAgentResponseComplete: boolean;
+  hasImageAttachments: boolean;
+  onBranch?: (messageId: string) => void;
+  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
+}) {
+  if (!isAgentResponseComplete) return null;
+  const replyContent = textContent.trim() || (hasImageAttachments ? "[Generated image]" : "[Assistant message]");
+  return (
+    <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-1">
+      <AssistantMessageActions message={message} textContent={textContent} replyContent={replyContent} onBranch={onBranch} onReply={onReply} />
+      <AssistantMessageMetadata message={message} modelDisplayLabel={modelDisplayLabel} formattedTime={formattedTime} />
+    </div>
+  );
+}
+
+/** Renders completed assistant reply, fork, and copy controls. */
+function AssistantMessageActions({
+  message,
+  textContent,
+  replyContent,
+  onBranch,
+  onReply,
+}: {
+  message: Message;
+  textContent: string;
+  replyContent: string;
+  onBranch?: (messageId: string) => void;
+  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
+}) {
+  const hasActions = Boolean(onReply || onBranch || textContent.trim());
+  if (!hasActions) return null;
+  return (
+    <div className="flex items-center gap-x-3 opacity-0 transition-opacity duration-150 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100" data-testid="agent-message-actions">
+      {onReply && <ReplyButton onClick={() => onReply(message.id, replyContent, "assistant")} />}
+      {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
+      {textContent.trim() && <CopyButton content={textContent} />}
+    </div>
+  );
+}
+
+/** Renders the quiet model, usage, cost, and time metadata for an assistant message. */
+function AssistantMessageMetadata({
+  message,
+  modelDisplayLabel,
+  formattedTime,
+}: {
+  message: Message;
+  modelDisplayLabel: string | null;
+  formattedTime: string;
+}) {
+  const metadata = [
+    modelDisplayLabel,
+    message.tokens_used != null ? `${message.tokens_used.toLocaleString()} tok` : null,
+    message.cost_usd != null ? `$${message.cost_usd.toFixed(4)}` : null,
+    formattedTime,
+  ].filter(Boolean).join(" · ");
+  return <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground/55" data-testid="agent-message-metadata">{metadata}</span>;
+}
+
+/** Renders an assistant message, including its live response state. */
+function AssistantMessageContent({
+  message,
+  onBranch,
+  onReply,
+  onScrollToMessage,
+  agentDisplayState,
+}: MessageBubbleProps) {
+  const [imagePreviewIndex, setImagePreviewIndex] = useState<number | null>(null);
+  const { imageAttachments, fileAttachments, imageSlides } = useMessageAttachments(message);
+  const textContent = useMemo(() => stripInjectedFiles(message.content), [message.content]);
+  const isAnsweredPlanMessage = useThreadRecord(message.thread_id, (record) => record.answeredPlanMessageIds.has(message.id));
+  const modelDisplayLabel = useAssistantModelDisplayLabel(message);
+  const formattedTime = useMemo(
+    () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    [message.timestamp],
+  );
+  const goal = parseGoalStatusNotice(textContent);
+  if (goal) return <AssistantGoalNotice goal={goal} />;
+  const assistantContentEmpty = isAssistantContentEmpty(message.content);
+  const hasAttachments = imageAttachments.length > 0 || fileAttachments.length > 0;
+  if (assistantContentEmpty && !hasAttachments) return isAnsweredPlanMessage ? <AnsweredSummary content={message.content} messageId={message.id} /> : null;
+  const resolvedAgentDisplayState = agentDisplayState ?? COMPLETED_AGENT_DISPLAY_STATE;
+  const isAgentResponseComplete = resolvedAgentDisplayState.phase === "completed";
+  return (
+    <div className="group/msg space-y-2" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
+      {message.reply_to_message_id && (
+        <QuoteBlock
+          quotedText={message.quoted_text ?? ""}
+          available={!!message.quoted_text}
+          onClick={() => onScrollToMessage?.(message.reply_to_message_id!)}
+        />
+      )}
+      <MessageImageAttachments message={message} images={imageAttachments} align="start" testId="assistant-image-attachments" onOpenPreview={setImagePreviewIndex} />
+      <MessageFileAttachments files={fileAttachments} align="start" />
+      <AssistantResponseText
+        message={message}
+        assistantContentEmpty={assistantContentEmpty}
+        agentDisplayState={agentDisplayState}
+        isAgentResponseComplete={isAgentResponseComplete}
+      />
+      <AssistantMessageFooter
+        message={message}
+        textContent={textContent}
+        formattedTime={formattedTime}
+        modelDisplayLabel={modelDisplayLabel}
+        isAgentResponseComplete={isAgentResponseComplete}
+        hasImageAttachments={imageAttachments.length > 0}
+        onBranch={onBranch}
+        onReply={onReply}
+      />
+      <MessageImageLightbox imagePreviewIndex={imagePreviewIndex} imageSlides={imageSlides} onClose={() => setImagePreviewIndex(null)} />
+    </div>
+  );
+}
+
+/** Routes a message to its role-specific presentation without changing its outer memo boundary. */
+function MessageRoleContent({
   message,
   interactive = true,
   onBranch,
@@ -505,412 +1061,12 @@ export const MessageBubble = memo(function MessageBubble({
   agentDisplayState,
   showParentAgentProvenance = true,
 }: MessageBubbleProps) {
-  const [imagePreviewIndex, setImagePreviewIndex] = useState<number | null>(null);
-  const attachmentTransportUrl = useSyncExternalStore(
-    subscribeToAttachmentTransportUrl,
-    getAttachmentTransportUrlSnapshot,
-    getAttachmentTransportUrlSnapshot,
-  );
-
-  const formattedTime = useMemo(
-    () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    [message.timestamp],
-  );
-
-  const threadProvider = useWorkspaceStore((s) =>
-    s.threads.find((t) => t.id === message.thread_id)?.provider,
-  );
-  const providerCatalog = useProviderModelsStore((s) =>
-    threadProvider ? s.models[threadProvider] : undefined,
-  );
-  const modelDisplayLabel = useMemo(
-    () =>
-      message.model
-        ? resolveModelDisplayLabel(message.model, { catalog: providerCatalog })
-        : null,
-    [message.model, providerCatalog],
-  );
-
-  const imageAttachments = useMemo(
-    () => message.attachments?.filter((a) => a.mimeType.startsWith("image/")) ?? [],
-    [message.attachments],
-  );
-  const fileAttachments = useMemo(
-    () => message.attachments?.filter((a) => !a.mimeType.startsWith("image/")) ?? [],
-    [message.attachments],
-  );
-  const textContent = useMemo(() => stripInjectedFiles(message.content), [message.content]);
-  const hasPreviewAnnotations =
-    (message.previewAnnotations?.annotations.length ?? 0) > 0;
-
-  const isAnsweredPlanMessage = useThreadRecord(
-    message.thread_id,
-    (r) => r.answeredPlanMessageIds.has(message.id),
-  );
-
-  const imageSlides = useMemo(
-    () =>
-      imageAttachments.map((img) => ({
-        src: buildStoredAttachmentImageSrc(message.thread_id, img.id, img.mimeType),
-        title: img.name,
-      })),
-    [attachmentTransportUrl, imageAttachments, message.thread_id],
-  );
-
-  if (message.role === "system") {
-    if (isHandoffMessage(message.role, message.content)) {
-      if (parseHandoffJson(message.content)) {
-        return <HandoffCard content={message.content} />;
-      }
-      // Malformed handoff JSON: fall through to normal system-message rendering.
-    }
-
-    const agentError = parseAgentError(message.content);
-    if (agentError) {
-      return (
-        <div className="flex items-start gap-2.5 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm">
-          <AlertCircle size={14} className="mt-0.5 shrink-0 text-destructive/60" />
-          <p className="text-muted-foreground leading-relaxed">{agentError}</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="flex items-center gap-3 py-2" role="note">
-        <div className="h-px flex-1 bg-border" aria-hidden="true" />
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <RotateCcw size={12} aria-hidden="true" />
-          <span>{message.content}</span>
-        </div>
-        <div className="h-px flex-1 bg-border" aria-hidden="true" />
-      </div>
-    );
+  if (message.role === "system") return <SystemMessageContent message={message} />;
+  if (message.role === "user") {
+    return <UserMessageContent message={message} interactive={interactive} onBranch={onBranch} onReply={onReply} onScrollToMessage={onScrollToMessage} agentDisplayState={agentDisplayState} showParentAgentProvenance={showParentAgentProvenance} />;
   }
+  return <AssistantMessageContent message={message} interactive={interactive} onBranch={onBranch} onReply={onReply} onScrollToMessage={onScrollToMessage} agentDisplayState={agentDisplayState} showParentAgentProvenance={showParentAgentProvenance} />;
+}
 
-  // Goal-status confirmations are emitted by AgentService when the user types
-  // /goal in the composer. They arrive as assistant messages but read as
-  // chat-control notices, not model output — render them as a compact pill
-  // rather than a full bubble.
-  if (message.role === "assistant") {
-    const goal = parseGoalStatusNotice(textContent);
-    if (goal) {
-      // "Goal achieved" is the agent-side payoff — give it the same legible
-      // receipt vocabulary as the user's "Sent as goal" marker rather than a
-      // faint hairline, so the moment the goal lands is easy to spot. The
-      // remaining control acknowledgements stay quiet hairline chapter-breaks.
-      if (goal.label === "Goal achieved") {
-        return (
-          <div className="flex py-1.5" role="note" aria-label={goal.hint ? `Goal achieved in ${goal.hint}` : "Goal achieved"}>
-            <GoalReceipt label="Goal achieved" suffix={goal.hint ? `in ${goal.hint}` : undefined} />
-          </div>
-        );
-      }
-      return <GoalPill label={goal.label} condition={goal.condition} hint={goal.hint} />;
-    }
-  }
-
-  // User-typed `/goal <condition>` SET form. AgentService rewrites only the
-  // provider-facing payload; the transcript keeps a normal user bubble with
-  // the command token stripped and a quiet "Sent as goal" footer.
-  const userGoal = message.role === "user" ? parseUserGoalCommand(textContent) : null;
-  const hasAttachments = imageAttachments.length > 0 || fileAttachments.length > 0;
-
-  // Suppress the plan-mode answer payload that the server sends to the model
-  // on submit — the AnsweredSummary marker on the originating assistant
-  // message is the canonical UI representation for the answered batch, so
-  // also rendering the verbose user re-statement would be redundant noise
-  // when the thread reloads.
-  if (
-    message.role === "user" &&
-    !hasAttachments &&
-    !hasPreviewAnnotations &&
-    textContent.startsWith(PLAN_ANSWER_MESSAGE_PREFIX)
-  ) {
-    return null;
-  }
-  const isUser = message.role === "user";
-  const userDisplayText = userGoal ? userGoal.condition : textContent;
-  const parentAgentProvenance = message.parentAgentProvenance;
-  const parentAgentDetails = parentAgentProvenance
-    ? [
-        `Thread ${parentAgentProvenance.parentThreadId}`,
-        `Turn ${parentAgentProvenance.parentTurnId}`,
-        `Item ${parentAgentProvenance.parentItemId}`,
-        ...parentAgentProvenance.providerIdentities.map((identity) =>
-          `${identity.providerId} ${identity.scope}: ${identity.value} (${identity.provenance})`,
-        ),
-      ].join(" · ")
-    : "";
-
-  if (isUser) {
-
-    return (
-      <>
-        <div className="group/msg flex justify-end" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
-          <div className="min-w-0 max-w-[min(82%,56rem)] space-y-1.5">
-            {/* Quote block — shown when this message is a reply */}
-            {message.reply_to_message_id && (
-              <QuoteBlock
-                quotedText={message.quoted_text ?? ""}
-                available={!!message.quoted_text}
-                onClick={() => onScrollToMessage?.(message.reply_to_message_id!)}
-              />
-            )}
-            {/* Image attachments — standalone thumbnails above the bubble */}
-            {imageAttachments.length > 0 && (
-              <div className={cn(
-                "flex justify-end gap-1.5",
-                imageAttachments.length > 2 ? "flex-wrap" : ""
-              )}>
-                {imageAttachments.map((img, idx) => {
-                  const src = buildStoredAttachmentImageSrc(message.thread_id, img.id, img.mimeType);
-                  return (
-                    <ImageThumbnail
-                      key={img.id}
-                      src={src}
-                      name={img.name}
-                      single={imageAttachments.length === 1}
-                      onOpenPreview={interactive
-                        ? () => setImagePreviewIndex(idx)
-                        : undefined}
-                    />
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Non-image files sit outside the colored bubble so names stay readable on any theme. */}
-            {fileAttachments.length > 0 && (
-              <div className="flex flex-wrap justify-end gap-2">
-                {fileAttachments.map((file) => (
-                  <FileAttachmentTile
-                    key={file.id}
-                    variant="transcript"
-                    name={file.name}
-                    sizeBytes={file.sizeBytes}
-                    mimeType={file.mimeType}
-                  />
-                ))}
-              </div>
-            )}
-
-            {message.previewAnnotations ? (
-              <div className="flex justify-end">
-                <PreviewAnnotationBundleChip
-                  bundle={message.previewAnnotations}
-                  threadId={message.thread_id}
-                  testId="sent-preview-annotation-bundle-chip"
-                />
-              </div>
-            ) : null}
-
-            {showParentAgentProvenance && parentAgentProvenance ? (
-              <div
-                className="flex justify-end"
-                role="note"
-                aria-label={`Parent agent provenance: ${parentAgentDetails}`}
-                data-testid="parent-agent-provenance"
-              >
-                <span className="font-mono text-xs text-muted-foreground/70" title={parentAgentDetails}>
-                  Parent agent
-                </span>
-              </div>
-            ) : null}
-
-          {userDisplayText.trim() && (
-            <div
-              className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground"
-              data-selected-text-content
-              data-selected-text-eligible="true"
-            >
-              {!userGoal && message.mentions?.length ? (
-                <MentionedUserText text={userDisplayText} mentions={message.mentions} />
-              ) : (
-                <Suspense fallback={null}>
-                  <LazyMarkdownContent content={userDisplayText} isStreaming={false} variant="user" />
-                </Suspense>
-              )}
-            </div>
-          )}
-
-          {message.selectedTextComments?.map((comment) => (
-            <SelectedTextCommentCard
-              key={comment.id}
-              quote={comment.source.quote}
-              note={comment.note}
-              displayNumber={comment.displayNumber}
-            />
-          ))}
-
-          <div className="flex flex-col items-end gap-0.5 pr-1">
-            <div className="flex items-center gap-1.5">
-              {interactive && onReply && <ReplyButton onClick={() => {
-                let fallback = "[Attachment]";
-                if (!userDisplayText.trim()) {
-                  const firstAtt = message.attachments?.[0];
-                  if (hasPreviewAnnotations && message.previewAnnotations) {
-                    fallback = composerFeedbackReplyFallback(message.previewAnnotations);
-                  } else if (firstAtt?.mimeType.startsWith("image/")) fallback = "[Image attachment]";
-                  else if (firstAtt?.mimeType === "application/pdf") fallback = "[PDF attachment]";
-                  else if (firstAtt) fallback = "[File attachment]";
-                }
-                onReply(message.id, userDisplayText.trim() || fallback, "user");
-              }} />}
-              {interactive && onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
-              {interactive && userDisplayText.trim() && <CopyButton content={userDisplayText} />}
-            </div>
-            <div className="flex items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground/55">
-              {userGoal && <GoalReceipt label="Sent as goal" tone="muted" />}
-              <span>{formattedTime}</span>
-            </div>
-          </div>
-        </div>
-        </div>
-        <ImageAttachmentLightbox
-          open={imagePreviewIndex !== null}
-          onOpenChange={(open) => {
-            if (!open) setImagePreviewIndex(null);
-          }}
-          items={imageSlides}
-          initialIndex={imagePreviewIndex ?? 0}
-        />
-      </>
-    );
-  }
-
-  // Assistant body that collapses to nothing visible (e.g. cursor-agent's
-  // plan-mode output is exclusively a `plan-questions` fenced block, which
-  // the markdown renderer suppresses).
-  const assistantContentEmpty = isAssistantContentEmpty(message.content);
-  if (assistantContentEmpty && !hasAttachments) {
-    // For answered plan-questions messages, show a read-only summary
-    // instead of hiding the bubble entirely (AC-1.28).
-    if (isAnsweredPlanMessage) {
-      return <AnsweredSummary content={message.content} messageId={message.id} />;
-    }
-    // Active wizard or unanswered: the wizard component handles rendering.
-    return null;
-  }
-
-  // Assistant message — borderless prose flowing directly on the page.
-  // The legacy `▸ ASSISTANT` head was removed because it pre-empted the prose
-  // with redundant role labelling (only one party in the chat besides the
-  // user). Provenance — model, tokens, cost, time — now lives in one quiet
-  // foot line so the body owns the top of the message.
-  const resolvedAgentDisplayState = agentDisplayState ?? COMPLETED_AGENT_DISPLAY_STATE;
-  const isAgentResponseComplete = resolvedAgentDisplayState.phase === "completed";
-  const isAgentResponseStreaming = resolvedAgentDisplayState.phase === "streaming";
-  const renderAgentDelta = agentDisplayState?.phase === "streaming"
-    || agentDisplayState?.phase === "finalizing";
-  const agentReplyContent =
-    textContent.trim() ||
-    (imageAttachments.length > 0 ? "[Generated image]" : "[Assistant message]");
-  const hasAgentMetadata = Boolean(
-    message.model || message.tokens_used != null || message.cost_usd != null || formattedTime,
-  );
-  const hasAgentActions = isAgentResponseComplete && Boolean(
-    onReply || onBranch || textContent.trim(),
-  );
-
-  return (
-    <div className="group/msg space-y-2" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
-      {/* Quote block — shown when this message is a reply */}
-      {message.reply_to_message_id && (
-        <QuoteBlock
-          quotedText={message.quoted_text ?? ""}
-          available={!!message.quoted_text}
-          onClick={() => onScrollToMessage?.(message.reply_to_message_id!)}
-        />
-      )}
-      {imageAttachments.length > 0 && (
-        <div
-          className={cn(
-            "flex justify-start gap-1.5",
-            imageAttachments.length > 2 ? "flex-wrap" : "",
-          )}
-          data-testid="assistant-image-attachments"
-        >
-          {imageAttachments.map((img, idx) => {
-            const src = buildStoredAttachmentImageSrc(message.thread_id, img.id, img.mimeType);
-            return (
-              <ImageThumbnail
-                key={img.id}
-                src={src}
-                name={img.name}
-                single={imageAttachments.length === 1}
-                onOpenPreview={() =>
-                  setImagePreviewIndex(idx)
-                }
-              />
-            );
-          })}
-        </div>
-      )}
-      {fileAttachments.length > 0 && (
-        <div className="flex flex-wrap justify-start gap-2">
-          {fileAttachments.map((file) => (
-            <FileAttachmentTile
-              key={file.id}
-              variant="transcript"
-              name={file.name}
-              sizeBytes={file.sizeBytes}
-              mimeType={file.mimeType}
-            />
-          ))}
-        </div>
-      )}
-      {!assistantContentEmpty && (
-        <div
-          className="text-sm text-foreground"
-          data-testid="assistant-response-text"
-          data-selected-text-content
-          data-selected-text-eligible={isAgentResponseComplete ? "true" : "false"}
-        >
-          {renderAgentDelta ? (
-            <DeltaBlock
-              text={message.content}
-              isStreaming={isAgentResponseStreaming}
-              showCursor={isAgentResponseStreaming}
-            />
-          ) : (
-            <Suspense fallback={null}>
-              <LazyMarkdownContent content={message.content} isStreaming={false} threadId={message.thread_id} chatHighlighting />
-            </Suspense>
-          )}
-        </div>
-      )}
-      {isAgentResponseComplete && (hasAgentActions || hasAgentMetadata) && (
-        <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-1">
-          {hasAgentActions && (
-            <div
-              className="flex items-center gap-x-3 opacity-0 transition-opacity duration-150 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100"
-              data-testid="agent-message-actions"
-            >
-              {onReply && <ReplyButton onClick={() => onReply(message.id, agentReplyContent, "assistant")} />}
-              {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
-              {textContent.trim() && <CopyButton content={textContent} />}
-            </div>
-          )}
-          {hasAgentMetadata && (
-            <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground/55" data-testid="agent-message-metadata">
-            {[
-              modelDisplayLabel,
-              message.tokens_used != null ? `${message.tokens_used.toLocaleString()} tok` : null,
-              message.cost_usd != null ? `$${message.cost_usd.toFixed(4)}` : null,
-              formattedTime,
-            ].filter(Boolean).join(" · ")}
-            </span>
-          )}
-        </div>
-      )}
-      <ImageAttachmentLightbox
-        open={imagePreviewIndex !== null}
-        onOpenChange={(open) => {
-          if (!open) setImagePreviewIndex(null);
-        }}
-        items={imageSlides}
-        initialIndex={imagePreviewIndex ?? 0}
-      />
-    </div>
-  );
-});
+/** Renders a single chat message and preserves memoization across unchanged props. */
+export const MessageBubble = memo(MessageRoleContent);

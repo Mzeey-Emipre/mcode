@@ -52,6 +52,7 @@ export function PullRequestChangedFilesPane({
   const searchActive = query.search.length > 0;
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- An externally restored file query replaces the local debounced search draft.
     setSearchInput(query.search);
   }, [query.search]);
 

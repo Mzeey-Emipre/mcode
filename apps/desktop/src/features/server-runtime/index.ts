@@ -69,6 +69,8 @@ interface ServerRuntimeNotification {
 }
 
 interface ServerRuntimeDependencies {
+  /** Platform selected by the Electron composition root. */
+  platform: NodeJS.Platform;
   manager?: ServerRuntimeManager;
   relayStarter?: ServerRuntimeRelayStarter;
   ipcMain: {
@@ -116,7 +118,7 @@ export class ServerRuntime {
 
   constructor(dependencies: ServerRuntimeDependencies) {
     this.dependencies = dependencies;
-    this.serverManager = dependencies.manager ?? new ServerManager();
+    this.serverManager = dependencies.manager ?? new ServerManager(dependencies.platform);
     this.relayStarter = dependencies.relayStarter ?? startIpcRelay;
     const capabilityPath = dependencies.reliabilityHarnessCapabilityPath;
     const capability = capabilityPath ? readReliabilityHarnessCapability(capabilityPath) : null;

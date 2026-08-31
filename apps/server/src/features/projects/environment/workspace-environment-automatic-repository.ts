@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type {
   MessageMention,
@@ -38,8 +38,8 @@ const QueuedTurnSubmissionSchema = z.object({
   content: z.string(),
   displayContent: z.string(),
   model: z.string(),
-  attachments: z.array(StoredAttachmentSchema),
-  mentions: MessageMentionsSchema,
+  attachments: z.array(StoredAttachmentSchema()),
+  mentions: MessageMentionsSchema(),
   selectedTextComments: SelectedTextCommentsSchema().optional(),
   permissionMode: z.enum(["default", "full", "supervised"]),
   provider: z.string().min(1),
@@ -107,6 +107,16 @@ interface QueuedTurnRow {
   dispatched_at: string | null;
 }
 
+interface AutomaticSetupGate {
+  state: WorkspaceEnvironmentAutomaticSetupSnapshot["gate"];
+}
+
+interface QueuedTurnMessageOrigin {
+  sourceThreadId: string;
+  sourceTurnId: string;
+  sourceProviderId: string;
+}
+
 /** SQLite storage for the automatic Setup gate, attempts, and queued Turn claims. */
 export class WorkspaceEnvironmentAutomaticRepository {
   constructor(private readonly db: Database.Database, private readonly now: () => string) {}
@@ -114,68 +124,104 @@ export class WorkspaceEnvironmentAutomaticRepository {
   /** Atomically persist one blocked Turn and create the Setup gate on the first submission. */
   queueFirstTurn(input: WorkspaceEnvironmentQueueFirstTurnInput): WorkspaceEnvironmentQueueAdmission {
     const now = this.now();
-    const submissionId = randomUUID();
-    const queued = this.db.transaction(() => {
-      const gate = this.db.prepare(
-        "SELECT state FROM workspace_environment_setup_gates WHERE thread_id = ?",
-      ).get(input.threadId) as { state: WorkspaceEnvironmentAutomaticSetupSnapshot["gate"] } | undefined;
-      if (gate && gate.state !== "blocked") return false;
-      const activeCount = (this.db.prepare(
-        "SELECT COUNT(*) AS count FROM workspace_environment_queued_turns WHERE thread_id = ? AND state IN ('queued', 'released', 'dispatching')",
-      ).get(input.threadId) as { count: number }).count;
-      if (activeCount >= MAX_ACTIVE_QUEUED_TURNS_PER_THREAD) throw new WorkspaceEnvironmentAutomaticQueueCapacityError();
-      if (!gate) {
-        const attemptId = randomUUID();
-        this.db.prepare(
-          "INSERT INTO workspace_environment_setup_gates (thread_id, state, attempt_id, created_at, updated_at) VALUES (?, 'blocked', ?, ?, ?)",
-        ).run(input.threadId, attemptId, now, now);
-        this.db.prepare(
-          "INSERT INTO workspace_environment_automatic_setup_attempts (id, thread_id, state, reason, created_at) VALUES (?, ?, 'queued', NULL, ?)",
-        ).run(attemptId, input.threadId, now);
-      }
-      const sequence = (this.db.prepare(
-        "SELECT COALESCE(MAX(sequence), 0) AS sequence FROM messages WHERE thread_id = ?",
-      ).get(input.threadId) as { sequence: number }).sequence + 1;
-      const queuePosition = (this.db.prepare(
-        "SELECT COALESCE(MAX(queue_position), 0) + 1 AS queue_position FROM workspace_environment_queued_turns WHERE thread_id = ?",
-      ).get(input.threadId) as { queue_position: number }).queue_position;
-      const origin = input.submission.sourceThreadId
-        && input.submission.originSourceTurnId
-        && input.submission.sourceProviderId
-        ? {
-            sourceThreadId: input.submission.sourceThreadId,
-            sourceTurnId: input.submission.originSourceTurnId,
-            sourceProviderId: input.submission.sourceProviderId,
-          }
-        : null;
-      this.db.prepare(
-        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, selected_text_comments, reply_to_message_id, quoted_text, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal) VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-      ).run(
-        input.messageId,
-        input.threadId,
-        input.content,
-        now,
-        sequence,
-        input.attachments.length > 0 ? JSON.stringify(input.attachments) : null,
-        input.previewAnnotations ? JSON.stringify(input.previewAnnotations) : null,
-        input.mentions.length > 0 ? JSON.stringify(input.mentions) : null,
-        input.submission.selectedTextComments?.length
-          ? JSON.stringify(SelectedTextCommentsSchema().parse(input.submission.selectedTextComments))
-          : null,
-        input.submission.replyToMessageId ?? null,
-        input.submission.quotedText ?? null,
-        origin ? "thread" : "composer",
-        origin?.sourceThreadId ?? null,
-        origin?.sourceTurnId ?? null,
-        origin?.sourceProviderId ?? null,
-      );
-      this.db.prepare(
-        "INSERT INTO workspace_environment_queued_turns (id, thread_id, message_id, queue_position, state, submission_json, created_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)",
-      ).run(submissionId, input.threadId, input.messageId, queuePosition, JSON.stringify(input.submission), now);
-      this.pruneTerminalTurns(input.threadId);
-      return true;
-    })();
+    const submissionId = NodeCrypto.randomUUID();
+    const queued = this.db.transaction(
+      () => this.queueBlockedFirstTurn(input, now, submissionId),
+    )();
     return { snapshot: this.snapshot(input.threadId), queued };
+  }
+
+  private queueBlockedFirstTurn(
+    input: WorkspaceEnvironmentQueueFirstTurnInput,
+    now: string,
+    submissionId: string,
+  ): boolean {
+    const gate = this.findSetupGate(input.threadId);
+    if (isReleasedSetupGate(gate)) return false;
+    this.assertQueuedTurnCapacity(input.threadId);
+    this.ensureBlockedSetupGate(input.threadId, gate, now);
+    const sequence = this.nextMessageSequence(input.threadId);
+    const queuePosition = this.nextQueuedTurnPosition(input.threadId);
+    this.insertQueuedTurnMessage(input, now, sequence);
+    this.insertQueuedTurn(input, submissionId, now, queuePosition);
+    this.pruneTerminalTurns(input.threadId);
+    return true;
+  }
+
+  private findSetupGate(threadId: string): AutomaticSetupGate | undefined {
+    return this.db.prepare(
+      "SELECT state FROM workspace_environment_setup_gates WHERE thread_id = ?",
+    ).get(threadId) as AutomaticSetupGate | undefined;
+  }
+
+  private assertQueuedTurnCapacity(threadId: string): void {
+    const activeCount = (this.db.prepare(
+      "SELECT COUNT(*) AS count FROM workspace_environment_queued_turns WHERE thread_id = ? AND state IN ('queued', 'released', 'dispatching')",
+    ).get(threadId) as { count: number }).count;
+    if (activeCount >= MAX_ACTIVE_QUEUED_TURNS_PER_THREAD) {
+      throw new WorkspaceEnvironmentAutomaticQueueCapacityError();
+    }
+  }
+
+  private ensureBlockedSetupGate(threadId: string, gate: AutomaticSetupGate | undefined, now: string): void {
+    if (gate) return;
+    const attemptId = NodeCrypto.randomUUID();
+    this.db.prepare(
+      "INSERT INTO workspace_environment_setup_gates (thread_id, state, attempt_id, created_at, updated_at) VALUES (?, 'blocked', ?, ?, ?)",
+    ).run(threadId, attemptId, now, now);
+    this.db.prepare(
+      "INSERT INTO workspace_environment_automatic_setup_attempts (id, thread_id, state, reason, created_at) VALUES (?, ?, 'queued', NULL, ?)",
+    ).run(attemptId, threadId, now);
+  }
+
+  private nextMessageSequence(threadId: string): number {
+    return (this.db.prepare(
+      "SELECT COALESCE(MAX(sequence), 0) AS sequence FROM messages WHERE thread_id = ?",
+    ).get(threadId) as { sequence: number }).sequence + 1;
+  }
+
+  private nextQueuedTurnPosition(threadId: string): number {
+    return (this.db.prepare(
+      "SELECT COALESCE(MAX(queue_position), 0) + 1 AS queue_position FROM workspace_environment_queued_turns WHERE thread_id = ?",
+    ).get(threadId) as { queue_position: number }).queue_position;
+  }
+
+  private insertQueuedTurnMessage(
+    input: WorkspaceEnvironmentQueueFirstTurnInput,
+    now: string,
+    sequence: number,
+  ): void {
+    const origin = queuedTurnMessageOrigin(input.submission);
+    this.db.prepare(
+      "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, selected_text_comments, reply_to_message_id, quoted_text, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal) VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+    ).run(
+      input.messageId,
+      input.threadId,
+      input.content,
+      now,
+      sequence,
+      serializedArray(input.attachments),
+      serializedOptionalValue(input.previewAnnotations),
+      serializedArray(input.mentions),
+      serializedSelectedTextComments(input.submission.selectedTextComments),
+      input.submission.replyToMessageId ?? null,
+      input.submission.quotedText ?? null,
+      origin ? "thread" : "composer",
+      origin?.sourceThreadId ?? null,
+      origin?.sourceTurnId ?? null,
+      origin?.sourceProviderId ?? null,
+    );
+  }
+
+  private insertQueuedTurn(
+    input: WorkspaceEnvironmentQueueFirstTurnInput,
+    submissionId: string,
+    now: string,
+    queuePosition: number,
+  ): void {
+    this.db.prepare(
+      "INSERT INTO workspace_environment_queued_turns (id, thread_id, message_id, queue_position, state, submission_json, created_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)",
+    ).run(submissionId, input.threadId, input.messageId, queuePosition, JSON.stringify(input.submission), now);
   }
 
   /** Return the reconnect-authoritative lifecycle snapshot for one Thread. */
@@ -383,7 +429,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
   /** Create one new queued automatic Setup attempt after a final blocked outcome. */
   retryCurrentAttempt(threadId: string): boolean {
     const now = this.now();
-    const attemptId = randomUUID();
+    const attemptId = NodeCrypto.randomUUID();
     return this.db.transaction(() => {
       const replaced = this.db.prepare(
         "UPDATE workspace_environment_setup_gates SET attempt_id = ?, updated_at = ? WHERE thread_id = ? AND state = 'blocked' AND attempt_id IN (SELECT id FROM workspace_environment_automatic_setup_attempts WHERE state IN ('failed', 'interrupted'))",
@@ -469,4 +515,34 @@ export class WorkspaceEnvironmentAutomaticRepository {
       "DELETE FROM workspace_environment_queued_turns WHERE id IN (SELECT id FROM workspace_environment_queued_turns WHERE thread_id = ? AND state IN ('dispatched', 'cancelled') ORDER BY queue_position DESC LIMIT -1 OFFSET ?)",
     ).run(threadId, MAX_RETAINED_TERMINAL_QUEUED_TURNS_PER_THREAD);
   }
+}
+
+function isReleasedSetupGate(gate: AutomaticSetupGate | undefined): boolean {
+  return gate !== undefined && gate.state !== "blocked";
+}
+
+function queuedTurnMessageOrigin(
+  submission: WorkspaceEnvironmentQueuedTurnSubmission,
+): QueuedTurnMessageOrigin | null {
+  if (!submission.sourceThreadId || !submission.originSourceTurnId || !submission.sourceProviderId) {
+    return null;
+  }
+  return {
+    sourceThreadId: submission.sourceThreadId,
+    sourceTurnId: submission.originSourceTurnId,
+    sourceProviderId: submission.sourceProviderId,
+  };
+}
+
+function serializedArray(value: readonly unknown[]): string | null {
+  return value.length > 0 ? JSON.stringify(value) : null;
+}
+
+function serializedOptionalValue(value: unknown): string | null {
+  return value ? JSON.stringify(value) : null;
+}
+
+function serializedSelectedTextComments(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  return JSON.stringify(SelectedTextCommentsSchema().parse(value));
 }

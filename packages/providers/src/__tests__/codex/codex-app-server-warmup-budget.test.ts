@@ -5,8 +5,8 @@ const { mockSpawn, mockWhich } = vi.hoisted(() => ({
   mockWhich: vi.fn(),
 }));
 
-vi.mock("child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("child_process")>();
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: mockSpawn };
 });
 
@@ -32,7 +32,7 @@ describe("warmCodexAppServer discovery budget", () => {
       }),
     );
 
-    const warmup = warmCodexAppServer("slow-codex", 100);
+    const warmup = warmCodexAppServer("slow-codex", process.platform, 100);
     let settled = false;
     void warmup.then(
       () => {

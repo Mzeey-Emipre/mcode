@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WorkspaceEnvironmentService,
@@ -21,11 +21,11 @@ const document = {
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
 });
 
 async function service(): Promise<{ root: string; instance: WorkspaceEnvironmentService }> {
-  const root = await mkdtemp(join(tmpdir(), "mcode-environment-"));
+  const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-"));
   roots.push(root);
   return { root, instance: new WorkspaceEnvironmentService(root) };
 }
@@ -50,6 +50,29 @@ async function waitFor(assertion: () => void): Promise<void> {
   throw failure;
 }
 
+function sharedEnvironmentThread(
+  id: string,
+  baseCheckout: string,
+  worktreeCheckout: string,
+) {
+  if (id === "direct") return { id, workspace_id: workspaceId, mode: "direct" };
+  if (id === "worktree") {
+    return {
+      id,
+      workspace_id: workspaceId,
+      mode: "worktree",
+      worktree_managed: false,
+      worktree_path: worktreeCheckout,
+    };
+  }
+  return null;
+}
+
+function requireTestValue<T>(value: T | null | undefined, message: string): T {
+  if (!value) throw new Error(message);
+  return value;
+}
+
 describe("WorkspaceEnvironmentService", () => {
   it("reads an absent default and saves at projects/<workspace-id>/environment.json", async () => {
     const { root, instance } = await service();
@@ -58,19 +81,19 @@ describe("WorkspaceEnvironmentService", () => {
     const saved = await instance.save({ workspaceId, sourceRevision: absent.revision, document });
     expect(saved.document).toEqual(document);
     expect(saved.revision).toBeTruthy();
-    expect(await readFile(join(root, "projects", workspaceId, "environment.json"), "utf8")).toContain('"version":"0.0.1"');
+    expect(await NodeFSPromises.readFile(NodePath.join(root, "projects", workspaceId, "environment.json"), "utf8")).toContain('"version":"0.0.1"');
   });
 
   it("replaces atomically and rejects stale saves without changing newer bytes", async () => {
     const { root, instance } = await service();
     const first = await instance.save({ workspaceId, sourceRevision: null, document });
     const newer = await instance.save({ workspaceId, sourceRevision: first.revision, document: { ...document, actions: [] } });
-    const path = join(root, "projects", workspaceId, "environment.json");
-    const before = await readFile(path, "utf8");
+    const path = NodePath.join(root, "projects", workspaceId, "environment.json");
+    const before = await NodeFSPromises.readFile(path, "utf8");
     await expect(instance.save({ workspaceId, sourceRevision: first.revision, document })).rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_STALE" });
-    expect(await readFile(path, "utf8")).toBe(before);
+    expect(await NodeFSPromises.readFile(path, "utf8")).toBe(before);
     expect(newer.revision).not.toBe(first.revision);
-    expect((await readdir(join(root, "projects", workspaceId))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    expect((await NodeFSPromises.readdir(NodePath.join(root, "projects", workspaceId))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("serializes concurrent saves so exactly one wins a shared revision", async () => {
@@ -88,17 +111,18 @@ describe("WorkspaceEnvironmentService", () => {
     expect(stale[0]?.reason).toMatchObject({ code: "WORKSPACE_ENVIRONMENT_STALE" });
     const persisted = await instance.read(workspaceId);
     expect(persisted.document).toEqual(successes[0]?.value.document);
-    expect(await readFile(join(root, "projects", workspaceId, "environment.json"), "utf8")).toContain(persisted.document.actions[0]?.name);
+    expect(await NodeFSPromises.readFile(NodePath.join(root, "projects", workspaceId, "environment.json"), "utf8")).toContain(persisted.document.actions[0]?.name);
   });
 
   it("reads and writes the selected worktree checkout without accepting a revision from another storage scope", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-worktree-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-worktree-"));
     roots.push(root);
-    const baseCheckout = join(root, "base");
-    const worktreeCheckout = join(root, "worktree");
-    await mkdir(worktreeCheckout, { recursive: true });
+    const baseCheckout = NodePath.join(root, "base");
+    const worktreeCheckout = NodePath.join(root, "worktree");
+    await NodeFSPromises.mkdir(worktreeCheckout, { recursive: true });
     const instance = new WorkspaceEnvironmentService({
       mcodeDir: root,
+      platform: "linux",
       workspaces: { findById: (id) => id === workspaceId ? { id, path: baseCheckout } : null },
       threads: {
         findById: (id) => id === "worktree"
@@ -117,7 +141,7 @@ describe("WorkspaceEnvironmentService", () => {
     });
     const baseSaved = await instance.save({ workspaceId, sourceRevision: null, document });
 
-    expect(await readFile(join(worktreeCheckout, ".mcode", "environment.json"), "utf8")).toContain('"bun run dev"');
+    expect(await NodeFSPromises.readFile(NodePath.join(worktreeCheckout, ".mcode", "environment.json"), "utf8")).toContain('"bun run dev"');
     await expect(instance.save({
       workspaceId,
       threadId: "worktree",
@@ -128,13 +152,13 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("requires approval for the exact shared Setup command and never falls back from a worktree checkout", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-shared-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-shared-"));
     roots.push(root);
-    const baseCheckout = join(root, "base");
-    const worktreeCheckout = join(root, "worktree");
-    await mkdir(join(baseCheckout, ".mcode"), { recursive: true });
-    await mkdir(worktreeCheckout, { recursive: true });
-    await writeFile(join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
+    const baseCheckout = NodePath.join(root, "base");
+    const worktreeCheckout = NodePath.join(root, "worktree");
+    await NodeFSPromises.mkdir(NodePath.join(baseCheckout, ".mcode"), { recursive: true });
+    await NodeFSPromises.mkdir(worktreeCheckout, { recursive: true });
+    await NodeFSPromises.writeFile(NodePath.join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
       version: "0.0.1",
       setup: { default: "bun run setup" },
       actions: [{ id: "build", name: "Build", command: { default: "bun run build" } }],
@@ -155,14 +179,9 @@ describe("WorkspaceEnvironmentService", () => {
     }));
     const instance = new WorkspaceEnvironmentService({
       mcodeDir: root,
+      platform: "linux",
       workspaces: { findById: (id) => id === workspaceId ? { id, path: baseCheckout } : null },
-      threads: {
-        findById: (id) => id === "direct"
-          ? { id, workspace_id: workspaceId, mode: "direct" }
-          : id === "worktree"
-            ? { id, workspace_id: workspaceId, mode: "worktree", worktree_managed: false, worktree_path: worktreeCheckout }
-            : null,
-      },
+      threads: { findById: (id) => sharedEnvironmentThread(id, baseCheckout, worktreeCheckout) },
       terminalCommands: { prepare },
     });
 
@@ -171,9 +190,7 @@ describe("WorkspaceEnvironmentService", () => {
     expect(pending.status).toBe("awaiting-approval");
     expect(pending.snapshot.script).toBe("bun run setup");
     expect(start).not.toHaveBeenCalled();
-    const approval = pending.snapshot.approval;
-    expect(approval).not.toBeNull();
-    if (!approval) throw new Error("Expected a shared command approval");
+    const approval = requireTestValue(pending.snapshot.approval, "Expected a shared command approval");
 
     await expect(instance.approveCommand({ ...approval, threadId: "direct", fingerprint: "0".repeat(64) }))
       .rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_APPROVAL_STALE" });
@@ -197,13 +214,13 @@ describe("WorkspaceEnvironmentService", () => {
     const worktreeAttempt = await instance.startSetup({ threadId: "worktree" });
     expect(worktreeAttempt.status).toBe("unavailable");
 
-    await writeFile(join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
+    await NodeFSPromises.writeFile(NodePath.join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
       version: "0.0.1",
       setup: { default: "echo first\r\necho second" },
       actions: [],
     }));
     const crlfFingerprint = (await instance.startSetup({ threadId: "direct" })).snapshot.approval?.fingerprint;
-    await writeFile(join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
+    await NodeFSPromises.writeFile(NodePath.join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
       version: "0.0.1",
       setup: { default: "echo first\necho second" },
       actions: [],
@@ -215,17 +232,17 @@ describe("WorkspaceEnvironmentService", () => {
 
   it("rejects oversized persisted bytes before parsing and preserves the file", async () => {
     const { root, instance } = await service();
-    const path = join(root, "projects", workspaceId, "environment.json");
-    await mkdir(join(root, "projects", workspaceId), { recursive: true });
+    const path = NodePath.join(root, "projects", workspaceId, "environment.json");
+    await NodeFSPromises.mkdir(NodePath.join(root, "projects", workspaceId), { recursive: true });
     const oversized = `${JSON.stringify({ version: "0.0.1", actions: [] })}${" ".repeat(128 * 1024)}`;
-    await writeFile(path, oversized);
+    await NodeFSPromises.writeFile(path, oversized);
     await expect(instance.read(workspaceId)).rejects.toMatchObject({
       code: "WORKSPACE_ENVIRONMENT_VALIDATION",
       issues: expect.arrayContaining([
         expect.objectContaining({ code: "DOCUMENT_TOO_LARGE", reason: "document_too_large" }),
       ]),
     });
-    expect(await readFile(path, "utf8")).toBe(oversized);
+    expect(await NodeFSPromises.readFile(path, "utf8")).toBe(oversized);
   });
 
   it("persists near-limit documents canonically within the raw byte bound", async () => {
@@ -243,8 +260,8 @@ describe("WorkspaceEnvironmentService", () => {
     expect(encoder.encode(`${JSON.stringify(nearLimit, null, 2)}\n`).byteLength).toBeGreaterThan(WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES);
 
     const saved = await instance.save({ workspaceId, sourceRevision: null, document: nearLimit });
-    const path = join(root, "projects", workspaceId, "environment.json");
-    const raw = await readFile(path);
+    const path = NodePath.join(root, "projects", workspaceId, "environment.json");
+    const raw = await NodeFSPromises.readFile(path);
     expect(raw.byteLength).toBeLessThanOrEqual(WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES);
     expect((await instance.read(workspaceId)).document).toEqual(saved.document);
   });
@@ -252,19 +269,19 @@ describe("WorkspaceEnvironmentService", () => {
   it("keeps existing bytes when validation or unsupported-version checks fail", async () => {
     const { root, instance } = await service();
     const saved = await instance.save({ workspaceId, sourceRevision: null, document });
-    const path = join(root, "projects", workspaceId, "environment.json");
-    const before = await readFile(path, "utf8");
+    const path = NodePath.join(root, "projects", workspaceId, "environment.json");
+    const before = await NodeFSPromises.readFile(path, "utf8");
     await expect(instance.save({ workspaceId, sourceRevision: saved.revision, document: { ...document, setup: {} } })).rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_VALIDATION" });
-    expect(await readFile(path, "utf8")).toBe(before);
+    expect(await NodeFSPromises.readFile(path, "utf8")).toBe(before);
 
-    await writeFile(path, JSON.stringify({ ...document, version: "9.9.9" }));
+    await NodeFSPromises.writeFile(path, JSON.stringify({ ...document, version: "9.9.9" }));
     await expect(instance.read(workspaceId)).rejects.toBeInstanceOf(WorkspaceEnvironmentServiceError);
     await expect(instance.save({ workspaceId, sourceRevision: saved.revision, document })).rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_UNSUPPORTED_VERSION" });
-    expect(await readFile(path, "utf8")).toContain('"version":"9.9.9"');
+    expect(await NodeFSPromises.readFile(path, "utf8")).toContain('"version":"9.9.9"');
   });
 
   it("runs one transient Setup attempt with the OS override and records a nonzero command result", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     let finish!: (completion: TerminalCommandCompletion) => void;
     const completion = new Promise<TerminalCommandCompletion>((resolve) => { finish = resolve; });
@@ -323,7 +340,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("records an unavailable attempt when the current OS has no Setup script", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const prepare = vi.fn();
     const instance = new WorkspaceEnvironmentService({
@@ -349,7 +366,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("allows Direct and existing worktree Threads but rejects managed and deleting Threads", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const threads = new Map([
       ["direct", { id: "direct", workspace_id: workspaceId, mode: "direct", worktree_managed: true }],
@@ -378,7 +395,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("uses a nonblank default when the current OS override is blank", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const prepare = vi.fn(async () => ({
       kind: "unavailable" as const,
@@ -405,7 +422,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("records a configuration failure for an invalid current environment document", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const prepare = vi.fn();
     const instance = new WorkspaceEnvironmentService({
@@ -416,9 +433,9 @@ describe("WorkspaceEnvironmentService", () => {
       createAttemptId: () => "attempt-invalid",
       now: () => new Date("2026-08-22T12:00:00.000Z"),
     });
-    const path = join(root, "projects", workspaceId, "environment.json");
-    await mkdir(join(root, "projects", workspaceId), { recursive: true });
-    await writeFile(path, JSON.stringify({ version: "9.9.9", actions: [] }));
+    const path = NodePath.join(root, "projects", workspaceId, "environment.json");
+    await NodeFSPromises.mkdir(NodePath.join(root, "projects", workspaceId), { recursive: true });
+    await NodeFSPromises.writeFile(path, JSON.stringify({ version: "9.9.9", actions: [] }));
 
     await expect(instance.startSetup({ threadId: "thread-1" })).resolves.toMatchObject({
       id: "attempt-invalid",
@@ -431,7 +448,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("classifies a contained timeout without changing the latest attempt identity", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const instance = new WorkspaceEnvironmentService({
       mcodeDir: root,
@@ -470,7 +487,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("retains ownership after a containment failure until the command releases", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     let release!: () => void;
     const released = new Promise<void>((resolve) => { release = resolve; });
@@ -518,7 +535,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("cancels Setup by Thread, workspace, and server disposal", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const closeByThread = vi.fn(async () => ({ kind: "contained" as const }));
     const closeByWorkspace = vi.fn(async () => ({ kind: "contained" as const }));
@@ -572,7 +589,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("rejects new Setup once disposal begins without preparing or starting another command", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const closeEntered = deferred<void>();
     const closeRelease = deferred<void>();
@@ -620,7 +637,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("waits for a pending preparation, closes it, and prevents a cancelled Thread from starting Setup", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const pending = deferred<TerminalCommandPreparation>();
     const start = vi.fn();
@@ -661,7 +678,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("bounds Thread, workspace, and shutdown cancellation while preparations settle late", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const timers: Array<() => void> = [];
     const pendingByThread = new Map<string, ReturnType<typeof deferred<TerminalCommandPreparation>>>();
@@ -736,7 +753,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("rejects excess pending Setup work and frees capacity after late cancellation cleanup", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const timers: Array<() => void> = [];
     const pendingByThread = new Map<string, ReturnType<typeof deferred<TerminalCommandPreparation>>>();
@@ -789,7 +806,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("waits for a pending environment read and prevents the cancelled Thread from preparing Setup", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const prepare = vi.fn();
     const instance = new WorkspaceEnvironmentService({
@@ -823,7 +840,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("cancels pending preparations by workspace and during server disposal", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     const pendingByThread = new Map<string, { readonly promise: Promise<TerminalCommandPreparation>; readonly resolve: (value: TerminalCommandPreparation) => void }>();
     const preparations = new Map<string, TerminalCommandPreparation>();
@@ -886,7 +903,7 @@ describe("WorkspaceEnvironmentService", () => {
   });
 
   it("evicts the oldest completed transient attempts without evicting active Setup", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-setup-"));
     roots.push(root);
     let nextAttempt = 0;
     const instance = new WorkspaceEnvironmentService({

@@ -86,6 +86,259 @@ export interface BrowserHeaderProps {
   readonly onHumanFocus?: () => void;
 }
 
+interface BrowserNavigationControlsProps {
+  readonly canBack: boolean;
+  readonly canFwd: boolean;
+  readonly hasLoadedPage: boolean;
+  readonly onGoBack: () => void;
+  readonly onGoForward: () => void;
+  readonly onReload: () => void;
+}
+
+function BrowserNavigationControls({
+  canBack,
+  canFwd,
+  hasLoadedPage,
+  onGoBack,
+  onGoForward,
+  onReload,
+}: BrowserNavigationControlsProps) {
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button type="button" variant="ghost" size="icon-sm" className={cn("shrink-0", ICON_HIT_SLOP)} disabled={!canBack} onClick={onGoBack} aria-label="Back">
+              <ArrowLeft size={16} aria-hidden />
+            </Button>
+          }
+        />
+        <TooltipContent side="top" sideOffset={6} className="text-xs">Navigate back</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button type="button" variant="ghost" size="icon-sm" className={cn("shrink-0", ICON_HIT_SLOP)} disabled={!canFwd} onClick={onGoForward} aria-label="Forward">
+              <ArrowRight size={16} aria-hidden />
+            </Button>
+          }
+        />
+        <TooltipContent side="top" sideOffset={6} className="text-xs">Navigate forward</TooltipContent>
+      </Tooltip>
+      {hasLoadedPage ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button type="button" variant="ghost" size="icon-sm" className={cn("shrink-0", ICON_HIT_SLOP)} onClick={onReload} aria-label="Reload">
+                <RotateCw size={16} aria-hidden />
+              </Button>
+            }
+          />
+          <TooltipContent side="top" sideOffset={6} className="text-xs">Reload page</TooltipContent>
+        </Tooltip>
+      ) : null}
+    </>
+  );
+}
+
+interface BrowserUrlBarProps {
+  readonly url: string;
+  readonly pageTitle: string | null;
+  readonly faviconUrl: string | null;
+  readonly hasLoadedPage: boolean;
+  readonly focusRequest: number | undefined;
+  readonly onNavigate: (url: string) => void;
+  readonly onOpenExternal: () => void;
+  readonly onHumanFocus: (() => void) | undefined;
+}
+
+function urlBarClass(focused: boolean, revealActions: boolean): string {
+  if (focused) return "bg-input ring-2 ring-ring/70";
+  if (revealActions) return "bg-input ring-1 ring-border";
+  return "hover:bg-input/60";
+}
+
+function urlInputClass(showTitle: boolean, focused: boolean): string {
+  return cn(
+    "min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground",
+    showTitle ? "cursor-default text-center font-medium text-foreground" : "text-foreground",
+    !showTitle && !focused && "text-center text-muted-foreground",
+    focused && "font-mono",
+  );
+}
+
+function urlBarState(
+  showAsTitle: boolean,
+  hasLoadedPage: boolean,
+  barHover: boolean,
+  focused: boolean,
+  showFavicon: boolean,
+  faviconError: boolean,
+): { showTitle: boolean; revealActions: boolean; faviconVisible: boolean; canOpenExternal: boolean } {
+  const showTitle = showAsTitle && !focused;
+  const revealActions = hasLoadedPage && showTitle && barHover;
+  return {
+    showTitle,
+    revealActions,
+    faviconVisible: showFavicon && !focused && !faviconError,
+    canOpenExternal: revealActions || focused && hasLoadedPage,
+  };
+}
+
+function BrowserUrlBar({
+  url,
+  pageTitle,
+  faviconUrl,
+  hasLoadedPage,
+  focusRequest,
+  onNavigate,
+  onOpenExternal,
+  onHumanFocus,
+}: BrowserUrlBarProps) {
+  const { displayValue, showFavicon, showAsTitle, inputRef, placeholder, onFocus, onBlur, onChange, onSubmit } = useOmniboxState({ url, pageTitle, faviconUrl });
+  const [focused, setFocused] = useState(false);
+  const [barHover, setBarHover] = useState(false);
+  const [failedFaviconUrl, setFailedFaviconUrl] = useState<string | null>(null);
+  const faviconError = faviconUrl !== null && failedFaviconUrl === faviconUrl;
+  useEffect(() => {
+    if (!focusRequest) return;
+    const handle = requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [focusRequest, inputRef]);
+
+  const state = urlBarState(showAsTitle, hasLoadedPage, barHover, focused, showFavicon, faviconError);
+  const handleFocus = () => {
+    setFocused(true);
+    onHumanFocus?.();
+    onFocus();
+  };
+  const handleBlur = () => {
+    setFocused(false);
+    onBlur();
+  };
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    const target = onSubmit();
+    if (target.trim()) onNavigate(target);
+  };
+
+  return (
+    <div className="flex min-w-0 flex-1 justify-center px-1">
+      <div
+        data-testid="browser-url-bar"
+        onPointerEnter={() => setBarHover(true)}
+        onPointerLeave={() => setBarHover(false)}
+        className={cn("flex w-full max-w-xl items-center gap-1.5 rounded-full px-3.5 py-1.5 transition-all", urlBarClass(focused, state.revealActions))}
+      >
+        {state.faviconVisible ? <img src={faviconUrl!} alt="" width={14} height={14} loading="eager" className="pointer-events-none size-3.5 shrink-0 rounded-sm" onError={() => setFailedFaviconUrl(faviconUrl)} /> : null}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <input
+                ref={inputRef}
+                value={displayValue}
+                onChange={(event) => onChange(event.target.value)}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                aria-label="Preview URL"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                className={urlInputClass(state.showTitle, focused)}
+              />
+            }
+          />
+          {url ? <TooltipContent side="top" sideOffset={6}>{url}</TooltipContent> : null}
+        </Tooltip>
+        {state.canOpenExternal ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button type="button" onClick={onOpenExternal} aria-label="Open in system browser" className="shrink-0 text-muted-foreground hover:text-foreground">
+                  <ArrowUpRight size={14} aria-hidden />
+                </button>
+              }
+            />
+            <TooltipContent side="top" sideOffset={6} className="text-xs">Open in system browser</TooltipContent>
+          </Tooltip>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+interface BrowserPageActionsProps {
+  readonly hasLoadedPage: boolean;
+  readonly threadId: string;
+  readonly designModeActive: boolean;
+  readonly elementPickBusy: boolean;
+  readonly captureBusy: boolean;
+  readonly regionBusy: boolean;
+  readonly onToggleDesign: () => void;
+  readonly onScreenshot: () => void;
+}
+
+type BrowserActionProps = Pick<
+  BrowserPageActionsProps,
+  "threadId" | "designModeActive" | "elementPickBusy" | "captureBusy" | "regionBusy" | "onToggleDesign" | "onScreenshot"
+>;
+
+function DesignAction({ threadId, designModeActive, elementPickBusy, onToggleDesign }: BrowserActionProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button type="button" variant="ghost" size={designModeActive ? "sm" : "icon-sm"} aria-label="Design" aria-pressed={designModeActive} disabled={!threadId} onClick={onToggleDesign} className={cn("shrink-0", ICON_HIT_SLOP, designModeActive && "bg-primary/10 text-primary")}>
+            {elementPickBusy ? <Spinner size={16} className="text-current" /> : <PenTool size={16} aria-hidden />}
+            {designModeActive ? <span>Design</span> : null}
+          </Button>
+        }
+      />
+      <TooltipContent side="top" sideOffset={6} className="max-w-[min(19rem,calc(100vw-1.5rem))] text-xs">Design: pick an element to attach to the chat</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ScreenshotAction({ threadId, elementPickBusy, captureBusy, regionBusy, onScreenshot }: BrowserActionProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="Screenshot" disabled={!threadId || captureBusy || regionBusy || elementPickBusy} onClick={onScreenshot} className={cn("shrink-0", ICON_HIT_SLOP, captureBusy && "bg-primary/10 text-primary")}>
+            {captureBusy ? <Spinner size={16} className="text-current" /> : <Camera size={16} aria-hidden />}
+          </Button>
+        }
+      />
+      <TooltipContent side="top" sideOffset={6} className="max-w-[min(16rem,calc(100vw-1.5rem))] text-xs">Screenshot the visible viewport</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function BrowserPageActions({
+  hasLoadedPage,
+  threadId,
+  designModeActive,
+  elementPickBusy,
+  captureBusy,
+  regionBusy,
+  onToggleDesign,
+  onScreenshot,
+}: BrowserPageActionsProps) {
+  if (!hasLoadedPage) return null;
+  return (
+    <>
+      <DesignAction threadId={threadId} designModeActive={designModeActive} elementPickBusy={elementPickBusy} captureBusy={captureBusy} regionBusy={regionBusy} onToggleDesign={onToggleDesign} onScreenshot={onScreenshot} />
+      <ScreenshotAction threadId={threadId} designModeActive={designModeActive} elementPickBusy={elementPickBusy} captureBusy={captureBusy} regionBusy={regionBusy} onToggleDesign={onToggleDesign} onScreenshot={onScreenshot} />
+    </>
+  );
+}
+
 /**
  * The browser's clean URL header. A minimal back/forward row, a center bar that
  * morphs across three states, and a right cluster of page actions plus the
@@ -135,265 +388,14 @@ export function BrowserHeader({
   onStopAutomation,
   onHumanFocus,
 }: BrowserHeaderProps) {
-  const {
-    displayValue,
-    showFavicon,
-    showAsTitle,
-    inputRef,
-    placeholder,
-    onFocus,
-    onBlur,
-    onChange,
-    onSubmit,
-  } = useOmniboxState({ url, pageTitle, faviconUrl });
-
-  const [focused, setFocused] = useState(false);
-  const [barHover, setBarHover] = useState(false);
-  const [faviconError, setFaviconError] = useState(false);
-
-  useEffect(() => setFaviconError(false), [faviconUrl]);
-
-  // Honour focus requests from the parent (mod+shift+b). rAF defers until after
-  // layout so the input is mounted and visible when focus + select fire.
-  useEffect(() => {
-    if (!focusRequest) return;
-    const handle = requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-    return () => cancelAnimationFrame(handle);
-  }, [focusRequest, inputRef]);
-
-  // The loaded title is centered and blurred; hovering it surfaces reload +
-  // open-in-external. The focused pill rings and left-aligns the editable URL.
-  const showTitle = showAsTitle && !focused;
-  const loadedHoverReveal = hasLoadedPage && showTitle && barHover;
-  const faviconVisible = showFavicon && !focused && !faviconError;
-
   return (
     <div
       data-testid="browser-header"
       className="flex h-10 flex-none items-center gap-1 bg-background px-2"
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className={cn("shrink-0", ICON_HIT_SLOP)}
-              disabled={!canBack}
-              onClick={onGoBack}
-              aria-label="Back"
-            >
-              <ArrowLeft size={16} aria-hidden />
-            </Button>
-          }
-        />
-        <TooltipContent side="top" sideOffset={6} className="text-xs">
-          Navigate back
-        </TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className={cn("shrink-0", ICON_HIT_SLOP)}
-              disabled={!canFwd}
-              onClick={onGoForward}
-              aria-label="Forward"
-            >
-              <ArrowRight size={16} aria-hidden />
-            </Button>
-          }
-        />
-        <TooltipContent side="top" sideOffset={6} className="text-xs">
-          Navigate forward
-        </TooltipContent>
-      </Tooltip>
-      {hasLoadedPage ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className={cn("shrink-0", ICON_HIT_SLOP)}
-                onClick={onReload}
-                aria-label="Reload"
-              >
-                <RotateCw size={16} aria-hidden />
-              </Button>
-            }
-          />
-          <TooltipContent side="top" sideOffset={6} className="text-xs">
-            Reload page
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
-
-      {/* Center bar: morphs across empty / focused / loaded. */}
-      <div className="flex min-w-0 flex-1 justify-center px-1">
-        <div
-          data-testid="browser-url-bar"
-          onPointerEnter={() => setBarHover(true)}
-          onPointerLeave={() => setBarHover(false)}
-          className={cn(
-            "flex w-full max-w-xl items-center gap-1.5 rounded-full px-3.5 py-1.5 transition-all",
-            focused
-              ? "bg-input ring-2 ring-ring/70"
-              : loadedHoverReveal
-                ? "bg-input ring-1 ring-border"
-                : "hover:bg-input/60",
-          )}
-        >
-          {faviconVisible ? (
-            <img
-              src={faviconUrl!}
-              alt=""
-              width={14}
-              height={14}
-              loading="eager"
-              className="pointer-events-none size-3.5 shrink-0 rounded-sm"
-              onError={() => setFaviconError(true)}
-            />
-          ) : null}
-
-          <input
-            ref={inputRef}
-            value={displayValue}
-            onChange={(e) => onChange(e.target.value)}
-            onFocus={() => {
-              setFocused(true);
-              onHumanFocus?.();
-              onFocus();
-            }}
-            onBlur={() => {
-              setFocused(false);
-              onBlur();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                if (e.nativeEvent.isComposing) return;
-                e.preventDefault();
-                const target = onSubmit();
-                if (target.trim()) onNavigate(target);
-              }
-            }}
-            placeholder={placeholder}
-            aria-label="Preview URL"
-            title={url || undefined}
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            className={cn(
-              "min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground",
-              showTitle
-                ? "cursor-default text-center font-medium text-foreground"
-                : "text-foreground",
-              !showTitle && !focused && "text-center text-muted-foreground",
-              focused && "font-mono",
-            )}
-          />
-
-          {(focused || loadedHoverReveal) && hasLoadedPage ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    onClick={onOpenExternal}
-                    aria-label="Open in system browser"
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                  >
-                    <ArrowUpRight size={14} aria-hidden />
-                  </button>
-                }
-              />
-              <TooltipContent side="top" sideOffset={6} className="text-xs">
-                Open in system browser
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-        </div>
-      </div>
-
-      {/* Right cluster: page actions (loaded) plus overflow tools. */}
-      {hasLoadedPage ? (
-        <>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size={designModeActive ? "sm" : "icon-sm"}
-                  aria-label="Design"
-                  aria-pressed={designModeActive}
-                  disabled={!threadId}
-                  onClick={onToggleDesign}
-                  className={cn(
-                    "shrink-0",
-                    ICON_HIT_SLOP,
-                    designModeActive && "bg-primary/10 text-primary",
-                  )}
-                >
-                  {elementPickBusy ? (
-                    <Spinner size={16} className="text-current" />
-                  ) : (
-                    <PenTool size={16} aria-hidden />
-                  )}
-                  {designModeActive ? <span>Design</span> : null}
-                </Button>
-              }
-            />
-            <TooltipContent
-              side="top"
-              sideOffset={6}
-              className="max-w-[min(19rem,calc(100vw-1.5rem))] text-xs"
-            >
-              Design: pick an element to attach to the chat
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Screenshot"
-                  disabled={!threadId || captureBusy || regionBusy || elementPickBusy}
-                  onClick={onScreenshot}
-                  className={cn(
-                    "shrink-0",
-                    ICON_HIT_SLOP,
-                    captureBusy && "bg-primary/10 text-primary",
-                  )}
-                >
-                  {captureBusy ? (
-                    <Spinner size={16} className="text-current" />
-                  ) : (
-                    <Camera size={16} aria-hidden />
-                  )}
-                </Button>
-              }
-            />
-            <TooltipContent
-              side="top"
-              sideOffset={6}
-              className="max-w-[min(16rem,calc(100vw-1.5rem))] text-xs"
-            >
-              Screenshot the visible viewport
-            </TooltipContent>
-          </Tooltip>
-        </>
-      ) : null}
+      <BrowserNavigationControls canBack={canBack} canFwd={canFwd} hasLoadedPage={hasLoadedPage} onGoBack={onGoBack} onGoForward={onGoForward} onReload={onReload} />
+      <BrowserUrlBar url={url} pageTitle={pageTitle} faviconUrl={faviconUrl} hasLoadedPage={hasLoadedPage} focusRequest={focusRequest} onNavigate={onNavigate} onOpenExternal={onOpenExternal} onHumanFocus={onHumanFocus} />
+      <BrowserPageActions hasLoadedPage={hasLoadedPage} threadId={threadId} designModeActive={designModeActive} elementPickBusy={elementPickBusy} captureBusy={captureBusy} regionBusy={regionBusy} onToggleDesign={onToggleDesign} onScreenshot={onScreenshot} />
       <BrowserOverflowMenu
         hasLoadedPage={hasLoadedPage}
         onNewPage={onNewPage}

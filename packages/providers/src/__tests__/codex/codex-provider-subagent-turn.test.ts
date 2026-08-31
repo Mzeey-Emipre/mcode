@@ -23,7 +23,7 @@ const { sendTurnMock, getChildThreadMetadataMock, interruptChildTurnMock } = vi.
 }));
 
 vi.mock("../../private/codex/codex-app-server.js", async () => {
-  const { EventEmitter } = await import("events");
+  const { EventEmitter } = await import("node:events");
   class MockCodexAppServer extends EventEmitter {
     isAlive = true;
     threadId = "sdk-thread-1";

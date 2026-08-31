@@ -22,6 +22,9 @@ const CursorSpendResponseSchema = z.object({
   teamMemberSpend: z.array(z.unknown()),
 });
 
+type CursorSpendMember = z.infer<typeof CursorSpendMemberSchema>;
+type CursorSpendResponse = z.infer<typeof CursorSpendResponseSchema>;
+
 interface CacheEntry {
   key: string;
   expiresAt: number;
@@ -85,9 +88,23 @@ export class CursorAdminUsageSource {
   }
 
   private async fetchFresh(apiKey: string, usageEmail: string): Promise<QuotaCategory[]> {
-    let response: Response;
+    const response = await this.requestSpend(apiKey, usageEmail);
+    if (!response) return [];
+    const spend = await this.decodeSpendResponse(response);
+    if (!spend) return [];
+    const member = this.findMember(spend, usageEmail);
+    if (!member) return [];
+
+    const categories = mapCursorSpendMember(member);
+    if (categories.length === 0) {
+      logger.warn("Cursor usage unavailable", { reason: "missing_percentage_fields" });
+    }
+    return categories;
+  }
+
+  private async requestSpend(apiKey: string, usageEmail: string): Promise<Response | null> {
     try {
-      response = await this.fetchImpl(CURSOR_SPEND_ENDPOINT, {
+      return await this.fetchImpl(CURSOR_SPEND_ENDPOINT, {
         method: "POST",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         headers: {
@@ -105,21 +122,23 @@ export class CursorAdminUsageSource {
         reason: "request_failed",
         error: error instanceof Error ? error.name : String(error),
       });
-      return [];
+      return null;
     }
+  }
 
+  private async decodeSpendResponse(response: Response): Promise<CursorSpendResponse | null> {
     if (!response.ok) {
       logger.warn("Cursor usage unavailable", {
         reason: "http_status",
         status: response.status,
       });
-      return [];
+      return null;
     }
 
     const contentLength = response.headers.get("content-length");
     if (contentLength && Number(contentLength) > MAX_RESPONSE_BYTES) {
       logger.warn("Cursor usage unavailable", { reason: "response_too_large" });
-      return [];
+      return null;
     }
 
     let bodyText: string;
@@ -129,7 +148,7 @@ export class CursorAdminUsageSource {
       logger.warn("Cursor usage unavailable", {
         reason: error instanceof ResponseTooLargeError ? "response_too_large" : "read_failed",
       });
-      return [];
+      return null;
     }
 
     let body: unknown;
@@ -137,34 +156,27 @@ export class CursorAdminUsageSource {
       body = JSON.parse(bodyText);
     } catch {
       logger.warn("Cursor usage unavailable", { reason: "invalid_json" });
-      return [];
+      return null;
     }
 
     const parsed = CursorSpendResponseSchema.safeParse(body);
     if (!parsed.success) {
       logger.warn("Cursor usage unavailable", { reason: "invalid_shape" });
-      return [];
+      return null;
     }
 
+    return parsed.data;
+  }
+
+  private findMember(spend: CursorSpendResponse, usageEmail: string): CursorSpendMember | null {
     const normalizedUsageEmail = normalizeEmail(usageEmail);
-    const matchingMember = parsed.data.teamMemberSpend.find((member) => {
-      const parsedMember = CursorSpendMemberSchema.safeParse(member);
-      if (!parsedMember.success) return false;
-      return normalizeEmail(cursorSpendMemberEmail(parsedMember.data)) === normalizedUsageEmail;
-    });
-    if (!matchingMember) return [];
-
-    const member = CursorSpendMemberSchema.safeParse(matchingMember);
-    if (!member.success) {
-      logger.warn("Cursor usage unavailable", { reason: "invalid_shape" });
-      return [];
+    for (const candidate of spend.teamMemberSpend) {
+      const member = CursorSpendMemberSchema.safeParse(candidate);
+      if (member.success && normalizeEmail(cursorSpendMemberEmail(member.data)) === normalizedUsageEmail) {
+        return member.data;
+      }
     }
-
-    const categories = mapCursorSpendMember(member.data);
-    if (categories.length === 0) {
-      logger.warn("Cursor usage unavailable", { reason: "missing_percentage_fields" });
-    }
-    return categories;
+    return null;
   }
 }
 

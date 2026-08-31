@@ -3,6 +3,7 @@ import type { Workspace, Thread, GitBranch, PermissionMode, WorktreeInfo, Attach
 import {
   type WorkspaceThread,
   buildPlaceholderWorkspaceThread,
+  type ClientPreparingContext,
   titleFromMessageContent,
 } from "@/lib/workspace-thread";
 import {
@@ -47,6 +48,107 @@ const lastSyncTime = new Map<string, number>();
 async function clearPreviewResources(workspaceId: string, threadId: string): Promise<void> {
   await usePreviewTabsStore.getState().clearScope(workspaceId, threadId);
   usePreviewReferenceQueueStore.getState().clearThread(threadId);
+}
+
+function optimisticCreationSuccessState(
+  state: Pick<WorkspaceState, "threads" | "activeThreadId">,
+  placeholderId: string,
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  warnings: CreateAndSendResult["warnings"],
+  pending: PendingThreadCreation | undefined,
+  transportWasWorktree: boolean,
+) {
+  const hydratedThread = hydrateCreatedThread(thread, pending);
+  const createdThread = warnings?.length
+    ? { ...hydratedThread, clientWarnings: warnings }
+    : hydratedThread;
+  return {
+    threads: [createdThread, ...state.threads.filter((candidate) => candidate.id !== placeholderId && candidate.id !== thread.id)],
+    activeThreadId: state.activeThreadId === placeholderId ? thread.id : state.activeThreadId,
+    error: null,
+    ...(transportWasWorktree ? { worktreesLoadedForWorkspace: null } : {}),
+  };
+}
+
+function hydrateCreatedThread(
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  pending: PendingThreadCreation | undefined,
+): WorkspaceThread {
+  return {
+    ...thread,
+    ...createdThreadIdentitySettings(thread, pending),
+    ...createdThreadModeSettings(thread, pending),
+    ...createdThreadPreferenceSettings(thread, pending),
+    ...createdThreadThinkingSettings(thread, pending),
+    ...createdThreadProviderSettings(thread, pending),
+  };
+}
+
+function createdThreadIdentitySettings(
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  pending: PendingThreadCreation | undefined,
+) {
+  return {
+    model: pending?.model ?? thread.model ?? null,
+    provider: pending?.provider ?? thread.provider ?? "claude",
+  };
+}
+
+function createdThreadModeSettings(
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  pending: PendingThreadCreation | undefined,
+) {
+  return {
+    reasoning_level: pending?.reasoningLevel ?? thread.reasoning_level ?? null,
+    interaction_mode: pending?.interactionMode ?? thread.interaction_mode ?? null,
+  };
+}
+
+function createdThreadPreferenceSettings(
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  pending: PendingThreadCreation | undefined,
+) {
+  return {
+    permission_mode: pending?.permissionMode ?? thread.permission_mode ?? null,
+    context_window_mode: pending?.contextWindow ?? thread.context_window_mode ?? null,
+  };
+}
+
+function createdThreadThinkingSettings(
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  pending: PendingThreadCreation | undefined,
+) {
+  return {
+    thinking: pending?.thinking ?? thread.thinking ?? null,
+  };
+}
+
+function createdThreadProviderSettings(
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  pending: PendingThreadCreation | undefined,
+) {
+  return {
+    codex_fast_mode: createdCodexFastMode(thread, pending),
+    copilot_agent: createdCopilotAgent(thread, pending),
+  };
+}
+
+function createdCodexFastMode(
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  pending: PendingThreadCreation | undefined,
+): boolean | null {
+  return (pending?.provider === "codex" ? pending.codexFastMode ?? null : null)
+    ?? thread.codex_fast_mode
+    ?? null;
+}
+
+function createdCopilotAgent(
+  thread: Omit<CreateAndSendResult, "runtimeSnapshot" | "warnings">,
+  pending: PendingThreadCreation | undefined,
+): string | null {
+  return (pending?.provider === "copilot" ? pending.copilotAgent ?? null : null)
+    ?? thread.copilot_agent
+    ?? null;
 }
 
 /**
@@ -123,6 +225,177 @@ interface PendingThreadCreation {
   codexFastMode?: boolean;
   /** Goal objective installed atomically with this thread's first turn. */
   goalObjective?: string;
+}
+
+interface ThreadCreationTarget {
+  transportMode: "direct" | "worktree";
+  branch: string;
+  worktreeBranchMode?: "branchless" | "named";
+  existingWorktreePath?: string;
+  existingWorktreeBaseBranch?: string;
+}
+
+interface BranchThreadParams {
+  sourceThreadId: string;
+  content: string;
+  displayContent?: string;
+  model: string;
+  provider?: string;
+  mode: "direct" | "worktree" | "existing-worktree";
+  branch?: string;
+  existingWorktreePath?: string;
+  existingWorktreeBaseBranch?: string;
+  forkedFromMessageId?: string;
+  permissionMode?: PermissionMode;
+  reasoningLevel?: ReasoningLevel;
+  attachments?: AttachmentMeta[];
+  interactionMode?: InteractionMode;
+  copilotAgent?: string;
+  contextWindow?: ContextWindowMode;
+  thinking?: boolean;
+  codexFastMode?: boolean;
+  mentions?: MessageMention[];
+  previewAnnotations?: PreviewAnnotationBundle;
+  goalObjective?: string;
+  orchestrationMode?: OrchestrationMode;
+}
+
+function threadCreationContext(
+  action: "new" | "branch",
+  mode: "direct" | "worktree" | "existing-worktree",
+): ClientPreparingContext {
+  const contexts = {
+    new: {
+      direct: "new-direct",
+      worktree: "new-worktree",
+      "existing-worktree": "new-existing-worktree",
+    },
+    branch: {
+      direct: "branch-direct",
+      worktree: "branch-worktree",
+      "existing-worktree": "branch-existing-worktree",
+    },
+  } as const;
+  return contexts[action][mode];
+}
+
+function targetForAttachedWorktree(
+  worktree: WorktreeInfo,
+  selectedBranch: string,
+  existingWorktreePath = worktree.path,
+): ThreadCreationTarget {
+  if (isDetachedWorktree(worktree)) {
+    if (!selectedBranch) {
+      throw new Error("Select a base branch before attaching a detached worktree");
+    }
+    return {
+      transportMode: "worktree",
+      branch: selectedBranch,
+      existingWorktreePath,
+      existingWorktreeBaseBranch: selectedBranch,
+    };
+  }
+  return {
+    transportMode: "worktree",
+    branch: worktree.branch,
+    existingWorktreePath,
+  };
+}
+
+function newThreadCreationTarget(
+  mode: WorkspaceState["newThreadMode"],
+  branch: string,
+  branchSource: WorkspaceState["newThreadBranchSource"],
+  selectedWorktree: WorktreeInfo | null,
+): ThreadCreationTarget {
+  if (mode === "direct") return { transportMode: "direct", branch: branch || "main" };
+  if (mode === "worktree") {
+    return {
+      transportMode: "worktree",
+      branch: branch || "main",
+      worktreeBranchMode: branchSource === "pr" ? "named" : "branchless",
+    };
+  }
+  if (!selectedWorktree) throw new Error("No worktree selected");
+  return targetForAttachedWorktree(selectedWorktree, branch);
+}
+
+function branchThreadCreationTarget(
+  params: BranchThreadParams,
+  worktrees: WorktreeInfo[],
+): ThreadCreationTarget {
+  const branch = params.branch ?? "main";
+  if (params.mode === "direct") return { transportMode: "direct", branch };
+  if (params.mode === "worktree") return { transportMode: "worktree", branch };
+  const existingWorktreePath = params.existingWorktreePath;
+  if (!existingWorktreePath) {
+    throw new Error("existingWorktreePath is required for existing-worktree mode");
+  }
+  const matchedWorktree = worktrees.find(
+    (worktree) => normalizeWorktreePath(worktree.path) === normalizeWorktreePath(existingWorktreePath),
+  );
+  if (!matchedWorktree) {
+    return {
+      transportMode: "worktree",
+      branch,
+      existingWorktreePath,
+      existingWorktreeBaseBranch: params.existingWorktreeBaseBranch,
+    };
+  }
+  return targetForAttachedWorktree(
+    matchedWorktree,
+    params.existingWorktreeBaseBranch ?? params.branch ?? "",
+    existingWorktreePath,
+  );
+}
+
+function placeholderWorktreeSettings(pending: PendingThreadCreation) {
+  const usesExistingWorktree = pending.existingWorktreePath !== undefined;
+  const checkoutState = usesExistingWorktree
+    ? pending.existingWorktreeBaseBranch ? "branchless" : "named"
+    : pending.worktreeBranchMode;
+  return {
+    checkoutState,
+    baseBranch: pending.existingWorktreeBaseBranch ?? null,
+    worktreePath: pending.existingWorktreePath ?? null,
+    worktreeManaged: usesExistingWorktree ? false : undefined,
+  };
+}
+
+function placeholderProviderSettings(pending: PendingThreadCreation) {
+  return {
+    codexFastMode: pending.provider === "codex" ? (pending.codexFastMode ?? null) : null,
+    copilotAgent: pending.provider === "copilot" ? (pending.copilotAgent ?? null) : null,
+  };
+}
+
+function buildOptimisticThreadPlaceholder(
+  placeholderId: string,
+  pending: PendingThreadCreation,
+  clientPreparingContext: ClientPreparingContext,
+): WorkspaceThread {
+  const captionForUi = pending.displayContent ?? pending.content;
+  return buildPlaceholderWorkspaceThread({
+    id: placeholderId,
+    workspaceId: pending.workspaceId,
+    title: titleFromMessageContent(captionForUi),
+    queuedMessage: captionForUi,
+    transportMode: pending.transportMode,
+    branch: pending.branch,
+    ...placeholderWorktreeSettings(pending),
+    clientPreparingContext,
+    model: pending.model,
+    provider: pending.provider,
+    reasoningLevel: pending.reasoningLevel,
+    interactionMode: pending.interactionMode,
+    orchestrationMode: pending.orchestrationMode,
+    permissionMode: pending.permissionMode,
+    contextWindow: pending.contextWindow,
+    thinking: pending.thinking,
+    ...placeholderProviderSettings(pending),
+    parentThreadId: pending.sourceThreadId,
+    forkedFromMessageId: pending.forkedFromMessageId,
+  });
 }
 
 const pendingThreadCreationByPlaceholderId = new Map<string, PendingThreadCreation>();
@@ -248,30 +521,7 @@ interface WorkspaceState {
     orchestrationMode?: OrchestrationMode,
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
-  branchThread: (params: {
-    sourceThreadId: string;
-    content: string;
-    displayContent?: string;
-    model: string;
-    provider?: string;
-    mode: "direct" | "worktree" | "existing-worktree";
-    branch?: string;
-    existingWorktreePath?: string;
-    existingWorktreeBaseBranch?: string;
-    forkedFromMessageId?: string;
-    permissionMode?: PermissionMode;
-    reasoningLevel?: ReasoningLevel;
-    attachments?: AttachmentMeta[];
-    interactionMode?: InteractionMode;
-    copilotAgent?: string;
-    contextWindow?: ContextWindowMode;
-    thinking?: boolean;
-    codexFastMode?: boolean;
-    mentions?: MessageMention[];
-    previewAnnotations?: PreviewAnnotationBundle;
-    goalObjective?: string;
-    orchestrationMode?: OrchestrationMode;
-  }) => Promise<Thread>;
+  branchThread: (params: BranchThreadParams) => Promise<Thread>;
   /**
    * Re-run server creation for a placeholder thread after {@link WorkspaceThread.clientError}.
    */
@@ -408,37 +658,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     useThreadStore.getState().transferThreadRuntime(placeholderId, thread.id);
     useThreadStore.getState().applyThreadRuntimeSnapshot(runtimeSnapshot);
     useDiffStore.getState().hideRightPanel(workspaceId, thread.id);
-    set((state) => {
-      const without = state.threads.filter((t) => t.id !== placeholderId);
-      const deduped = without.filter((t) => t.id !== thread.id);
-      const hydratedThread: WorkspaceThread = {
-        ...thread,
-        model: pending?.model ?? thread.model ?? null,
-        provider: pending?.provider ?? thread.provider ?? "claude",
-        reasoning_level: pending?.reasoningLevel ?? thread.reasoning_level ?? null,
-        interaction_mode: pending?.interactionMode ?? thread.interaction_mode ?? null,
-        permission_mode: pending?.permissionMode ?? thread.permission_mode ?? null,
-        context_window_mode: pending?.contextWindow ?? thread.context_window_mode ?? null,
-        thinking: pending?.thinking ?? thread.thinking ?? null,
-        codex_fast_mode: (
-          pending?.provider === "codex" ? (pending.codexFastMode ?? null) : null
-        ) ?? thread.codex_fast_mode ?? null,
-        copilot_agent: (
-          pending?.provider === "copilot" ? (pending.copilotAgent ?? null) : null
-        ) ?? thread.copilot_agent ?? null,
-      };
-      const wt: WorkspaceThread = warnings?.length
-        ? { ...hydratedThread, clientWarnings: warnings }
-        : hydratedThread;
-      const nextThreads: WorkspaceThread[] = [wt, ...deduped];
-      const stillOnPlaceholder = state.activeThreadId === placeholderId;
-      return {
-        threads: nextThreads,
-        activeThreadId: stillOnPlaceholder ? thread.id : state.activeThreadId,
-        error: null,
-        ...(transportWasWorktree ? { worktreesLoadedForWorkspace: null } : {}),
-      };
-    });
+    set((state) => optimisticCreationSuccessState(
+      state,
+      placeholderId,
+      thread,
+      warnings,
+      pending,
+      transportWasWorktree,
+    ));
     if (get().activeThreadId === thread.id) {
       void getConversationResidency().activate(thread.id, get().threads);
     }
@@ -462,6 +689,105 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       ),
       error: msg,
     }));
+  };
+
+  const markPlaceholderRunning = (placeholderId: string) => {
+    useThreadStore.setState((state) => ({
+      runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
+      records: patchThreadRecord(state.records, placeholderId, {
+        agentStartTime: Date.now(),
+        runtimePhase: "running",
+      }),
+    }));
+  };
+
+  const beginOptimisticThreadCreation = (
+    pending: PendingThreadCreation,
+    clientPreparingContext: ClientPreparingContext,
+  ) => {
+    const placeholderId = crypto.randomUUID();
+    const placeholder = buildOptimisticThreadPlaceholder(
+      placeholderId,
+      pending,
+      clientPreparingContext,
+    );
+    bumpThreadListMutationEpoch(pending.workspaceId);
+    pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
+    useDiffStore.getState().hideRightPanel(pending.workspaceId, placeholderId);
+    set((state) => ({
+      threads: [placeholder, ...state.threads],
+      activeThreadId: placeholderId,
+      pendingNewThread: false,
+      branchManuallySelected: false,
+      newThreadBranchSource: "branch",
+      error: null,
+    }));
+    reconcileSelectedConversation();
+    markPlaceholderRunning(placeholderId);
+    return placeholderId;
+  };
+
+  const createPendingThread = async (
+    pending: PendingThreadCreation,
+    clientPreparingContext: ClientPreparingContext,
+  ) => {
+    const placeholderId = beginOptimisticThreadCreation(pending, clientPreparingContext);
+    try {
+      const result = await runCreateAndSend(pending);
+      applyOptimisticSuccess(
+        placeholderId,
+        pending.workspaceId,
+        result,
+        pending.transportMode === "worktree",
+      );
+      return result;
+    } catch (error) {
+      applyOptimisticFailure(placeholderId, error);
+      throw error;
+    }
+  };
+
+  const clearThreadResources = (threadId: string) => {
+    useTerminalStore.getState().clearThread(threadId);
+    useQueueStore.getState().clearQueue(threadId);
+    useComposerDraftStore.getState().clearDraft(threadId);
+    useTaskStore.getState().clearTasks(threadId);
+    useDiffStore.getState().clearThread(threadId);
+    useProjectActionStore.getState().clearThread(threadId);
+  };
+
+  const clearClientOnlyThread = async (workspaceId: string | undefined, threadId: string) => {
+    if (!workspaceId) return;
+    releaseBrowserAutomationThreadScope(workspaceId, threadId);
+    await clearPreviewResources(workspaceId, threadId);
+    bumpThreadListMutationEpoch(workspaceId);
+  };
+
+  const deletePersistedThread = async (
+    workspaceId: string | undefined,
+    threadId: string,
+    cleanupWorktree: boolean,
+  ) => {
+    if (workspaceId) await clearPreviewResources(workspaceId, threadId);
+    await getTransport().deleteThread(threadId, cleanupWorktree);
+    if (!workspaceId) return;
+    releaseBrowserAutomationThreadScope(workspaceId, threadId);
+    bumpThreadListMutationEpoch(workspaceId);
+  };
+
+  const removeThreadFromWorkspace = (threadId: string) => {
+    const didClearActiveThread = get().activeThreadId === threadId;
+    set((state) => ({
+      threads: state.threads.filter((thread) => thread.id !== threadId),
+      activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
+      prUrlsByThreadId: Object.fromEntries(
+        Object.entries(state.prUrlsByThreadId).filter(([id]) => id !== threadId),
+      ) as Record<string, string>,
+      checksById: Object.fromEntries(
+        Object.entries(state.checksById).filter(([id]) => id !== threadId),
+      ) as typeof state.checksById,
+    }));
+    if (didClearActiveThread) reconcileSelectedConversation();
   };
 
   return {
@@ -834,52 +1160,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
-
     const { newThreadMode, newThreadBranch, newThreadBranchSource, selectedWorktree } = get();
-
-    let mode: "direct" | "worktree" = "direct";
-    let branch = newThreadBranch || "main";
-    let worktreeBranchMode: "branchless" | "named" | undefined;
-    let existingWorktreePath: string | undefined;
-    let existingWorktreeBaseBranch: string | undefined;
-
-    if (newThreadMode === "worktree") {
-      mode = "worktree";
-      worktreeBranchMode = newThreadBranchSource === "pr" ? "named" : "branchless";
-    } else if (newThreadMode === "existing-worktree") {
-      mode = "worktree";
-      if (!selectedWorktree) throw new Error("No worktree selected");
-      if (isDetachedWorktree(selectedWorktree)) {
-        if (!newThreadBranch) {
-          throw new Error("Select a base branch before attaching a detached worktree");
-        }
-        branch = newThreadBranch;
-        existingWorktreeBaseBranch = branch;
-      } else {
-        branch = selectedWorktree.branch;
-      }
-      existingWorktreePath = selectedWorktree.path;
-    }
-
-    const clientPreparingContext =
-      newThreadMode === "worktree"
-        ? "new-worktree"
-        : newThreadMode === "existing-worktree"
-          ? "new-existing-worktree"
-          : "new-direct";
-
-    const placeholderId = crypto.randomUUID();
+    const target = newThreadCreationTarget(
+      newThreadMode,
+      newThreadBranch,
+      newThreadBranchSource,
+      selectedWorktree,
+    );
     const pending: PendingThreadCreation = {
       workspaceId,
       content,
       displayContent,
       model,
       permissionMode,
-      transportMode: mode,
-      branch,
-      worktreeBranchMode,
-      existingWorktreePath,
-      existingWorktreeBaseBranch,
+      ...target,
       attachments,
       reasoningLevel,
       provider,
@@ -894,119 +1188,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       goalObjective,
     };
 
-    const captionForUi = displayContent ?? content;
-
-    const placeholder = buildPlaceholderWorkspaceThread({
-      id: placeholderId,
-      workspaceId,
-      title: titleFromMessageContent(captionForUi),
-      queuedMessage: captionForUi,
-      transportMode: mode,
-      branch,
-      checkoutState: existingWorktreePath
-        ? existingWorktreeBaseBranch
-          ? "branchless"
-          : "named"
-        : worktreeBranchMode,
-      baseBranch: existingWorktreeBaseBranch ?? null,
-      worktreePath: existingWorktreePath ?? null,
-      worktreeManaged: existingWorktreePath ? false : undefined,
-      clientPreparingContext,
-      model,
-      provider,
-      reasoningLevel,
-      interactionMode,
-      orchestrationMode,
-      permissionMode,
-      contextWindow,
-      thinking,
-      codexFastMode: provider === "codex" ? (codexFastMode ?? null) : null,
-      copilotAgent: provider === "copilot" ? (copilotAgent ?? null) : null,
-    });
-
-    bumpThreadListMutationEpoch(workspaceId);
-    pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
-    useDiffStore.getState().hideRightPanel(workspaceId, placeholderId);
-    set((state) => ({
-      threads: [placeholder, ...state.threads],
-      activeThreadId: placeholderId,
-      pendingNewThread: false,
-      branchManuallySelected: false,
-      newThreadBranchSource: "branch",
-      error: null,
-    }));
-    reconcileSelectedConversation();
-
-    useThreadStore.setState((state) => ({
-      runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
-      records: patchThreadRecord(state.records, placeholderId, {
-        agentStartTime: Date.now(),
-        runtimePhase: "running",
-      }),
-    }));
-
-    try {
-      const result = await runCreateAndSend(pending);
-      applyOptimisticSuccess(placeholderId, workspaceId, result, mode === "worktree");
-      return result;
-    } catch (e) {
-      applyOptimisticFailure(placeholderId, e);
-      throw e;
-    }
+    return createPendingThread(pending, threadCreationContext("new", newThreadMode));
   },
 
   branchThread: async (params) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
-
-    let transportMode: "direct" | "worktree" = "direct";
-    let branch = params.branch ?? "main";
-    let existingWorktreePath: string | undefined;
-    let existingWorktreeBaseBranch: string | undefined;
-
-    if (params.mode === "worktree") {
-      transportMode = "worktree";
-    } else if (params.mode === "existing-worktree") {
-      if (!params.existingWorktreePath) {
-        throw new Error("existingWorktreePath is required for existing-worktree mode");
-      }
-      transportMode = "worktree";
-      existingWorktreePath = params.existingWorktreePath;
-      existingWorktreeBaseBranch = params.existingWorktreeBaseBranch;
-      const matchedWorktree = get().worktrees.find(
-        (wt) => normalizeWorktreePath(wt.path) === normalizeWorktreePath(params.existingWorktreePath!),
-      );
-      if (matchedWorktree && isDetachedWorktree(matchedWorktree)) {
-        const baseBranch = params.existingWorktreeBaseBranch ?? params.branch;
-        if (!baseBranch) {
-          throw new Error("Select a base branch before attaching a detached worktree");
-        }
-        branch = baseBranch;
-        existingWorktreeBaseBranch = baseBranch;
-      } else if (matchedWorktree) {
-        branch = matchedWorktree.branch;
-        existingWorktreeBaseBranch = undefined;
-      }
-    }
-
-    const clientPreparingContext =
-      params.mode === "worktree"
-        ? "branch-worktree"
-        : params.mode === "existing-worktree"
-          ? "branch-existing-worktree"
-          : "branch-direct";
-
-    const placeholderId = crypto.randomUUID();
+    const target = branchThreadCreationTarget(params, get().worktrees);
     const pending: PendingThreadCreation = {
       workspaceId,
       content: params.content,
       displayContent: params.displayContent,
       model: params.model,
       permissionMode: params.permissionMode,
-      transportMode,
-      branch,
-      existingWorktreePath,
-      existingWorktreeBaseBranch,
+      ...target,
       attachments: params.attachments,
       reasoningLevel: params.reasoningLevel,
       provider: params.provider,
@@ -1023,67 +1218,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       goalObjective: params.goalObjective,
     };
 
-    const branchCaptionForUi = params.displayContent ?? params.content;
-
-    const placeholder = buildPlaceholderWorkspaceThread({
-      id: placeholderId,
-      workspaceId,
-      title: titleFromMessageContent(branchCaptionForUi),
-      queuedMessage: branchCaptionForUi,
-      transportMode,
-      branch,
-      checkoutState: existingWorktreePath
-        ? existingWorktreeBaseBranch
-          ? "branchless"
-          : "named"
-        : undefined,
-      baseBranch: existingWorktreeBaseBranch ?? null,
-      worktreePath: existingWorktreePath ?? null,
-      worktreeManaged: existingWorktreePath ? false : undefined,
-      clientPreparingContext,
-      model: params.model,
-      provider: params.provider,
-      reasoningLevel: params.reasoningLevel,
-      interactionMode: params.interactionMode,
-      orchestrationMode: params.orchestrationMode,
-      permissionMode: params.permissionMode,
-      contextWindow: params.contextWindow,
-      thinking: params.thinking,
-      codexFastMode: params.provider === "codex" ? (params.codexFastMode ?? null) : null,
-      copilotAgent: params.provider === "copilot" ? (params.copilotAgent ?? null) : null,
-      parentThreadId: params.sourceThreadId,
-      forkedFromMessageId: params.forkedFromMessageId,
-    });
-
-    bumpThreadListMutationEpoch(workspaceId);
-    pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
-    useDiffStore.getState().hideRightPanel(workspaceId, placeholderId);
-    set((state) => ({
-      threads: [placeholder, ...state.threads],
-      activeThreadId: placeholderId,
-      pendingNewThread: false,
-      branchManuallySelected: false,
-      newThreadBranchSource: "branch",
-      error: null,
-    }));
-    reconcileSelectedConversation();
-
-    useThreadStore.setState((state) => ({
-      runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
-      records: patchThreadRecord(state.records, placeholderId, {
-        agentStartTime: Date.now(),
-        runtimePhase: "running",
-      }),
-    }));
-
-    try {
-      const result = await runCreateAndSend(pending);
-      applyOptimisticSuccess(placeholderId, workspaceId, result, transportMode === "worktree");
-      return result;
-    } catch (e) {
-      applyOptimisticFailure(placeholderId, e);
-      throw e;
-    }
+    return createPendingThread(pending, threadCreationContext("branch", params.mode));
   },
 
   retryPreparingThread: async (placeholderId) => {
@@ -1147,71 +1282,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const row = get().threads.find((t) => t.id === threadId);
       const workspaceIdForEpoch = row?.workspace_id;
       const isClientOnly = !!(row?.clientPreparing || row?.clientError);
-
       if (isClientOnly) {
-        if (workspaceIdForEpoch) releaseBrowserAutomationThreadScope(workspaceIdForEpoch, threadId);
-        if (workspaceIdForEpoch) await clearPreviewResources(workspaceIdForEpoch, threadId);
-        if (workspaceIdForEpoch) {
-          bumpThreadListMutationEpoch(workspaceIdForEpoch);
-        }
-        useTerminalStore.getState().clearThread(threadId);
-        useQueueStore.getState().clearQueue(threadId);
-        useComposerDraftStore.getState().clearDraft(threadId);
-        useTaskStore.getState().clearTasks(threadId);
-        useDiffStore.getState().clearThread(threadId);
-        useProjectActionStore.getState().clearThread(threadId);
-        const didClearActiveThread = get().activeThreadId === threadId;
-        set((state) => {
-          const remainingUrls = Object.fromEntries(
-            Object.entries(state.prUrlsByThreadId).filter(([k]) => k !== threadId),
-          ) as Record<string, string>;
-          const remainingChecks = Object.fromEntries(
-            Object.entries(state.checksById).filter(([k]) => k !== threadId),
-          ) as typeof state.checksById;
-          return {
-            threads: state.threads.filter((t) => t.id !== threadId),
-            activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
-            prUrlsByThreadId: remainingUrls,
-            checksById: remainingChecks,
-          };
-        });
-        if (didClearActiveThread) reconcileSelectedConversation();
-        useThreadStore.getState().clearThreadState(threadId);
-        return;
+        await clearClientOnlyThread(workspaceIdForEpoch, threadId);
+      } else {
+        await deletePersistedThread(workspaceIdForEpoch, threadId, cleanupWorktree);
       }
-
-      if (workspaceIdForEpoch) await clearPreviewResources(workspaceIdForEpoch, threadId);
-      await getTransport().deleteThread(threadId, cleanupWorktree);
-      if (workspaceIdForEpoch) releaseBrowserAutomationThreadScope(workspaceIdForEpoch, threadId);
-      if (workspaceIdForEpoch) {
-        bumpThreadListMutationEpoch(workspaceIdForEpoch);
-      }
-      useTerminalStore.getState().clearThread(threadId);
-      useQueueStore.getState().clearQueue(threadId);
-      useComposerDraftStore.getState().clearDraft(threadId);
-      useTaskStore.getState().clearTasks(threadId);
-      useDiffStore.getState().clearThread(threadId);
-      useProjectActionStore.getState().clearThread(threadId);
-      const didClearActiveThread = get().activeThreadId === threadId;
       // Remove from threads[] FIRST so any in-flight dequeue timer callback's
       // threadExists guard sees the thread as deleted before clearThreadState
       // cancels the timer. This closes the race window between the timer
       // callback checking membership and the timer being cancelled.
-      set((state) => {
-        const remainingUrls = Object.fromEntries(
-          Object.entries(state.prUrlsByThreadId).filter(([k]) => k !== threadId),
-        ) as Record<string, string>;
-        const remainingChecks = Object.fromEntries(
-          Object.entries(state.checksById).filter(([k]) => k !== threadId),
-        ) as typeof state.checksById;
-        return {
-          threads: state.threads.filter((t) => t.id !== threadId),
-          activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
-          prUrlsByThreadId: remainingUrls,
-          checksById: remainingChecks,
-        };
-      });
-      if (didClearActiveThread) reconcileSelectedConversation();
+      clearThreadResources(threadId);
+      removeThreadFromWorkspace(threadId);
       useThreadStore.getState().clearThreadState(threadId);
     } catch (e) {
       set({ error: String(e) });

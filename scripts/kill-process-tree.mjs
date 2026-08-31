@@ -6,7 +6,7 @@
  * continue holding their network ports across dev sessions.
  */
 
-import { spawnSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 
 /** Max wait for taskkill to propagate through a deep process tree. */
 export const TASKKILL_TIMEOUT_MS = 5_000;
@@ -44,7 +44,7 @@ export function killPidTree(
   }
 
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
+    NodeChildProcess.spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
       stdio: "ignore",
       timeout: TASKKILL_TIMEOUT_MS,
     });

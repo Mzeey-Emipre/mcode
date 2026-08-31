@@ -1,7 +1,6 @@
 /** @internal Runs one Cursor CLI stream-JSON turn. */
 
-import { spawn as nodeSpawn } from "node:child_process";
-import type { ChildProcess, SpawnOptions } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import { logger } from "@mcode/shared";
 import type { AgentEvent } from "@mcode/contracts";
 import { CursorStreamJsonParser } from "./cursor-stream-json-parser.js";
@@ -17,8 +16,8 @@ import type { CursorStreamEvent } from "./cursor-stream-json-types.js";
 export type SpawnLike = (
   command: string,
   args: readonly string[],
-  options: SpawnOptions,
-) => ChildProcess;
+  options: NodeChildProcess.SpawnOptions,
+) => NodeChildProcess.ChildProcess;
 
 /** Supplies process dependencies for the runner. */
 export interface CursorTurnRunnerDeps {
@@ -34,6 +33,7 @@ export interface CursorTurnRunnerOptions {
   model?: string;
   permissionMode: "default" | "full";
   chatId: string | null;
+  platform: NodeJS.Platform;
   env?: Record<string, string>;
 }
 
@@ -50,9 +50,8 @@ export function buildCursorTurnArgs(opts: {
   model?: string;
   permissionMode: "default" | "full";
   chatId: string | null;
-  platform?: NodeJS.Platform;
+  platform: NodeJS.Platform;
 }): string[] {
-  const platform = opts.platform ?? process.platform;
   const args: string[] = [
     "--print",
     "--output-format",
@@ -67,7 +66,7 @@ export function buildCursorTurnArgs(opts: {
     args.push("--sandbox", "disabled");
   } else {
     args.push("--trust");
-    const supervisedSandboxAvailable = platform === "darwin" || platform === "linux";
+    const supervisedSandboxAvailable = opts.platform === "darwin" || opts.platform === "linux";
     args.push("--sandbox", supervisedSandboxAvailable ? "enabled" : "disabled");
   }
   if (opts.model && opts.model.length > 0) {
@@ -85,17 +84,18 @@ export async function runCursorTurn(
   onEvent: (event: AgentEvent) => void,
   todoSnapshot: CursorTodoSnapshot,
   abortSignal?: AbortSignal,
-  deps: CursorTurnRunnerDeps = { spawn: nodeSpawn },
+  deps: CursorTurnRunnerDeps = { spawn: NodeChildProcess.spawn },
 ): Promise<CursorTurnResult> {
   const args = buildCursorTurnArgs({
     model: options.model,
     permissionMode: options.permissionMode,
     chatId: options.chatId,
+    platform: options.platform,
   });
 
   const child = deps.spawn(options.cliPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
-    shell: process.platform === "win32",
+    shell: options.platform === "win32",
     cwd: options.cwd,
     env: options.env ?? processEnvironmentSnapshot(),
   });

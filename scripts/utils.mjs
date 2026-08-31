@@ -2,14 +2,14 @@
 /**
  * Shared utilities for Mcode root scripts.
  */
-import { execFileSync } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import * as NodeChildProcess from 'node:child_process';
+import * as NodePath from 'node:path';
+import * as NodeURL from 'node:url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 
 /** Absolute path to the monorepo root (parent of `scripts/`). */
-export const scriptRoot = resolve(__dirname, '..');
+export const scriptRoot = NodePath.resolve(__dirname, '..');
 
 /**
  * Resolve the main checkout root, handling git worktrees where node_modules
@@ -18,10 +18,10 @@ export const scriptRoot = resolve(__dirname, '..');
  */
 export function resolveMainRoot() {
   try {
-    const commonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+    const commonDir = NodeChildProcess.execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd: scriptRoot, encoding: 'utf8',
     }).trim();
-    return resolve(scriptRoot, commonDir, '..');
+    return NodePath.resolve(scriptRoot, commonDir, '..');
   } catch {
     return scriptRoot;
   }

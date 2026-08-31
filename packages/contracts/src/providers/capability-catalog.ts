@@ -37,19 +37,40 @@ const CatalogMarketplaceNameSchema = z.string().trim().min(1).max(256);
 const CatalogVersionSchema = z.string().trim().min(1).max(128);
 const CatalogCapabilitySchema = z.string().trim().min(1).max(256);
 
-function identitySchema<TKind extends ProviderCapabilityKind>(kind: TKind) {
-  return z.object({
+const providerSkillIdentitySchema = lazySchema(() =>
+  z.object({
     providerId: ProviderIdSchema,
-    kind: z.literal(kind),
+    kind: z.literal("skill"),
     nativeId: CatalogNativeIdSchema,
-  }).strict();
-}
+  }).strict(),
+);
+const providerPluginIdentitySchema = lazySchema(() =>
+  z.object({
+    providerId: ProviderIdSchema,
+    kind: z.literal("plugin"),
+    nativeId: CatalogNativeIdSchema,
+  }).strict(),
+);
+const providerCustomPromptIdentitySchema = lazySchema(() =>
+  z.object({
+    providerId: ProviderIdSchema,
+    kind: z.literal("customPrompt"),
+    nativeId: CatalogNativeIdSchema,
+  }).strict(),
+);
+const providerCommandIdentitySchema = lazySchema(() =>
+  z.object({
+    providerId: ProviderIdSchema,
+    kind: z.literal("providerCommand"),
+    nativeId: CatalogNativeIdSchema,
+  }).strict(),
+);
 
 /** Provider Skill entry available for explicit invocation. */
 export const ProviderSkillCapabilitySchema = lazySchema(() =>
   z.object({
     kind: z.literal("skill"),
-    identity: identitySchema("skill"),
+    identity: providerSkillIdentitySchema(),
     name: CatalogNameSchema,
     description: CatalogDescriptionSchema,
     source: SkillSourceSchema,
@@ -62,7 +83,7 @@ export const ProviderSkillCapabilitySchema = lazySchema(() =>
 export const ProviderPluginCapabilitySchema = lazySchema(() =>
   z.object({
     kind: z.literal("plugin"),
-    identity: identitySchema("plugin"),
+    identity: providerPluginIdentitySchema(),
     name: CatalogNameSchema,
     description: CatalogDescriptionSchema,
     mentionPath: z.string().startsWith("plugin://").max(PROVIDER_CATALOG_PATH_MAX_CHARS),
@@ -79,7 +100,7 @@ export type ProviderPluginCapability = z.infer<ReturnType<typeof ProviderPluginC
 export const ProviderCustomPromptCapabilitySchema = lazySchema(() =>
   z.object({
     kind: z.literal("customPrompt"),
-    identity: identitySchema("customPrompt"),
+    identity: providerCustomPromptIdentitySchema(),
     name: CatalogNameSchema,
     description: CatalogDescriptionSchema,
     nativeName: CatalogNameSchema.optional(),
@@ -91,7 +112,7 @@ export const ProviderCustomPromptCapabilitySchema = lazySchema(() =>
 export const ProviderCommandCapabilitySchema = lazySchema(() =>
   z.object({
     kind: z.literal("providerCommand"),
-    identity: identitySchema("providerCommand"),
+    identity: providerCommandIdentitySchema(),
     name: CatalogNameSchema,
     description: CatalogDescriptionSchema,
     nativeName: CatalogNameSchema.optional(),
@@ -308,10 +329,10 @@ export type ProviderCatalogSnapshot = z.infer<ReturnType<typeof ProviderCatalogS
 /** Stable provider capability identity used by incremental removals. */
 export const ProviderCapabilityIdentitySchema = lazySchema(() =>
   z.discriminatedUnion("kind", [
-    identitySchema("skill"),
-    identitySchema("plugin"),
-    identitySchema("customPrompt"),
-    identitySchema("providerCommand"),
+    providerSkillIdentitySchema(),
+    providerPluginIdentitySchema(),
+    providerCustomPromptIdentitySchema(),
+    providerCommandIdentitySchema(),
   ]),
 );
 /** Stable provider capability identity used by incremental removals. */

@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createSQLiteCertificationReport,
@@ -17,7 +17,7 @@ const directories: string[] = [];
 
 afterEach(() => {
   for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -102,7 +102,7 @@ function passingProfile(): SQLiteProfileReport {
 
 describe("SQLite release certification", () => {
   it("proves migration recovery, disk rejection, and five-generation retention", () => {
-    const directory = mkdtempSync(join(tmpdir(), "mcode-sqlite-certification-"));
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-sqlite-certification-"));
     directories.push(directory);
 
     const recovery = runSQLiteRecoveryCertification(directory);
@@ -126,7 +126,7 @@ describe("SQLite release certification", () => {
       },
     });
 
-    expect(runSQLiteCacheBudgetCertification(join(directory, "cache-budget"))).toEqual({
+    expect(runSQLiteCacheBudgetCertification(NodePath.join(directory, "cache-budget"))).toEqual({
       activeKiB: 2_048,
       backgroundKiB: 500,
       activePragma: -2_048,

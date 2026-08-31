@@ -46,6 +46,47 @@ export function clearPendingTurnPersistMessage(
   };
 }
 
+function replaceResponseAt(
+  messages: readonly Message[],
+  index: number,
+  message: Message,
+  preserveSequence: boolean,
+): TurnResponseProjection {
+  const nextMessages = [...messages];
+  const current = nextMessages[index]!;
+  nextMessages[index] = preserveSequence
+    ? { ...current, ...message, sequence: current.sequence }
+    : { ...current, ...message };
+  return { messages: nextMessages, replacedMessageId: current.id };
+}
+
+function mappedLocalMessageId(record: ThreadRecord, serverMessageId: string | undefined): string | undefined {
+  if (!serverMessageId) return undefined;
+  return Object.entries(record.serverMessageIds).find(([, mappedId]) => mappedId === serverMessageId)?.[0];
+}
+
+function unmappedTrailingResponseIndex(
+  record: ThreadRecord,
+  message: Message,
+  serverMessageId: string | undefined,
+): number {
+  const trailingMessage = record.messages.at(-1);
+  const matchesCurrentAssistant = trailingMessage?.role === "assistant"
+    && trailingMessage.content === message.content
+    && record.currentTurnMessageId === trailingMessage.id;
+  return serverMessageId && matchesCurrentAssistant && !record.serverMessageIds[trailingMessage.id]
+    ? record.messages.length - 1
+    : -1;
+}
+
+function currentTurnResponseIndex(record: ThreadRecord, message: Message): number {
+  return record.messages.findIndex(
+    (existing) => existing.id === record.currentTurnMessageId
+      && existing.role === "assistant"
+      && existing.content === message.content,
+  );
+}
+
 /** Project an assistant message into its canonical transcript position. */
 export function projectTurnResponse(
   record: ThreadRecord,
@@ -53,54 +94,19 @@ export function projectTurnResponse(
   serverMessageId: string | undefined,
 ): TurnResponseProjection {
   const exactIndex = record.messages.findIndex((existing) => existing.id === message.id);
-  if (exactIndex >= 0) {
-    const messages = [...record.messages];
-    messages[exactIndex] = { ...messages[exactIndex]!, ...message };
-    return { messages, replacedMessageId: message.id };
-  }
+  if (exactIndex >= 0) return replaceResponseAt(record.messages, exactIndex, message, false);
 
-  const mappedLocalMessageId = serverMessageId
-    ? Object.entries(record.serverMessageIds).find(([, mappedId]) => mappedId === serverMessageId)?.[0]
-    : undefined;
-  const localIndex = mappedLocalMessageId
-    ? record.messages.findIndex((existing) => existing.id === mappedLocalMessageId)
+  const localMessageId = mappedLocalMessageId(record, serverMessageId);
+  const localIndex = localMessageId
+    ? record.messages.findIndex((existing) => existing.id === localMessageId)
     : -1;
+  if (localIndex >= 0) return replaceResponseAt(record.messages, localIndex, message, true);
 
-  if (localIndex >= 0) {
-    const messages = [...record.messages];
-    const localMessage = messages[localIndex]!;
-    messages[localIndex] = { ...localMessage, ...message, sequence: localMessage.sequence };
-    return { messages, replacedMessageId: localMessage.id };
-  }
+  const trailingIndex = unmappedTrailingResponseIndex(record, message, serverMessageId);
+  if (trailingIndex >= 0) return replaceResponseAt(record.messages, trailingIndex, message, true);
 
-  const trailingMessage = record.messages.at(-1);
-  if (
-    serverMessageId
-    && trailingMessage?.role === "assistant"
-    && trailingMessage.content === message.content
-    && record.currentTurnMessageId === trailingMessage.id
-    && !record.serverMessageIds[trailingMessage.id]
-  ) {
-    const messages = [...record.messages];
-    messages[messages.length - 1] = {
-      ...trailingMessage,
-      ...message,
-      sequence: trailingMessage.sequence,
-    };
-    return { messages, replacedMessageId: trailingMessage.id };
-  }
-
-  if (!serverMessageId) {
-    const currentMessageIndex = record.messages.findIndex(
-      (existing) => existing.id === record.currentTurnMessageId && existing.role === "assistant" && existing.content === message.content,
-    );
-    if (currentMessageIndex >= 0) {
-      const messages = [...record.messages];
-      const localMessage = messages[currentMessageIndex]!;
-      messages[currentMessageIndex] = { ...localMessage, ...message, sequence: localMessage.sequence };
-      return { messages, replacedMessageId: localMessage.id };
-    }
-  }
+  const currentIndex = serverMessageId ? -1 : currentTurnResponseIndex(record, message);
+  if (currentIndex >= 0) return replaceResponseAt(record.messages, currentIndex, message, true);
 
   return { messages: [...record.messages, message] };
 }

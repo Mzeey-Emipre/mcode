@@ -1,10 +1,8 @@
 import { create } from "zustand";
-import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { AgentEvent, CanonicalAgentEventEnvelope, CanonicalAgentReconnectRecovery, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, SelectedTextComment, TurnFileEffectSummary, TurnRuntimeSnapshot, TurnOutcome } from "@mcode/contracts";
+import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, ToolCallRecord } from "@/transport";
+import type { AgentEvent, CanonicalAgentEventEnvelope, CanonicalAgentReconnectRecovery, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, ProviderUsageInfo, GoalLookupResult, PreviewAnnotationBundle, SelectedTextComment, TurnFileEffectSummary, TurnRuntimeSnapshot, TurnOutcome } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
-import type { ThoughtSegment } from "@/features/conversation/narrative/types";
 import {
-  PlanQuestionSchema,
   PERMISSION_MODES,
   INTERACTION_MODES,
   ProviderIdSchema,
@@ -63,7 +61,6 @@ import {
   type ThreadRecord,
   type HandoffMeta,
   type ThreadSettings,
-  type StoredPermission,
   getThreadRecord,
   patchThreadRecord,
   deleteThreadRecord,
@@ -72,6 +69,38 @@ import {
   applyCanonicalPushEvents,
   applyCanonicalReconnectRecovery,
 } from "./canonical-agent-replica";
+import {
+  dispatchAgentEvent,
+  hasAgentEventHandler,
+  prepareAgentEvent,
+  type AgentEventHandlerTable,
+} from "./thread-store/agent-event-preflight";
+import {
+  hydrateRunningThreads as hydrateRunningThreadRecords,
+  transferThreadRuntime as transferOptimisticThreadRuntime,
+  type RuntimeHydrationObservation,
+} from "./thread-store/runtime";
+import {
+  resolveAgentGroupLabel,
+  taskTextFromToolInput,
+  updatePlanTasksFromToolInput,
+} from "./thread-store/task-projection";
+import { extractPendingPlanQuestions } from "./thread-store/plan-questions";
+export { extractPendingPlanQuestions } from "./thread-store/plan-questions";
+import {
+  appendThoughtSegment,
+  parseStoredAttachments,
+  projectAssistantMessageBoundary,
+  projectToolProgress,
+  visiblePersistedThoughtSegments,
+} from "./thread-store/narrative-projection";
+import {
+  hasProviderUsageData,
+  mergeProviderUsageSnapshot,
+  mergeThreadUsageSnapshot,
+  providerQuotaSnapshot,
+} from "./thread-store/usage";
+export { mergeProviderUsageSnapshot } from "./thread-store/usage";
 
 function deriveRunningThreadIds(records: Map<string, ThreadRecord>): Set<string> {
   return new Set(
@@ -83,106 +112,6 @@ function deriveRunningThreadIds(records: Map<string, ThreadRecord>): Set<string>
 
 function preserveRunningThreadIds(previous: Set<string>, next: Set<string>): Set<string> {
   return previous.size === next.size && [...next].every((id) => previous.has(id)) ? previous : next;
-}
-
-interface RuntimeHydrationObservation {
-  turnExecutionId: string | null;
-  runtimePhase: ThreadRecord["runtimePhase"];
-}
-
-function mergeRuntimeList<T>(
-  persisted: T[],
-  placeholder: T[],
-): T[] {
-  return persisted.length > 0 ? persisted : placeholder;
-}
-
-function transferThreadRuntime(
-  records: Map<string, ThreadRecord>,
-  placeholderId: string,
-  persistedId: string,
-  placeholderRunning: boolean,
-): Map<string, ThreadRecord> {
-  const placeholder = records.get(placeholderId);
-  if (!placeholder || placeholderId === persistedId) return records;
-  const persisted = getThreadRecord(records, persistedId);
-  const persistedExists = records.has(persistedId);
-  const persistedSequence = persisted.lastAgentEventSequence;
-  const usePersisted = <T>(value: T, fallback: T, empty: (candidate: T) => boolean): T =>
-    empty(value) ? fallback : value;
-  const placeholderPhase = placeholder.runtimePhase === "idle" && placeholderRunning
-    ? "running"
-    : placeholder.runtimePhase;
-  const runtimePhase = persisted.runtimePhase === "idle"
-    ? placeholderPhase
-    : persisted.runtimePhase;
-  const turnExecutionId = persisted.turnExecutionId ?? placeholder.turnExecutionId;
-  const currentTurnResponseKey = usePersisted(
-    persisted.currentTurnResponseKey,
-    placeholder.currentTurnResponseKey,
-    (value) => value.length === 0,
-  ) || `turn-response:${persistedId}:${crypto.randomUUID()}`;
-  // Agent-event sequences are scoped to the persisted thread ID. A cursor
-  // observed on the client-only placeholder must not suppress its first
-  // persisted-ID event after the handoff.
-  const nextPersistedSequence = persistedExists ? (persistedSequence ?? 0) : 0;
-  const nextRecords = deleteThreadRecord(records, placeholderId);
-  return patchThreadRecord(nextRecords, persistedId, {
-    runtimePhase,
-    turnExecutionId,
-    agentStartTime: persisted.agentStartTime ?? placeholder.agentStartTime,
-    streaming: usePersisted(persisted.streaming, placeholder.streaming, (value) => value.length === 0),
-    streamingPreview: usePersisted(
-      persisted.streamingPreview,
-      placeholder.streamingPreview,
-      (value) => value.length === 0,
-    ),
-    toolCalls: mergeRuntimeList(persisted.toolCalls, placeholder.toolCalls),
-    thoughtSegments: mergeRuntimeList(persisted.thoughtSegments, placeholder.thoughtSegments),
-    hooks: mergeRuntimeList(persisted.hooks, placeholder.hooks),
-    currentTurnMessageId: usePersisted(
-      persisted.currentTurnMessageId,
-      placeholder.currentTurnMessageId,
-      (value) => value.length === 0,
-    ),
-    pendingTurnPersistMessageIds: [
-      ...new Set([
-        ...placeholder.pendingTurnPersistMessageIds,
-        ...persisted.pendingTurnPersistMessageIds,
-      ]),
-    ],
-    currentTurnResponseKey,
-    assistantResponseKeys: {
-      ...placeholder.assistantResponseKeys,
-      ...persisted.assistantResponseKeys,
-    },
-    isCompacting: persisted.isCompacting || placeholder.isCompacting,
-    permissions: persisted.permissions.length > 0 ? persisted.permissions : placeholder.permissions,
-    narrativeByMessage: {
-      ...placeholder.narrativeByMessage,
-      ...persisted.narrativeByMessage,
-    },
-    ...(nextPersistedSequence > 0
-      ? {
-        lastAgentEventSequence: nextPersistedSequence,
-        lastAgentEventEpoch: persisted.lastAgentEventEpoch,
-      }
-      : {}),
-    fileEffectSummary: persisted.fileEffectSummary.effects.length > 0
-      ? persisted.fileEffectSummary
-      : placeholder.fileEffectSummary,
-    fileEffectTurnId: usePersisted(
-      persisted.fileEffectTurnId,
-      placeholder.fileEffectTurnId,
-      (value) => value.length === 0,
-    ),
-    awaitingUserStopPersist: persisted.awaitingUserStopPersist ?? placeholder.awaitingUserStopPersist,
-    rateLimit: persisted.rateLimit ?? placeholder.rateLimit,
-    apiRetry: persisted.apiRetry ?? placeholder.apiRetry,
-    ...(persistedExists && persisted.error !== null
-      ? {}
-      : { error: placeholder.error }),
-  });
 }
 
 export type { HandoffMeta, ThreadSettings, StoredPermission } from "./thread-record";
@@ -382,114 +311,7 @@ function clearNarrativeLoadState(threadId: string): void {
     if (key.startsWith(prefix)) narrativeLoaded.delete(key);
   }
 }
-const USAGE_STALE_TTL_MS = 24 * 60 * 60 * 1000;
 const providerUsageSnapshots = new Map<string, ProviderUsageInfo>();
-
-function hasProviderUsageData(usage: ProviderUsageInfo | undefined): boolean {
-  return (
-    (usage?.quotaCategories.length ?? 0) > 0 ||
-    usage?.sessionCostUsd !== undefined ||
-    usage?.serviceTier !== undefined ||
-    usage?.numTurns !== undefined ||
-    usage?.durationMs !== undefined
-  );
-}
-
-function isFreshUsageSnapshot(usage: ProviderUsageInfo | undefined, now = Date.now()): boolean {
-  if (!usage?.fetchedAt) return hasProviderUsageData(usage);
-  const fetchedAt = Date.parse(usage.fetchedAt);
-  return Number.isFinite(fetchedAt) && now - fetchedAt <= USAGE_STALE_TTL_MS;
-}
-
-function providerQuotaSnapshot(usage: ProviderUsageInfo): ProviderUsageInfo {
-  return {
-    providerId: usage.providerId,
-    quotaCategories: usage.quotaCategories,
-    billingMode: usage.billingMode,
-    usageStatus: usage.usageStatus,
-    fetchedAt: usage.fetchedAt,
-    failedAt: usage.failedAt,
-    diagnostic: usage.diagnostic,
-  };
-}
-
-function mergeThreadUsageSnapshot(
-  existing: ProviderUsageInfo | undefined,
-  providerSnapshot: ProviderUsageInfo | undefined,
-  incoming: ProviderUsageInfo,
-  now = Date.now(),
-): ProviderUsageInfo {
-  const existingThreadMetrics = existing
-    ? {
-        sessionCostUsd: existing.sessionCostUsd,
-        serviceTier: existing.serviceTier,
-        numTurns: existing.numTurns,
-        durationMs: existing.durationMs,
-      }
-    : {};
-  const baseProviderSnapshot = providerSnapshot && hasProviderUsageData(providerSnapshot)
-    ? providerSnapshot
-    : existing;
-  return {
-    ...mergeProviderUsageSnapshot(baseProviderSnapshot, providerQuotaSnapshot(incoming), now),
-    ...existingThreadMetrics,
-    sessionCostUsd: incoming.sessionCostUsd ?? existing?.sessionCostUsd,
-    serviceTier: incoming.serviceTier ?? existing?.serviceTier,
-    numTurns: incoming.numTurns ?? existing?.numTurns,
-    durationMs: incoming.durationMs ?? existing?.durationMs,
-  };
-}
-
-/**
- * Merges incoming provider quota data with a prior last-known-good snapshot.
- */
-export function mergeProviderUsageSnapshot(
-  existing: ProviderUsageInfo | undefined,
-  incoming: ProviderUsageInfo,
-  now = Date.now(),
-): ProviderUsageInfo {
-  const status = incoming.usageStatus
-    ?? (incoming.quotaCategories.length === 0 ? "unavailable" : "ready");
-  if (status === "unavailable" || status === "unsupported") {
-    if (existing && hasProviderUsageData(existing) && isFreshUsageSnapshot(existing, now)) {
-      return {
-        ...existing,
-        providerId: existing.providerId,
-        quotaCategories: existing.quotaCategories,
-        usageStatus: "stale",
-        failedAt: incoming.failedAt ?? new Date(now).toISOString(),
-        diagnostic: incoming.diagnostic,
-      };
-    }
-    return { ...incoming, usageStatus: status };
-  }
-
-  if (status === "ready-empty") {
-    return {
-      providerId: incoming.providerId,
-      quotaCategories: [],
-      billingMode: incoming.billingMode,
-      sessionCostUsd: incoming.sessionCostUsd,
-      serviceTier: incoming.serviceTier,
-      numTurns: incoming.numTurns,
-      durationMs: incoming.durationMs,
-      usageStatus: "ready-empty",
-      fetchedAt: incoming.fetchedAt ?? new Date(now).toISOString(),
-    };
-  }
-
-  return {
-    ...existing,
-    ...incoming,
-    quotaCategories: incoming.quotaCategories.length > 0
-      ? incoming.quotaCategories
-      : (existing?.quotaCategories ?? []),
-    usageStatus: incoming.quotaCategories.length > 0 ? "ready" : (incoming.usageStatus ?? "ready-empty"),
-    fetchedAt: incoming.fetchedAt ?? new Date(now).toISOString(),
-    failedAt: undefined,
-    diagnostic: undefined,
-  };
-}
 
 function clearDequeueTimer(threadId: string) {
   const timer = dequeueTimers.get(threadId);
@@ -643,84 +465,6 @@ function claimTurnResponseKey(
   return { responseKey, nextLiveKey: createTurnResponseKey(threadId) };
 }
 
-function parseStoredAttachments(value: unknown): StoredAttachment[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is StoredAttachment => {
-    if (!item || typeof item !== "object") return false;
-    const record = item as Record<string, unknown>;
-    return (
-      typeof record.id === "string" &&
-      typeof record.name === "string" &&
-      typeof record.mimeType === "string" &&
-      typeof record.sizeBytes === "number"
-    );
-  });
-}
-
-/** Maps a persisted thought row into the live narrative segment shape. */
-function persistedThoughtToSegment(record: ThoughtSegmentRecord): ThoughtSegment {
-  const startedAt = Date.parse(record.started_at);
-  const endedAt = record.ended_at ? Date.parse(record.ended_at) : NaN;
-  return {
-    text: record.text,
-    startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
-    endedAt: Number.isFinite(endedAt) ? endedAt : undefined,
-  };
-}
-
-/** Returns persisted thought rows that should remain visible above the final reply. */
-function visiblePersistedThoughtSegments(
-  thoughts: readonly ThoughtSegmentRecord[],
-): ThoughtSegment[] {
-  return thoughts
-    .filter((thought) => !thought.is_final_response)
-    .map(persistedThoughtToSegment);
-}
-
-/**
- * Walk up the parentToolCallId chain to find the nearest Agent tool call
- * and return its description as a group label for TodoWrite tasks.
- */
-function resolveAgentGroupLabel(
-  toolCalls: readonly ToolCall[],
-  parentToolCallId: string,
-): string {
-  let current: string | undefined = parentToolCallId;
-  while (current) {
-    const tc = toolCalls.find((c) => c.id === current);
-    if (!tc) break;
-    if (tc.toolName === "Agent") {
-      const desc = tc.toolInput?.description ?? tc.toolInput?.prompt;
-      if (typeof desc === "string" && desc.length > 0) {
-        return desc.length > 80 ? desc.slice(0, 77) + "..." : desc;
-      }
-      return "Sub-agent";
-    }
-    current = tc.parentToolCallId;
-  }
-  return "Sub-agent";
-}
-
-function taskTextFromToolInput(toolInput: Record<string, unknown>): string | null {
-  const subject =
-    typeof toolInput.subject === "string" && toolInput.subject.trim().length > 0
-      ? toolInput.subject.trim()
-      : typeof toolInput.title === "string" && toolInput.title.trim().length > 0
-        ? toolInput.title.trim()
-        : typeof toolInput.content === "string" && toolInput.content.trim().length > 0
-          ? toolInput.content.trim()
-          : "";
-  const description =
-    typeof toolInput.description === "string" && toolInput.description.trim().length > 0
-      ? toolInput.description.trim()
-      : "";
-
-  if (!subject && !description) return null;
-  if (!subject) return description;
-  if (!description) return subject;
-  return `${subject} - ${description}`;
-}
-
 /**
  * Extract the harness-assigned task id from a `TaskCreate` result line such as
  * "Task #1 created successfully: ...". Returns null when no id is present.
@@ -728,40 +472,6 @@ function taskTextFromToolInput(toolInput: Record<string, unknown>): string | nul
 function parseHarnessTaskId(output: string): string | null {
   const match = /#(\d+)/.exec(output);
   return match ? match[1] : null;
-}
-
-function updatePlanTasksFromToolInput(toolInput: Record<string, unknown>): TaskItem[] {
-  const entries =
-    Array.isArray(toolInput.plan)
-      ? toolInput.plan
-      : Array.isArray(toolInput.tasks)
-        ? toolInput.tasks
-        : Array.isArray(toolInput.todos)
-          ? toolInput.todos
-          : [];
-
-  return entries.flatMap((entry, i): TaskItem[] => {
-    const item: Record<string, unknown> = typeof entry === "object" && entry !== null
-      ? entry as Record<string, unknown>
-      : { step: entry };
-    const content =
-      typeof item.step === "string" && item.step.trim().length > 0
-        ? item.step.trim()
-        : typeof item.content === "string" && item.content.trim().length > 0
-          ? item.content.trim()
-          : typeof item.title === "string" && item.title.trim().length > 0
-            ? item.title.trim()
-            : typeof item.description === "string" && item.description.trim().length > 0
-              ? item.description.trim()
-              : "";
-    if (!content) return [];
-    return [{
-      id: item.id != null ? String(item.id) : String(i),
-      content,
-      status: coerceTaskStatus(item.status),
-      group: "Tasks",
-    }];
-  });
 }
 
 /**
@@ -887,73 +597,6 @@ function pruneAssistantResponseKeys(
   );
 }
 
-/**
- * Scan a message list for an unanswered plan-questions block.
- * Finds the last assistant message containing a ```plan-questions``` fenced block,
- * confirms no user message follows it (meaning questions haven't been answered yet),
- * then parses and validates the JSON array inside the block.
- * Returns the parsed questions or null if none found.
- */
-/**
- * Walk messages newest-first to find the latest assistant `plan-questions`
- * fence and decide whether the wizard should pop.
- *
- * Decision order:
- *   1. The fence assistant message id is in `answeredIds` -> null (answered).
- *   2. A user message follows the fence in the array -> null (legacy fallback
- *      for threads that answered plan-questions before the marker landed).
- *   3. Otherwise -> parsed questions.
- *
- * Trailing assistant messages without a fence (e.g. a partially-streamed
- * follow-up) are skipped so the wizard still surfaces while the model is
- * mid-turn.
- */
-export function extractPendingPlanQuestions(
-  messages: Message[],
-  answeredIds: ReadonlySet<string>,
-): PlanQuestion[] | null {
-  const PLAN_QUESTIONS_RE = /```plan-questions\n([\s\S]*?)```/;
-
-  // First pass: locate the fence message index, walking newest-first.
-  let fenceIndex = -1;
-  let fenceContent: string | null = null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.role !== "assistant") continue;
-    const match = msg.content.match(PLAN_QUESTIONS_RE);
-    if (match) {
-      fenceIndex = i;
-      fenceContent = match[1];
-      break;
-    }
-  }
-  if (fenceIndex === -1 || fenceContent == null) return null;
-
-  // Authoritative marker: the server says this round was answered.
-  if (answeredIds.has(messages[fenceIndex].id)) return null;
-
-  // Legacy fallback: any user message after the fence implies the user
-  // already answered (covers threads from before the marker existed).
-  for (let i = fenceIndex + 1; i < messages.length; i++) {
-    if (messages[i].role === "user") return null;
-  }
-
-  try {
-    const raw = JSON.parse(fenceContent);
-    if (!Array.isArray(raw)) return null;
-    const results = raw.map((item) => PlanQuestionSchema().safeParse(item));
-    // Reject the whole batch if any question fails — partial batches break
-    // index continuity between the wizard UI and the answer map keys.
-    if (results.some((r) => !r.success)) return null;
-    const validated = results.map(
-      (r) => (r as { success: true; data: PlanQuestion }).data,
-    );
-    return validated.length > 0 ? validated : null;
-  } catch {
-    return null;
-  }
-}
-
 /** One coalesced `session.textDelta` span for rAF flushing; preserves missing `isFinalResponse` for legacy fallback behavior. */
 type PendingTextChunk = {
   delta: string;
@@ -963,84 +606,6 @@ type PendingTextChunk = {
 };
 
 const MAX_DEFERRED_NARRATIVE_EVENTS = 2048;
-
-function appendThoughtSegment(
-  segments: ThoughtSegment[],
-  acc: string,
-  isExplicitNonFinal: boolean,
-): ThoughtSegment[] {
-  if (!acc) return segments;
-  const looksLikeContinuation = (prevText: string, nextText: string): boolean => {
-    const trimmedPrev = prevText.trimEnd();
-    const lastChar = trimmedPrev.slice(-1);
-    const prevEndsSentence = /[.!?]/.test(lastChar);
-    const firstChar = nextText.replace(/^\s+/, "").slice(0, 1);
-    const nextStartsLowerOrPunct =
-      firstChar === "" || /[a-z,;:)\]}-]/.test(firstChar);
-    return !prevEndsSentence || nextStartsLowerOrPunct;
-  };
-  const TINY_SEGMENT_THRESHOLD = 40;
-  const last = segments[segments.length - 1];
-  const shouldReopen =
-    last &&
-    last.endedAt !== undefined &&
-    (last.text.length < TINY_SEGMENT_THRESHOLD || looksLikeContinuation(last.text, acc));
-  if (!last || (last.endedAt !== undefined && !shouldReopen)) {
-    return [
-      ...segments,
-      {
-        text: acc,
-        startedAt: Date.now(),
-        ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-      },
-    ];
-  }
-  if (last.endedAt !== undefined && shouldReopen) {
-    const reopened: ThoughtSegment = {
-      ...last,
-      text: last.text + acc,
-      ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-    };
-    delete (reopened as { endedAt?: number }).endedAt;
-    return [...segments.slice(0, -1), reopened];
-  }
-  return [
-    ...segments.slice(0, -1),
-    {
-      ...last,
-      text: last.text + acc,
-      ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-    },
-  ];
-}
-
-function projectAssistantMessageBoundary(
-  segments: ThoughtSegment[],
-  isFinalResponse: boolean,
-): ThoughtSegment[] | undefined {
-  const last = segments[segments.length - 1];
-  if (!last || last.endedAt !== undefined) return undefined;
-  return isFinalResponse
-    ? segments.slice(0, -1)
-    : [...segments.slice(0, -1), { ...last, endedAt: Date.now() }];
-}
-
-function projectToolProgress(
-  toolCalls: ToolCall[],
-  toolCallId: string,
-  elapsedSeconds: number,
-  lastActivityAt: number,
-): ToolCall[] | undefined {
-  let changed = false;
-  const updated = toolCalls.map((toolCall) => {
-    if (toolCall.id === toolCallId && !toolCall.isComplete) {
-      changed = true;
-      return { ...toolCall, elapsedSeconds, lastActivityAt };
-    }
-    return toolCall;
-  });
-  return changed ? updated : undefined;
-}
 
 /** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
 export const useThreadStore = create<ThreadState>((zustandSet, get) => {
@@ -1076,7 +641,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     threadId: string,
     patch: Partial<ThreadRecord> | ((current: ThreadRecord) => Partial<ThreadRecord>),
   ) => {
-    set((s) => ({ records: patchThreadRecord(s.records, threadId, patch) }));
+    const delta = typeof patch === "function" ? patch(getRec(threadId)) : patch;
+    if (Object.keys(delta).length === 0) return;
+    set((state) => ({ records: patchThreadRecord(state.records, threadId, delta) }));
   };
 
   const applyGoalLookup = (threadId: string, lookup: GoalLookupResult): void => {
@@ -1270,30 +837,61 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     flushPendingTextDeltas();
   };
 
-  const queueDeferredNarrativeEvent = (threadId: string, event: AgentEvent): void => {
-    for (const chunk of splitDeferredNarrativeEvent(event)) {
-      const generation = deferredNarrativeGenerations.get(threadId) ?? 0;
-      const queued = deferredNarrativeEventsByThread.get(threadId);
-      const events = queued?.generation === generation ? queued.events : [];
-      const bytes = queued?.generation === generation ? queued.bytes : 0;
-      const eventBytes = deferredNarrativeEventBytes(chunk);
-      if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS || bytes + eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
-        promoteDeferredNarrativeEvents(threadId);
-      }
+  const deferredNarrativeQueue = (threadId: string, generation: number) => {
+    const queue = deferredNarrativeEventsByThread.get(threadId);
+    return queue?.generation === generation ? queue : { generation, events: [], bytes: 0 };
+  };
 
-      const latest = deferredNarrativeEventsByThread.get(threadId);
-      const nextEvents = latest?.generation === generation ? latest.events : [];
-      const nextBytes = latest?.generation === generation ? latest.bytes : 0;
-      if (eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
-        applyDeferredNarrativeEvent(threadId, chunk);
-        continue;
-      }
-      deferredNarrativeEventsByThread.set(threadId, {
-        generation,
-        events: [...nextEvents, chunk],
-        bytes: nextBytes + eventBytes,
-      });
+  const queueDeferredNarrativeChunk = (threadId: string, chunk: AgentEvent): void => {
+    const generation = deferredNarrativeGenerations.get(threadId) ?? 0;
+    const eventBytes = deferredNarrativeEventBytes(chunk);
+    const queue = deferredNarrativeQueue(threadId, generation);
+    if (queue.events.length >= MAX_DEFERRED_NARRATIVE_EVENTS || queue.bytes + eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
+      promoteDeferredNarrativeEvents(threadId);
     }
+    if (eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
+      applyDeferredNarrativeEvent(threadId, chunk);
+      return;
+    }
+    const latest = deferredNarrativeQueue(threadId, generation);
+    deferredNarrativeEventsByThread.set(threadId, {
+      generation,
+      events: [...latest.events, chunk],
+      bytes: latest.bytes + eventBytes,
+    });
+  };
+
+  const queueDeferredNarrativeEvent = (threadId: string, event: AgentEvent): void => {
+    for (const chunk of splitDeferredNarrativeEvent(event)) queueDeferredNarrativeChunk(threadId, chunk);
+  };
+
+  const scheduleDeferredNarrativeCleanup = (threadId: string): void => {
+    queueMicrotask(() => {
+      if (!get().runningThreadIds.has(threadId)
+        && !pendingTextDeltaByThread.has(threadId)
+        && !deferredNarrativeEventsByThread.has(threadId)) {
+        deferredNarrativeGenerations.delete(threadId);
+      }
+    });
+  };
+
+  const markPriorToolCallsComplete = (threadId: string): void => {
+    const calls = getRec(threadId).toolCalls;
+    if (!calls.some((toolCall) => !toolCall.isComplete)) return;
+    set((state) => {
+      const current = getThreadRecord(state.records, threadId).toolCalls;
+      const children = (agentId: string) => current.filter((call) => call.parentToolCallId === agentId);
+      const isAgentDone = (agentId: string) => {
+        const agentChildren = children(agentId);
+        return agentChildren.length > 0 && !agentChildren.some((call) => !call.isComplete);
+      };
+      const toolCalls = current.map((toolCall) => {
+        if (toolCall.isComplete) return toolCall;
+        if (toolCall.toolName !== "Agent") return { ...toolCall, isComplete: true };
+        return isAgentDone(toolCall.id) ? { ...toolCall, isComplete: true } : toolCall;
+      });
+      return { records: patchThreadRecord(state.records, threadId, { toolCalls }) };
+    });
   };
 
   const messageSequenceFor = (threadId: string) =>
@@ -1380,6 +978,94 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   });
   registerConversationResidency(conversationResidency);
 
+  const paginationBoundarySequence = (
+    record: ThreadRecord,
+    direction: "older" | "newer",
+  ): number => direction === "older" ? record.oldestLoadedSequence : record.newestLoadedSequence;
+
+  const paginationIsLoading = (
+    record: ThreadRecord,
+    direction: "older" | "newer",
+  ): boolean => direction === "older" ? record.isLoadingMore : record.isLoadingNewer;
+
+  const matchesPaginationFileEffectRequest = (
+    threadId: string,
+    record: ThreadRecord | undefined,
+    identity: { direction: "older" | "newer"; boundarySequence: number; generation: number; conversationRevision: number },
+    expectedRevision: number,
+  ): record is ThreadRecord => {
+    if (!conversationResidency.isConversationVisible(threadId) || !record) return false;
+    if (paginationIsLoading(record, identity.direction)) return false;
+    if (paginationBoundarySequence(record, identity.direction) !== identity.boundarySequence) return false;
+    return record.loadEpoch === identity.generation && record.conversationRevision === expectedRevision;
+  };
+
+  const paginationFileEffectsPatch = (
+    record: ThreadRecord,
+    snapshots: Array<{ message_id: string; files_changed: string[] }>,
+  ): Partial<ThreadRecord> | null => {
+    const messageIds = new Set(record.messages.map((message) => message.id));
+    const retained = snapshots.filter((snapshot) => messageIds.has(snapshot.message_id));
+    if (retained.length === 0) return null;
+    return {
+      persistedFilesChanged: {
+        ...record.persistedFilesChanged,
+        ...Object.fromEntries(retained.map((snapshot) => [snapshot.message_id, snapshot.files_changed])),
+      },
+    };
+  };
+
+  const canLoadHistoryPage = (record: ThreadRecord, direction: ConversationPageDirection): boolean => {
+    return direction === "older"
+      ? record.hasMoreMessages && !record.isLoadingMore
+      : record.hasNewerMessages && !record.isLoadingNewer;
+  };
+
+  const setHistoryPageLoading = (
+    threadId: string,
+    direction: ConversationPageDirection,
+    loading: boolean,
+  ): void => {
+    patchRec(threadId, direction === "older" ? { isLoadingMore: loading } : { isLoadingNewer: loading });
+  };
+
+  const clearHistoryPageWhenCurrent = (
+    threadId: string,
+    direction: ConversationPageDirection,
+    requestHandle: NonNullable<ReturnType<typeof conversationResidency.beginHistoryPageRequest>>,
+    responseIdentity?: Parameters<typeof conversationResidency.canCommitHistoryPageRequest>[2],
+  ): boolean => {
+    const record = getRec(threadId);
+    const currentIdentity = direction === "older"
+      ? {
+          threadId,
+          cursor: { version: 1 as const, beforeSequence: record.oldestLoadedSequence },
+          direction: "older" as const,
+          generation: record.loadEpoch,
+          conversationRevision: record.conversationRevision,
+        }
+      : {
+          threadId,
+          cursor: { version: 1 as const, afterSequence: record.newestLoadedSequence },
+          direction: "newer" as const,
+          generation: record.loadEpoch,
+          conversationRevision: record.conversationRevision,
+        };
+    if (!conversationResidency.canCommitHistoryPageRequest(requestHandle, currentIdentity, responseIdentity)) return false;
+    setHistoryPageLoading(threadId, direction, false);
+    return true;
+  };
+
+  const canCommitVisibleHistoryPage = (
+    threadId: string,
+    direction: ConversationPageDirection,
+    ownsCurrentRequest: boolean,
+  ): boolean => {
+    if (conversationResidency.isConversationVisible(threadId)) return ownsCurrentRequest;
+    if (ownsCurrentRequest) setHistoryPageLoading(threadId, direction, false);
+    return false;
+  };
+
   const hydratePaginationFileChanges = (
     threadId: string,
     pageMessageIds: ReadonlySet<string>,
@@ -1401,44 +1087,13 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
         set((state) => {
           const record = state.records.get(threadId);
-          if (
-            !conversationResidency.isConversationVisible(threadId)
-            || !record
-            || (identity.direction === "older" ? record.isLoadingMore : record.isLoadingNewer)
-            || (identity.direction === "older"
-              ? record.oldestLoadedSequence
-              : record.newestLoadedSequence) !== identity.boundarySequence
-            || record.loadEpoch !== identity.generation
-            || record.conversationRevision !== identity.conversationRevision
-          ) return {};
-
-          const retainedMessageIds = new Set(record.messages.map((message) => message.id));
-          const retained = relevant.filter((snapshot) =>
-            retainedMessageIds.has(snapshot.message_id));
-          if (retained.length === 0) return {};
-
-          const nextFilesChanged = { ...record.persistedFilesChanged };
-          for (const snapshot of retained) {
-            nextFilesChanged[snapshot.message_id] = snapshot.files_changed;
-          }
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              persistedFilesChanged: nextFilesChanged,
-            }),
-          };
+          if (!matchesPaginationFileEffectRequest(threadId, record, identity, identity.conversationRevision)) return {};
+          const patch = paginationFileEffectsPatch(record, relevant);
+          return patch ? { records: patchThreadRecord(state.records, threadId, patch) } : {};
         });
 
         const current = get().records.get(threadId);
-        if (
-          !conversationResidency.isConversationVisible(threadId)
-          || !current
-          || (identity.direction === "older" ? current.isLoadingMore : current.isLoadingNewer)
-          || (identity.direction === "older"
-            ? current.oldestLoadedSequence
-            : current.newestLoadedSequence) !== identity.boundarySequence
-          || current.loadEpoch !== identity.generation
-          || current.conversationRevision !== identity.conversationRevision + 1
-        ) return;
+        if (!matchesPaginationFileEffectRequest(threadId, current, identity, identity.conversationRevision + 1)) return;
 
         const retainedMessageIds = new Set(current.messages.map((message) => message.id));
         const retained = relevant.filter((snapshot) =>
@@ -1454,6 +1109,1248 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       .catch((error: unknown) => {
         console.warn(`[threadStore] Failed to hydrate pagination snapshots for ${threadId}:`, error);
       });
+  };
+
+  const appendMessageToThread = (threadId: string, message: Message): void => {
+    patchRec(threadId, (record) => {
+      const { messages, evicted } = capMessages([...record.messages, message]);
+      return { messages, ...(evicted ? { hasMoreMessages: true } : {}) };
+    });
+  };
+
+  const createSystemMessage = (threadId: string, content: string): Message => ({
+    id: crypto.randomUUID(),
+    thread_id: threadId,
+    role: "system",
+    content,
+    tool_calls: null,
+    files_changed: null,
+    cost_usd: null,
+    tokens_used: null,
+    timestamp: new Date().toISOString(),
+    sequence: messageSequenceFor(threadId),
+    attachments: null,
+  });
+
+  const closeOpenThoughtSegment = (segments: ThreadRecord["thoughtSegments"]) => {
+    const last = segments.at(-1);
+    if (!last || last.endedAt !== undefined) return segments;
+    return [...segments.slice(0, -1), { ...last, endedAt: Date.now() }];
+  };
+
+  const systemNoticeFor = (subtype: string): string | null => {
+    if (subtype === "session_restarted") {
+      return "Session restarted. The agent no longer has context from earlier messages.";
+    }
+    if (subtype === "sdk_session_invalidated") {
+      return "Session reset. Earlier context cleared. Send again to continue.";
+    }
+    return null;
+  };
+
+  const handleGoalUpdated = (event: Extract<AgentEvent, { type: "goalUpdated" }>): void => {
+    patchRec(event.threadId, { goal: isGoalOpen(event.goal) ? event.goal : null });
+  };
+
+  const handleGoalCleared = (event: Extract<AgentEvent, { type: "goalCleared" }>): void => {
+    patchRec(event.threadId, { goal: null });
+  };
+
+  const handleSystemEvent = (event: Extract<AgentEvent, { type: "system" }>): void => {
+    const notice = systemNoticeFor(event.subtype);
+    if (notice) appendMessageToThread(event.threadId, createSystemMessage(event.threadId, notice));
+  };
+
+  const setWorkspaceThreadActive = (threadId: string): void => {
+    useWorkspaceStore.setState((workspace) => {
+      const index = workspace.threads.findIndex((thread) =>
+        thread.id === threadId && thread.status === "interrupted");
+      if (index < 0) return workspace;
+      const threads = [...workspace.threads];
+      threads[index] = { ...threads[index], status: "active" as const };
+      return { threads };
+    });
+  };
+
+  const handleTurnStarted = (
+    event: Extract<AgentEvent, { type: "turnStarted" }>,
+    runtime: { incomingExecutionId: string | undefined },
+  ): void => {
+    const fileEffectTurnId = typeof event.fileEffectTurnId === "string" ? event.fileEffectTurnId : "";
+    const record = getRec(event.threadId);
+    if (get().runningThreadIds.has(event.threadId) && record.fileEffectTurnId === fileEffectTurnId) return;
+    clearStreamingTextUsage(event.threadId);
+    useTaskStore.getState().prepareTaskBubbleForNewTurn(event.threadId);
+    patchRec(event.threadId, (current) => ({
+      agentStartTime: Date.now(),
+      turnExecutionId: runtime.incomingExecutionId ?? current.turnExecutionId,
+      runtimePhase: "running",
+      fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
+      ...resetTurnEphemeral(current),
+      fileEffectTurnId,
+      currentTurnResponseKey: createTurnResponseKey(event.threadId),
+    }));
+    setWorkspaceThreadActive(event.threadId);
+  };
+
+  const assistantMessageFromEvent = (
+    event: Extract<AgentEvent, { type: "message" }>,
+    content: string,
+    attachments: NonNullable<Message["attachments"]>,
+    messageId: string | undefined,
+  ): Message => ({
+    id: messageId ?? crypto.randomUUID(),
+    thread_id: event.threadId,
+    role: "assistant",
+    content,
+    tool_calls: null,
+    files_changed: null,
+    cost_usd: null,
+    tokens_used: event.tokens ?? null,
+    timestamp: new Date().toISOString(),
+    sequence: messageSequenceFor(event.threadId),
+    attachments: attachments.length > 0 ? attachments : null,
+    model: event.model ?? null,
+  });
+
+  const responseIdentityForMessage = (
+    record: ThreadRecord,
+    threadId: string,
+    message: Message,
+    isGoalNotice: boolean,
+    replacedMessageId: string | undefined,
+  ): Partial<Pick<ThreadRecord, "assistantResponseKeys" | "currentTurnMessageId" | "currentTurnResponseKey">> => {
+    if (isGoalNotice) return {};
+    const transferred = transferTurnResponseMetadata(record, replacedMessageId, message.id);
+    const existingResponseKey = transferred.assistantResponseKeys[message.id];
+    const identity = existingResponseKey
+      ? { responseKey: existingResponseKey, nextLiveKey: record.currentTurnResponseKey || createTurnResponseKey(threadId) }
+      : claimTurnResponseKey(record, threadId, message.id);
+    return {
+      currentTurnMessageId: message.id,
+      currentTurnResponseKey: identity.nextLiveKey,
+      assistantResponseKeys: { ...transferred.assistantResponseKeys, [message.id]: identity.responseKey },
+    };
+  };
+
+  const projectAssistantMessage = (
+    record: ThreadRecord,
+    event: Extract<AgentEvent, { type: "message" }>,
+    message: Message,
+  ): Partial<ThreadRecord> => {
+    const isGoalNotice = isGoalStatusNotice(message.content);
+    const response = isGoalNotice
+      ? { messages: [...record.messages, message] }
+      : projectTurnResponse(record, message, event.messageId);
+    const transferred = transferTurnResponseMetadata(record, response.replacedMessageId, message.id);
+    const identity = responseIdentityForMessage(
+      record,
+      event.threadId,
+      message,
+      isGoalNotice,
+      response.replacedMessageId,
+    );
+    const { messages, evicted } = capMessages(response.messages);
+    return {
+      ...identity,
+      streaming: "",
+      streamingPreview: "",
+      thoughtSegments: closeOpenThoughtSegment(record.thoughtSegments),
+      messages,
+      persistedToolCallCounts: transferred.persistedToolCallCounts,
+      persistedFilesChanged: transferred.persistedFilesChanged,
+      serverMessageIds: event.messageId
+        ? { ...transferred.serverMessageIds, [message.id]: event.messageId }
+        : transferred.serverMessageIds,
+      narrativeByMessage: transferred.narrativeByMessage,
+      latestTurnWithChanges: transferred.latestTurnWithChanges,
+      pendingTurnPersistMessageIds: transferred.pendingTurnPersistMessageIds,
+      assistantResponseKeys: pruneAssistantResponseKeys(
+        identity.assistantResponseKeys ?? transferred.assistantResponseKeys,
+        messages,
+      ),
+      ...(evicted ? { hasMoreMessages: true } : {}),
+    };
+  };
+
+  const handleMessageEvent = (event: Extract<AgentEvent, { type: "message" }>): void => {
+    clearStreamingTextUsage(event.threadId);
+    markPriorToolCallsComplete(event.threadId);
+    const content = typeof event.content === "string" ? event.content : "";
+    const attachments = parseStoredAttachments(event.attachments);
+    const messageId = typeof event.messageId === "string" && event.messageId.length > 0
+      ? event.messageId
+      : undefined;
+    if (!content && attachments.length === 0 && !messageId) return;
+    const normalizedEvent = messageId === event.messageId ? event : { ...event, messageId };
+    const message = assistantMessageFromEvent(normalizedEvent, content, attachments, messageId);
+    patchRec(event.threadId, (record) => projectAssistantMessage(record, normalizedEvent, message));
+    conversationResidency.synchronizeConversation(event.threadId);
+  };
+
+  const taskGroupFor = (
+    toolCalls: readonly ToolCall[],
+    parentToolCallId: string | undefined,
+  ): string => parentToolCallId ? resolveAgentGroupLabel(toolCalls, parentToolCallId) : "Tasks";
+
+  const projectTodoWriteTasks = (
+    threadId: string,
+    toolInput: Record<string, unknown>,
+    toolCalls: readonly ToolCall[],
+    parentToolCallId: string | undefined,
+  ): void => {
+    if (!Array.isArray(toolInput.todos)) return;
+    const group = taskGroupFor(toolCalls, parentToolCallId);
+    const tasks = toolInput.todos.map((todo, index): TaskItem => {
+      const item = todo as Record<string, unknown>;
+      return {
+        id: item.id != null ? String(item.id) : String(index),
+        content: String(item.content ?? ""),
+        status: coerceTaskStatus(item.status),
+        group,
+      };
+    });
+    useTaskStore.getState().setTaskGroup(threadId, group, tasks);
+  };
+
+  const projectTaskCreate = (
+    threadId: string,
+    toolCallId: string,
+    toolInput: Record<string, unknown>,
+    toolCalls: readonly ToolCall[],
+    parentToolCallId: string | undefined,
+  ): void => {
+    const content = taskTextFromToolInput(toolInput);
+    if (!content) return;
+    const group = taskGroupFor(toolCalls, parentToolCallId);
+    const activeForm = typeof toolInput.activeForm === "string" && toolInput.activeForm.trim().length > 0
+      ? toolInput.activeForm.trim()
+      : undefined;
+    const task: TaskItem = {
+      id: toolCallId || String(toolInput.id ?? content),
+      content,
+      status: coerceTaskStatus(toolInput.status ?? "pending"),
+      group,
+      ...(activeForm ? { activeForm } : {}),
+    };
+    const existing = useTaskStore.getState().tasksByThread[threadId] ?? [];
+    const groupTasks = existing.filter((item) => item.group === group && item.id !== task.id);
+    useTaskStore.getState().setTaskGroup(threadId, group, [...groupTasks, task]);
+  };
+
+  const taskUpdateTarget = (
+    tasks: readonly TaskItem[],
+    group: string,
+    harnessTaskId: string,
+  ): TaskItem | undefined => {
+    const scoped = tasks.find((task) => task.group === group && task.harnessTaskId === harnessTaskId);
+    if (scoped) return scoped;
+    const matching = tasks.filter((task) => task.harnessTaskId === harnessTaskId);
+    return matching.length === 1 ? matching[0] : undefined;
+  };
+
+  const nonEmptyToolInputText = (toolInput: Record<string, unknown>, key: string): string | undefined => {
+    const value = toolInput[key];
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  };
+
+  const patchedTaskItem = (target: TaskItem, toolInput: Record<string, unknown>): TaskItem => {
+    const subject = nonEmptyToolInputText(toolInput, "subject");
+    const activeForm = nonEmptyToolInputText(toolInput, "activeForm");
+    return {
+      ...target,
+      ...(toolInput.status !== undefined ? { status: coerceTaskStatus(toolInput.status) } : {}),
+      ...(subject ? { content: subject } : {}),
+      ...(activeForm ? { activeForm } : {}),
+    };
+  };
+
+  const projectTaskUpdate = (
+    threadId: string,
+    toolInput: Record<string, unknown>,
+    toolCalls: readonly ToolCall[],
+    parentToolCallId: string | undefined,
+  ): void => {
+    const harnessTaskId = toolInput.taskId != null ? String(toolInput.taskId) : "";
+    if (!harnessTaskId) return;
+    const tasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
+    const target = taskUpdateTarget(tasks, taskGroupFor(toolCalls, parentToolCallId), harnessTaskId);
+    if (!target) return;
+    const groupTasks = tasks.filter((task) => task.group === target.group);
+    if (toolInput.status === "deleted") {
+      useTaskStore.getState().setTaskGroup(threadId, target.group, groupTasks.filter((task) => task !== target));
+      return;
+    }
+    const patched = patchedTaskItem(target, toolInput);
+    useTaskStore.getState().setTaskGroup(threadId, target.group, groupTasks.map((task) => task === target ? patched : task));
+  };
+
+  const projectTaskToolUse = (
+    threadId: string,
+    toolCallId: string,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    toolCalls: readonly ToolCall[],
+    parentToolCallId: string | undefined,
+  ): void => {
+    if (toolName === "TodoWrite") projectTodoWriteTasks(threadId, toolInput, toolCalls, parentToolCallId);
+    if (toolName === "TaskCreate") projectTaskCreate(threadId, toolCallId, toolInput, toolCalls, parentToolCallId);
+    if (toolName === "TaskUpdate") projectTaskUpdate(threadId, toolInput, toolCalls, parentToolCallId);
+    if (toolName === "update_plan") {
+      const group = taskGroupFor(toolCalls, parentToolCallId);
+      const tasks = updatePlanTasksFromToolInput(toolInput).map((task) => ({ ...task, group }));
+      if (tasks.length > 0) useTaskStore.getState().setTaskGroup(threadId, group, tasks);
+    }
+  };
+
+  const shouldMergeToolUse = (existing: ToolCall, toolName: string): boolean => {
+    if (existing.toolName === "Agent" && toolName === "Agent") return true;
+    return !existing.isComplete
+      && (Object.keys(existing.toolInput ?? {}).length === 0 || existing.toolName !== toolName);
+  };
+
+  const mergeToolUse = (
+    event: Extract<AgentEvent, { type: "toolUse" }>,
+    existing: ToolCall,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ): void => {
+    const mergedInput = { ...existing.toolInput, ...toolInput };
+    const presentation = event.subagentPresentation
+      ?? (toolName === "Agent" ? createSubagentPresentation(toolInput, event.toolCallId) : undefined);
+    const subagentPresentation = presentation
+      ? mergeSubagentPresentation(existing.subagentPresentation, presentation, event.toolCallId)
+      : existing.subagentPresentation;
+    const parentToolCallId = existing.parentToolCallId ?? event.parentToolCallId;
+    patchRec(event.threadId, (record) => ({
+      toolCalls: record.toolCalls.map((toolCall) => toolCall.id === event.toolCallId
+        ? { ...toolCall, toolName, toolInput: mergedInput, subagentPresentation, parentToolCallId: toolCall.parentToolCallId ?? parentToolCallId }
+        : toolCall),
+    }));
+    projectTaskToolUse(event.threadId, event.toolCallId, toolName, mergedInput, getRec(event.threadId).toolCalls, parentToolCallId);
+  };
+
+  const newToolCall = (
+    event: Extract<AgentEvent, { type: "toolUse" }>,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ): ToolCall => {
+    const id = event.toolCallId || crypto.randomUUID();
+    return {
+      id,
+      toolName,
+      toolInput,
+      ...(toolName === "Agent" ? { subagentPresentation: event.subagentPresentation ?? createSubagentPresentation(toolInput, id) } : {}),
+      output: null,
+      isError: false,
+      isComplete: false,
+      parentToolCallId: event.parentToolCallId || undefined,
+      startedAt: Date.now(),
+      lastActivityAt: Date.now(),
+    };
+  };
+
+  const appendToolCall = (threadId: string, toolCall: ToolCall): void => {
+    patchRec(threadId, (record) => ({
+      toolCalls: [...record.toolCalls, toolCall],
+      thoughtSegments: closeOpenThoughtSegment(record.thoughtSegments),
+    }));
+  };
+
+  const handleToolUse = (
+    event: Extract<AgentEvent, { type: "toolUse" }>,
+    runtime: { isActiveThread: boolean },
+  ): void => {
+    if (!runtime.isActiveThread) promoteDeferredNarrativeEvents(event.threadId);
+    const toolName = event.toolName || "unknown";
+    const toolInput = event.toolInput ?? {};
+    const existing = getRec(event.threadId).toolCalls.find((toolCall) => toolCall.id === event.toolCallId);
+    if (existing && shouldMergeToolUse(existing, toolName)) {
+      mergeToolUse(event, existing, toolName, toolInput);
+      return;
+    }
+    if (existing) return;
+    if (!event.parentToolCallId) markPriorToolCallsComplete(event.threadId);
+    const toolCall = newToolCall(event, toolName, toolInput);
+    projectTaskToolUse(event.threadId, toolCall.id, toolName, toolInput, getRec(event.threadId).toolCalls, event.parentToolCallId);
+    appendToolCall(event.threadId, toolCall);
+  };
+
+  const toolResultInput = (value: unknown): Record<string, unknown> => {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+  };
+
+  const normalizedToolResult = (
+    event: Extract<AgentEvent, { type: "toolResult" }>,
+  ): Extract<AgentEvent, { type: "toolResult" }> => ({
+    ...event,
+    output: typeof event.output === "string" ? event.output : "",
+    outputTruncated: event.outputTruncated === true,
+    outputTotalBytes: typeof event.outputTotalBytes === "number" && Number.isFinite(event.outputTotalBytes)
+      ? event.outputTotalBytes
+      : undefined,
+    outputArtifactPath: typeof event.outputArtifactPath === "string" && event.outputArtifactPath.length > 0
+      ? event.outputArtifactPath
+      : undefined,
+    exitCode: typeof event.exitCode === "number" && Number.isInteger(event.exitCode)
+      ? event.exitCode
+      : undefined,
+  });
+
+  const recordHarnessTaskId = (
+    threadId: string,
+    toolCallId: string,
+    output: string,
+    isError: boolean,
+  ): void => {
+    if (isError) return;
+    const call = getRec(threadId).toolCalls.find((toolCall) => toolCall.id === toolCallId);
+    if (call?.toolName !== "TaskCreate") return;
+    const harnessTaskId = parseHarnessTaskId(output);
+    if (!harnessTaskId) return;
+    const tasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
+    const target = tasks.find((task) => task.id === toolCallId);
+    if (!target || target.harnessTaskId === harnessTaskId) return;
+    useTaskStore.getState().setTaskGroup(
+      threadId,
+      target.group,
+      tasks.filter((task) => task.group === target.group)
+        .map((task) => task.id === toolCallId ? { ...task, harnessTaskId } : task),
+    );
+  };
+
+  const hasActiveToolChildren = (toolCalls: readonly ToolCall[], id: string): boolean => {
+    return toolCalls.some((toolCall) => toolCall.parentToolCallId === id && !toolCall.isComplete);
+  };
+
+  const completedToolCall = (
+    toolCall: ToolCall,
+    event: Extract<AgentEvent, { type: "toolResult" }>,
+    toolInput: Record<string, unknown>,
+  ): ToolCall => {
+    const mergedInput = { ...toolCall.toolInput, ...toolInput };
+    const durationFromInput = mergedInput.durationMs;
+    const durationMs = typeof durationFromInput === "number" && Number.isFinite(durationFromInput)
+      ? durationFromInput
+      : toolCall.startedAt != null ? Math.max(0, Date.now() - toolCall.startedAt) : undefined;
+    return {
+      ...toolCall,
+      toolInput: mergedInput,
+      subagentPresentation: event.subagentPresentation
+        ? mergeSubagentPresentation(toolCall.subagentPresentation, event.subagentPresentation, toolCall.id)
+        : toolCall.subagentPresentation,
+      output: event.output,
+      isError: event.isError,
+      isComplete: true,
+      lastActivityAt: Date.now(),
+      ...(event.outputTruncated ? { outputTruncated: true } : {}),
+      ...(event.outputTotalBytes != null ? { outputTotalBytes: event.outputTotalBytes } : {}),
+      ...(event.outputArtifactPath ? { outputArtifactPath: event.outputArtifactPath } : {}),
+      ...(durationMs != null ? { durationMs } : {}),
+      ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
+    };
+  };
+
+  const completeMatchingToolCall = (
+    toolCalls: ToolCall[],
+    event: Extract<AgentEvent, { type: "toolResult" }>,
+    toolInput: Record<string, unknown>,
+  ): ToolCall[] => {
+    if (toolCalls.some((toolCall) => toolCall.id === event.toolCallId)) {
+      return toolCalls.map((toolCall) => toolCall.id === event.toolCallId
+        ? completedToolCall(toolCall, event, toolInput)
+        : toolCall);
+    }
+    let matched = false;
+    return toolCalls.map((toolCall) => {
+      const canMatch = !matched
+        && !toolCall.isComplete
+        && !(toolCall.toolName === "Agent" && hasActiveToolChildren(toolCalls, toolCall.id));
+      if (!canMatch) return toolCall;
+      matched = true;
+      return completedToolCall(toolCall, event, toolInput);
+    });
+  };
+
+  const handleToolResult = (event: Extract<AgentEvent, { type: "toolResult" }>): void => {
+    const normalizedEvent = normalizedToolResult(event);
+    recordHarnessTaskId(
+      normalizedEvent.threadId,
+      normalizedEvent.toolCallId,
+      normalizedEvent.output,
+      normalizedEvent.isError,
+    );
+    const toolInput = toolResultInput(normalizedEvent.toolInput);
+    patchRec(normalizedEvent.threadId, (record) => ({
+      toolCalls: completeMatchingToolCall(record.toolCalls, normalizedEvent, toolInput),
+    }));
+  };
+
+  const normalizedTextDelta = (value: unknown): string => typeof value === "string" ? value : "";
+
+  const normalizedIsFinalResponse = (value: unknown): boolean | undefined => {
+    return typeof value === "boolean" ? value : undefined;
+  };
+
+  const handleTextDelta = (
+    event: Extract<AgentEvent, { type: "textDelta" }>,
+    runtime: { isActiveThread: boolean },
+  ): void => {
+    const delta = normalizedTextDelta(event.delta);
+    if (delta.length === 0) return;
+    const isFinalResponse = normalizedIsFinalResponse(event.isFinalResponse);
+    const normalizedEvent = { ...event, isFinalResponse };
+    const deferNarrative = !runtime.isActiveThread;
+    const chunks = pendingTextDeltaByThread.get(event.threadId) ?? [];
+    const tail = chunks.at(-1);
+    const sameProjection = tail
+      && tail.isFinalResponse === isFinalResponse
+      && tail.deferNarrative === deferNarrative;
+    const next = sameProjection
+      ? [...chunks.slice(0, -1), { ...tail, delta: tail.delta + delta }]
+      : [...chunks, { delta, isFinalResponse, deferNarrative }];
+    pendingTextDeltaByThread.set(event.threadId, next);
+    if (!runtime.isActiveThread) queueDeferredNarrativeEvent(event.threadId, normalizedEvent);
+    if (!deferNarrative && (chunks.length === 0 || chunks.some((chunk) => chunk.deferNarrative))) {
+      markPriorToolCallsComplete(event.threadId);
+    }
+    scheduleTextDeltaFlush();
+  };
+
+  const handleAssistantMessageBoundary = (
+    event: Extract<AgentEvent, { type: "assistantMessageBoundary" }>,
+    runtime: { isActiveThread: boolean },
+  ): void => {
+    flushPendingTextDeltas();
+    const isFinalResponse = event.isFinalResponse === true;
+    const normalizedEvent = event.isFinalResponse === isFinalResponse
+      ? event
+      : { ...event, isFinalResponse };
+    if (!runtime.isActiveThread) {
+      queueDeferredNarrativeEvent(event.threadId, normalizedEvent);
+      return;
+    }
+    patchRec(event.threadId, (record) => {
+      const thoughtSegments = projectAssistantMessageBoundary(record.thoughtSegments, isFinalResponse);
+      return thoughtSegments ? { thoughtSegments } : {};
+    });
+  };
+
+  const handleToolProgress = (
+    event: Extract<AgentEvent, { type: "toolProgress" }>,
+    runtime: { isActiveThread: boolean },
+  ): void => {
+    if (!runtime.isActiveThread) {
+      queueDeferredNarrativeEvent(event.threadId, event);
+      return;
+    }
+    if (!event.toolCallId) return;
+    patchRec(event.threadId, (record) => {
+      const toolCalls = projectToolProgress(record.toolCalls, event.toolCallId, event.elapsedSeconds, Date.now());
+      return toolCalls ? { toolCalls } : {};
+    });
+  };
+
+  const handleHookStarted = (event: Extract<AgentEvent, { type: "hookStarted" }>): void => {
+    const hook: HookExecution = {
+      hookName: event.hookName || "unknown",
+      hookType: event.hookType || "stop",
+      toolName: event.toolName,
+      status: "running",
+      outputLines: [],
+      fullOutput: [],
+      startedAt: Date.now(),
+    };
+    patchRec(event.threadId, (record) => ({ hooks: [...record.hooks, hook] }));
+  };
+
+  const runningHookIndex = (hooks: readonly HookExecution[], hookName: string): number => {
+    for (let index = hooks.length - 1; index >= 0; index -= 1) {
+      if (hooks[index]?.hookName === hookName && hooks[index]?.status === "running") return index;
+    }
+    return -1;
+  };
+
+  const outputLinesForHook = (output: string): string[] => {
+    return output.split(/\r?\n/).filter((line, index, lines) => !(index === lines.length - 1 && line === ""));
+  };
+
+  const handleHookProgress = (event: Extract<AgentEvent, { type: "hookProgress" }>): void => {
+    const output = typeof event.output === "string" ? event.output : "";
+    if (!event.hookName || output.length === 0) return;
+    patchRec(event.threadId, (record) => {
+      const index = runningHookIndex(record.hooks, event.hookName);
+      const lines = outputLinesForHook(output);
+      if (index < 0 || lines.length === 0) return {};
+      const fullOutput = [...record.hooks[index].fullOutput, ...lines].slice(-500);
+      const hooks = [...record.hooks];
+      hooks[index] = { ...hooks[index], fullOutput, outputLines: fullOutput.slice(-20) };
+      return { hooks };
+    });
+  };
+
+  const appendPersistedHook = (
+    record: ThreadRecord,
+    event: Extract<AgentEvent, { type: "hookCompleted" }>,
+  ): Partial<ThreadRecord> => {
+    const messageId = event.persistedMessageId;
+    if (!messageId) return {};
+    const narrative = record.narrativeByMessage[messageId];
+    if (!narrative || (event.persistedHookId && narrative.hooks.some((hook) => hook.id === event.persistedHookId))) return {};
+    const sortOrder = narrative.hooks.length > 0 ? Math.max(...narrative.hooks.map((hook) => hook.sort_order)) + 1 : 1000;
+    const hook = {
+      id: event.persistedHookId ?? crypto.randomUUID(),
+      message_id: messageId,
+      hook_name: event.hookName,
+      tool_name: null,
+      phase: "stop" as const,
+      payload: JSON.stringify({ hookType: "stop", toolName: null }),
+      duration_ms: event.durationMs,
+      did_block: event.didBlock,
+      started_at: new Date().toISOString(),
+      ended_at: new Date().toISOString(),
+      sort_order: sortOrder,
+    };
+    return {
+      narrativeByMessage: {
+        ...record.narrativeByMessage,
+        [messageId]: { ...narrative, hooks: [...narrative.hooks, hook] },
+      },
+    };
+  };
+
+  const completeVolatileHook = (
+    record: ThreadRecord,
+    event: Extract<AgentEvent, { type: "hookCompleted" }>,
+  ): Partial<ThreadRecord> => {
+    const index = runningHookIndex(record.hooks, event.hookName);
+    if (index < 0) return {};
+    const hooks = [...record.hooks];
+    hooks[index] = { ...hooks[index], status: "completed", exitCode: event.exitCode, durationMs: event.durationMs, didBlock: event.didBlock };
+    return { hooks };
+  };
+
+  const handleHookCompleted = (event: Extract<AgentEvent, { type: "hookCompleted" }>): void => {
+    if (!event.hookName) return;
+    patchRec(event.threadId, (record) => event.persistedMessageId
+      ? appendPersistedHook(record, event)
+      : completeVolatileHook(record, event));
+  };
+
+  const terminalPhaseFor = (
+    event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
+  ): ThreadRecord["runtimePhase"] => {
+    if (event.type === "turnComplete" || event.outcome === "completed") return "completed";
+    if (event.outcome === "errored") return "errored";
+    return event.outcome === "cancelled" ? "cancelled" : "interrupted";
+  };
+
+  const terminalStatusFor = (phase: ThreadRecord["runtimePhase"]): "completed" | "errored" | "interrupted" => {
+    if (phase === "completed") return "completed";
+    return phase === "errored" ? "errored" : "interrupted";
+  };
+
+  const guardrailMessageFor = (
+    event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
+  ): Message | null => {
+    if (event.type !== "turnComplete") return null;
+    if (event.reason !== "error_max_budget_usd" && event.reason !== "max_turns") return null;
+    const reason = event.reason === "error_max_budget_usd" ? "Budget cap reached" : "Max turns reached";
+    return createSystemMessage(event.threadId, `Agent stopped: ${reason}. You can adjust guardrails in Settings > Agent.`);
+  };
+
+  const completedToolCalls = (toolCalls: ToolCall[]): ToolCall[] => {
+    return toolCalls.map((toolCall) => toolCall.isComplete ? toolCall : { ...toolCall, isComplete: true });
+  };
+
+  const terminalPatch = (
+    record: ThreadRecord,
+    phase: ThreadRecord["runtimePhase"],
+  ): Partial<ThreadRecord> => ({
+    streaming: "",
+    streamingPreview: "",
+    runtimePhase: phase,
+    toolCalls: completedToolCalls(record.toolCalls),
+    permissions: [],
+    rateLimit: undefined,
+  });
+
+  const appendTerminalMessages = (
+    record: ThreadRecord,
+    event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
+    phase: ThreadRecord["runtimePhase"],
+    guardrailMessage: Message | null,
+  ): Partial<ThreadRecord> => {
+    const base = terminalPatch(record, phase);
+    const guardrail = guardrailMessage
+      && !record.messages.some((message) => message.role === "system" && message.content.startsWith("Agent stopped:"))
+      ? guardrailMessage
+      : null;
+    if (record.streaming.length === 0) return appendEmptyTerminalMessage(record, base, guardrail);
+    const message: Message = {
+      id: crypto.randomUUID(),
+      thread_id: event.threadId,
+      role: "assistant",
+      content: record.streaming,
+      tool_calls: null,
+      files_changed: null,
+      cost_usd: event.type === "turnComplete" ? event.costUsd : null,
+      tokens_used: event.type === "turnComplete" ? event.tokensIn + event.tokensOut || null : null,
+      timestamp: new Date().toISOString(),
+      sequence: messageSequenceFor(event.threadId),
+      attachments: null,
+    };
+    return appendStreamingTerminalMessage(record, base, message, guardrail, event.threadId);
+  };
+
+  const appendEmptyTerminalMessage = (
+    record: ThreadRecord,
+    base: Partial<ThreadRecord>,
+    guardrailMessage: Message | null,
+  ): Partial<ThreadRecord> => {
+    const currentTurnPersist = record.currentTurnMessageId
+      ? queuePendingTurnPersistMessage(record, record.currentTurnMessageId)
+      : {};
+    if (!guardrailMessage) return { ...base, ...currentTurnPersist };
+    const { messages, evicted } = capMessages([...record.messages, guardrailMessage]);
+    return { ...base, ...currentTurnPersist, messages, ...(evicted ? { hasMoreMessages: true } : {}) };
+  };
+
+  const appendStreamingTerminalMessage = (
+    record: ThreadRecord,
+    base: Partial<ThreadRecord>,
+    message: Message,
+    guardrailMessage: Message | null,
+    threadId: string,
+  ): Partial<ThreadRecord> => {
+    const { responseKey, nextLiveKey } = claimTurnResponseKey(record, threadId, message.id);
+    const { messages, evicted } = capMessages([...record.messages, message, ...(guardrailMessage ? [guardrailMessage] : [])]);
+    const assistantResponseKeys = pruneAssistantResponseKeys(
+      { ...record.assistantResponseKeys, [message.id]: responseKey },
+      messages,
+    );
+    return {
+      ...base,
+      currentTurnMessageId: message.id,
+      ...queuePendingTurnPersistMessage(record, message.id),
+      currentTurnResponseKey: nextLiveKey,
+      assistantResponseKeys,
+      thoughtSegments: closeOpenThoughtSegment(record.thoughtSegments),
+      messages,
+      ...(evicted ? { hasMoreMessages: true } : {}),
+    };
+  };
+
+  const resolvedTurnContextWindow = (event: Extract<AgentEvent, { type: "turnComplete" }>) => {
+    const record = getRec(event.threadId);
+    const thread = useWorkspaceStore.getState().threads.find((item) => item.id === event.threadId);
+    const modelId = record.lastFallback?.actualModel ?? thread?.model ?? "claude-sonnet-4-6";
+    const settings = useSettingsStore.getState().settings.model.defaults;
+    const contextWindowMode = (thread?.context_window_mode as ContextWindowMode | null | undefined)
+      ?? settings.contextWindow
+      ?? "200k";
+    return resolveContextWindow({
+      sdkContextWindow: event.contextWindow,
+      modelId,
+      contextWindowMode,
+      previousContextWindow: record.context?.contextWindow,
+    });
+  };
+
+  const updateTurnContext = (event: Extract<AgentEvent, { type: "turnComplete" }>): void => {
+    if (event.tokensIn <= 0 || getRec(event.threadId).isCompacting) return;
+    const contextWindow = resolvedTurnContextWindow(event);
+    patchRec(event.threadId, {
+      context: {
+        lastTokensIn: event.tokensIn,
+        contextWindow,
+        totalProcessedTokens: event.totalProcessedTokens,
+        tokensOut: event.tokensOut,
+        cacheReadTokens: event.cacheReadTokens,
+        cacheWriteTokens: event.cacheWriteTokens,
+        costMultiplier: event.costMultiplier,
+      },
+    });
+  };
+
+  const synchronizeTerminalStatus = (threadId: string, status: "completed" | "errored" | "interrupted"): void => {
+    if (useWorkspaceStore.getState().activeThreadId === threadId) {
+      void getTransport().markThreadViewed(threadId).catch(() => {});
+      return;
+    }
+    useWorkspaceStore.setState((workspace) => ({
+      threads: workspace.threads.map((thread) => thread.id === threadId ? { ...thread, status } : thread),
+    }));
+  };
+
+  const handleTerminalEvent = (
+    event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
+    runtime: { incomingExecutionId: string | undefined; runtimeActive: boolean; runtimeRecord: ThreadRecord },
+  ): void => {
+    if (!runtime.runtimeActive || (runtime.incomingExecutionId && runtime.runtimeRecord.turnExecutionId !== runtime.incomingExecutionId)) return;
+    clearStreamingTextUsage(event.threadId);
+    useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(event.threadId);
+    const phase = terminalPhaseFor(event);
+    const guardrail = guardrailMessageFor(event);
+    patchRec(event.threadId, (record) => appendTerminalMessages(record, event, phase, guardrail));
+    conversationResidency.retainInactiveConversation(event.threadId);
+    if (event.type === "turnComplete") updateTurnContext(event);
+    synchronizeTerminalStatus(event.threadId, terminalStatusFor(phase));
+    if (event.type === "turnComplete" && !guardrail) scheduleDrainAfterEdit(event.threadId);
+  };
+
+  const updateUsageSnapshot = (threadId: string, providerId: string, incoming: ProviderUsageInfo): void => {
+    const providerSnapshot = mergeProviderUsageSnapshot(
+      providerUsageSnapshots.get(providerId),
+      providerQuotaSnapshot(incoming),
+    );
+    providerUsageSnapshots.set(providerId, providerSnapshot);
+    patchRec(threadId, (record) => ({
+      usageByProvider: {
+        ...record.usageByProvider,
+        [providerId]: mergeThreadUsageSnapshot(record.usageByProvider[providerId], providerSnapshot, incoming),
+      },
+    }));
+  };
+
+  const handleQuotaUpdate = (event: Extract<AgentEvent, { type: "quotaUpdate" }>): void => {
+    if (!event.providerId) return;
+    const categories = Array.isArray(event.categories) ? event.categories : [];
+    const incoming: ProviderUsageInfo = {
+      providerId: event.providerId,
+      quotaCategories: categories,
+      billingMode: event.billingMode,
+      sessionCostUsd: event.sessionCostUsd,
+      serviceTier: event.serviceTier,
+      numTurns: event.numTurns,
+      durationMs: event.durationMs,
+      usageStatus: categories.length > 0 ? "ready" : "ready-empty",
+      fetchedAt: new Date().toISOString(),
+    };
+    updateUsageSnapshot(event.threadId, event.providerId, incoming);
+    void get().fetchProviderUsage(event.threadId, event.providerId);
+  };
+
+  const handleContextEstimate = (event: Extract<AgentEvent, { type: "contextEstimate" }>): void => {
+    if (event.tokensIn <= 0 || getRec(event.threadId).isCompacting) return;
+    patchRec(event.threadId, (record) => ({
+      context: {
+        ...record.context,
+        lastTokensIn: event.tokensIn,
+        contextWindow: event.contextWindow ?? record.context?.contextWindow,
+        totalProcessedTokens: record.context?.totalProcessedTokens,
+      },
+    }));
+  };
+
+  const handleRateLimited = (event: Extract<AgentEvent, { type: "rateLimited" }>): void => {
+    patchRec(event.threadId, {
+      rateLimit: event.active
+        ? { retryAfterMs: event.retryAfterMs, limitType: event.limitType, utilization: event.utilization }
+        : undefined,
+    });
+  };
+
+  const handleApiRetry = (event: Extract<AgentEvent, { type: "apiRetry" }>): void => {
+    patchRec(event.threadId, {
+      apiRetry: { reason: event.reason, attempt: event.attempt, maxRetries: event.maxRetries, delayMs: event.delayMs },
+    });
+  };
+
+  const compactedSystemMessage = (threadId: string): void => {
+    if (!getRec(threadId).isCompacting) return;
+    appendMessageToThread(threadId, createSystemMessage(threadId, "Context compacted"));
+  };
+
+  const handleCompacting = (event: Extract<AgentEvent, { type: "compacting" }>): void => {
+    if (!event.active) compactedSystemMessage(event.threadId);
+    patchRec(event.threadId, (record) => ({
+      isCompacting: event.active,
+      ...(event.active
+        ? {
+            context: {
+              ...record.context,
+              lastTokensIn: 0,
+              contextWindow: record.context?.contextWindow,
+              totalProcessedTokens: record.context?.totalProcessedTokens,
+            },
+          }
+        : {}),
+    }));
+  };
+
+  const handleModelFallback = (event: Extract<AgentEvent, { type: "modelFallback" }>): void => {
+    const actual = findModelById(event.actualModel);
+    const actualModel = actual?.id ?? event.actualModel;
+    patchRec(event.threadId, { lastFallback: { requestedModel: event.requestedModel, actualModel } });
+    if (useWorkspaceStore.getState().activeThreadId !== event.threadId) return;
+    const actualLabel = actual?.label ?? actualModel;
+    const requestedLabel = findModelById(event.requestedModel)?.label ?? event.requestedModel;
+    useToastStore.getState().show("info", `Switched to ${actualLabel}`, `${requestedLabel} was unavailable`);
+  };
+
+  const agentErrorMessage = (threadId: string, error: string): Message => ({
+    ...createSystemMessage(threadId, JSON.stringify({ __type: "agent_error", message: error })),
+  });
+
+  const handleErrorEvent = (
+    event: Extract<AgentEvent, { type: "error" }>,
+    runtime: { incomingExecutionId: string | undefined; runtimeActive: boolean; runtimeRecord: ThreadRecord },
+  ): void => {
+    if (!runtime.runtimeActive || (runtime.incomingExecutionId && runtime.runtimeRecord.turnExecutionId !== runtime.incomingExecutionId)) return;
+    clearStreamingTextUsage(event.threadId);
+    const message = agentErrorMessage(event.threadId, event.error);
+    patchRec(event.threadId, (record) => {
+      const { messages, evicted } = capMessages([...record.messages, message]);
+      return {
+        error: event.error,
+        runtimePhase: "errored",
+        streaming: "",
+        streamingPreview: "",
+        agentStartTime: undefined,
+        currentTurnMessageId: "",
+        currentTurnResponseKey: "",
+        toolCalls: [],
+        isCompacting: false,
+        rateLimit: undefined,
+        apiRetry: undefined,
+        messages,
+        ...(evicted ? { hasMoreMessages: true } : {}),
+      };
+    });
+    clearDequeueTimer(event.threadId);
+    useQueueStore.getState().clearQueue(event.threadId);
+    useWorkspaceStore.setState((workspace) => ({
+      threads: workspace.threads.map((thread) => thread.id === event.threadId ? { ...thread, status: "errored" as const } : thread),
+    }));
+  };
+
+  const handleMcpStartupStatus = (event: Extract<AgentEvent, { type: "mcpServerStartupStatus" }>): void => {
+    if (event.status !== "failed" || useWorkspaceStore.getState().activeThreadId !== event.threadId) return;
+    const reason = event.error || event.failureReason || "Startup failed";
+    useToastStore.getState().show("error", "MCP server unavailable", `The turn will continue without it. ${event.name}: ${reason}`);
+  };
+
+  const ignoreAgentEvent = (): void => {};
+
+  const agentEventHandlers: AgentEventHandlerTable = {
+    turnStarted: handleTurnStarted,
+    message: handleMessageEvent,
+    generatedAttachment: ignoreAgentEvent,
+    toolUse: handleToolUse,
+    toolResult: handleToolResult,
+    turnComplete: handleTerminalEvent,
+    error: handleErrorEvent,
+    ended: handleTerminalEvent,
+    system: handleSystemEvent,
+    compacting: handleCompacting,
+    compactSummary: ignoreAgentEvent,
+    modelFallback: handleModelFallback,
+    textDelta: handleTextDelta,
+    toolInputDelta: ignoreAgentEvent,
+    toolProgress: handleToolProgress,
+    contextEstimate: handleContextEstimate,
+    quotaUpdate: handleQuotaUpdate,
+    providerUnavailable: ignoreAgentEvent,
+    rateLimited: handleRateLimited,
+    apiRetry: handleApiRetry,
+    hookStarted: handleHookStarted,
+    hookProgress: handleHookProgress,
+    hookCompleted: handleHookCompleted,
+    assistantMessageBoundary: handleAssistantMessageBoundary,
+    goalUpdated: handleGoalUpdated,
+    goalCleared: handleGoalCleared,
+    mcpServerStartupStatus: handleMcpStartupStatus,
+  };
+
+  const copyDefinedThreadSettings = (
+    source: Partial<ThreadSettings>,
+    target: Partial<ThreadSettings>,
+  ): void => {
+    if (source.permissionMode !== undefined) target.permissionMode = source.permissionMode;
+    if (source.interactionMode !== undefined) target.interactionMode = source.interactionMode;
+    if (source.orchestrationMode !== undefined) target.orchestrationMode = source.orchestrationMode;
+    if (source.reasoningLevel !== undefined) target.reasoningLevel = source.reasoningLevel;
+  };
+
+  const copyNullableThreadSettings = (
+    source: Partial<ThreadSettings>,
+    target: Partial<ThreadSettings>,
+  ): void => {
+    if ("copilotAgent" in source) target.copilotAgent = source.copilotAgent;
+    if ("contextWindow" in source) target.contextWindow = source.contextWindow;
+    if ("thinking" in source) target.thinking = source.thinking;
+    if ("codexFastMode" in source) target.codexFastMode = source.codexFastMode;
+    if ("defaultOpenInApp" in source) target.defaultOpenInApp = source.defaultOpenInApp;
+  };
+
+  const cleanThreadSettingsPatch = (settings: Partial<ThreadSettings>): Partial<ThreadSettings> => {
+    const patch: Partial<ThreadSettings> = {};
+    copyDefinedThreadSettings(settings, patch);
+    copyNullableThreadSettings(settings, patch);
+    return patch;
+  };
+
+  const workspaceThreadCoreSettingsPatch = (
+    thread: ReturnType<typeof useWorkspaceStore.getState>["threads"][number],
+    patch: Partial<ThreadSettings>,
+  ) => {
+    if (patch.permissionMode !== undefined) thread = { ...thread, permission_mode: patch.permissionMode };
+    if (patch.interactionMode !== undefined) thread = { ...thread, interaction_mode: patch.interactionMode };
+    if (patch.orchestrationMode !== undefined) thread = { ...thread, orchestration_mode: patch.orchestrationMode };
+    if (patch.reasoningLevel !== undefined) thread = { ...thread, reasoning_level: patch.reasoningLevel };
+    return thread;
+  };
+
+  const workspaceThreadComposerSettingsPatch = (
+    thread: ReturnType<typeof useWorkspaceStore.getState>["threads"][number],
+    patch: Partial<ThreadSettings>,
+  ) => {
+    if ("copilotAgent" in patch) thread = { ...thread, copilot_agent: patch.copilotAgent ?? null };
+    if ("contextWindow" in patch) thread = { ...thread, context_window_mode: patch.contextWindow ?? null };
+    if ("thinking" in patch) thread = { ...thread, thinking: patch.thinking ?? null };
+    return thread;
+  };
+
+  const workspaceThreadOpenInSettingsPatch = (
+    thread: ReturnType<typeof useWorkspaceStore.getState>["threads"][number],
+    patch: Partial<ThreadSettings>,
+  ) => {
+    if ("codexFastMode" in patch) thread = { ...thread, codex_fast_mode: patch.codexFastMode ?? null };
+    if ("defaultOpenInApp" in patch) thread = { ...thread, default_open_in_app: patch.defaultOpenInApp ?? null };
+    return thread;
+  };
+
+  const workspaceThreadSettingsPatch = (
+    thread: ReturnType<typeof useWorkspaceStore.getState>["threads"][number],
+    patch: Partial<ThreadSettings>,
+  ) => workspaceThreadOpenInSettingsPatch(
+    workspaceThreadComposerSettingsPatch(workspaceThreadCoreSettingsPatch(thread, patch), patch),
+    patch,
+  );
+
+  const transportThreadSettingsPatch = (patch: Partial<ThreadSettings>) => ({
+    ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
+    ...(patch.interactionMode !== undefined ? { interactionMode: patch.interactionMode } : {}),
+    ...(patch.orchestrationMode !== undefined ? { orchestrationMode: patch.orchestrationMode } : {}),
+    ...(patch.reasoningLevel !== undefined ? { reasoningLevel: patch.reasoningLevel } : {}),
+    ...("copilotAgent" in patch ? { copilotAgent: patch.copilotAgent } : {}),
+    ...("contextWindow" in patch ? { contextWindow: patch.contextWindow } : {}),
+    ...("thinking" in patch ? { thinking: patch.thinking } : {}),
+    ...("codexFastMode" in patch ? { codexFastMode: patch.codexFastMode } : {}),
+    ...("defaultOpenInApp" in patch ? { defaultOpenInApp: patch.defaultOpenInApp } : {}),
+  });
+
+  const latestUserMessageContent = (threadId: string): string | null => {
+    const messages = getRec(threadId).messages;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role === "user") return messages[index].content;
+    }
+    return null;
+  };
+
+  const recallCancelledUndispatchedMessage = (
+    threadId: string,
+    status: string,
+    dispatchState: string,
+    phase: ThreadRecord["runtimePhase"],
+  ): string | null => {
+    if (status !== "cancelled" || dispatchState !== "not-dispatched" || phase !== "cancelled") return null;
+    if (get().currentThreadId !== threadId) return null;
+    return latestUserMessageContent(threadId);
+  };
+
+  type TurnPersistedPayload = Parameters<ThreadState["handleTurnPersisted"]>[0];
+
+  const turnPersistStopState = (record: ThreadRecord, payload: TurnPersistedPayload) => {
+    if (!record.awaitingUserStopPersist) {
+      return { awaitingUserStopPersist: record.awaitingUserStopPersist, interruptStopFileNotice: record.interruptStopFileNotice };
+    }
+    return {
+      awaitingUserStopPersist: undefined,
+      interruptStopFileNotice: payload.filesChanged.length > 0 ? { paths: payload.filesChanged } : record.interruptStopFileNotice,
+    };
+  };
+
+  const persistedTurnMessages = (
+    record: ThreadRecord,
+    payload: TurnPersistedPayload,
+    localMessageId: string,
+  ): Message[] | undefined => {
+    const ensured = payload.filesChanged.length > 0 || payload.toolCallCount > 0
+      ? ensureAssistantMessageForTurnPersist(record, payload.threadId, localMessageId)
+      : undefined;
+    if (payload.outcome === undefined) return ensured;
+    return (ensured ?? record.messages).map((message) => message.id === localMessageId
+      ? { ...message, outcome: payload.outcome, ...(payload.executionId !== undefined ? { outcomeExecutionId: payload.executionId } : {}) }
+      : message);
+  };
+
+  const persistedTurnFileEffects = (
+    record: ThreadRecord,
+    payload: TurnPersistedPayload,
+    localMessageId: string,
+  ): Partial<ThreadRecord> => {
+    const ownsLiveEffects = payload.turnId != null
+      && payload.turnId === record.fileEffectTurnId
+      && (localMessageId === record.currentTurnMessageId || record.pendingTurnPersistMessageIds.includes(localMessageId));
+    if (!payload.fileEffects || !ownsLiveEffects || payload.fileEffects.revision < record.fileEffectSummary.revision) return {};
+    return { fileEffectSummary: payload.fileEffects };
+  };
+
+  const projectPersistedTurn = (
+    record: ThreadRecord,
+    payload: TurnPersistedPayload,
+    currentThreadId: string | null,
+  ): Partial<ThreadRecord> => {
+    const localMessageId = resolveTurnPersistLocalMessageId(record, payload.messageId);
+    const messages = persistedTurnMessages(record, payload, localMessageId);
+    const stopState = turnPersistStopState(record, payload);
+    return {
+      ...(messages ? { messages } : {}),
+      persistedToolCallCounts: { ...record.persistedToolCallCounts, [localMessageId]: payload.toolCallCount },
+      persistedFilesChanged: { ...record.persistedFilesChanged, [localMessageId]: payload.filesChanged },
+      latestTurnWithChanges: currentThreadId === payload.threadId
+        ? payload.filesChanged.length > 0 ? localMessageId : null
+        : record.latestTurnWithChanges,
+      serverMessageIds: { ...record.serverMessageIds, [localMessageId]: payload.messageId },
+      ...clearPendingTurnPersistMessage(record, localMessageId),
+      ...stopState,
+      ...persistedTurnFileEffects(record, payload, localMessageId),
+    };
+  };
+
+  const prepareOutgoingTurn = (threadId: string, content: string) => {
+    const isControlCommand = isGoalControlCommand(content);
+    const runningBeforeControl = isControlCommand ? new Set(get().runningThreadIds) : undefined;
+    if (!isControlCommand && get().runningThreadIds.has(threadId)) {
+      throw new Error(`Thread ${threadId} already has an active agent session`);
+    }
+    if (!isControlCommand) {
+      invalidateDeferredNarrativeEvents(threadId);
+      useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
+    }
+    return { isControlCommand, runningBeforeControl };
+  };
+
+  const visibleSendAttachments = (
+    attachments: AttachmentMeta[] | undefined,
+    previewAnnotations: PreviewAnnotationBundle | undefined,
+  ) => [
+    ...(attachments?.map((attachment) => ({
+      id: attachment.id, name: attachment.name, mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes,
+    })) ?? []),
+    ...previewAnnotationSnapshotStoredAttachments(previewAnnotations),
+  ];
+
+  const optimisticUserMessage = (
+    threadId: string,
+    content: string,
+    displayContent: string | undefined,
+    attachments: AttachmentMeta[] | undefined,
+    previewAnnotations: PreviewAnnotationBundle | undefined,
+    mentions: MessageMention[] | undefined,
+    selectedTextComments: SelectedTextComment[] | undefined,
+    replyToMessageId: string | undefined,
+    quotedText: string | undefined,
+  ): Message => {
+    const visibleAttachments = visibleSendAttachments(attachments, previewAnnotations);
+    return {
+      id: crypto.randomUUID(), thread_id: threadId, role: "user", content: displayContent ?? content,
+      tool_calls: null, files_changed: null, cost_usd: null, tokens_used: null,
+      timestamp: new Date().toISOString(), sequence: messageSequenceFor(threadId),
+      attachments: visibleAttachments.length > 0 ? visibleAttachments : null,
+      previewAnnotations: previewAnnotations ?? null,
+      mentions: mentions && mentions.length > 0 ? mentions : null,
+      selectedTextComments: selectedTextComments ?? null,
+      reply_to_message_id: replyToMessageId ?? null, quoted_text: quotedText ?? null,
+    };
+  };
+
+  const sendSettingsPatch = (
+    current: ThreadSettings,
+    reasoningLevel: ReasoningLevel | undefined,
+    orchestrationMode: OrchestrationMode | undefined,
+    contextWindow: ContextWindowMode | undefined,
+    thinking: boolean | undefined,
+    codexFastMode: boolean | undefined,
+  ): Partial<ThreadRecord> => {
+    const patch: Partial<ThreadSettings> = {};
+    if (reasoningLevel !== undefined) patch.reasoningLevel = reasoningLevel;
+    if (orchestrationMode !== undefined) patch.orchestrationMode = orchestrationMode;
+    if (contextWindow !== undefined) patch.contextWindow = contextWindow;
+    if (thinking !== undefined) patch.thinking = thinking;
+    if (codexFastMode !== undefined) patch.codexFastMode = codexFastMode;
+    return Object.keys(patch).length > 0 ? { settings: { ...current, ...patch } } : {};
+  };
+
+  const optimisticMessageWindowPatch = (state: ThreadState, threadId: string, message: Message): Partial<ThreadRecord> => {
+    if (state.currentThreadId !== threadId) return {};
+    const record = getThreadRecord(state.records, threadId);
+    const { messages, evicted } = capMessages([...record.messages, message]);
+    return { messages, ...(evicted ? { hasMoreMessages: true } : {}) };
+  };
+
+  const applyOptimisticSend = (
+    threadId: string, message: Message, isControlCommand: boolean, responseKey: string,
+    reasoningLevel: ReasoningLevel | undefined, orchestrationMode: OrchestrationMode | undefined,
+    contextWindow: ContextWindowMode | undefined, thinking: boolean | undefined, codexFastMode: boolean | undefined,
+  ): void => {
+    set((state) => {
+      const record = getThreadRecord(state.records, threadId);
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          ...resetTurnEphemeral(record),
+          ...sendSettingsPatch(state.getThreadSettings(threadId), reasoningLevel, orchestrationMode, contextWindow, thinking, codexFastMode),
+          ...optimisticMessageWindowPatch(state, threadId, message),
+          agentStartTime: Date.now(), fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
+          currentTurnResponseKey: responseKey, ...(isControlCommand ? {} : { turnExecutionId: null }),
+          lastFallback: undefined, rateLimit: undefined, apiRetry: undefined, error: null,
+          runtimePhase: isControlCommand ? record.runtimePhase : "running",
+        }),
+      };
+    });
+  };
+
+  const ownsOptimisticRuntime = (
+    record: ThreadRecord,
+    isControlCommand: boolean,
+    activeSessionConflict: boolean,
+    responseKey: string,
+    executionId: string | null,
+  ): boolean => {
+    if (isControlCommand || activeSessionConflict) return false;
+    return record.currentTurnResponseKey === responseKey
+      && record.turnExecutionId === executionId
+      && record.runtimePhase === "running";
+  };
+
+  const rollbackFailedSend = (
+    threadId: string, error: unknown, planAction: import("@mcode/contracts").PlanAction | undefined,
+    isControlCommand: boolean, runningBeforeControl: Set<string> | undefined,
+    responseKey: string, executionId: string | null, userMessageId: string,
+  ): boolean => {
+    if (planAction === "revise") usePlanStore.getState().setGenerating(threadId, false);
+    const message = String(error);
+    const activeSessionConflict = !isControlCommand && message.includes("already has an active agent session");
+    set((state) => {
+      const record = getThreadRecord(state.records, threadId);
+      const ownsRuntime = ownsOptimisticRuntime(record, isControlCommand, activeSessionConflict, responseKey, executionId);
+      return {
+        records: patchThreadRecord(state.records, threadId, (current) => ({
+          error: message,
+          ...(activeSessionConflict && state.currentThreadId === threadId ? { messages: current.messages.filter((item) => item.id !== userMessageId) } : {}),
+          ...(ownsRuntime ? { agentStartTime: undefined, runtimePhase: "errored" as const } : {}),
+        })),
+      };
+    });
+    if (isControlCommand && runningBeforeControl?.has(threadId) && !get().runningThreadIds.has(threadId)) {
+      set((state) => ({ runningThreadIds: new Set([...state.runningThreadIds, threadId]) }));
+    }
+    if (!activeSessionConflict && !isControlCommand) invalidateDeferredNarrativeEvents(threadId);
+    return false;
   };
 
   return {
@@ -1529,8 +2426,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
    */
   loadOlderMessages: async (threadId) => {
     const rec = getRec(threadId);
-    if (!rec.hasMoreMessages) return;
-    if (rec.isLoadingMore) return;
+    if (!canLoadHistoryPage(rec, "older")) return;
 
     const requestRecord = getRec(threadId);
     const cursor = requestRecord.oldestLoadedSequence;
@@ -1546,7 +2442,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     };
     const requestHandle = conversationResidency.beginHistoryPageRequest(request);
     if (!requestHandle) return;
-    patchRec(threadId, { isLoadingMore: true });
+    setHistoryPageLoading(threadId, "older", true);
 
     try {
       const prefetchedPage = conversationResidency.takePrefetchedHistoryPage(request);
@@ -1572,11 +2468,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         currentIdentity,
         responseIdentity,
       );
-      if (!conversationResidency.isConversationVisible(threadId)) {
-        if (ownsCurrentRequest) patchRec(threadId, { isLoadingMore: false });
-        return;
-      }
-      if (!ownsCurrentRequest) return;
+      if (!canCommitVisibleHistoryPage(threadId, "older", ownsCurrentRequest)) return;
 
       const newCounts: Record<string, number> = {};
       for (const msg of olderMessages) {
@@ -1645,16 +2537,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         },
       );
     } catch {
-      const currentRecord = getRec(threadId);
-      if (conversationResidency.canCommitHistoryPageRequest(requestHandle, {
-        threadId,
-        cursor: { version: 1, beforeSequence: currentRecord.oldestLoadedSequence },
-        direction: "older",
-        generation: currentRecord.loadEpoch,
-        conversationRevision: currentRecord.conversationRevision,
-      })) {
-        patchRec(threadId, { isLoadingMore: false });
-      }
+      clearHistoryPageWhenCurrent(threadId, "older", requestHandle);
     } finally {
       conversationResidency.finishHistoryPageRequest(requestHandle);
     }
@@ -1663,7 +2546,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   /** Fetch the next batch below the resident window after newer rows were evicted. */
   loadNewerMessages: async (threadId) => {
     const rec = getRec(threadId);
-    if (!rec.hasNewerMessages || rec.isLoadingNewer) return;
+    if (!canLoadHistoryPage(rec, "newer")) return;
 
     const requestRecord = getRec(threadId);
     const cursor = requestRecord.newestLoadedSequence;
@@ -1679,7 +2562,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     };
     const requestHandle = conversationResidency.beginHistoryPageRequest(request);
     if (!requestHandle) return;
-    patchRec(threadId, { isLoadingNewer: true });
+    setHistoryPageLoading(threadId, "newer", true);
 
     try {
       const {
@@ -1703,11 +2586,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         currentIdentity,
         responseIdentity,
       );
-      if (!conversationResidency.isConversationVisible(threadId)) {
-        if (ownsCurrentRequest) patchRec(threadId, { isLoadingNewer: false });
-        return;
-      }
-      if (!ownsCurrentRequest) return;
+      if (!canCommitVisibleHistoryPage(threadId, "newer", ownsCurrentRequest)) return;
 
       const newCounts: Record<string, number> = {};
       for (const message of newerMessages) {
@@ -1776,16 +2655,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         },
       );
     } catch {
-      const currentRecord = getRec(threadId);
-      if (conversationResidency.canCommitHistoryPageRequest(requestHandle, {
-        threadId,
-        cursor: { version: 1, afterSequence: currentRecord.newestLoadedSequence },
-        direction: "newer",
-        generation: currentRecord.loadEpoch,
-        conversationRevision: currentRecord.conversationRevision,
-      })) {
-        patchRec(threadId, { isLoadingNewer: false });
-      }
+      clearHistoryPageWhenCurrent(threadId, "newer", requestHandle);
     } finally {
       conversationResidency.finishHistoryPageRequest(requestHandle);
     }
@@ -1799,110 +2669,18 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction, mentions, previewAnnotations, goalObjective, orchestrationMode, selectedTextComments) => {
     conversationResidency.invalidateConversation(threadId);
 
-    // A `/goal` control form (show/clear/reset/bare) never starts a provider
-    // turn - the server services it synchronously and returns. It must not
-    // touch turn running-state: marking an idle thread running would strand it
-    // (no Ended clears it, by design - see goal-command.ts), and on send
-    // failure the rollback below must not clear the running-state of a real
-    // turn the control command was issued against mid-flight (#583).
-    const isControlCommand = isGoalControlCommand(content);
-    const runningBeforeControl = isControlCommand
-      ? new Set(get().runningThreadIds)
-      : undefined;
-    if (!isControlCommand && get().runningThreadIds.has(threadId)) {
-      throw new Error(`Thread ${threadId} already has an active agent session`);
-    }
-    if (!isControlCommand) {
-      invalidateDeferredNarrativeEvents(threadId);
-      useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
-    }
-
-    const storedComposerAttachments =
-      attachments?.map((a) => ({
-        id: a.id,
-        name: a.name,
-        mimeType: a.mimeType,
-        sizeBytes: a.sizeBytes,
-      })) ?? [];
-    const storedPreviewAnnotationAttachments =
-      previewAnnotationSnapshotStoredAttachments(previewAnnotations);
-    const visibleAttachments = [
-      ...storedComposerAttachments,
-      ...storedPreviewAnnotationAttachments,
-    ];
+    const { isControlCommand, runningBeforeControl } = prepareOutgoingTurn(threadId, content);
     const optimisticTurnResponseKey = createTurnResponseKey(threadId);
     const optimisticTurnExecutionId = isControlCommand ? getRec(threadId).turnExecutionId : null;
 
-    // Add user message to local state immediately (optimistic)
-    // Use displayContent for the UI (without injected file blocks) if provided
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      thread_id: threadId,
-      role: "user",
-      content: displayContent ?? content,
-      tool_calls: null,
-      files_changed: null,
-      cost_usd: null,
-      tokens_used: null,
-      timestamp: new Date().toISOString(),
-      sequence: messageSequenceFor(threadId),
-      attachments: visibleAttachments.length > 0 ? visibleAttachments : null,
-      previewAnnotations: previewAnnotations ?? null,
-      mentions: mentions && mentions.length > 0 ? mentions : null,
-      selectedTextComments: selectedTextComments ?? null,
-      reply_to_message_id: replyToMessageId ?? null,
-      quoted_text: quotedText ?? null,
-    };
-
-    set((state) => {
-      const settingsPatch =
-        reasoningLevel !== undefined ||
-        orchestrationMode !== undefined ||
-        contextWindow !== undefined ||
-        thinking !== undefined ||
-        codexFastMode !== undefined
-          ? {
-              settings: {
-                ...state.getThreadSettings(threadId),
-                ...(reasoningLevel !== undefined && { reasoningLevel }),
-                ...(orchestrationMode !== undefined && { orchestrationMode }),
-                ...(contextWindow !== undefined && { contextWindow }),
-                ...(thinking !== undefined && { thinking }),
-                ...(codexFastMode !== undefined && { codexFastMode }),
-              },
-            }
-          : {};
-
-      const messagePatch =
-        state.currentThreadId === threadId
-          ? (() => {
-              const rec = getThreadRecord(state.records, threadId);
-              const { messages: capped, evicted } = capMessages([...rec.messages, userMessage]);
-              return {
-                messages: capped,
-                ...(evicted ? { hasMoreMessages: true } : {}),
-              };
-            })()
-          : {};
-
-      const rec = getThreadRecord(state.records, threadId);
-      return {
-        records: patchThreadRecord(state.records, threadId, {
-          ...resetTurnEphemeral(rec),
-          ...settingsPatch,
-          ...messagePatch,
-          agentStartTime: Date.now(),
-          fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
-          currentTurnResponseKey: optimisticTurnResponseKey,
-          ...(isControlCommand ? {} : { turnExecutionId: null }),
-          lastFallback: undefined,
-          rateLimit: undefined,
-          apiRetry: undefined,
-          error: null,
-          runtimePhase: isControlCommand ? rec.runtimePhase : "running",
-        }),
-      };
-    });
+    const userMessage = optimisticUserMessage(
+      threadId, content, displayContent, attachments, previewAnnotations, mentions,
+      selectedTextComments, replyToMessageId, quotedText,
+    );
+    applyOptimisticSend(
+      threadId, userMessage, isControlCommand, optimisticTurnResponseKey,
+      reasoningLevel, orchestrationMode, contextWindow, thinking, codexFastMode,
+    );
 
     try {
       const { interactionMode } = get().getThreadSettings(threadId);
@@ -1931,40 +2709,11 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         selectedTextComments,
       });
       return true;
-    } catch (e) {
-      if (planAction === "revise") {
-        usePlanStore.getState().setGenerating(threadId, false);
-      }
-      const error = String(e);
-      const activeSessionConflict =
-        !isControlCommand && error.includes("already has an active agent session");
-      set((state) => {
-        const currentRecord = getThreadRecord(state.records, threadId);
-        const ownsOnlyOptimisticRuntime = !isControlCommand
-          && !activeSessionConflict
-          && currentRecord.currentTurnResponseKey === optimisticTurnResponseKey
-          && currentRecord.turnExecutionId === optimisticTurnExecutionId
-          && currentRecord.runtimePhase === "running";
-        // Control commands never added the thread to running-state, so leave it
-        // untouched on rollback - a real turn in flight may own it (#583).
-        return {
-          records: patchThreadRecord(state.records, threadId, (rec) => ({
-            error,
-            ...(activeSessionConflict && state.currentThreadId === threadId
-              ? { messages: rec.messages.filter((m) => m.id !== userMessage.id) }
-              : {}),
-            ...(ownsOnlyOptimisticRuntime ? { agentStartTime: undefined } : {}),
-            ...(ownsOnlyOptimisticRuntime ? { runtimePhase: "errored" as const } : {}),
-          })),
-        };
-      });
-      if (isControlCommand && runningBeforeControl?.has(threadId) && !get().runningThreadIds.has(threadId)) {
-        set((state) => ({ runningThreadIds: new Set([...state.runningThreadIds, threadId]) }));
-      }
-      if (!activeSessionConflict && !isControlCommand) {
-        invalidateDeferredNarrativeEvents(threadId);
-      }
-      return false;
+    } catch (error) {
+      return rollbackFailedSend(
+        threadId, error, planAction, isControlCommand, runningBeforeControl,
+        optimisticTurnResponseKey, optimisticTurnExecutionId, userMessage.id,
+      );
     }
   },
 
@@ -1976,19 +2725,12 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       const result = await getTransport().stopAgent(threadId);
       get().applyThreadRuntimeSnapshot(result.snapshot);
 
-      let lastUserText: string | null = null;
-      if (result.status === "cancelled"
-        && result.dispatchState === "not-dispatched"
-        && result.snapshot.phase === "cancelled"
-        && get().currentThreadId === threadId) {
-        const messages = getRec(threadId).messages;
-        for (let i = messages.length - 1; i >= 0; i--) {
-          if (messages[i].role === "user") {
-            lastUserText = messages[i].content;
-            break;
-          }
-        }
-      }
+      const lastUserText = recallCancelledUndispatchedMessage(
+        threadId,
+        result.status,
+        result.dispatchState,
+        result.snapshot.phase,
+      );
       if (lastUserText !== null) {
         patchRec(threadId, { composerRecallFromStop: { text: lastUserText } });
       }
@@ -2039,11 +2781,12 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
   transferThreadRuntime: (placeholderId, persistedId) => {
     set((state) => {
-      const records = transferThreadRuntime(
+      const records = transferOptimisticThreadRuntime(
         state.records,
         placeholderId,
         persistedId,
         state.runningThreadIds.has(placeholderId),
+        createTurnResponseKey,
       );
       if (records === state.records) return {};
       const nextRunning = new Set(state.runningThreadIds);
@@ -2061,51 +2804,17 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   hydrateRunningThreads: (ids, observed) => {
     const resetPendingIds = new Set<string>();
     set((state) => {
-      const current = state.runningThreadIds;
-      if (current.size === ids.length && ids.every((id) => current.has(id))) {
-        return {};
-      }
-      const now = Date.now();
-      const nextIds = new Set(ids);
-      let records = state.records;
-      for (const id of current) {
-        if (!nextIds.has(id)) {
-          const observation = observed?.get(id);
-          const currentRecord = getThreadRecord(records, id);
-          if (observed && (!observation
-            || currentRecord.turnExecutionId !== observation.turnExecutionId
-            || currentRecord.runtimePhase !== observation.runtimePhase)) {
-            nextIds.add(id);
-            continue;
-          }
-          resetPendingIds.add(id);
-          records = patchThreadRecord(records, id, {
-            ...resetTurnEphemeral(currentRecord),
-            runtimePhase: "idle",
-          });
-        }
-      }
-      for (const id of ids) {
-        const rec = getThreadRecord(records, id);
-        const isNewlyRunning = !current.has(id);
-        if (isNewlyRunning) {
-          resetPendingIds.add(id);
-          records = patchThreadRecord(records, id, {
-            ...resetTurnEphemeral(rec),
-            turnExecutionId: rec.turnExecutionId,
-            runtimePhase: "running",
-            currentTurnResponseKey: createTurnResponseKey(id),
-            agentStartTime: rec.agentStartTime ?? now,
-          });
-        } else if (rec.agentStartTime === undefined || rec.runtimePhase !== "running") {
-          records = patchThreadRecord(records, id, {
-            ...(rec.agentStartTime === undefined ? { agentStartTime: now } : {}),
-            turnExecutionId: rec.turnExecutionId,
-            runtimePhase: "running",
-          });
-        }
-      }
-      return { records, runningThreadIds: nextIds };
+      const hydration = hydrateRunningThreadRecords(
+        state.records,
+        state.runningThreadIds,
+        ids,
+        observed,
+        resetTurnEphemeral,
+        createTurnResponseKey,
+      );
+      if (!hydration) return {};
+      hydration.resetPendingIds.forEach((threadId) => resetPendingIds.add(threadId));
+      return { records: hydration.records, runningThreadIds: hydration.runningThreadIds };
     });
     for (const threadId of resetPendingIds) {
       clearStreamingTextUsage(threadId);
@@ -2251,23 +2960,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
    * undefined values in `settings` mean "don't change", not "clear".
    */
   setThreadSettings: (threadId, settings) => {
-    // Build a clean patch with only explicitly-provided fields.
-    // undefined means "don't change", not "clear". If we naively spread
-    // settings, undefined values would overwrite the existing in-memory
-    // state without being sent to the DB, causing divergence on reload.
-    const patch: Partial<ThreadSettings> = {};
-    if (settings.permissionMode !== undefined) patch.permissionMode = settings.permissionMode;
-    if (settings.interactionMode !== undefined) patch.interactionMode = settings.interactionMode;
-    if (settings.orchestrationMode !== undefined) patch.orchestrationMode = settings.orchestrationMode;
-    if (settings.reasoningLevel !== undefined) patch.reasoningLevel = settings.reasoningLevel;
-    // Use `in` check so explicit null clears the agent (null !== undefined).
-    if ("copilotAgent" in settings) patch.copilotAgent = settings.copilotAgent;
-    // null clears the override so the thread inherits from the global default.
-    if ("contextWindow" in settings) patch.contextWindow = settings.contextWindow;
-    if ("thinking" in settings) patch.thinking = settings.thinking;
-    if ("codexFastMode" in settings) patch.codexFastMode = settings.codexFastMode;
-    // null clears the override so the thread inherits the global default.
-    if ("defaultOpenInApp" in settings) patch.defaultOpenInApp = settings.defaultOpenInApp;
+    const patch = cleanThreadSettingsPatch(settings);
 
     if (Object.keys(patch).length === 0) return Promise.resolve(false);
 
@@ -2277,53 +2970,13 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       }),
     }));
 
-    // Also mirror the patch into workspaceStore.threads so the cached
-    // thread object stays in sync. Composer's no-draft hydration path
-    // reads from that cache directly (permission_mode, interaction_mode,
-    // reasoning_level, copilot_agent), so failing to sync here causes
-    // the UI to revert to stale DB values on thread re-entry.
     useWorkspaceStore.setState((state) => ({
-      threads: state.threads.map((t) =>
-        t.id === threadId
-          ? {
-              ...t,
-              ...(patch.permissionMode !== undefined && { permission_mode: patch.permissionMode }),
-              ...(patch.interactionMode !== undefined && { interaction_mode: patch.interactionMode }),
-              ...(patch.orchestrationMode !== undefined && { orchestration_mode: patch.orchestrationMode }),
-              ...(patch.reasoningLevel !== undefined && { reasoning_level: patch.reasoningLevel }),
-              ...("copilotAgent" in patch && { copilot_agent: patch.copilotAgent ?? null }),
-              ...("contextWindow" in patch && { context_window_mode: patch.contextWindow ?? null }),
-              ...("thinking" in patch && { thinking: patch.thinking ?? null }),
-              ...("codexFastMode" in patch && { codex_fast_mode: patch.codexFastMode ?? null }),
-              ...("defaultOpenInApp" in patch && { default_open_in_app: patch.defaultOpenInApp ?? null }),
-            }
-          : t,
-      ),
+      threads: state.threads.map((thread) => thread.id === threadId
+        ? workspaceThreadSettingsPatch(thread, patch)
+        : thread),
     }));
 
-    // copilotAgent / contextWindow / thinking: null clears the persisted value; undefined means don't change.
-    const transportPatch: {
-      reasoningLevel?: ThreadSettings["reasoningLevel"];
-      interactionMode?: ThreadSettings["interactionMode"];
-      orchestrationMode?: ThreadSettings["orchestrationMode"];
-      permissionMode?: ThreadSettings["permissionMode"];
-      copilotAgent?: string | null;
-      contextWindow?: ContextWindowMode | null;
-      thinking?: boolean | null;
-      codexFastMode?: boolean | null;
-      defaultOpenInApp?: string | null;
-    } = {
-      ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
-      ...(patch.interactionMode !== undefined ? { interactionMode: patch.interactionMode } : {}),
-      ...(patch.orchestrationMode !== undefined ? { orchestrationMode: patch.orchestrationMode } : {}),
-      ...(patch.reasoningLevel !== undefined ? { reasoningLevel: patch.reasoningLevel } : {}),
-      ...("copilotAgent" in patch ? { copilotAgent: patch.copilotAgent } : {}),
-      ...("contextWindow" in patch ? { contextWindow: patch.contextWindow } : {}),
-      ...("thinking" in patch ? { thinking: patch.thinking } : {}),
-      ...("codexFastMode" in patch ? { codexFastMode: patch.codexFastMode } : {}),
-      ...("defaultOpenInApp" in patch ? { defaultOpenInApp: patch.defaultOpenInApp } : {}),
-    };
-    return getTransport().updateThreadSettings(threadId, transportPatch).catch(() => false);
+    return getTransport().updateThreadSettings(threadId, transportThreadSettingsPatch(patch)).catch(() => false);
   },
 
   clearThreadState: (threadId) => {
@@ -2681,1385 +3334,25 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
    * message and schedules tool call fade-out animations.
    */
   handleAgentEvent: (event) => {
-    const { threadId } = event;
-    const runtimeRecord = getRec(threadId);
-    const runtimeActive = runtimeRecord.runtimePhase === "running"
-      || get().runningThreadIds.has(threadId)
-      || runtimeRecord.streaming.length > 0;
-    const incomingExecutionId = typeof event.turnExecutionId === "string"
-      ? event.turnExecutionId
-      : undefined;
-    if (event.type === "turnStarted") {
-      if (runtimeRecord.runtimePhase === "running"
-        && runtimeRecord.turnExecutionId
-        && incomingExecutionId
-        && runtimeRecord.turnExecutionId !== incomingExecutionId) return;
-    } else if (incomingExecutionId
-      && runtimeRecord.turnExecutionId
-      && incomingExecutionId !== runtimeRecord.turnExecutionId) return;
-    const eventEpoch = typeof event.epoch === "string" ? event.epoch : undefined;
-    const eventSequence = typeof event.sequence === "number" && event.sequence > 0
-      ? event.sequence
-      : undefined;
-    if (eventSequence !== undefined) {
-      const record = getRec(threadId);
-      const lastSequence = record.lastAgentEventSequence;
-      const epochChanged = eventEpoch !== undefined
-        && eventEpoch !== record.lastAgentEventEpoch;
-      if (!epochChanged && lastSequence !== undefined && eventSequence <= lastSequence) {
-        if (get().currentThreadId !== threadId) recordBackgroundEventDropped(threadId);
-        return;
-      }
-      patchRec(threadId, {
-        lastAgentEventSequence: eventSequence,
-        ...(eventEpoch !== undefined ? { lastAgentEventEpoch: eventEpoch } : {}),
-      });
-    }
-    const currentThreadId = get().currentThreadId;
-    // Before conversation hydration, no running IDs means events belong to the
-    // only known conversation. Once running sessions are known, null selection
-    // must keep background narrative deferred.
-    const isActiveThread = currentThreadId === threadId
-      || conversationResidency?.isDisplayConversationLeased(threadId) === true
-      || (currentThreadId === null && get().runningThreadIds.size === 0);
-    const isLifecycleExit = event.type === "turnComplete" || event.type === "ended" || event.type === "error";
-    const startsNewInstance = event.type === "turnStarted";
-
-    if (isLifecycleExit || startsNewInstance) {
-      // Lifecycle events can arrive in same frame as final text delta.
-      // Flush first so invalidation cannot discard text needed for persistence.
-      flushPendingTextDeltas();
-      if (startsNewInstance) invalidateDeferredNarrativeEvents(threadId);
-      if (isLifecycleExit && !isActiveThread) promoteDeferredNarrativeEvents(threadId);
-      if (isLifecycleExit) {
-        queueMicrotask(() => {
-          if (!get().runningThreadIds.has(threadId)
-            && !pendingTextDeltaByThread.has(threadId)
-            && !deferredNarrativeEventsByThread.has(threadId)) {
-            deferredNarrativeGenerations.delete(threadId);
-          }
-        });
-      }
-    }
-    if (startsNewInstance) {
-      threadHydrator.invalidatePermissionSnapshots(threadId);
-    }
-    if (isActiveThread && !startsNewInstance && !isLifecycleExit) {
-      promoteDeferredNarrativeEvents(threadId);
-    }
-
-    if (event.type !== "textDelta") {
-      flushPendingTextDeltas();
-    }
-
-    // Only evict the message cache on structural changes that add or modify
-    // persisted messages. Streaming deltas (textDelta, toolProgress) are
-    // ephemeral and don't change what loadMessages would return from the DB.
-    const isStructuralEvent =
-      event.type === "turnComplete" ||
-      event.type === "ended" ||
-      event.type === "error";
-    if (isStructuralEvent) {
-      conversationResidency.invalidateConversation(threadId);
-    }
-
-    // Helper: mark all prior incomplete tool calls as complete.
-    // The Claude Agent SDK handles tool execution internally and does not
-    // emit standalone "session.toolResult" events. So when a new event
-    // arrives that implies previous tools finished (new toolUse, message,
-    // delta, or turnComplete), we mark prior calls as done.
-    const markPriorToolCallsComplete = () => {
-      const calls = getRec(threadId).toolCalls;
-      if (!calls || !calls.some((tc) => !tc.isComplete)) return;
-      set((state) => {
-        const current = getThreadRecord(state.records, threadId).toolCalls;
-        const children = (agentId: string) =>
-          current.filter((c) => c.parentToolCallId === agentId);
-        const isAgentDone = (agentId: string) => {
-          const kids = children(agentId);
-          return kids.length > 0 && !kids.some((c) => !c.isComplete);
-        };
-
-        const updated = current.map((tc) => {
-          if (tc.isComplete) return tc;
-          if (tc.toolName === "Agent") {
-            const done = isAgentDone(tc.id);
-            return done ? { ...tc, isComplete: true } : tc;
-          }
-          return { ...tc, isComplete: true };
-        });
-        return { records: patchThreadRecord(state.records, threadId, { toolCalls: updated }) };
-      });
-    };
-
-    if (event.type !== "apiRetry" && getRec(threadId).apiRetry) {
-      patchRec(threadId, { apiRetry: undefined });
-    }
-
-    if (event.type === "goalUpdated") {
-      const goal = event.goal as GoalState | undefined;
-      if (goal) {
-        const openGoal = isGoalOpen(goal) ? goal : null;
-        patchRec(threadId, { goal: openGoal });
-      }
-      return;
-    }
-
-    if (event.type === "goalCleared") {
-      patchRec(threadId, { goal: null });
-      return;
-    }
-
-    if (event.type === "system") {
-      const subtype = event.subtype as string;
-      // Both subtypes render as the quiet system-message hairline chapter-break.
-      // `session_restarted`: the SDK silently restarted (lost in-memory context).
-      // `sdk_session_invalidated`: a poison-pill provider state forced a reset;
-      // the persisted sdk_session_id is cleared server-side so the next send
-      // starts fresh. Terse, technical copy; no apology, no vendor-blame.
-      const systemNotice =
-        subtype === "session_restarted"
-          ? "Session restarted. The agent no longer has context from earlier messages."
-          : subtype === "sdk_session_invalidated"
-            ? "Session reset. Earlier context cleared. Send again to continue."
-            : null;
-      if (systemNotice) {
-        const message: Message = {
-          id: crypto.randomUUID(),
-          thread_id: threadId,
-          role: "system",
-          content: systemNotice,
-          tool_calls: null,
-          files_changed: null,
-          cost_usd: null,
-          tokens_used: null,
-          timestamp: new Date().toISOString(),
-          sequence: messageSequenceFor(threadId),
-          attachments: null,
-        };
-        set((state) => {
-          const rec = getThreadRecord(state.records, threadId);
-          const { messages: capped, evicted } = capMessages([...rec.messages, message]);
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              messages: capped,
-              ...(evicted ? { hasMoreMessages: true } : {}),
-            }),
-          };
-        });
-      }
-      return;
-    }
-
-    if (event.type === "turnStarted") {
-      const fileEffectTurnId = typeof event.fileEffectTurnId === "string"
-        ? event.fileEffectTurnId
-        : "";
-      const currentState = get();
-      const currentRecord = getThreadRecord(currentState.records, threadId);
-      if (currentState.runningThreadIds.has(threadId)
-        && currentRecord.fileEffectTurnId === fileEffectTurnId) {
-        return;
-      }
-      clearStreamingTextUsage(threadId);
-      useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
-      set((state) => {
-        const rec = getThreadRecord(state.records, threadId);
-        return {
-          records: patchThreadRecord(state.records, threadId, {
-            agentStartTime: Date.now(),
-            turnExecutionId: incomingExecutionId ?? rec.turnExecutionId,
-            runtimePhase: "running",
-            fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
-            ...resetTurnEphemeral(rec),
-            fileEffectTurnId,
-            currentTurnResponseKey: createTurnResponseKey(threadId),
-          }),
-        };
-      });
-      // Clear interrupted status so the resume banner no longer lists this
-      // thread while the agent processes the continuation message.
-      useWorkspaceStore.setState((ws) => {
-        const idx = ws.threads.findIndex(
-          (t) => t.id === threadId && t.status === "interrupted",
-        );
-        if (idx < 0) return ws;
-        const threads = [...ws.threads];
-        threads[idx] = { ...threads[idx], status: "active" as const };
-        return { threads };
-      });
-      return;
-    }
-
-    if (event.type === "message") {
-      clearStreamingTextUsage(threadId);
-      markPriorToolCallsComplete();
-      const content = (event.content as string) || "";
-      const isGoalNotice = isGoalStatusNotice(content);
-      const attachments = parseStoredAttachments(event.attachments);
-      if (content || attachments.length > 0 || event.messageId) {
-        const message: Message = {
-          id: (event.messageId as string) || crypto.randomUUID(),
-          thread_id: threadId,
-          role: "assistant",
-          content,
-          tool_calls: null,
-          files_changed: null,
-          cost_usd: null,
-          tokens_used: (event.tokens as number) ?? null,
-          timestamp: new Date().toISOString(),
-          sequence: messageSequenceFor(threadId),
-          attachments: attachments.length > 0 ? attachments : null,
-          // Server injects the model after persisting; defaults to null when
-          // unknown (legacy clients, non-Claude providers without model info).
-          model: (event.model as string | null | undefined) ?? null,
-        };
-        set((state) => {
-          const rec = getThreadRecord(state.records, threadId);
-          const segments = rec.thoughtSegments;
-          const lastSeg = segments[segments.length - 1];
-          const closedSegments =
-            lastSeg && lastSeg.endedAt === undefined
-              ? [...segments.slice(0, -1), { ...lastSeg, endedAt: Date.now() }]
-              : segments;
-          const responseProjection = isGoalNotice
-            ? { messages: [...rec.messages, message] }
-            : projectTurnResponse(rec, message, event.messageId);
-          const transferredMetadata = transferTurnResponseMetadata(
-            rec,
-            responseProjection.replacedMessageId,
-            message.id,
-          );
-
-          const responseIdentityPatch: Partial<
-            Pick<
-              ThreadRecord,
-              "assistantResponseKeys" | "currentTurnMessageId" | "currentTurnResponseKey"
-            >
-          > = isGoalNotice
-            ? {}
-            : (() => {
-                const existingResponseKey = transferredMetadata.assistantResponseKeys[message.id];
-                const { responseKey, nextLiveKey } = existingResponseKey
-                  ? {
-                      responseKey: existingResponseKey,
-                      nextLiveKey: rec.currentTurnResponseKey || createTurnResponseKey(threadId),
-                    }
-                  : claimTurnResponseKey(rec, threadId, message.id);
-                return {
-                  currentTurnMessageId: message.id,
-                  currentTurnResponseKey: nextLiveKey,
-                  assistantResponseKeys: {
-                    ...transferredMetadata.assistantResponseKeys,
-                    [message.id]: responseKey,
-                  },
-                };
-              })();
-
-          const turnPatch = {
-            ...responseIdentityPatch,
-            streaming: "",
-            streamingPreview: "",
-            thoughtSegments: closedSegments,
-          };
-          const { messages: capped, evicted } = capMessages(responseProjection.messages);
-          const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
-            responseIdentityPatch.assistantResponseKeys ?? transferredMetadata.assistantResponseKeys,
-            capped,
-          );
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              ...turnPatch,
-              messages: capped,
-              persistedToolCallCounts: transferredMetadata.persistedToolCallCounts,
-              persistedFilesChanged: transferredMetadata.persistedFilesChanged,
-              serverMessageIds: event.messageId
-                ? { ...transferredMetadata.serverMessageIds, [message.id]: event.messageId }
-                : transferredMetadata.serverMessageIds,
-              narrativeByMessage: transferredMetadata.narrativeByMessage,
-              latestTurnWithChanges: transferredMetadata.latestTurnWithChanges,
-              pendingTurnPersistMessageIds: transferredMetadata.pendingTurnPersistMessageIds,
-              assistantResponseKeys: prunedAssistantResponseKeys,
-              ...(evicted ? { hasMoreMessages: true } : {}),
-            }),
-          };
-        });
-        conversationResidency.synchronizeConversation(threadId);
-      }
-      return;
-    }
-
-    if (event.type === "toolUse") {
-      // Background text stays deferred until its tool boundary arrives. Project
-      // that queued narrative first so toolUse closes the correct thought.
-      if (!isActiveThread) {
-        promoteDeferredNarrativeEvents(threadId);
-      }
-      const toolCallId = (event.toolCallId as string) || "";
-      const existingCalls = getRec(threadId).toolCalls;
-      const toolName = (event.toolName as string) || "unknown";
-      const incomingInput = (event.toolInput as Record<string, unknown>) || {};
-      const parentToolCallId = event.parentToolCallId as string | undefined;
-      const applyTodoWriteTasks = (
-        toolInput: Record<string, unknown>,
-        resolvedParentToolCallId: string | undefined,
-      ) => {
-        if (toolName !== "TodoWrite") return;
-        const todos = toolInput.todos as Array<Record<string, unknown>> | undefined;
-        if (!todos || !Array.isArray(todos)) return;
-
-        const group = resolvedParentToolCallId
-          ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
-          : "Tasks";
-
-        const taskItems: TaskItem[] = todos.map((t, i) => ({
-          id: t.id != null ? String(t.id) : String(i),
-          content: String(t.content ?? ""),
-          status: coerceTaskStatus(t.status),
-          group,
-        }));
-
-        useTaskStore.getState().setTaskGroup(threadId, group, taskItems);
-      };
-      const applyTaskCreate = (
-        toolInput: Record<string, unknown>,
-        resolvedParentToolCallId: string | undefined,
-      ) => {
-        if (toolName !== "TaskCreate") return;
-        const content = taskTextFromToolInput(toolInput);
-        if (!content) return;
-
-        const group = resolvedParentToolCallId
-          ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
-          : "Tasks";
-        const activeForm =
-          typeof toolInput.activeForm === "string" && toolInput.activeForm.trim().length > 0
-            ? toolInput.activeForm.trim()
-            : undefined;
-        const taskItem: TaskItem = {
-          id: toolCallId || String(toolInput.id ?? content),
-          content,
-          status: coerceTaskStatus(toolInput.status ?? "pending"),
-          group,
-          ...(activeForm !== undefined ? { activeForm } : {}),
-        };
-        const existingTasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
-        const groupTasks = existingTasks.filter((task) => task.group === group);
-        useTaskStore.getState().setTaskGroup(
-          threadId,
-          group,
-          [...groupTasks.filter((task) => task.id !== taskItem.id), taskItem],
-        );
-      };
-      const applyTaskUpdate = (
-        toolInput: Record<string, unknown>,
-        resolvedParentToolCallId: string | undefined,
-      ) => {
-        if (toolName !== "TaskUpdate") return;
-        const harnessTaskId = toolInput.taskId != null ? String(toolInput.taskId) : "";
-        if (!harnessTaskId) return;
-
-        const group = resolvedParentToolCallId
-          ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
-          : "Tasks";
-        const allTasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
-        // Prefer a task scoped to this group. Fall back to a global harnessTaskId
-        // match only when exactly one task carries the id, so an update still
-        // lands when the group cannot be resolved (e.g. the create's parent Agent
-        // call has been evicted from the buffer) without updating the wrong task
-        // on an ambiguous sub-agent collision.
-        const scoped = allTasks.find(
-          (t) => t.group === group && t.harnessTaskId === harnessTaskId,
-        );
-        const globalMatches = allTasks.filter((t) => t.harnessTaskId === harnessTaskId);
-        const target = scoped ?? (globalMatches.length === 1 ? globalMatches[0] : undefined);
-        if (!target) return;
-
-        const groupTasks = allTasks.filter((t) => t.group === target.group);
-        if (toolInput.status === "deleted") {
-          useTaskStore.getState().setTaskGroup(
-            threadId,
-            target.group,
-            groupTasks.filter((t) => t !== target),
-          );
-          return;
-        }
-
-        // Only `subject` maps to the displayed content. A description-only edit
-        // does not rewrite content, matching the server's persisted behavior.
-        const nextSubject =
-          typeof toolInput.subject === "string" && toolInput.subject.trim().length > 0
-            ? toolInput.subject.trim()
-            : undefined;
-        const nextActiveForm =
-          typeof toolInput.activeForm === "string" && toolInput.activeForm.trim().length > 0
-            ? toolInput.activeForm.trim()
-            : undefined;
-        const patched: TaskItem = {
-          ...target,
-          ...(toolInput.status !== undefined ? { status: coerceTaskStatus(toolInput.status) } : {}),
-          ...(nextSubject ? { content: nextSubject } : {}),
-          ...(nextActiveForm !== undefined ? { activeForm: nextActiveForm } : {}),
-        };
-        useTaskStore.getState().setTaskGroup(
-          threadId,
-          target.group,
-          groupTasks.map((t) => (t === target ? patched : t)),
-        );
-      };
-      const applyUpdatePlanTasks = (
-        toolInput: Record<string, unknown>,
-        resolvedParentToolCallId: string | undefined,
-      ) => {
-        if (toolName !== "update_plan") return;
-        const group = resolvedParentToolCallId
-          ? resolveAgentGroupLabel(existingCalls, resolvedParentToolCallId)
-          : "Tasks";
-        const taskItems = updatePlanTasksFromToolInput(toolInput).map((task) => ({ ...task, group }));
-        if (taskItems.length === 0) return;
-
-        useTaskStore.getState().setTaskGroup(threadId, group, taskItems);
-      };
-      if (toolCallId) {
-        const existing = existingCalls.find((tc) => tc.id === toolCallId);
-        if (existing) {
-          // Providers may emit a sparse running ToolUse first, then a richer
-          // ToolUse with the same id when the completion payload arrives.
-          const isAgentEnrichment = existing.toolName === "Agent" && toolName === "Agent";
-          const shouldMergeDuplicate = isAgentEnrichment || (
-            !existing.isComplete && (
-              Object.keys(existing.toolInput ?? {}).length === 0
-              || existing.toolName !== toolName
-            ));
-          if (shouldMergeDuplicate) {
-            const mergedInput = { ...existing.toolInput, ...incomingInput };
-            const incomingPresentation = event.subagentPresentation
-              ?? (toolName === "Agent" ? createSubagentPresentation(incomingInput, toolCallId) : undefined);
-            const subagentPresentation = incomingPresentation
-              ? mergeSubagentPresentation(existing.subagentPresentation, incomingPresentation, toolCallId)
-              : existing.subagentPresentation;
-            const resolvedParentToolCallId = existing.parentToolCallId ?? parentToolCallId;
-            set((state) => {
-              const calls = getThreadRecord(state.records, threadId).toolCalls;
-              const updated = calls.map((tc) =>
-                tc.id === toolCallId
-                  ? {
-                      ...tc,
-                      toolName,
-                      toolInput: mergedInput,
-                      subagentPresentation,
-                      parentToolCallId: tc.parentToolCallId ?? resolvedParentToolCallId,
-                    }
-                  : tc,
-              );
-              return { records: patchThreadRecord(state.records, threadId, { toolCalls: updated }) };
-            });
-            applyTodoWriteTasks(mergedInput, resolvedParentToolCallId);
-            applyTaskCreate(mergedInput, resolvedParentToolCallId);
-            applyTaskUpdate(mergedInput, resolvedParentToolCallId);
-            applyUpdatePlanTasks(mergedInput, resolvedParentToolCallId);
-          }
-          return;
-        }
-      }
-
-      // Only mark prior tool calls complete if this isn't a subagent's tool call
-      // (subagent calls should not mark the parent Agent call as complete)
-      if (!parentToolCallId) {
-        markPriorToolCallsComplete();
-      }
-      // Intercept task tool calls to populate the task panel.
-      // Sub-agent calls are grouped by their parent Agent's description so
-      // multiple sub-agents each get their own collapsible section.
-      applyTodoWriteTasks(incomingInput, parentToolCallId);
-      applyTaskCreate(incomingInput, parentToolCallId);
-      applyTaskUpdate(incomingInput, parentToolCallId);
-      applyUpdatePlanTasks(incomingInput, parentToolCallId);
-
-      const resolvedToolCallId = toolCallId || crypto.randomUUID();
-      const toolCall: ToolCall = {
-        id: resolvedToolCallId,
-        toolName,
-        toolInput: incomingInput,
-        ...(toolName === "Agent"
-          ? {
-              subagentPresentation: event.subagentPresentation
-                ?? createSubagentPresentation(incomingInput, resolvedToolCallId),
-            }
-          : {}),
-        output: null,
-        isError: false,
-        isComplete: false,
-        parentToolCallId: parentToolCallId || undefined,
-        startedAt: Date.now(),
-        lastActivityAt: Date.now(),
-      };
-      set((state) => {
-        const rec = getThreadRecord(state.records, threadId);
-        const segments = rec.thoughtSegments;
-        const last = segments[segments.length - 1];
-        const froze = last && last.endedAt === undefined;
-        const nextSegments = froze
-          ? [...segments.slice(0, -1), { ...last, endedAt: Date.now() }]
-          : segments;
-        return {
-          records: patchThreadRecord(state.records, threadId, {
-            toolCalls: [...rec.toolCalls, toolCall],
-            thoughtSegments: nextSegments,
-          }),
-        };
-      });
-      return;
-    }
-
-    if (event.type === "toolResult") {
-      const toolCallId = (event.toolCallId as string) || "";
-      const output = (event.output as string) || "";
-      const isError = (event.isError as boolean) || false;
-      const exitCode =
-        typeof event.exitCode === "number" && Number.isInteger(event.exitCode)
-          ? event.exitCode
-          : undefined;
-      const outputTruncated = event.outputTruncated === true;
-      const outputTotalBytes =
-        typeof event.outputTotalBytes === "number" && Number.isFinite(event.outputTotalBytes)
-          ? event.outputTotalBytes
-          : undefined;
-      const outputArtifactPath =
-        typeof event.outputArtifactPath === "string" && event.outputArtifactPath.length > 0
-          ? event.outputArtifactPath
-          : undefined;
-      const rawToolInput = event.toolInput;
-      const incomingInput =
-        rawToolInput && typeof rawToolInput === "object" && !Array.isArray(rawToolInput)
-          ? rawToolInput as Record<string, unknown>
-          : {};
-      // The harness only reveals its task id in the TaskCreate result, so capture
-      // it here onto the task the create produced. Later TaskUpdate calls correlate
-      // by this id; without it status transitions and deletions never land.
-      const resultCall = toolCallId
-        ? getRec(threadId).toolCalls.find((tc) => tc.id === toolCallId)
-        : undefined;
-      if (resultCall?.toolName === "TaskCreate" && !isError) {
-        const harnessTaskId = parseHarnessTaskId(output);
-        if (harnessTaskId) {
-          const allTasks = useTaskStore.getState().tasksByThread[threadId] ?? [];
-          const target = allTasks.find((t) => t.id === toolCallId);
-          if (target && target.harnessTaskId !== harnessTaskId) {
-            useTaskStore.getState().setTaskGroup(
-              threadId,
-              target.group,
-              allTasks
-                .filter((t) => t.group === target.group)
-                .map((t) => (t.id === toolCallId ? { ...t, harnessTaskId } : t)),
-            );
-          }
-        }
-      }
-      set((state) => {
-        const calls = getThreadRecord(state.records, threadId).toolCalls;
-        // Try matching by ID first; fall back to the first incomplete tool call
-        // when the SDK sends a null or non-matching toolCallId.
-        const hasIdMatch = toolCallId && calls.some((tc) => tc.id === toolCallId);
-
-        // Fallback: pick the first incomplete call, but never pick an Agent call
-        // that has active children — completing it prematurely would hide nested work.
-        const hasActiveChildren = (id: string) =>
-          calls.some((c) => c.parentToolCallId === id && !c.isComplete);
-        let matched = false;
-        const completeCall = (tc: ToolCall): ToolCall => {
-          const mergedInput = { ...tc.toolInput, ...incomingInput };
-          const subagentPresentation = event.subagentPresentation
-            ? mergeSubagentPresentation(tc.subagentPresentation, event.subagentPresentation, tc.id)
-            : tc.subagentPresentation;
-          const fromInput = mergedInput.durationMs;
-          const durationMs =
-            typeof fromInput === "number" && Number.isFinite(fromInput)
-              ? fromInput
-              : tc.startedAt != null
-                ? Math.max(0, Date.now() - tc.startedAt)
-                : undefined;
-          return {
-            ...tc,
-            toolInput: mergedInput,
-            subagentPresentation,
-            output,
-            isError,
-            isComplete: true,
-            lastActivityAt: Date.now(),
-            ...(outputTruncated ? { outputTruncated: true } : {}),
-            ...(outputTotalBytes != null ? { outputTotalBytes } : {}),
-            ...(outputArtifactPath ? { outputArtifactPath } : {}),
-            ...(durationMs != null ? { durationMs } : {}),
-            ...(exitCode !== undefined ? { exitCode } : {}),
-          };
-        };
-        const updated = hasIdMatch
-          ? calls.map((tc) => (tc.id === toolCallId ? completeCall(tc) : tc))
-          : calls.map((tc) => {
-              if (!matched && !tc.isComplete && !(tc.toolName === "Agent" && hasActiveChildren(tc.id))) {
-                matched = true;
-                return completeCall(tc);
-              }
-              return tc;
-            });
-
-        return { records: patchThreadRecord(state.records, threadId, { toolCalls: updated }) };
-      });
-      return;
-    }
-
-    // session.textDelta: accumulate streaming text for live preview and finalization.
-    if (event.type === "textDelta") {
-      const delta = (event.delta as string) || "";
-      if (!delta) return;
-      const rawIsFinalResponse = event.isFinalResponse;
-      const isFinalResponse =
-        typeof rawIsFinalResponse === "boolean" ? rawIsFinalResponse : undefined;
-      const deferNarrative = !isActiveThread;
-      const hadPending = pendingTextDeltaByThread.has(threadId);
-      const existing = pendingTextDeltaByThread.get(threadId) ?? [];
-      const next = [...existing];
-      const tail = next[next.length - 1];
-      if (
-        tail
-        && tail.isFinalResponse === isFinalResponse
-        && tail.deferNarrative === deferNarrative
-      ) {
-        next[next.length - 1] = {
-          delta: tail.delta + delta,
-          isFinalResponse,
-          deferNarrative,
-        };
-      } else {
-        next.push({ delta, isFinalResponse, deferNarrative });
-      }
-      pendingTextDeltaByThread.set(threadId, next);
-      if (!isActiveThread) {
-        queueDeferredNarrativeEvent(threadId, event);
-      }
-      if (!deferNarrative && (!hadPending || existing.some((chunk) => chunk.deferNarrative))) {
-        markPriorToolCallsComplete();
-      }
-      scheduleTextDeltaFlush();
-      return;
-    }
-
-    if (event.type === "assistantMessageBoundary") {
-      // Authoritative classification of the text deltas just streamed for this
-      // assistant message, derived from the Anthropic `stop_reason`.
-      //
-      // - isFinalResponse=true (end_turn, stop_sequence, max_tokens, refusal):
-      //   the streamed text was the assistant's final response, not a thought.
-      //   Drop the open thought segment so it does not render alongside the
-      //   forthcoming MessageBubble. The streaming buffer already holds the
-      //   text and will be cleared by `session.message`.
-      // - isFinalResponse=false (tool_use, pause_turn, anything else):
-      //   the streamed text was preamble. Close the open thought so the next
-      //   delta starts a fresh segment.
-      const isFinalResponse = event.isFinalResponse === true;
-      // Flush any pending text delta chunks first so the open thought we
-      // operate on reflects every delta that arrived for this message.
-      flushPendingTextDeltas();
-      if (!isActiveThread) {
-        queueDeferredNarrativeEvent(threadId, event);
-        return;
-      }
-      set((state) => {
-        const rec = getThreadRecord(state.records, threadId);
-        const nextSegments = projectAssistantMessageBoundary(rec.thoughtSegments, isFinalResponse);
-        if (!nextSegments) return state;
-        return {
-          records: patchThreadRecord(state.records, threadId, {
-            thoughtSegments: nextSegments,
-          }),
-        };
-      });
-      return;
-    }
-
-    if (event.type === "toolProgress") {
-      if (!isActiveThread) {
-        queueDeferredNarrativeEvent(threadId, event);
-        return;
-      }
-      const toolCallId = (event.toolCallId as string) || "";
-      const elapsedSeconds = (event.elapsedSeconds as number) ?? 0;
-      if (!toolCallId) return;
-      const lastActivityAt = Date.now();
-      set((state) => {
-        const current = getThreadRecord(state.records, threadId).toolCalls;
-        const updated = projectToolProgress(current, toolCallId, elapsedSeconds, lastActivityAt);
-        // Return same state reference when nothing changed — Zustand skips notification.
-        if (!updated) return state;
-        return { records: patchThreadRecord(state.records, threadId, { toolCalls: updated }) };
-      });
-      return;
-    }
-
-    if (event.type === "hookStarted") {
-      const hookName = (event.hookName as string) || "unknown";
-      const hookType = (event.hookType as "permission" | "stop") || "stop";
-      const toolName = event.toolName as string | undefined;
-      const hook: HookExecution = {
-        hookName,
-        hookType,
-        toolName,
-        status: "running",
-        outputLines: [],
-        fullOutput: [],
-        startedAt: Date.now(),
-      };
-      set((state) => ({
-        records: patchThreadRecord(state.records, threadId, {
-          hooks: [...getThreadRecord(state.records, threadId).hooks, hook],
-        }),
-      }));
-      return;
-    }
-
-    if (event.type === "hookProgress") {
-      const hookName = (event.hookName as string) || "";
-      const output = (event.output as string) || "";
-      if (!hookName || !output) return;
-      set((state) => {
-        const hooks = getThreadRecord(state.records, threadId).hooks;
-        // Target the last running hook with this name (not all same-name runs)
-        let idx = -1;
-        for (let i = hooks.length - 1; i >= 0; i--) {
-          if (hooks[i]!.hookName === hookName && hooks[i]!.status === "running") {
-            idx = i;
-            break;
-          }
-        }
-        if (idx < 0) return state;
-        // Split chunk into actual lines so the 20-line cap is line-based
-        const addedLines = output
-          .split(/\r?\n/)
-          .filter((line, i, arr) => !(i === arr.length - 1 && line === ""));
-        if (addedLines.length === 0) return state;
-        const next = [...hooks];
-        const target = next[idx]!;
-        // Cap retained output to prevent unbounded memory growth from verbose hooks
-        const raw = [...target.fullOutput, ...addedLines];
-        const fullOutput = raw.length > 500 ? raw.slice(-500) : raw;
-        next[idx] = { ...target, fullOutput, outputLines: fullOutput.slice(-20) };
-        return { records: patchThreadRecord(state.records, threadId, { hooks: next }) };
-      });
-      return;
-    }
-
-    if (event.type === "hookCompleted") {
-      const hookName = (event.hookName as string) || "";
-      const exitCode = (event.exitCode as number) ?? 1;
-      const durationMs = (event.durationMs as number) ?? 0;
-      const didBlock = (event.didBlock as boolean) ?? false;
-      const persistedMessageId = event.persistedMessageId as string | undefined;
-      const persistedHookId = event.persistedHookId as string | undefined;
-      if (!hookName) return;
-
-      // Late hooks (Stop/SessionEnd/PreCompact) arrive with persistedMessageId
-      // set by the server after `persistTurn` already ran. Route them into the
-      // persisted narrative cache so they render below the assistant bubble
-      // rather than appending to the volatile hooksByThread list (which is
-      // cleared on turn end and would not be visible).
-      if (persistedMessageId) {
-        set((state) => {
-          const rec = getThreadRecord(state.records, threadId);
-          const existing = rec.narrativeByMessage[persistedMessageId];
-          if (!existing) return state;
-          if (persistedHookId && existing.hooks.some((h) => h.id === persistedHookId)) {
-            return state;
-          }
-          const record = {
-            id: persistedHookId ?? crypto.randomUUID(),
-            message_id: persistedMessageId,
-            hook_name: hookName,
-            tool_name: null,
-            phase: "stop" as const,
-            payload: JSON.stringify({ hookType: "stop", toolName: null }),
-            duration_ms: durationMs,
-            did_block: didBlock,
-            started_at: new Date().toISOString(),
-            ended_at: new Date().toISOString(),
-            sort_order: (existing.hooks.length > 0
-              ? Math.max(...existing.hooks.map((h) => h.sort_order)) + 1
-              : 1000),
-          };
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              narrativeByMessage: {
-                ...rec.narrativeByMessage,
-                [persistedMessageId]: {
-                  ...existing,
-                  hooks: [...existing.hooks, record],
-                },
-              },
-            }),
-          };
-        });
-        return;
-      }
-
-      set((state) => {
-        const hooks = getThreadRecord(state.records, threadId).hooks;
-        // Target the last running hook with this name
-        let idx = -1;
-        for (let i = hooks.length - 1; i >= 0; i--) {
-          if (hooks[i]!.hookName === hookName && hooks[i]!.status === "running") {
-            idx = i;
-            break;
-          }
-        }
-        if (idx < 0) return state;
-        const next = [...hooks];
-        next[idx] = { ...next[idx]!, status: "completed" as const, exitCode, durationMs, didBlock };
-        return { records: patchThreadRecord(state.records, threadId, { hooks: next }) };
-      });
-      return;
-    }
-
-    if (event.type === "turnComplete" || event.type === "ended") {
-      if (!runtimeActive
-        || (incomingExecutionId && runtimeRecord.turnExecutionId !== incomingExecutionId)) return;
-      clearStreamingTextUsage(threadId);
-      useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(threadId);
-      const turnComplete = event.type === "turnComplete" ? event : undefined;
-      const costUsd = turnComplete?.costUsd ?? null;
-      const tokensIn = turnComplete?.tokensIn ?? 0;
-      const tokensOut = turnComplete?.tokensOut ?? 0;
-      const terminalPhase: ThreadRecord["runtimePhase"] = event.type === "turnComplete"
-        ? "completed"
-        : event.outcome === "completed"
-          ? "completed"
-          : event.outcome === "errored"
-            ? "errored"
-            : event.outcome === "cancelled"
-              ? "cancelled"
-              : "interrupted";
-      const terminalStatus: "completed" | "errored" | "interrupted" = terminalPhase === "completed"
-        ? "completed"
-        : terminalPhase === "errored"
-          ? "errored"
-          : "interrupted";
-
-      // Commit any remaining streaming content and stop the agent,
-      // Tool calls remain in-place and collapse into a summary.
-      const streamContent = getRec(threadId).streaming;
-
-      // Build an ephemeral system message for guardrail stops (budget/turn limit).
-      // Folded into the same set() call to avoid a double render pass.
-      const reason = turnComplete?.reason;
-      const isGuardrailStop = reason === "error_max_budget_usd" || reason === "max_turns";
-      const guardrailMsg: Message | null = isGuardrailStop ? {
-        id: crypto.randomUUID(),
-        thread_id: threadId,
-        role: "system",
-        content: `Agent stopped: ${reason === "error_max_budget_usd" ? "Budget cap reached" : "Max turns reached"}. You can adjust guardrails in Settings > Agent.`,
-        sequence: 0,
-        tokens_used: null,
-        cost_usd: null,
-        timestamp: new Date().toISOString(),
-        tool_calls: null,
-        files_changed: null,
-        attachments: null,
-      } : null;
-
-      // First: mark all tool calls as complete (in place) and commit the message
-      if (streamContent) {
-        const message: Message = {
-          id: crypto.randomUUID(),
-          thread_id: threadId,
-          role: "assistant",
-          content: streamContent,
-          tool_calls: null,
-          files_changed: null,
-          cost_usd: costUsd,
-          tokens_used: tokensIn + tokensOut || null,
-          timestamp: new Date().toISOString(),
-          sequence: messageSequenceFor(threadId),
-          attachments: null,
-        };
-        set((state) => {
-          const rec = getThreadRecord(state.records, threadId);
-          const segments = rec.thoughtSegments;
-          const lastSeg = segments[segments.length - 1];
-          const closedSegments =
-            lastSeg && lastSeg.endedAt === undefined
-              ? [...segments.slice(0, -1), { ...lastSeg, endedAt: Date.now() }]
-              : segments;
-          const completedCalls = rec.toolCalls.map((tc) =>
-            tc.isComplete ? tc : { ...tc, isComplete: true },
-          );
-          const dedupedGuardrail =
-            guardrailMsg &&
-            !rec.messages.some(
-              (m) => m.role === "system" && m.content.startsWith("Agent stopped:"),
-            )
-              ? guardrailMsg
-              : null;
-          const pending = [message, ...(dedupedGuardrail ? [dedupedGuardrail] : [])];
-          const { responseKey, nextLiveKey } = claimTurnResponseKey(
-            rec,
-            threadId,
-            message.id,
-          );
-
-          const basePatch = {
-            streaming: "",
-            streamingPreview: "",
-            runtimePhase: terminalPhase,
-            currentTurnMessageId: message.id,
-            ...queuePendingTurnPersistMessage(rec, message.id),
-            currentTurnResponseKey: nextLiveKey,
-            assistantResponseKeys: {
-              ...rec.assistantResponseKeys,
-              [message.id]: responseKey,
-            },
-            thoughtSegments: closedSegments,
-            toolCalls: completedCalls,
-            permissions: [] as StoredPermission[],
-            rateLimit: undefined,
-          };
-
-          const { messages: capped, evicted } = capMessages([...rec.messages, ...pending]);
-          const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
-            basePatch.assistantResponseKeys,
-            capped,
-          );
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              ...basePatch,
-              messages: capped,
-              assistantResponseKeys: prunedAssistantResponseKeys,
-              ...(evicted ? { hasMoreMessages: true } : {}),
-            }),
-          };
-        });
-      } else {
-        set((state) => {
-          const rec = getThreadRecord(state.records, threadId);
-          const completedCalls = rec.toolCalls.map((tc) =>
-            tc.isComplete ? tc : { ...tc, isComplete: true },
-          );
-          const dedupedGuardrail =
-            guardrailMsg &&
-            !rec.messages.some(
-              (m) => m.role === "system" && m.content.startsWith("Agent stopped:"),
-            )
-              ? guardrailMsg
-              : null;
-
-          const basePatch = {
-            streaming: "",
-            streamingPreview: "",
-            runtimePhase: terminalPhase,
-            toolCalls: completedCalls,
-            permissions: [] as StoredPermission[],
-            rateLimit: undefined,
-            ...(rec.currentTurnMessageId
-              ? {
-                  ...queuePendingTurnPersistMessage(rec, rec.currentTurnMessageId),
-                }
-              : {}),
-          };
-
-          if (dedupedGuardrail) {
-            const { messages: capped, evicted } = capMessages([...rec.messages, dedupedGuardrail]);
-            return {
-              records: patchThreadRecord(state.records, threadId, {
-                ...basePatch,
-                messages: capped,
-                ...(evicted ? { hasMoreMessages: true } : {}),
-              }),
-            };
-          }
-
-          return {
-            records: patchThreadRecord(state.records, threadId, basePatch),
-          };
-        });
-      }
-      conversationResidency.retainInactiveConversation(threadId);
-
-      // Update context tracker. Prefer the SDK-reported contextWindow (authoritative)
-      // over the local registry. The DB is updated server-side; contextByThread is
-      // the live source within a session and loaded from thread.list on cold start.
-      //
-      // Skip context update if the thread is currently compacting. A turnComplete
-      // can fire during compaction (from the compaction API call itself) carrying
-      // the pre-compaction input token count, which would flash near-100% fill.
-      // Compaction cleanup (isCompactingByThread) is handled solely by the
-      // session.compacting handler to keep lifecycle management in one place.
-      if (tokensIn > 0 && !getRec(threadId).isCompacting) {
-        const sdkContextWindow = turnComplete?.contextWindow;
-        const totalProcessedTokens = turnComplete?.totalProcessedTokens;
-        // Prefer the actual model that ran (post-fallback) so context window
-        // sizing reflects Haiku's limits rather than the requested Opus model.
-        const fallback = getRec(threadId).lastFallback;
-        const thread = useWorkspaceStore.getState().threads.find((t) => t.id === threadId);
-        const modelId = fallback?.actualModel
-          ?? thread?.model
-          ?? "claude-sonnet-4-6";
-        // Effective mode chain: thread override > settings default > "200k".
-        // Uses get() (not state) because this runs outside the set() callback.
-        const settingsDefaults = useSettingsStore.getState().settings.model.defaults;
-        const effectiveMode: ContextWindowMode =
-          (thread?.context_window_mode as ContextWindowMode | null | undefined)
-          ?? settingsDefaults.contextWindow
-          ?? "200k";
-        const contextWindow = resolveContextWindow({
-          sdkContextWindow,
-          modelId,
-          contextWindowMode: effectiveMode,
-          previousContextWindow: getRec(threadId).context?.contextWindow,
-        });
-        set((state) => ({
-          records: patchThreadRecord(state.records, threadId, {
-            context: {
-              lastTokensIn: tokensIn,
-              contextWindow,
-              totalProcessedTokens,
-              tokensOut,
-              cacheReadTokens: turnComplete?.cacheReadTokens,
-              cacheWriteTokens: turnComplete?.cacheWriteTokens,
-              costMultiplier: turnComplete?.costMultiplier,
-            },
-          }),
-        }));
-      }
-
-      // Tool calls remain in state (all marked complete). They render as
-      // a collapsed summary in-place. When turn.persisted fires, the DB-backed
-      // summary replaces them and tool calls are cleared.
-
-      // Sync the thread's status in workspaceStore so the sidebar reflects the
-      // terminal outcome without waiting for a full thread reload.
-      // If the user is already viewing this thread, skip the badge and
-      // immediately mark viewed so the DB transitions to "paused".
-      const isActiveThread = useWorkspaceStore.getState().activeThreadId === threadId;
-      if (isActiveThread) {
-        getTransport().markThreadViewed(threadId).catch(() => {});
-      } else {
-        useWorkspaceStore.setState((ws) => ({
-          threads: ws.threads.map((t) =>
-            t.id === threadId ? { ...t, status: terminalStatus } : t,
-          ),
-        }));
-      }
-
-      // Auto-dequeue: send next queued message after a brief visual pause.
-      // Only on turnComplete (not session.ended) so explicit stops don't drain the queue.
-      // Uses tracked timers to prevent double-dequeue from duplicate events.
-      // Skip dequeue when a guardrail stopped the session to avoid restarting
-      // an agent that was intentionally capped by budget or turn limits.
-      if (event.type === "turnComplete" && !isGuardrailStop) {
-        if (hasPendingPlanQuestions(threadId)) return;
-        clearDequeueTimer(threadId);
-        const timer = setTimeout(() => {
-          dequeueTimers.delete(threadId);
-          // Guard: verify the thread still exists and isn't already running
-          const threadExists = useWorkspaceStore.getState().threads.some(
-            (t) => t.id === threadId && t.deleted_at == null,
-          );
-          if (!threadExists) return;
-          if (get().runningThreadIds.has(threadId)) return;
-
-          // Skip auto-drain while the user is editing a queued message.
-          // The queue will resume when the edit is saved or cancelled.
-          if (useQueueStore.getState().editingThreadId === threadId) return;
-          if (hasPendingPlanQuestions(threadId)) return;
-
-          const next = useQueueStore.getState().dequeueNext(threadId);
-          if (next) {
-            void (async (): Promise<void> => {
-              try {
-                await get().sendMessage(
-                  threadId,
-                  next.content,
-                  next.model,
-                  next.permissionMode,
-                  next.attachments.length > 0 ? next.attachments : undefined,
-                  next.displayContent,
-                  next.reasoningLevel,
-                  next.provider,
-                  next.copilotAgent,
-                  next.contextWindow,
-                  next.thinking,
-                  next.codexFastMode,
-                  next.replyToMessageId,
-                  next.quotedText,
-                  undefined,
-                  next.mentions,
-                  next.previewAnnotations,
-                  next.goalObjective,
-                  next.orchestrationMode,
-                );
-              } catch {
-                void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);
-              }
-            })();
-          }
-        }, 400);
-        dequeueTimers.set(threadId, timer);
-      }
-      return;
-    }
-
-    if (event.type === "quotaUpdate") {
-      const providerId = event.providerId as string;
-      const categories = Array.isArray(event.categories)
-        ? (event.categories as QuotaCategory[])
-        : [];
-      const billingMode = event.billingMode as ProviderBillingMode | undefined;
-      const sessionCostUsd = event.sessionCostUsd as number | undefined;
-      const serviceTier = event.serviceTier as "standard" | "priority" | "batch" | undefined;
-      const numTurns = event.numTurns as number | undefined;
-      const durationMs = event.durationMs as number | undefined;
-      if (providerId) {
-        const incoming: ProviderUsageInfo = {
-          providerId,
-          quotaCategories: categories,
-          billingMode,
-          sessionCostUsd,
-          serviceTier,
-          numTurns,
-          durationMs,
-          usageStatus: categories.length > 0 ? "ready" : "ready-empty",
-          fetchedAt: new Date().toISOString(),
-        };
-        const providerSnapshot = mergeProviderUsageSnapshot(
-          providerUsageSnapshots.get(providerId),
-          providerQuotaSnapshot(incoming),
-        );
-        providerUsageSnapshots.set(providerId, providerSnapshot);
-        set((state) => {
-          const rec = getThreadRecord(state.records, threadId);
-          const existing = rec.usageByProvider[providerId];
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              usageByProvider: {
-                ...rec.usageByProvider,
-                [providerId]: mergeThreadUsageSnapshot(existing, providerSnapshot, incoming),
-              },
-            }),
-          };
-        });
-        get().fetchProviderUsage(threadId, providerId);
-      }
-      return;
-    }
-
-    if (event.type === "contextEstimate") {
-      const tokensIn = event.tokensIn as number;
-      const ctxWindow = event.contextWindow as number | undefined;
-      // Only apply if not compacting — the compaction-start zero sentinel is
-      // authoritative while compaction is in progress.
-      if (tokensIn > 0 && !getRec(threadId).isCompacting) {
-        set((state) => {
-          const prev = getThreadRecord(state.records, threadId).context;
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              context: {
-                ...prev,
-                lastTokensIn: tokensIn,
-                contextWindow: ctxWindow ?? prev?.contextWindow,
-                totalProcessedTokens: prev?.totalProcessedTokens,
-              },
-            }),
-          };
-        });
-      }
-      return;
-    }
-
-    if (event.type === "rateLimited") {
-      const active = event.active as boolean;
-      patchRec(threadId, {
-        rateLimit: active
-          ? {
-              retryAfterMs: event.retryAfterMs as number | undefined,
-              limitType: event.limitType as string | undefined,
-              utilization: event.utilization as number | undefined,
-            }
-          : undefined,
-      });
-      return;
-    }
-
-    if (event.type === "apiRetry") {
-      patchRec(threadId, {
-        apiRetry: {
-          reason: event.reason as string,
-          attempt: event.attempt as number | undefined,
-          maxRetries: event.maxRetries as number | undefined,
-          delayMs: event.delayMs as number | undefined,
-        },
-      });
-      return;
-    }
-
-    if (event.type === "compacting") {
-      const active = event.active as boolean;
-      if (!active) {
-        const wasCompacting = getRec(threadId).isCompacting;
-        if (wasCompacting) {
-          const systemMsg: Message = {
-            id: crypto.randomUUID(),
-            thread_id: threadId,
-            role: "system",
-            content: "Context compacted",
-            sequence: messageSequenceFor(threadId),
-            timestamp: new Date().toISOString(),
-            tool_calls: null,
-            files_changed: null,
-            cost_usd: null,
-            tokens_used: null,
-            attachments: null,
-          };
-          patchRec(threadId, (rec) => {
-            const { messages: capped, evicted } = capMessages([...rec.messages, systemMsg]);
-            return {
-              messages: capped,
-              ...(evicted ? { hasMoreMessages: true } : {}),
-            };
-          });
-        }
-      }
-      set((state) => {
-        const rec = getThreadRecord(state.records, threadId);
-        const prev = rec.context;
-        return {
-          records: patchThreadRecord(state.records, threadId, {
-            isCompacting: active,
-            ...(active
-              ? {
-                  context: {
-                    ...prev,
-                    lastTokensIn: 0,
-                    contextWindow: prev?.contextWindow,
-                    totalProcessedTokens: prev?.totalProcessedTokens,
-                  },
-                }
-              : {}),
-          }),
-        };
-      });
-      return;
-    }
-
-    if (event.type === "modelFallback") {
-      const requestedModel = event.requestedModel as string;
-      const actualModel = event.actualModel as string;
-
-      const actualDefinition = findModelById(actualModel);
-      const normalizedActual = actualDefinition?.id ?? actualModel;
-
-      patchRec(threadId, {
-        lastFallback: { requestedModel, actualModel: normalizedActual },
-      });
-
-      // Only notify the user if they are viewing this thread
-      if (useWorkspaceStore.getState().activeThreadId === threadId) {
-        const actualLabel = actualDefinition?.label ?? normalizedActual;
-        const requestedLabel = findModelById(requestedModel)?.label ?? requestedModel;
-        useToastStore.getState().show(
-          "info",
-          `Switched to ${actualLabel}`,
-          `${requestedLabel} was unavailable`,
-        );
-      }
-      return;
-    }
-
-    if (event.type === "error") {
-      if (!runtimeActive
-        || (incomingExecutionId && runtimeRecord.turnExecutionId !== incomingExecutionId)) return;
-      clearStreamingTextUsage(threadId);
-      const errorMsg = typeof event.error === "string" ? event.error : String(event.error ?? "Unknown error");
-      const errorMessage: Message = {
-        id: crypto.randomUUID(),
-        thread_id: threadId,
-        role: "system",
-        content: JSON.stringify({ __type: "agent_error", message: errorMsg }),
-        tool_calls: null,
-        files_changed: null,
-        cost_usd: null,
-        tokens_used: null,
-        timestamp: new Date().toISOString(),
-        sequence: messageSequenceFor(threadId),
-        attachments: null,
-      };
-      set((state) => {
-        const rec = getThreadRecord(state.records, threadId);
-        const basePatch = {
-          error: errorMsg,
-          runtimePhase: "errored" as const,
-          streaming: "",
-          streamingPreview: "",
-          agentStartTime: undefined,
-          currentTurnMessageId: "",
-          currentTurnResponseKey: "",
-          toolCalls: [] as ToolCall[],
-          isCompacting: false,
-          rateLimit: undefined,
-          apiRetry: undefined,
-        };
-        const { messages: capped, evicted } = capMessages([...rec.messages, errorMessage]);
-        return {
-          records: patchThreadRecord(state.records, threadId, {
-            ...basePatch,
-            messages: capped,
-            ...(evicted ? { hasMoreMessages: true } : {}),
-          }),
-        };
-      });
-
-      // Clear any pending dequeue timer and queue for this thread on error
-      clearDequeueTimer(threadId);
-      useQueueStore.getState().clearQueue(threadId);
-
-      // Sync the thread's status in workspaceStore so the sidebar shows
-      // the red "Errored" badge without waiting for a full thread reload.
-      useWorkspaceStore.setState((ws) => ({
-        threads: ws.threads.map((t) =>
-          t.id === threadId ? { ...t, status: "errored" as const } : t,
-        ),
-      }));
-      return;
-    }
-
-    if (event.type === "mcpServerStartupStatus") {
-      if (
-        event.status === "failed"
-        && useWorkspaceStore.getState().activeThreadId === threadId
-      ) {
-        const reason = event.error || event.failureReason || "Startup failed";
-        useToastStore.getState().show(
-          "error",
-          "MCP server unavailable",
-          `The turn will continue without it. ${event.name}: ${reason}`,
-        );
-      }
-      return;
-    }
-
-    // These event types are either consumed server-side or have no thread
-    // conversation effect in the current web client.
-    if (
-      event.type === "generatedAttachment" ||
-      event.type === "compactSummary" ||
-      event.type === "toolInputDelta" ||
-      event.type === "providerUnavailable"
-    ) {
-      return;
-    }
-
-    const unsupportedEvent: never = event;
-    void unsupportedEvent;
-
+    if (!hasAgentEventHandler(agentEventHandlers, event)) return;
+    const runtime = prepareAgentEvent({
+      clearApiRetry: (id) => patchRec(id, { apiRetry: undefined }),
+      flushPendingTextDeltas,
+      getCurrentThreadId: () => get().currentThreadId,
+      getRecord: getRec,
+      getRunningThreadIds: () => get().runningThreadIds,
+      invalidateConversation: (id) => conversationResidency.invalidateConversation(id),
+      invalidateDeferredNarrativeEvents,
+      invalidatePermissionSnapshots: (id) => threadHydrator.invalidatePermissionSnapshots(id),
+      isDisplayConversationLeased: (id) => conversationResidency.isDisplayConversationLeased(id),
+      patchRecord: patchRec,
+      promoteDeferredNarrativeEvents,
+      recordBackgroundEventDropped,
+      scheduleDeferredNarrativeCleanup,
+    }, event);
+    if (!runtime) return;
+    dispatchAgentEvent(agentEventHandlers, event, runtime);
   },
-
   handleFileEffectsUpdated: (threadId, turnId, summary) => {
     set((state) => {
       const rec = getThreadRecord(state.records, threadId);
@@ -4160,66 +3453,12 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     conversationResidency.invalidateConversation(payload.threadId);
 
     set((state) => {
-      const rec = getThreadRecord(state.records, payload.threadId);
-      let interruptStopFileNotice = rec.interruptStopFileNotice;
-      let awaitingUserStopPersist = rec.awaitingUserStopPersist;
-      if (rec.awaitingUserStopPersist) {
-        awaitingUserStopPersist = undefined;
-        if (payload.filesChanged.length > 0) {
-          interruptStopFileNotice = { paths: payload.filesChanged };
-        }
-      }
-
-      const localMsgId = resolveTurnPersistLocalMessageId(rec, payload.messageId);
-      const ensuredMessages =
-        payload.filesChanged.length > 0 || payload.toolCallCount > 0
-          ? ensureAssistantMessageForTurnPersist(rec, payload.threadId, localMsgId)
-          : undefined;
-      const outcomeMessages = payload.outcome !== undefined
-        ? (ensuredMessages ?? rec.messages).map((message) => {
-            if (message.id !== localMsgId) return message;
-            return {
-              ...message,
-              outcome: payload.outcome,
-              ...(payload.executionId !== undefined
-                ? { outcomeExecutionId: payload.executionId }
-                : {}),
-            };
-          })
-        : undefined;
-      const ownsLiveFileEffects = payload.turnId != null
-        && payload.turnId === rec.fileEffectTurnId
-        && (localMsgId === rec.currentTurnMessageId
-          || rec.pendingTurnPersistMessageIds.includes(localMsgId));
       return {
-        records: patchThreadRecord(state.records, payload.threadId, {
-          ...(outcomeMessages ? { messages: outcomeMessages } : {}),
-          ...(outcomeMessages ? {} : ensuredMessages ? { messages: ensuredMessages } : {}),
-          persistedToolCallCounts: {
-            ...rec.persistedToolCallCounts,
-            [localMsgId]: payload.toolCallCount,
-          },
-          persistedFilesChanged: {
-            ...rec.persistedFilesChanged,
-            [localMsgId]: payload.filesChanged,
-          },
-          latestTurnWithChanges:
-            state.currentThreadId === payload.threadId
-              ? payload.filesChanged.length > 0 ? localMsgId : null
-              : rec.latestTurnWithChanges,
-          serverMessageIds: {
-            ...rec.serverMessageIds,
-            [localMsgId]: payload.messageId,
-          },
-          ...clearPendingTurnPersistMessage(rec, localMsgId),
-          interruptStopFileNotice,
-          awaitingUserStopPersist,
-          ...(payload.fileEffects
-            && ownsLiveFileEffects
-            && payload.fileEffects.revision >= rec.fileEffectSummary.revision
-            ? { fileEffectSummary: payload.fileEffects }
-            : {}),
-        }),
+        records: patchThreadRecord(
+          state.records,
+          payload.threadId,
+          projectPersistedTurn(getThreadRecord(state.records, payload.threadId), payload, state.currentThreadId),
+        ),
       };
     });
 

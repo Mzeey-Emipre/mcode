@@ -274,30 +274,36 @@ export function patchThreadRecord(
   const next = new Map(records);
   const current = getThreadRecord(records, threadId);
   const delta = typeof patch === "function" ? patch(current) : patch;
-  const advancesConversation = Object.keys(delta).some((key) =>
-    CONVERSATION_REVISION_FIELDS.has(key as keyof ThreadRecord)
-  );
-  const updated = {
-    ...current,
-    ...delta,
-    ...(delta.messages
-      ? {
-          oldestLoadedSequence:
-            delta.oldestLoadedSequence ?? delta.messages[0]?.sequence ?? 0,
-          newestLoadedSequence:
-            delta.newestLoadedSequence ?? delta.messages.at(-1)?.sequence ?? 0,
-        }
-      : {}),
-    conversationRevision: advancesConversation
-      ? current.conversationRevision + 1
-      : current.conversationRevision,
-  };
-  if (!("messages" in delta || "serverMessageIds" in delta || "pendingTurnPersistMessageIds" in delta)) {
+  const updated = updatedThreadRecord(current, delta);
+  if (!requiresMessageMetadataPruning(delta)) {
     next.set(threadId, updated);
     return next;
   }
+  next.set(threadId, withPrunedMessageMetadata(updated));
+  return next;
+}
+
+function updatedThreadRecord(current: ThreadRecord, delta: Partial<ThreadRecord>): ThreadRecord {
+  const messages = delta.messages;
+  const advancesConversation = Object.keys(delta).some((key) => CONVERSATION_REVISION_FIELDS.has(key as keyof ThreadRecord));
+  return {
+    ...current,
+    ...delta,
+    ...(messages ? {
+      oldestLoadedSequence: delta.oldestLoadedSequence ?? messages[0]?.sequence ?? 0,
+      newestLoadedSequence: delta.newestLoadedSequence ?? messages.at(-1)?.sequence ?? 0,
+    } : {}),
+    conversationRevision: advancesConversation ? current.conversationRevision + 1 : current.conversationRevision,
+  };
+}
+
+function requiresMessageMetadataPruning(delta: Partial<ThreadRecord>): boolean {
+  return ["messages", "serverMessageIds", "pendingTurnPersistMessageIds"].some((key) => key in delta);
+}
+
+function withPrunedMessageMetadata(updated: ThreadRecord): ThreadRecord {
   const retainedMessageIds = new Set(updated.messages.map((message) => message.id));
-  next.set(threadId, {
+  return {
     ...updated,
     serverMessageIds: Object.fromEntries(
       Object.entries(updated.serverMessageIds).filter(([messageId]) => retainedMessageIds.has(messageId)),
@@ -306,8 +312,7 @@ export function patchThreadRecord(
       updated.pendingTurnPersistMessageIds,
       updated.messages,
     ),
-  });
-  return next;
+  };
 }
 
 /** Retain pending persistence attribution only while its transcript row is resident. */

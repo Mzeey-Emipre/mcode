@@ -1,9 +1,9 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { execFileSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeChildProcess from "node:child_process";
 import { SnapshotService } from "../snapshot-service.js";
 import { RealGitExecutor } from "../../../git/execution/real-git-executor.js";
 
@@ -18,17 +18,17 @@ const GIT_OPERATION_TIMEOUT_MS = 30_000;
 
 /** Initializes a fresh git repo in a temp directory with one committed file. */
 function createGitRepo(): string {
-  const tmpDir = mkdtempSync(join(tmpdir(), "mcode-snap-test-"));
+  const tmpDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-snap-test-"));
 
-  execFileSync("git", ["-C", tmpDir, "init", "-b", "main"]);
-  execFileSync("git", ["-C", tmpDir, "config", "user.email", "test@mcode.test"]);
-  execFileSync("git", ["-C", tmpDir, "config", "user.name", "Mcode Test"]);
+  NodeChildProcess.execFileSync("git", ["-C", tmpDir, "init", "-b", "main"]);
+  NodeChildProcess.execFileSync("git", ["-C", tmpDir, "config", "user.email", "test@mcode.test"]);
+  NodeChildProcess.execFileSync("git", ["-C", tmpDir, "config", "user.name", "Mcode Test"]);
 
   // Create an initial file and commit so HEAD exists
-  writeFileSync(join(tmpDir, "existing.txt"), "line one\nline two\nline three\n");
-  execFileSync("git", ["-C", tmpDir, "add", "existing.txt"]);
-  const tree = execFileSync("git", ["-C", tmpDir, "write-tree"], { encoding: "utf8" }).trim();
-  const commit = execFileSync("git", ["-C", tmpDir, "commit-tree", tree, "-m", "initial commit"], {
+  NodeFS.writeFileSync(NodePath.join(tmpDir, "existing.txt"), "line one\nline two\nline three\n");
+  NodeChildProcess.execFileSync("git", ["-C", tmpDir, "add", "existing.txt"]);
+  const tree = NodeChildProcess.execFileSync("git", ["-C", tmpDir, "write-tree"], { encoding: "utf8" }).trim();
+  const commit = NodeChildProcess.execFileSync("git", ["-C", tmpDir, "commit-tree", tree, "-m", "initial commit"], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -38,18 +38,18 @@ function createGitRepo(): string {
       GIT_COMMITTER_EMAIL: "test@mcode.test",
     },
   }).trim();
-  execFileSync("git", ["-C", tmpDir, "update-ref", "refs/heads/main", commit]);
+  NodeChildProcess.execFileSync("git", ["-C", tmpDir, "update-ref", "refs/heads/main", commit]);
 
   return tmpDir;
 }
 
 /** Initializes a fresh git repo with no commits (unborn HEAD). */
 function createUnbornRepo(): string {
-  const tmpDir = mkdtempSync(join(tmpdir(), "mcode-snap-unborn-"));
+  const tmpDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-snap-unborn-"));
 
-  execFileSync("git", ["-C", tmpDir, "init", "-b", "main"]);
-  execFileSync("git", ["-C", tmpDir, "config", "user.email", "test@mcode.test"]);
-  execFileSync("git", ["-C", tmpDir, "config", "user.name", "Mcode Test"]);
+  NodeChildProcess.execFileSync("git", ["-C", tmpDir, "init", "-b", "main"]);
+  NodeChildProcess.execFileSync("git", ["-C", tmpDir, "config", "user.email", "test@mcode.test"]);
+  NodeChildProcess.execFileSync("git", ["-C", tmpDir, "config", "user.name", "Mcode Test"]);
 
   return tmpDir;
 }
@@ -64,13 +64,13 @@ describe("SnapshotService integration", () => {
   }, GIT_REPO_SETUP_TIMEOUT_MS);
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+    NodeFS.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("new untracked files appear in getFilesChanged", async () => {
     const refBefore = await service.captureRef(tmpDir);
 
-    writeFileSync(join(tmpDir, "newfile.ts"), 'export const x = 1;\n');
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "newfile.ts"), 'export const x = 1;\n');
 
     const refAfter = await service.captureRef(tmpDir);
 
@@ -83,7 +83,7 @@ describe("SnapshotService integration", () => {
   it("modified tracked files appear in getFilesChanged", async () => {
     const refBefore = await service.captureRef(tmpDir);
 
-    writeFileSync(join(tmpDir, "existing.txt"), "line one\nline two\nline three\nline four\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "existing.txt"), "line one\nline two\nline three\nline four\n");
 
     const refAfter = await service.captureRef(tmpDir);
 
@@ -96,8 +96,8 @@ describe("SnapshotService integration", () => {
   it("both new and modified files appear in getFilesChanged", async () => {
     const refBefore = await service.captureRef(tmpDir);
 
-    writeFileSync(join(tmpDir, "existing.txt"), "line one\nline two\nline three\nmodified\n");
-    writeFileSync(join(tmpDir, "brand-new.ts"), "export const brand = 'new';\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "existing.txt"), "line one\nline two\nline three\nmodified\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "brand-new.ts"), "export const brand = 'new';\n");
 
     const refAfter = await service.captureRef(tmpDir);
 
@@ -122,7 +122,7 @@ describe("SnapshotService integration", () => {
   it("getDiff includes new file content", async () => {
     const refBefore = await service.captureRef(tmpDir);
 
-    writeFileSync(join(tmpDir, "hello.ts"), "export function hello() {\n  return 'world';\n}\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "hello.ts"), "export function hello() {\n  return 'world';\n}\n");
 
     const refAfter = await service.captureRef(tmpDir);
 
@@ -139,7 +139,7 @@ describe("SnapshotService integration", () => {
 
     const refBefore = await service.captureRef(tmpDir);
 
-    writeFileSync(join(tmpDir, "counted.txt"), newFileContent);
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "counted.txt"), newFileContent);
 
     const refAfter = await service.captureRef(tmpDir);
 
@@ -153,8 +153,8 @@ describe("SnapshotService integration", () => {
 
   it("scopes historical diffs and stats to attributed paths", async () => {
     const refBefore = await service.captureRef(tmpDir);
-    writeFileSync(join(tmpDir, "authored.txt"), "agent change\n");
-    writeFileSync(join(tmpDir, "unrelated.txt"), "git pull change\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "authored.txt"), "agent change\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "unrelated.txt"), "git pull change\n");
     const refAfter = await service.captureRef(tmpDir);
 
     const diff = await service.getDiff(
@@ -174,7 +174,7 @@ describe("SnapshotService integration", () => {
 
   it("keeps both sides of a rename when opening the renamed file", async () => {
     const refBefore = await service.captureRef(tmpDir);
-    renameSync(join(tmpDir, "existing.txt"), join(tmpDir, "renamed.txt"));
+    NodeFS.renameSync(NodePath.join(tmpDir, "existing.txt"), NodePath.join(tmpDir, "renamed.txt"));
     const refAfter = await service.captureRef(tmpDir);
 
     const diff = await service.getDiff(
@@ -195,9 +195,9 @@ describe("SnapshotService integration", () => {
   it("gitignored files are excluded from getFilesChanged", async () => {
     const refBefore = await service.captureRef(tmpDir);
 
-    writeFileSync(join(tmpDir, ".gitignore"), "*.log\n");
-    writeFileSync(join(tmpDir, "debug.log"), "some debug output\n");
-    writeFileSync(join(tmpDir, "visible.txt"), "this file should appear\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, ".gitignore"), "*.log\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "debug.log"), "some debug output\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "visible.txt"), "this file should appear\n");
 
     const refAfter = await service.captureRef(tmpDir);
 
@@ -220,11 +220,11 @@ describe("SnapshotService integration - unborn repo", () => {
   }, GIT_OPERATION_TIMEOUT_MS);
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+    NodeFS.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("captures files in a repo with no commits", async () => {
-    writeFileSync(join(tmpDir, "first.ts"), "export const first = true;\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "first.ts"), "export const first = true;\n");
 
     const ref = await service.captureRef(tmpDir);
 
@@ -236,7 +236,7 @@ describe("SnapshotService integration - unborn repo", () => {
   it("detects new files between snapshots in unborn repo", async () => {
     const refBefore = await service.captureRef(tmpDir);
 
-    writeFileSync(join(tmpDir, "hello.ts"), "export const hello = 'world';\n");
+    NodeFS.writeFileSync(NodePath.join(tmpDir, "hello.ts"), "export const hello = 'world';\n");
 
     const refAfter = await service.captureRef(tmpDir);
 

@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -209,7 +209,7 @@ describe("ReviewWorktreeService", () => {
       "feature/review",
     );
     reviewLinkRepo.insert({
-      worktreeId: randomUUID(),
+      worktreeId: NodeCrypto.randomUUID(),
       provider: "github",
       repositoryNodeId: identity.repositoryNodeId,
       pullRequestNumber: identity.number,
@@ -259,7 +259,7 @@ describe("ReviewWorktreeService", () => {
     threadRepo.updateWorktreePath(thread.id, "C:/managed/review-42");
     threadRepo.updatePr(thread.id, 42, "OPEN");
     const link = reviewLinkRepo.insert({
-      worktreeId: randomUUID(),
+      worktreeId: NodeCrypto.randomUUID(),
       provider: "github",
       repositoryNodeId: identity.repositoryNodeId,
       pullRequestNumber: identity.number,

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useRef, useCallback, useEffect, useMemo } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord, getThreadRecord, getHandoffStatus } from "../state";
 import { useWorkspaceThread } from "@/features/projects/state/workspace-selectors";
@@ -41,7 +41,10 @@ import { useComposerFormController } from "./draft/useComposerFormController";
 import { useComposerExecutionTarget } from "./execution/useComposerExecutionTarget";
 import { useComposerAgentControlState } from "./controls/useComposerAgentControlState";
 import { useComposerQueueController } from "./submission/useComposerQueueController";
-import { useComposerSubmissionController } from "./submission/useComposerSubmissionController";
+import {
+  useComposerSubmissionController,
+  type PendingCheckoutConfirmation,
+} from "./submission/useComposerSubmissionController";
 import { ComposerContentSurface } from "./ComposerContentSurface";
 import { ComposerStatusStrip } from "./ComposerStatusStrip";
 import { useComposerSurfaceState } from "./useComposerSurfaceState";
@@ -120,6 +123,70 @@ function handleSlashPopupKey(
 
 function showComposerOptionsInline(composerWidth: number): boolean {
   return composerWidth === 0 || composerWidth >= 640;
+}
+
+function resetPendingGoal(
+  activeGoal: Parameters<typeof isGoalOpen>[0],
+  goalPending: boolean,
+  setGoalPending: (value: boolean) => void,
+): void {
+  if (isGoalOpen(activeGoal) && goalPending) setGoalPending(false);
+}
+
+function ComposerTopFade({ isNewThread }: { isNewThread: boolean | undefined }) {
+  if (isNewThread) return null;
+  return <div className="pointer-events-none absolute inset-x-0 -top-3 h-3 bg-gradient-to-t from-background/70 to-transparent" />;
+}
+
+function ComposerQueueToast({ toast }: { toast: string | null }) {
+  if (!toast) return null;
+  return (
+    <div className="pointer-events-none absolute -top-8 right-4 z-20 flex items-center gap-1.5 rounded-full bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-sm ring-1 ring-border/50 backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-150">
+      <Check size={10} className="text-primary" />
+      {toast}
+    </div>
+  );
+}
+
+function ComposerCheckoutDialog({
+  pending,
+  confirming,
+  onCancel,
+  onConfirm,
+}: {
+  pending: PendingCheckoutConfirmation | null;
+  confirming: boolean;
+  onCancel(): void;
+  onConfirm(): void;
+}) {
+  const description = pending
+    ? `You're on "${pending.currentBranch}" but selected "${pending.targetBranch}". Switch to "${pending.targetBranch}" before starting the thread?`
+    : "";
+  const confirmLabel = confirming ? "Switching..." : "Switch and send";
+
+  return (
+    <Dialog
+      open={pending !== null}
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Switch branch?</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" disabled={confirming} />}>
+            Cancel
+          </DialogClose>
+          <Button onClick={onConfirm} disabled={confirming}>
+            {confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 interface ComposerProps {
@@ -275,10 +342,9 @@ export function Composer({
     }
   }, [planPanelOpen, threadId]);
   const editorContainerRef = useRef<HTMLDivElement>(null);
-  const [filePopupAnchorRect, setFilePopupAnchorRect] = useState<DOMRect | null>(null);
   const handleAttachmentDrop = useCallback((event: React.DragEvent) => {
     if (handleDrop(event)) editorRef.current?.focus();
-  }, [handleDrop]);
+  }, [editorRef, handleDrop]);
 
 
   const stopAgent = useThreadStore((s) => s.stopAgent);
@@ -332,9 +398,7 @@ export function Composer({
     focusEditor,
   });
 
-  useEffect(() => {
-    if (isGoalOpen(activeGoal)) setGoalPending(false);
-  }, [activeGoal]);
+  resetPendingGoal(activeGoal, goalPending, setGoalPending);
 
   const activeProviderId = activeThread?.provider ?? "claude";
   const usageInfo = useThreadRecord(threadId, (r) => r.usageByProvider[activeProviderId]);
@@ -352,7 +416,7 @@ export function Composer({
     const editor = editorRef.current;
     if (!editor) return;
     insertMentionNode(editor, createMentionNodeData(item), fileAutocomplete.triggerStart, fileAutocomplete.query.length);
-  }, [fileAutocomplete]);
+  }, [editorRef, fileAutocomplete]);
 
   const filePopup = useFileTagPopup({
     items: fileAutocomplete.suggestions,
@@ -362,13 +426,9 @@ export function Composer({
     onDismiss: fileAutocomplete.dismiss,
   });
 
-  useEffect(() => {
-    if (!fileAutocomplete.isOpen) {
-      setFilePopupAnchorRect(null);
-      return;
-    }
-    setFilePopupAnchorRect(composerContainerRef.current?.getBoundingClientRect() ?? null);
-  }, [fileAutocomplete.isOpen]);
+  const filePopupAnchorRect = fileAutocomplete.isOpen
+    ? composerContainerRef.current?.getBoundingClientRect() ?? null
+    : null;
 
 
   const slashCommand = useSlashCommand({
@@ -501,7 +561,7 @@ export function Composer({
         insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace, cmd.identity);
       }
     }
-  }, [slashCommand]);
+  }, [editorRef, slashCommand]);
 
   // Unified popup keyboard handler for Lexical's KeyboardPlugin.
   // Delegates to the file tag popup or slash command popup depending on which is open.
@@ -533,20 +593,8 @@ export function Composer({
 
   return (
     <div className="relative px-4 py-4 sm:px-8">
-      {/* Soft gradient hint above the composer — short enough that it doesn't
-          bury the last line of content (e.g. the turn footer) when the chat is
-          scrolled to its tail. Reduced from h-5/opaque to h-3/70% so the band
-          reads as edge-softening rather than a mask. */}
-      {!isNewThread && (
-        <div className="pointer-events-none absolute inset-x-0 -top-3 h-3 bg-gradient-to-t from-background/70 to-transparent" />
-      )}
-      {/* Queue toast */}
-      {toast && (
-        <div className="pointer-events-none absolute -top-8 right-4 z-20 flex items-center gap-1.5 rounded-full bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-sm ring-1 ring-border/50 backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-150">
-          <Check size={10} className="text-primary" />
-          {toast}
-        </div>
-      )}
+      <ComposerTopFade isNewThread={isNewThread} />
+      <ComposerQueueToast toast={toast} />
 
       {/* Max-width wrapper to align with message list column */}
       <div className={PRIMARY_CONTENT_RAIL_CLASS}>
@@ -668,31 +716,12 @@ export function Composer({
         onDismiss={slashCommand.onDismiss}
         onRetry={slashCommand.onRetry}
       />
-      <Dialog
-        open={routedPendingCheckoutConfirmation !== null}
-        onOpenChange={(open) => {
-          if (!open) cancelRoutedCheckoutConfirmation();
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Switch branch?</DialogTitle>
-            <DialogDescription>
-              {routedPendingCheckoutConfirmation
-                ? `You're on "${routedPendingCheckoutConfirmation.currentBranch}" but selected "${routedPendingCheckoutConfirmation.targetBranch}". Switch to "${routedPendingCheckoutConfirmation.targetBranch}" before starting the thread?`
-                : ""}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" disabled={routedCheckoutConfirming} />}>
-              Cancel
-            </DialogClose>
-            <Button onClick={confirmRoutedCheckoutAndSubmit} disabled={routedCheckoutConfirming}>
-              {routedCheckoutConfirming ? "Switching..." : "Switch and send"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ComposerCheckoutDialog
+        pending={routedPendingCheckoutConfirmation}
+        confirming={routedCheckoutConfirming}
+        onCancel={cancelRoutedCheckoutConfirmation}
+        onConfirm={confirmRoutedCheckoutAndSubmit}
+      />
     </div>
   );
 }

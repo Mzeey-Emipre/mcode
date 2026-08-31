@@ -55,81 +55,62 @@ export function summarizeCodexNotificationParams(
   params: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
   const ids = traceCorrelationIds(params);
+  if (!params || typeof params !== "object") return { ...ids, paramKeys: [] };
+  const summarize = CODEX_NOTIFICATION_SUMMARIZERS[method];
+  if (summarize) return summarize(params, ids);
+  return { ...ids, paramKeys: Object.keys(params).filter((key) => key !== "item").slice(0, 20) };
+}
 
-  if (!params || typeof params !== "object") {
-    return { ...ids, paramKeys: [] };
-  }
-  const baseKeys = Object.keys(params).filter((k) => k !== "item").slice(0, 20);
+type CodexNotificationSummary = (params: Record<string, unknown>, ids: Record<string, string>) => Record<string, unknown>;
 
-  if (method === "item/completed") {
-    const item = params.item as Record<string, unknown> | undefined;
-    const itemType = typeof item?.type === "string" ? item.type : undefined;
-    const itemId = typeof item?.id === "string" ? item.id : undefined;
-    const toolKind =
-      typeof item?.toolKind === "string"
-        ? item.toolKind
-        : typeof item?.tool_kind === "string"
-          ? item.tool_kind
-          : undefined;
-    const name = typeof item?.name === "string" ? item.name : undefined;
-    return {
-      ...ids,
-      itemType,
-      itemId,
-      toolKind,
-      functionName: name,
-    };
-  }
+const CODEX_NOTIFICATION_SUMMARIZERS: Record<string, CodexNotificationSummary> = {
+  "item/completed": summarizeCompletedCodexItem,
+  "item/reasoning/textDelta": summarizeCodexDelta,
+  "item/reasoning/summaryTextDelta": summarizeCodexDelta,
+  "item/plan/delta": summarizeCodexDelta,
+  "item/agentMessage/delta": summarizeCodexDelta,
+  "item/started": summarizeStartedCodexItem,
+  "turn/completed": summarizeCodexTurn,
+  "turn/started": summarizeCodexTurn,
+  "mcpServer/startupStatus/updated": summarizeCodexMcpStartup,
+};
 
-  if (
-    method === "item/reasoning/textDelta"
-    || method === "item/reasoning/summaryTextDelta"
-    || method === "item/plan/delta"
-    || method === "item/agentMessage/delta"
-  ) {
-    const rawDelta =
-      typeof params.delta === "string"
-        ? params.delta
-        : typeof params.text === "string"
-          ? params.text
-          : "";
-    return {
-      ...ids,
-      deltaLen: rawDelta.length,
-      deltaPreview: rawDelta.length > 0 ? previewText(rawDelta, 64) : "",
-    };
-  }
+function summarizeCompletedCodexItem(
+  params: Record<string, unknown>,
+  ids: Record<string, string>,
+): Record<string, unknown> {
+  const item = asCodexTraceRecord(params.item);
+  return { ...ids, itemType: codexTraceString(item?.type), itemId: codexTraceString(item?.id), toolKind: codexTraceString(item?.toolKind) ?? codexTraceString(item?.tool_kind), functionName: codexTraceString(item?.name) };
+}
 
-  if (method === "item/started") {
-    const item = params.item as Record<string, unknown> | undefined;
-    return {
-      ...ids,
-      itemType: typeof item?.type === "string" ? item.type : undefined,
-      itemId: typeof item?.id === "string" ? item.id : undefined,
-    };
-  }
+function summarizeCodexDelta(params: Record<string, unknown>, ids: Record<string, string>): Record<string, unknown> {
+  const delta = codexTraceString(params.delta) ?? codexTraceString(params.text) ?? "";
+  return { ...ids, deltaLen: delta.length, deltaPreview: delta.length > 0 ? previewText(delta, 64) : "" };
+}
 
-  if (method === "turn/completed" || method === "turn/started") {
-    const turn = params.turn as Record<string, unknown> | undefined;
-    return {
-      ...ids,
-      turnId: typeof turn?.id === "string" ? turn.id : undefined,
-      status: typeof turn?.status === "string" ? turn.status : undefined,
-    };
-  }
+function summarizeStartedCodexItem(params: Record<string, unknown>, ids: Record<string, string>): Record<string, unknown> {
+  const item = asCodexTraceRecord(params.item);
+  return { ...ids, itemType: codexTraceString(item?.type), itemId: codexTraceString(item?.id) };
+}
 
-  if (method === "mcpServer/startupStatus/updated") {
-    return {
-      ...ids,
-      name: typeof params.name === "string" ? params.name : undefined,
-      status: typeof params.status === "string" ? params.status : undefined,
-      errorPreview: typeof params.error === "string" ? previewDiagnostic(params.error) : undefined,
-      failureReasonPreview:
-        typeof params.failureReason === "string" ? previewDiagnostic(params.failureReason) : undefined,
-    };
-  }
+function summarizeCodexTurn(params: Record<string, unknown>, ids: Record<string, string>): Record<string, unknown> {
+  const turn = asCodexTraceRecord(params.turn);
+  return { ...ids, turnId: codexTraceString(turn?.id), status: codexTraceString(turn?.status) };
+}
 
-  return { ...ids, paramKeys: baseKeys };
+function summarizeCodexMcpStartup(params: Record<string, unknown>, ids: Record<string, string>): Record<string, unknown> {
+  const error = codexTraceString(params.error);
+  const failureReason = codexTraceString(params.failureReason);
+  return { ...ids, name: codexTraceString(params.name), status: codexTraceString(params.status), errorPreview: error ? previewDiagnostic(error) : undefined, failureReasonPreview: failureReason ? previewDiagnostic(failureReason) : undefined };
+}
+
+function asCodexTraceRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function codexTraceString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 /**

@@ -1,16 +1,16 @@
 import { app } from "electron";
-import { join } from "path";
+import * as NodePath from "node:path";
 
 /** Return the platform-specific icon path for a desktop window. */
-export function getWindowIconPath(): string {
+export function getWindowIconPath(platform: NodeJS.Platform): string {
   const iconFile =
-    process.platform === "win32"
+    platform === "win32"
       ? "icon.ico"
-      : process.platform === "darwin"
+      : platform === "darwin"
         ? "icon.icns"
         : "icon.png";
   if (app.isPackaged) {
-    return join(process.resourcesPath, iconFile);
+    return NodePath.join(process.resourcesPath, iconFile);
   }
-  return join(app.getAppPath(), "build", iconFile);
+  return NodePath.join(app.getAppPath(), "build", iconFile);
 }

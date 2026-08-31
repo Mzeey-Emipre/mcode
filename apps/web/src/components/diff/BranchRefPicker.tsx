@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Check, ChevronDown } from "lucide-react";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   Command,
@@ -47,11 +48,13 @@ function useResolveBranchComparison(
       state.branchComparison &&
       state.branchResolvedRevisionByScope[key] === diffScopeRevision
     ) {
+      // oxlint-disable-next-line react/set-state-in-effect -- The store cache is the external source of truth for this request lifecycle.
       setLoading(false);
       return;
     }
 
     let cancelled = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- Starting the branch-comparison request must synchronize its pending indicator.
     setLoading(true);
     void getTransport()
       .getBranchComparison(workspaceId, threadId)
@@ -151,16 +154,22 @@ function RefName({
   const prefix = slash >= 0 ? name.slice(0, slash + 1) : null;
   const rest = slash >= 0 ? name.slice(slash + 1) : name;
   return (
-    <span
-      className={cn(
-        "min-w-0 flex-1 truncate whitespace-nowrap font-mono text-[11px]",
-        active ? "text-foreground" : "text-foreground/80",
-      )}
-      title={name}
-    >
-      {prefix && <span className="text-muted-foreground/50">{prefix}</span>}
-      {middleTruncate(rest, prefix ? 22 : 29)}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate whitespace-nowrap font-mono text-[11px]",
+              active ? "text-foreground" : "text-foreground/80",
+            )}
+          />
+        }
+      >
+        {prefix && <span className="text-muted-foreground/50">{prefix}</span>}
+        {middleTruncate(rest, prefix ? 22 : 29)}
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">{name}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -260,19 +269,25 @@ function RefCombobox({
 /** Read-only chip for the current branch on the left side of the comparison. */
 function CurrentRefChip({ value }: { value: string | null }) {
   return (
-    <span
-      data-testid="branch-current-ref"
-      aria-label={`Current branch: ${value ?? "unknown"}`}
-      title={value ?? "Current branch"}
-      className={cn(
-        "flex h-6 min-w-0 shrink items-center rounded-md px-2 font-mono text-xs font-medium",
-        "text-muted-foreground",
-      )}
-    >
-      <span className={cn("max-w-[142px] truncate", !value && "text-muted-foreground")}>
-        {value ?? "current"}
-      </span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            data-testid="branch-current-ref"
+            aria-label={`Current branch: ${value ?? "unknown"}`}
+            className={cn(
+              "flex h-6 min-w-0 shrink items-center rounded-md px-2 font-mono text-xs font-medium",
+              "text-muted-foreground",
+            )}
+          />
+        }
+      >
+        <span className={cn("max-w-[142px] truncate", !value && "text-muted-foreground")}>
+          {value ?? "current"}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">{value ?? "Current branch"}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -284,6 +299,21 @@ interface BranchRefPickerProps {
   threadId?: string;
   /** Bumps when git state changes in this scope; triggers comparison re-resolution. */
   diffScopeRevision: number;
+}
+
+function BranchRefPickerPlaceholder({ children }: { children: string }) {
+  return <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">{children}</span>;
+}
+
+function BranchRefPickerContent({ comparison, onSelect }: { comparison: BranchComparison | null; onSelect: (target: string) => void }) {
+  const refs = comparison?.refs ?? [];
+  return <div className="flex min-w-0 max-w-[min(46vw,390px)] items-center gap-1 overflow-hidden" data-testid="branch-ref-picker" role="group" aria-label="Branch comparison range">
+    <CurrentRefChip value={comparison?.base ?? null} />
+    <div className="flex min-w-0 flex-1 items-center gap-0.5 border-l border-border/25 pl-1">
+      <span aria-hidden="true" data-testid="branch-range-arrow" className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/50"><ArrowRight size={12} strokeWidth={1.8} /></span>
+      <RefCombobox value={comparison?.target ?? null} refs={refs} onSelect={onSelect} />
+    </div>
+  </div>;
 }
 
 /**
@@ -304,40 +334,10 @@ export function BranchRefPicker({
   const setBranchTarget = useDiffStore((s) => s.setBranchTarget);
 
   if (loading && !comparison) {
-    return (
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
-        Resolving
-      </span>
-    );
+    return <BranchRefPickerPlaceholder>Resolving</BranchRefPickerPlaceholder>;
   }
   if (comparison?.isUnborn) {
-    return (
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
-        No commits yet
-      </span>
-    );
+    return <BranchRefPickerPlaceholder>No commits yet</BranchRefPickerPlaceholder>;
   }
-
-  const refs = comparison?.refs ?? [];
-  return (
-    <div
-      className="flex min-w-0 max-w-[min(46vw,390px)] items-center gap-1 overflow-hidden"
-      data-testid="branch-ref-picker"
-      role="group"
-      aria-label="Branch comparison range"
-    >
-      <CurrentRefChip value={comparison?.base ?? null} />
-      {/* Target side: divider + arrow + picker share one hover surface (no nested chip). */}
-      <div className="flex min-w-0 flex-1 items-center gap-0.5 border-l border-border/25 pl-1">
-        <span
-          aria-hidden="true"
-          data-testid="branch-range-arrow"
-          className="inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/50"
-        >
-          <ArrowRight size={12} strokeWidth={1.8} />
-        </span>
-        <RefCombobox value={comparison?.target ?? null} refs={refs} onSelect={setBranchTarget} />
-      </div>
-    </div>
-  );
+  return <BranchRefPickerContent comparison={comparison} onSelect={setBranchTarget} />;
 }

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useCallback, useState, useLayoutEffect, lazy, Suspense } from "react";
+import { useMemo, useRef, useCallback, useState, lazy, Suspense } from "react";
 import type { Components } from "react-markdown";
 import type { PlanRecord, PlanSectionNav } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,32 @@ interface PlanDocumentProps {
 const HEADING_BASE =
   "group/heading scroll-mt-14 cursor-pointer rounded-md px-1.5 -mx-1.5 transition-colors duration-100 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
 
+function getHeadingClass(level: number): string {
+  const levelClass = { 1: "text-base font-semibold", 2: "text-[13.5px] font-semibold", 3: "text-[13px] font-medium" }[level];
+  return cn(HEADING_BASE, levelClass);
+}
+
+function PlanHeading({ level, children, sectionMap, commentMap, activeHeading, onHeadingClick, onCommit, onSave, onDiscard }: { level: number; children: React.ReactNode; sectionMap: Map<string, string>; commentMap: Map<string, string>; activeHeading: string | null; onHeadingClick: (title: string) => void; onCommit: (title: string, value: string) => void; onSave: (title: string, value: string) => void; onDiscard: (title: string) => void }) {
+  const text = typeof children === "string" ? children : String(children);
+  const key = text.toLowerCase();
+  const sectionId = sectionMap.get(key);
+  const Tag = `h${level}` as keyof React.JSX.IntrinsicElements;
+  const hasComment = (commentMap.get(key) ?? "").length > 0;
+  const isOpen = activeHeading === key;
+  return <>
+    <Tag id={sectionId ?? undefined} tabIndex={0} aria-expanded={isOpen} aria-label={`${text}. Activate to ${isOpen ? "close" : "add"} a section note.`} className={getHeadingClass(level)} onClick={() => onHeadingClick(text)} onKeyDown={(event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      onHeadingClick(text);
+    }}>
+      {children}
+      {hasComment && <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-primary/70 align-middle" aria-hidden />}
+      <span className="ml-2 font-mono text-[10px] font-normal text-muted-foreground/0 transition-colors group-hover/heading:text-muted-foreground/50 group-focus-visible/heading:text-muted-foreground/50" aria-hidden>+</span>
+    </Tag>
+    {isOpen && <PlanAnnotation key={`annotation-${key}`} sectionTitle={text} initialValue={commentMap.get(key) ?? ""} onCommit={(value) => onCommit(text, value)} onSave={(value) => onSave(text, value)} onDiscard={() => onDiscard(text)} />}
+  </>;
+}
+
 /**
  * Renders a plan's markdown content with clickable headings for
  * Canvas-style inline annotation. Reuses {@link MarkdownContent} so
@@ -38,10 +64,6 @@ export function PlanDocument({
 }: PlanDocumentProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeHeading, setActiveHeading] = useState<string | null>(null);
-
-  useLayoutEffect(() => {
-    setActiveHeading((prev) => (prev === null ? prev : null));
-  }, [plan.id]);
 
   const sectionMap = useMemo(() => {
     if (!plan.sectionsJson) return new Map<string, string>();
@@ -109,62 +131,7 @@ export function PlanDocument({
   );
 
   const headingRenderer = useCallback(
-    (level: number, children: React.ReactNode) => {
-      const text = typeof children === "string" ? children : String(children);
-      const key = text.toLowerCase();
-      const sectionId = sectionMap.get(key);
-      const Tag = `h${level}` as keyof React.JSX.IntrinsicElements;
-      const hasComment = commentMap.has(key) && (commentMap.get(key) ?? "").length > 0;
-      const isOpen = activeHeading === key;
-
-      return (
-        <>
-          <Tag
-            id={sectionId ?? undefined}
-            tabIndex={0}
-            aria-expanded={isOpen}
-            aria-label={`${text}. Activate to ${isOpen ? "close" : "add"} a section note.`}
-            className={cn(
-              HEADING_BASE,
-              level === 1 && "text-base font-semibold",
-              level === 2 && "text-[13.5px] font-semibold",
-              level === 3 && "text-[13px] font-medium",
-            )}
-            onClick={() => handleHeadingClick(text)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                handleHeadingClick(text);
-              }
-            }}
-          >
-            {children}
-            {hasComment && (
-              <span
-                className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-primary/70 align-middle"
-                aria-hidden
-              />
-            )}
-            <span
-              className="ml-2 font-mono text-[10px] font-normal text-muted-foreground/0 transition-colors group-hover/heading:text-muted-foreground/50 group-focus-visible/heading:text-muted-foreground/50"
-              aria-hidden
-            >
-              +
-            </span>
-          </Tag>
-          {isOpen && (
-            <PlanAnnotation
-              key={`annotation-${key}`}
-              sectionTitle={text}
-              initialValue={commentMap.get(key) ?? ""}
-              onCommit={(val) => handleCommitNote(text, val)}
-              onSave={(val) => handleSaveNote(text, val)}
-              onDiscard={() => handleDiscardNote(text)}
-            />
-          )}
-        </>
-      );
-    },
+    (level: number, children: React.ReactNode) => <PlanHeading level={level} children={children} sectionMap={sectionMap} commentMap={commentMap} activeHeading={activeHeading} onHeadingClick={handleHeadingClick} onCommit={handleCommitNote} onSave={handleSaveNote} onDiscard={handleDiscardNote} />,
     [sectionMap, commentMap, activeHeading, handleHeadingClick, handleCommitNote, handleSaveNote, handleDiscardNote],
   );
 

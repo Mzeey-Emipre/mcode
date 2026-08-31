@@ -1,5 +1,5 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   BrowserAutomationResponseSchema,
@@ -26,7 +26,9 @@ import {
 import { WebBrowserSessionAdapter } from "../webBrowserSessionAdapter";
 import { executeWebBrowserDispatch } from "../../browserAutomationWebExecutor";
 
-const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
+const workspaceRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../../../../../");
+const OBSERVATION_OPERATIONS = new Set(["inspect", "snapshot", "screenshot"]);
+const AGENT_OWNED_OPERATIONS = new Set(["open", "navigate", "click", "type", "act", "tabs"]);
 
 vi.mock("../../web-browser-automation/capture", () => ({
   captureVisibleWebScreenshot: vi.fn(async () => ({
@@ -62,6 +64,12 @@ function replaceObservationRefs(value: unknown, observationRef: string | undefin
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, replaceObservationRefs(entry, observationRef)]));
 }
 
+function isNavigationStep(value: unknown): value is { operation: "navigate"; url?: unknown } {
+  if (typeof value !== "object" || value === null) return false;
+  const step = value as { operation?: unknown; url?: unknown };
+  return step.operation === "navigate";
+}
+
 class WebExecutorSubject implements BrowserConformanceSubject {
   private readonly receipts: BrowserConformanceReceipt[] = [];
   private readonly state = { url: "https://example.test/", owner: "none" as "none" | "agent", observationRef: undefined as string | undefined };
@@ -70,7 +78,22 @@ class WebExecutorSubject implements BrowserConformanceSubject {
   constructor(private readonly driver: BrowserSessionDriver, private readonly liveTargets: Map<string, ReturnType<typeof target>>) {}
 
   async dispatch(command: BrowserConformanceCommand): Promise<BrowserConformanceReceipt> {
-    const args = replaceObservationRefs(command.args ?? {}, this.state.observationRef) as Record<string, unknown>;
+    const args = this.resolveArgs(command);
+    const result = await this.execute(command, args);
+    this.recordSuccessfulDispatch(command, args, result);
+    const receipt = this.normalizeReceipt(command, result);
+    this.receipts.push(receipt);
+    return receipt;
+  }
+
+  private resolveArgs(command: BrowserConformanceCommand): Record<string, unknown> {
+    return replaceObservationRefs(command.args ?? {}, this.state.observationRef) as Record<string, unknown>;
+  }
+
+  private async execute(
+    command: BrowserConformanceCommand,
+    args: Record<string, unknown>,
+  ): Promise<Awaited<ReturnType<BrowserSessionDriver["execute"]>>> {
     const dispatch = {
       scope: { workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance" },
       connection: { desktopInstanceId: "web", windowId: 1, connectionGeneration: 1, targetGeneration: 1, capabilityRevision: 1 },
@@ -89,41 +112,129 @@ class WebExecutorSubject implements BrowserConformanceSubject {
         args,
       },
     } as unknown as BrowserAutomationHostDispatch;
-    const result = BrowserAutomationResponseSchema().parse(
-      await this.driver.execute(dispatch, new AbortController().signal),
-    );
-    if (result.ok) {
-      const candidate = result.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
-      this.state.observationRef = candidate.nextObservationRef ?? candidate.finalObservation?.observationRef ?? candidate.observationRef ?? this.state.observationRef;
-      if (["open", "navigate"].includes(command.operation)) this.state.url = String(args.url ?? this.state.url);
-      if (command.operation === "act" && Array.isArray(args.steps)) {
-        const navigation = args.steps.find((step) => typeof step === "object" && step !== null && (step as { operation?: unknown }).operation === "navigate");
-        if (navigation && typeof (navigation as { url?: unknown }).url === "string") this.state.url = navigation.url;
-      }
-      if (["open", "navigate", "click", "type", "act", "tabs"].includes(command.operation)) this.state.owner = "agent";
+    return BrowserAutomationResponseSchema().parse(await this.driver.execute(dispatch, new AbortController().signal));
+  }
+
+  private recordSuccessfulDispatch(
+    command: BrowserConformanceCommand,
+    args: Record<string, unknown>,
+    result: Awaited<ReturnType<BrowserSessionDriver["execute"]>>,
+  ): void {
+    if (!result.ok) return;
+    this.recordObservationRef(result.result);
+    this.recordNavigation(command, args);
+    if (AGENT_OWNED_OPERATIONS.has(command.operation)) this.state.owner = "agent";
+  }
+
+  private recordObservationRef(result: unknown): void {
+    const candidate = result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
+    this.state.observationRef = candidate.nextObservationRef ?? candidate.finalObservation?.observationRef ?? candidate.observationRef ?? this.state.observationRef;
+  }
+
+  private recordNavigation(command: BrowserConformanceCommand, args: Record<string, unknown>): void {
+    if (["open", "navigate"].includes(command.operation)) {
+      this.state.url = String(args.url ?? this.state.url);
+      return;
     }
-    const raw = {
+    if (command.operation !== "act") return;
+    const navigation = Array.isArray(args.steps) ? args.steps.find(isNavigationStep) : undefined;
+    if (typeof navigation?.url === "string") this.state.url = navigation.url;
+  }
+
+  private normalizeReceipt(
+    command: BrowserConformanceCommand,
+    result: Awaited<ReturnType<BrowserSessionDriver["execute"]>>,
+  ): BrowserConformanceReceipt {
+    const receipt = result.ok
+      ? this.successfulReceipt(command, result.result)
+      : this.failedReceipt(result.error);
+    const outcome = result.ok
+      ? this.completedOutcome()
+      : this.failedOutcome(result.error);
+    return normalizeBrowserConformanceRun({
       receipts: [{
         order: { tick: this.tick, ordinal: this.receipts.length },
         commandId: command.id,
         operation: command.operation,
-        status: result.ok ? "applied" : "failed",
-        effect: result.ok ? ((result.result as { effect?: string }).effect ?? (["inspect", "snapshot", "screenshot"].includes(command.operation) ? "none" : command.operation === "open" ? "created" : "complete")) : (result.error.effect ?? "none"),
-        recovery: result.ok ? ((result.result as { recovery?: string }).recovery ?? "none") : (result.error.recovery ?? "inspect"),
-        truncated: result.ok && Boolean((result.result as { truncation?: { truncated?: boolean } }).truncation?.truncated),
-        revisions: { host: 0, document: 0, control: 0, capability: 1, observation: this.receipts.length },
-        errorCode: result.ok ? null : result.error.code,
-        errorStage: result.ok ? (["inspect", "snapshot", "screenshot"].includes(command.operation) ? "observation" : "effect") : (result.error.stage ?? "effect"),
+        ...receipt,
+        revisions: this.revisions(),
         ownership: this.state.owner,
       }],
-      outcome: result.ok ? { status: "completed", effect: "complete", recovery: "none", revisions: { capability: 1, observation: this.receipts.length }, ownership: this.state.owner } : { status: "failed", effect: result.error.effect ?? "none", recovery: result.error.recovery ?? "inspect", errorCode: result.error.code, errorStage: result.error.stage ?? "effect", ownership: this.state.owner },
-      finalState: { readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, revisions: { capability: 1, observation: this.receipts.length }, resources: this.snapshotResources() },
-      visibleObservations: [{ surface: "browser", readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, title: "Executor fixture", action: command.operation, truncated: false }],
+      outcome,
+      finalState: this.finalState(),
+      visibleObservations: [this.visibleObservation(command.operation)],
+    }).receipts[0]!;
+  }
+
+  private successfulReceipt(command: BrowserConformanceCommand, result: unknown): Record<string, unknown> {
+    const candidate = result as { effect?: string; recovery?: string; truncation?: { truncated?: boolean } };
+    return {
+      status: "applied",
+      effect: candidate.effect ?? this.defaultEffect(command.operation),
+      recovery: candidate.recovery ?? "none",
+      truncated: Boolean(candidate.truncation?.truncated),
+      errorCode: null,
+      errorStage: OBSERVATION_OPERATIONS.has(command.operation) ? "observation" : "effect",
     };
-    const normalized = normalizeBrowserConformanceRun(raw);
-    const receipt = normalized.receipts[0]!;
-    this.receipts.push(receipt);
-    return receipt;
+  }
+
+  private failedReceipt(error: { effect?: string; recovery?: string; code: string; stage?: string }): Record<string, unknown> {
+    return {
+      status: "failed",
+      effect: error.effect ?? "none",
+      recovery: error.recovery ?? "inspect",
+      truncated: false,
+      errorCode: error.code,
+      errorStage: error.stage ?? "effect",
+    };
+  }
+
+  private defaultEffect(operation: BrowserConformanceCommand["operation"]): string {
+    if (OBSERVATION_OPERATIONS.has(operation)) return "none";
+    return operation === "open" ? "created" : "complete";
+  }
+
+  private completedOutcome(): Record<string, unknown> {
+    return { status: "completed", effect: "complete", recovery: "none", revisions: this.revisions(), ownership: this.state.owner };
+  }
+
+  private failedOutcome(error: { effect?: string; recovery?: string; code: string; stage?: string }): Record<string, unknown> {
+    return {
+      status: "failed",
+      effect: error.effect ?? "none",
+      recovery: error.recovery ?? "inspect",
+      errorCode: error.code,
+      errorStage: error.stage ?? "effect",
+      ownership: this.state.owner,
+    };
+  }
+
+  private revisions(): { host: number; document: number; control: number; capability: number; observation: number } {
+    return { host: 0, document: 0, control: 0, capability: 1, observation: this.receipts.length };
+  }
+
+  private finalState(): Record<string, unknown> {
+    return {
+      readiness: "ready",
+      controlOwner: this.state.owner,
+      tabCount: 1,
+      currentUrl: this.state.url,
+      revisions: this.revisions(),
+      resources: this.snapshotResources(),
+    };
+  }
+
+  private visibleObservation(operation: BrowserConformanceCommand["operation"]): Record<string, unknown> {
+    return {
+      surface: "browser",
+      readiness: "ready",
+      controlOwner: this.state.owner,
+      tabCount: 1,
+      currentUrl: this.state.url,
+      title: "Executor fixture",
+      action: operation,
+      truncated: false,
+    };
   }
 
   schedule(_event: BrowserConformanceScheduledEvent): void {}
@@ -133,10 +244,31 @@ class WebExecutorSubject implements BrowserConformanceSubject {
     const last = this.receipts.at(-1);
     return normalizeBrowserConformanceRun({
       receipts: this.receipts,
-      outcome: { status: last?.status === "failed" ? "failed" : "completed", effect: last?.effect ?? "none", recovery: last?.recovery ?? "none", revisions: last?.revisions, ownership: last?.ownership },
-      finalState: { readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, revisions: last?.revisions, resources: this.snapshotResources() },
+      outcome: this.snapshotOutcomeFor(last),
+      finalState: this.snapshotFinalState(last),
       visibleObservations: [{ surface: "browser", readiness: "ready", controlOwner: this.state.owner, tabCount: 1, currentUrl: this.state.url, title: "Executor fixture", action: last?.operation ?? null, truncated: false }],
     });
+  }
+
+  private snapshotOutcomeFor(last: BrowserConformanceReceipt | undefined): Record<string, unknown> {
+    return {
+      status: last?.status === "failed" ? "failed" : "completed",
+      effect: last?.effect ?? "none",
+      recovery: last?.recovery ?? "none",
+      revisions: last?.revisions,
+      ownership: last?.ownership,
+    };
+  }
+
+  private snapshotFinalState(last: BrowserConformanceReceipt | undefined): Record<string, unknown> {
+    return {
+      readiness: "ready",
+      controlOwner: this.state.owner,
+      tabCount: 1,
+      currentUrl: this.state.url,
+      revisions: last?.revisions,
+      resources: this.snapshotResources(),
+    };
   }
   snapshotResources(): BrowserConformanceResourceSnapshot {
     const targets = this.liveTargets.size > 0 ? [{ id: "browser-target", generation: 1 }] : [];

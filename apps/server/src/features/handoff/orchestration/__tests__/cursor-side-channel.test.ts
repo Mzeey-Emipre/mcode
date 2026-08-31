@@ -32,6 +32,7 @@ describe("Cursor clean side-channel fork", () => {
     );
 
     const host: ProviderHostPorts = {
+      runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
       environment: { snapshot: () => ({}) },
       processes: { attach: () => undefined, terminateTree: async () => undefined },
       browser: {

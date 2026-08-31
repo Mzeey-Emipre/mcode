@@ -18,13 +18,13 @@
  *   node apps/desktop/scripts/desktop-packaging/package-validation/smoke-test.mjs --bundle    # test pre-packaging bundle (requires native deps on PATH)
  */
 
-import { spawn, execFileSync } from "child_process";
-import { existsSync, mkdirSync, realpathSync, rmSync } from "fs";
-import { resolve, dirname } from "path";
-import { createRequire } from "module";
-import { fileURLToPath } from "url";
-import { tmpdir } from "os";
-import { randomUUID } from "crypto";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeModule from "node:module";
+import * as NodeURL from "node:url";
+import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto";
 import {
   findClaudeSdkCliPath,
   expectedClaudeSdkCliPath,
@@ -34,11 +34,11 @@ import {
   getPackagedRuntimeStartupTimeoutMs,
 } from "./smoke-test-config.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const desktopRoot = resolve(__dirname, "..", "..", "..");
-const releaseDir = resolve(desktopRoot, "release");
-const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
-const serverRequire = createRequire(resolve(desktopRoot, "..", "server", "package.json"));
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const desktopRoot = NodePath.resolve(__dirname, "..", "..", "..");
+const releaseDir = NodePath.resolve(desktopRoot, "release");
+const desktopRequire = NodeModule.createRequire(NodePath.resolve(desktopRoot, "package.json"));
+const serverRequire = NodeModule.createRequire(NodePath.resolve(desktopRoot, "..", "server", "package.json"));
 
 const SMOKE_PORT = 19899;
 const POLL_INTERVAL_MS = 300;
@@ -54,43 +54,43 @@ function findUnpackedServer() {
   const candidates = [
     // Windows
     {
-      server: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
-      renamedBinary: resolve(releaseDir, "win-unpacked/resources/bin/mcode-server.exe"),
-      electron: resolve(releaseDir, "win-unpacked/Mcode.exe"),
-      resourcesRoot: resolve(releaseDir, "win-unpacked/resources"),
-      sqlite: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
-      koffi: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
-      nodePty: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
+      server: NodePath.resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
+      renamedBinary: NodePath.resolve(releaseDir, "win-unpacked/resources/bin/mcode-server.exe"),
+      electron: NodePath.resolve(releaseDir, "win-unpacked/Mcode.exe"),
+      resourcesRoot: NodePath.resolve(releaseDir, "win-unpacked/resources"),
+      sqlite: NodePath.resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
+      koffi: NodePath.resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: NodePath.resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // Linux (electron-builder uses package name as binary name)
     {
-      server: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
-      renamedBinary: resolve(releaseDir, "linux-unpacked/resources/bin/mcode-server"),
-      electron: resolve(releaseDir, "linux-unpacked/mcode-desktop"),
-      resourcesRoot: resolve(releaseDir, "linux-unpacked/resources"),
-      sqlite: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
-      koffi: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
-      nodePty: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
+      server: NodePath.resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
+      renamedBinary: NodePath.resolve(releaseDir, "linux-unpacked/resources/bin/mcode-server"),
+      electron: NodePath.resolve(releaseDir, "linux-unpacked/mcode-desktop"),
+      resourcesRoot: NodePath.resolve(releaseDir, "linux-unpacked/resources"),
+      sqlite: NodePath.resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
+      koffi: NodePath.resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: NodePath.resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // macOS Intel
     {
-      server: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
-      renamedBinary: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/bin/mcode-server"),
-      electron: resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
-      resourcesRoot: resolve(releaseDir, "mac/Mcode.app/Contents/Resources"),
-      sqlite: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
-      koffi: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
-      nodePty: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
+      server: NodePath.resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
+      renamedBinary: NodePath.resolve(releaseDir, "mac/Mcode.app/Contents/Resources/bin/mcode-server"),
+      electron: NodePath.resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
+      resourcesRoot: NodePath.resolve(releaseDir, "mac/Mcode.app/Contents/Resources"),
+      sqlite: NodePath.resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
+      koffi: NodePath.resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: NodePath.resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // macOS ARM
     {
-      server: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
-      renamedBinary: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/bin/mcode-server"),
-      electron: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
-      resourcesRoot: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources"),
-      sqlite: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
-      koffi: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
-      nodePty: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
+      server: NodePath.resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
+      renamedBinary: NodePath.resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/bin/mcode-server"),
+      electron: NodePath.resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
+      resourcesRoot: NodePath.resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources"),
+      sqlite: NodePath.resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
+      koffi: NodePath.resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: NodePath.resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
     },
   ];
 
@@ -100,19 +100,19 @@ function findUnpackedServer() {
     // In production, mac.binaries handles co-signing. For the smoke test, use
     // the main Electron binary on macOS to validate the server bundle.
     const isMac = c.server.includes(".app/Contents/");
-    const useRenamed = !isMac && existsSync(c.renamedBinary);
+    const useRenamed = !isMac && NodeFS.existsSync(c.renamedBinary);
     const runtime = useRenamed ? c.renamedBinary : c.electron;
-    if (existsSync(c.server) && existsSync(runtime)) {
-      const binding = resolve(c.sqlite, "better_sqlite3.node");
-      if (!existsSync(binding)) {
+    if (NodeFS.existsSync(c.server) && NodeFS.existsSync(runtime)) {
+      const binding = NodePath.resolve(c.sqlite, "better_sqlite3.node");
+      if (!NodeFS.existsSync(binding)) {
         throw new Error(`Packaged better-sqlite3 binding not found: ${binding}`);
       }
-      const electronDir = useRenamed ? dirname(c.electron) : undefined;
+      const electronDir = useRenamed ? NodePath.dirname(c.electron) : undefined;
       return {
         server: c.server,
         electron: runtime,
         binding,
-        resourcesRoot: realpathSync(c.resourcesRoot),
+        resourcesRoot: NodeFS.realpathSync(c.resourcesRoot),
         electronDir,
         koffi: c.koffi,
         nodePty: c.nodePty,
@@ -149,13 +149,13 @@ function inferPackagedSdkTarget(serverPath) {
  * --bundle mode: test the pre-packaging bundle with the workspace Electron runtime.
  */
 function findBundleServer() {
-  const server = resolve(desktopRoot, "dist/server/server.cjs");
-  if (!existsSync(server)) {
+  const server = NodePath.resolve(desktopRoot, "dist/server/server.cjs");
+  if (!NodeFS.existsSync(server)) {
     return null;
   }
-  const betterSqliteDir = dirname(serverRequire.resolve("better-sqlite3/package.json"));
-  const binding = resolve(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
-  if (!existsSync(binding)) {
+  const betterSqliteDir = NodePath.dirname(serverRequire.resolve("better-sqlite3/package.json"));
+  const binding = NodePath.resolve(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
+  if (!NodeFS.existsSync(binding)) {
     throw new Error(`Workspace Electron better-sqlite3 binding not found: ${binding}`);
   }
   return { server, electron: desktopRequire("electron"), binding };
@@ -190,7 +190,7 @@ const timeoutMs = getPackagedRuntimeStartupTimeoutMs({
 });
 
 if (!bundleOnly) {
-  if (!found.koffi || !existsSync(found.koffi)) {
+  if (!found.koffi || !NodeFS.existsSync(found.koffi)) {
     console.error(`[smoke-test] ERROR: koffi native module missing at ${found.koffi}`);
     console.error("  package config should include node_modules/koffi in files and asarUnpack.");
     process.exit(1);
@@ -240,8 +240,8 @@ if (!bundleOnly) {
     `;
 
     try {
-      const output = execFileSync(found.electron, ["-e", ptyScript], {
-        cwd: dirname(found.server),
+      const output = NodeChildProcess.execFileSync(found.electron, ["-e", ptyScript], {
+        cwd: NodePath.dirname(found.server),
         encoding: "utf8",
         timeout: 10_000,
         env: {
@@ -266,8 +266,8 @@ if (!bundleOnly) {
 // Create a temporary data directory so the smoke test is isolated
 // ---------------------------------------------------------------------------
 
-const dataDir = resolve(tmpdir(), `mcode-smoke-${randomUUID().slice(0, 8)}`);
-mkdirSync(dataDir, { recursive: true });
+const dataDir = NodePath.resolve(NodeOS.tmpdir(), `mcode-smoke-${NodeCrypto.randomUUID().slice(0, 8)}`);
+NodeFS.mkdirSync(dataDir, { recursive: true });
 
 // ---------------------------------------------------------------------------
 // Spawn the server
@@ -305,13 +305,13 @@ if (found.electronDir) {
 // A bad signature causes a silent SIGKILL from the kernel.
 if (process.platform === "darwin") {
   try {
-    const sigInfo = execFileSync("codesign", ["-dvv", found.electron], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+    const sigInfo = NodeChildProcess.execFileSync("codesign", ["-dvv", found.electron], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
     console.log(`[smoke-test] codesign info:\n${sigInfo}`);
   } catch (e) {
     console.log(`[smoke-test] codesign -dvv output: ${e.stderr || e.stdout || e.message}`);
   }
   try {
-    execFileSync("codesign", ["--verify", "--strict", found.electron], { encoding: "utf-8" });
+    NodeChildProcess.execFileSync("codesign", ["--verify", "--strict", found.electron], { encoding: "utf-8" });
     console.log("[smoke-test] codesign --verify: OK");
   } catch (e) {
     console.error(`[smoke-test] codesign --verify FAILED: ${e.stderr || e.message}`);
@@ -320,11 +320,11 @@ if (process.platform === "darwin") {
 
 console.log(`[smoke-test] Starting server on port ${SMOKE_PORT}...`);
 
-const child = spawn(found.electron, [
+const child = NodeChildProcess.spawn(found.electron, [
   "--max-old-space-size=96",
   found.server,
 ], {
-  cwd: dirname(found.server),
+  cwd: NodePath.dirname(found.server),
   env,
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -392,7 +392,7 @@ setTimeout(() => {
 await exitPromise;
 
 // Clean up temp data directory
-try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* ok */ }
+try { NodeFS.rmSync(dataDir, { recursive: true, force: true }); } catch { /* ok */ }
 
 if (outcome === "healthy") {
   console.log("[smoke-test] PASS: Server started and /health returned 200.");

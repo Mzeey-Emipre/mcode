@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getSelection,
@@ -14,6 +14,7 @@ import {
   KEY_ARROW_UP_COMMAND,
   KEY_TAB_COMMAND,
   KEY_ESCAPE_COMMAND,
+  type LexicalNode,
 } from "lexical";
 import { $isMentionNode } from "./MentionNode";
 import { $isSlashCommandNode } from "./SlashCommandNode";
@@ -28,6 +29,102 @@ interface KeyboardPluginProps {
   readonly isPopupOpen?: boolean;
   /** Called when a navigation key is pressed while popup is open. Returns true if handled. */
   readonly onPopupKeyDown?: (key: string) => boolean;
+}
+
+interface KeyboardRefs {
+  isPopupOpen: MutableRefObject<boolean | undefined>;
+  onPopupKeyDown: MutableRefObject<((key: string) => boolean) | undefined>;
+  onSubmit: MutableRefObject<() => void>;
+  disabled: MutableRefObject<boolean | undefined>;
+}
+
+/** Handles a popup navigation key when a Composer popup has claimed it. */
+function handlePopupKey(event: KeyboardEvent | null, key: string, refs: KeyboardRefs): boolean {
+  const popupHandler = refs.onPopupKeyDown.current;
+  if (!event || !refs.isPopupOpen.current || !popupHandler) return false;
+  if (!popupHandler(key)) return false;
+  event.preventDefault();
+  return true;
+}
+
+/** Handles Enter for an open Composer popup. */
+function handlePopupEnter(event: KeyboardEvent | null, refs: KeyboardRefs): boolean {
+  if (!event || event.shiftKey) return false;
+  return handlePopupKey(event, "Enter", refs);
+}
+
+/** Submits the Composer for an unhandled Enter key. */
+function handleSubmitEnter(event: KeyboardEvent | null, refs: KeyboardRefs): boolean {
+  if (!event || event.shiftKey) return false;
+  event.preventDefault();
+  if (!refs.disabled.current) refs.onSubmit.current();
+  return true;
+}
+
+/** Returns whether a Lexical node is a mention or slash-command chip. */
+function isDecoratorShortcutNode(node: LexicalNode): boolean {
+  return $isMentionNode(node) || $isSlashCommandNode(node);
+}
+
+/** Removes selected chips and preserves Lexical's node-selection delete behavior. */
+function removeSelectedShortcutNodes(event: KeyboardEvent, selection: ReturnType<typeof $getSelection>): boolean {
+  if (!$isNodeSelection(selection)) return false;
+  event.preventDefault();
+  for (const node of selection.getNodes()) {
+    if (isDecoratorShortcutNode(node)) node.remove();
+  }
+  return true;
+}
+
+/** Finds the chip adjacent to a collapsed range selection in a delete direction. */
+function getAdjacentShortcutNode(
+  selection: ReturnType<typeof $getSelection>,
+  isBackward: boolean,
+): LexicalNode | null {
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+
+  const anchor = selection.anchor;
+  if (anchor.type === "text") {
+    return getTextAdjacentShortcutNode(anchor.getNode(), anchor.offset, isBackward);
+  }
+  if (anchor.type === "element") {
+    return getElementAdjacentShortcutNode(anchor.getNode(), anchor.offset, isBackward);
+  }
+  return null;
+}
+
+/** Finds the chip adjacent to a text selection anchor. */
+function getTextAdjacentShortcutNode(
+  node: LexicalNode,
+  offset: number,
+  isBackward: boolean,
+): LexicalNode | null {
+  if (isBackward && offset === 0) return node.getPreviousSibling();
+  if (!isBackward && offset === node.getTextContentSize()) return node.getNextSibling();
+  return null;
+}
+
+/** Finds the chip adjacent to an element selection anchor. */
+function getElementAdjacentShortcutNode(
+  node: LexicalNode,
+  offset: number,
+  isBackward: boolean,
+): LexicalNode | null {
+  if (!$isElementNode(node)) return null;
+  if (isBackward && offset === 0) return null;
+  return node.getChildAtIndex(isBackward ? offset - 1 : offset);
+}
+
+/** Deletes a selected or cursor-adjacent Composer chip. */
+function handleShortcutDelete(event: KeyboardEvent, isBackward: boolean): boolean {
+  const selection = $getSelection();
+  if (removeSelectedShortcutNodes(event, selection)) return true;
+
+  const node = getAdjacentShortcutNode(selection, isBackward);
+  if (!node || !isDecoratorShortcutNode(node)) return false;
+  event.preventDefault();
+  node.remove();
+  return true;
 }
 
 /**
@@ -61,149 +158,61 @@ export function KeyboardPlugin({
   const disabledRef = useRef(disabled);
   disabledRef.current = disabled;
 
+  const refs = useMemo<KeyboardRefs>(() => ({
+    isPopupOpen: isPopupOpenRef,
+    onPopupKeyDown: onPopupKeyDownRef,
+    onSubmit: onSubmitRef,
+    disabled: disabledRef,
+  }), []);
+
   // Register all keyboard handlers once, using refs for latest values
   useEffect(() => {
-    // Popup interception at CRITICAL priority (above submit handler)
-    const popupHandler = (key: string) => (event: KeyboardEvent | null): boolean => {
-      if (!event) return false;
-      if (!isPopupOpenRef.current || !onPopupKeyDownRef.current) return false;
-      if (onPopupKeyDownRef.current(key)) {
-        event.preventDefault();
-        return true;
-      }
-      return false;
-    };
-
     const unregisterDown = editor.registerCommand(
       KEY_ARROW_DOWN_COMMAND,
-      popupHandler("ArrowDown") as (event: KeyboardEvent) => boolean,
+      (event) => handlePopupKey(event, "ArrowDown", refs),
       COMMAND_PRIORITY_CRITICAL,
     );
 
     const unregisterUp = editor.registerCommand(
       KEY_ARROW_UP_COMMAND,
-      popupHandler("ArrowUp") as (event: KeyboardEvent) => boolean,
+      (event) => handlePopupKey(event, "ArrowUp", refs),
       COMMAND_PRIORITY_CRITICAL,
     );
 
     const unregisterTab = editor.registerCommand(
       KEY_TAB_COMMAND,
-      popupHandler("Tab") as (event: KeyboardEvent) => boolean,
+      (event) => handlePopupKey(event, "Tab", refs),
       COMMAND_PRIORITY_CRITICAL,
     );
 
     const unregisterEsc = editor.registerCommand(
       KEY_ESCAPE_COMMAND,
-      popupHandler("Escape") as (event: KeyboardEvent) => boolean,
+      (event) => handlePopupKey(event, "Escape", refs),
       COMMAND_PRIORITY_CRITICAL,
     );
 
     const unregisterPopupEnter = editor.registerCommand(
       KEY_ENTER_COMMAND,
-      (event: KeyboardEvent | null) => {
-        if (!event) return false;
-        if (event.shiftKey) return false;
-        if (!isPopupOpenRef.current || !onPopupKeyDownRef.current) return false;
-        if (onPopupKeyDownRef.current("Enter")) {
-          event.preventDefault();
-          return true;
-        }
-        return false;
-      },
+      (event) => handlePopupEnter(event, refs),
       COMMAND_PRIORITY_CRITICAL,
     );
 
     // Normal Enter-to-submit at HIGH priority
     const unregisterSubmitEnter = editor.registerCommand(
       KEY_ENTER_COMMAND,
-      (event: KeyboardEvent | null) => {
-        if (!event) return false;
-        if (event.shiftKey) return false;
-        event.preventDefault();
-        if (!disabledRef.current) {
-          onSubmitRef.current();
-        }
-        return true;
-      },
+      (event) => handleSubmitEnter(event, refs),
       COMMAND_PRIORITY_HIGH,
     );
 
-    // Backspace/Delete: remove decorator nodes when selected or cursor-adjacent
-    const handleDelete = (event: KeyboardEvent, isBackward: boolean): boolean => {
-      const selection = $getSelection();
-
-      // Case 1: NodeSelection (chip is highlighted) - delete all selected nodes
-      if ($isNodeSelection(selection)) {
-        event.preventDefault();
-        const nodes = selection.getNodes();
-        for (const node of nodes) {
-          if ($isMentionNode(node) || $isSlashCommandNode(node)) {
-            node.remove();
-          }
-        }
-        return true;
-      }
-
-      // Case 2: RangeSelection with cursor right after a decorator node
-      if ($isRangeSelection(selection) && selection.isCollapsed()) {
-        const anchor = selection.anchor;
-
-        if (anchor.type === "text") {
-          const node = anchor.getNode();
-          // Backspace at offset 0: remove the previous sibling chip
-          if (anchor.offset === 0 && isBackward) {
-            const prev = node.getPreviousSibling();
-            if (prev && ($isMentionNode(prev) || $isSlashCommandNode(prev))) {
-              event.preventDefault();
-              prev.remove();
-              return true;
-            }
-          }
-          // Forward Delete at end of text: remove the next sibling chip
-          if (!isBackward && anchor.offset === node.getTextContentSize()) {
-            const next = node.getNextSibling();
-            if (next && ($isMentionNode(next) || $isSlashCommandNode(next))) {
-              event.preventDefault();
-              next.remove();
-              return true;
-            }
-          }
-        }
-
-        // Element anchor: cursor is between block children (e.g. after a chip with no text node)
-        if (anchor.type === "element" && $isElementNode(anchor.getNode())) {
-          const parent = anchor.getNode();
-          if (isBackward && anchor.offset > 0) {
-            const target = parent.getChildAtIndex(anchor.offset - 1);
-            if (target && ($isMentionNode(target) || $isSlashCommandNode(target))) {
-              event.preventDefault();
-              target.remove();
-              return true;
-            }
-          }
-          if (!isBackward) {
-            const target = parent.getChildAtIndex(anchor.offset);
-            if (target && ($isMentionNode(target) || $isSlashCommandNode(target))) {
-              event.preventDefault();
-              target.remove();
-              return true;
-            }
-          }
-        }
-      }
-
-      return false;
-    };
-
     const unregisterBackspace = editor.registerCommand(
       KEY_BACKSPACE_COMMAND,
-      (event: KeyboardEvent) => handleDelete(event, true),
+      (event) => handleShortcutDelete(event, true),
       COMMAND_PRIORITY_HIGH,
     );
 
     const unregisterDelete = editor.registerCommand(
       KEY_DELETE_COMMAND,
-      (event: KeyboardEvent) => handleDelete(event, false),
+      (event) => handleShortcutDelete(event, false),
       COMMAND_PRIORITY_HIGH,
     );
 
@@ -217,7 +226,7 @@ export function KeyboardPlugin({
       unregisterBackspace();
       unregisterDelete();
     };
-  }, [editor]);
+  }, [editor, refs]);
 
   return null;
 }

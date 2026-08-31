@@ -53,7 +53,10 @@ function createCurrentTurn({
   };
 }
 
-function findLastAgentMessageBody(input: MessageListItemsInput): string | undefined {
+function findLastAgentMessageBody(input: Pick<
+  MessageListItemsInput,
+  "renderedThreadId" | "isAgentRunning" | "messages"
+>): string | undefined {
   if (!input.renderedThreadId || input.isAgentRunning) return undefined;
   return [...input.messages]
     .reverse()
@@ -61,7 +64,7 @@ function findLastAgentMessageBody(input: MessageListItemsInput): string | undefi
     ?.content;
 }
 
-function findLastUserMessage(input: MessageListItemsInput) {
+function findLastUserMessage(input: Pick<MessageListItemsInput, "messages">) {
   for (let index = input.messages.length - 1; index >= 0; index -= 1) {
     const message = input.messages[index];
     if (message.role === "user" && !message.is_internal) return message;
@@ -71,13 +74,37 @@ function findLastUserMessage(input: MessageListItemsInput) {
 
 /** Projects stateful transcript data into virtual rows and sticky-message inputs. */
 export function useMessageListItems(input: MessageListItemsInput) {
+  const {
+    agentDisplayState,
+    agentStartTime,
+    assistantResponseKeys,
+    currentTurnMessageId,
+    currentTurnResponseKey,
+    hooks,
+    isAgentRunning,
+    latestTurnWithChanges,
+    messages,
+    permissions,
+    persistedFilesChanged,
+    persistedNarrativeByMessage,
+    renderedThreadId,
+    streamingText,
+    thoughtSegments,
+    toolCalls,
+    turnSummariesByMessageId,
+  } = input;
   const currentTurn = useMemo(
-    () => createCurrentTurn(input),
+    () => createCurrentTurn({
+      renderedThreadId,
+      currentTurnMessageId,
+      currentTurnResponseKey,
+      assistantResponseKeys,
+    }),
     [
-      input.assistantResponseKeys,
-      input.currentTurnMessageId,
-      input.currentTurnResponseKey,
-      input.renderedThreadId,
+      assistantResponseKeys,
+      currentTurnMessageId,
+      currentTurnResponseKey,
+      renderedThreadId,
     ],
   );
   const transcriptProjectorRef = useRef<ReturnType<typeof createTranscriptItemProjector> | null>(null);
@@ -86,37 +113,41 @@ export function useMessageListItems(input: MessageListItemsInput) {
   }
   const virtualItems = useMemo(
     () => measureMessageListPerformance("narrativeItemProjection", () => transcriptProjectorRef.current!({
-      messages: input.messages,
-      persistedFilesChanged: input.persistedFilesChanged,
-      latestTurnWithChanges: input.latestTurnWithChanges,
+      messages,
+      persistedFilesChanged,
+      latestTurnWithChanges,
       currentTurn,
-      persistedNarrativeByMessage: input.persistedNarrativeByMessage,
-      turnSummariesByMessageId: input.turnSummariesByMessageId,
-      toolCalls: input.toolCalls,
-      agentDisplayState: input.agentDisplayState,
-      agentStartTime: input.agentStartTime,
-      streamingText: input.streamingText,
-      permissions: input.permissions,
-      hooks: input.hooks,
-      thoughtSegments: input.thoughtSegments,
-      committedAssistantBody: findLastAgentMessageBody(input),
+      persistedNarrativeByMessage,
+      turnSummariesByMessageId,
+      toolCalls,
+      agentDisplayState,
+      agentStartTime,
+      streamingText,
+      permissions,
+      hooks,
+      thoughtSegments,
+      committedAssistantBody: findLastAgentMessageBody({
+        renderedThreadId,
+        isAgentRunning,
+        messages,
+      }),
     })),
     [
       currentTurn,
-      input.agentDisplayState,
-      input.agentStartTime,
-      input.hooks,
-      input.isAgentRunning,
-      input.latestTurnWithChanges,
-      input.messages,
-      input.permissions,
-      input.persistedFilesChanged,
-      input.persistedNarrativeByMessage,
-      input.renderedThreadId,
-      input.streamingText,
-      input.thoughtSegments,
-      input.toolCalls,
-      input.turnSummariesByMessageId,
+      agentDisplayState,
+      agentStartTime,
+      hooks,
+      isAgentRunning,
+      latestTurnWithChanges,
+      messages,
+      permissions,
+      persistedFilesChanged,
+      persistedNarrativeByMessage,
+      renderedThreadId,
+      streamingText,
+      thoughtSegments,
+      toolCalls,
+      turnSummariesByMessageId,
     ],
   );
   const items = useMemo<MessageListItem[]>(
@@ -125,7 +156,7 @@ export function useMessageListItems(input: MessageListItemsInput) {
       : [{ key: "leading-content", type: "leading-content", content: input.leadingContent }, ...virtualItems],
     [input.leadingContent, virtualItems],
   );
-  const lastUserMessage = useMemo(() => findLastUserMessage(input), [input.messages]);
+  const lastUserMessage = useMemo(() => findLastUserMessage({ messages }), [messages]);
   const lastUserMessagePreview = useMemo(
     () => lastUserMessage ? resolveUserMessagePreview(lastUserMessage) : null,
     [lastUserMessage],

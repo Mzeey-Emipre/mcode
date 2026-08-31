@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
 import {
   CommandEmpty,
   CommandGroup,
@@ -22,6 +22,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useShallow } from "zustand/shallow";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ChecksStatus } from "@mcode/contracts";
 import type { RecentThread, Thread } from "@/transport/types";
 
@@ -29,6 +30,23 @@ interface SearchRow {
   thread: Thread | RecentThread;
   workspaceName: string;
   workspacePath: string;
+}
+
+function getThreadSearchResultLabel(loading: boolean, hasQuery: boolean, resultCount: number): string {
+  if (loading) return "Searching…";
+  const resultNoun = resultCount === 1 ? "result" : "results";
+  const recentNoun = resultCount === 1 ? "recent thread" : "recent threads";
+  return hasQuery ? `${resultCount} ${resultNoun}` : `${resultCount} ${recentNoun}`;
+}
+
+function ThreadSearchToolbar({ loading, resultLabel, providers }: { loading: boolean; resultLabel: string; providers: string[] }) {
+  return <div data-testid="thread-search-toolbar" className="flex min-h-11 items-center justify-between gap-3 border-b border-border/60 px-3 py-1.5"><div aria-live="polite" className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">{loading && <Spinner size={12} aria-hidden />}<span>{resultLabel}</span></div><div className="flex shrink-0 items-center gap-1" role="toolbar" aria-label="Thread search controls"><ThreadSortControl showLabel /><ThreadFilterDropdown providers={providers} showLabel /></div></div>;
+}
+
+function ThreadSearchResults({ loading, rows, searchError, hasQuery, renderRow }: { loading: boolean; rows: SearchRow[]; searchError: boolean; hasQuery: boolean; renderRow: (row: SearchRow) => ReactNode }) {
+  if (loading && rows.length === 0) return <CommandList className="max-h-[28rem] overflow-y-auto p-1.5"><div className="grid gap-1 px-1 py-2" aria-label="Loading threads">{[0, 1, 2].map((item) => <div key={item} className="flex h-14 animate-pulse items-center gap-3 rounded-md px-3"><span className="size-7 rounded-md bg-accent" /><span className="grid flex-1 gap-2"><span className="h-3 w-2/5 rounded bg-accent" /><span className="h-2.5 w-3/5 rounded bg-accent/70" /></span></div>)}</div></CommandList>;
+  if (rows.length === 0) return <CommandList className="max-h-[28rem] overflow-y-auto p-1.5"><CommandEmpty>{searchError ? "Thread search is unavailable." : hasQuery ? "No matching threads." : "No recent threads."}</CommandEmpty></CommandList>;
+  return <CommandList className="max-h-[28rem] overflow-y-auto p-1.5"><CommandGroup heading={hasQuery ? "Threads" : "Recent threads"}>{rows.map(renderRow)}</CommandGroup></CommandList>;
 }
 
 /** Applies the thread finder's active filters and sort order to recent threads. */
@@ -95,13 +113,30 @@ function ThreadSearchResult({
         {thread.title}
       </span>
       <div className="flex min-w-0 shrink items-center justify-end gap-2 whitespace-nowrap text-xs text-muted-foreground">
-        <span className="max-w-44 truncate text-right" title={row.workspacePath} aria-label={`Project, ${row.workspaceName}`}>
-          {row.workspaceName}
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className="max-w-44 truncate text-right"
+                aria-label={`Project, ${row.workspaceName}`}
+              >
+                {row.workspaceName}
+              </span>
+            }
+          />
+          <TooltipContent>{row.workspacePath}</TooltipContent>
+        </Tooltip>
         <span aria-hidden className="text-muted-foreground/35">·</span>
-        <span className="max-w-40 truncate font-mono" title={thread.branch} aria-label={`Branch, ${thread.branch}`}>
-          {thread.branch}
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="max-w-40 truncate font-mono" aria-label={`Branch, ${thread.branch}`}>
+                {thread.branch}
+              </span>
+            }
+          />
+          <TooltipContent>{thread.branch}</TooltipContent>
+        </Tooltip>
         <span className={cn(isUserCompleted && "grayscale opacity-45")}>
           <ThreadStateMarker marker={marker} />
         </span>
@@ -225,75 +260,14 @@ export function ThreadSearchView() {
     close();
   };
 
-  const loading = query.trim() ? isSearching : recentLoading;
-  const resultLabel = loading
-    ? "Searching…"
-    : query.trim()
-      ? `${rows.length} ${rows.length === 1 ? "result" : "results"}`
-      : `${rows.length} ${rows.length === 1 ? "recent thread" : "recent threads"}`;
+  const hasQuery = Boolean(query.trim());
+  const loading = hasQuery ? isSearching : recentLoading;
+  const resultLabel = getThreadSearchResultLabel(loading, hasQuery, rows.length);
 
   return (
     <>
-      <div
-        data-testid="thread-search-toolbar"
-        className="flex min-h-11 items-center justify-between gap-3 border-b border-border/60 px-3 py-1.5"
-      >
-        <div
-          aria-live="polite"
-          className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground"
-        >
-          {loading && <Spinner size={12} aria-hidden />}
-          <span>{resultLabel}</span>
-        </div>
-        <div
-          className="flex shrink-0 items-center gap-1"
-          role="toolbar"
-          aria-label="Thread search controls"
-        >
-          <ThreadSortControl showLabel />
-          <ThreadFilterDropdown providers={providers} showLabel />
-        </div>
-      </div>
-
-      <CommandList className="max-h-[28rem] overflow-y-auto p-1.5">
-        {loading && rows.length === 0 ? (
-          <div className="grid gap-1 px-1 py-2" aria-label="Loading threads">
-            {[0, 1, 2].map((item) => (
-              <div
-                key={item}
-                className="flex h-14 animate-pulse items-center gap-3 rounded-md px-3"
-              >
-                <span className="size-7 rounded-md bg-accent" />
-                <span className="grid flex-1 gap-2">
-                  <span className="h-3 w-2/5 rounded bg-accent" />
-                  <span className="h-2.5 w-3/5 rounded bg-accent/70" />
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <CommandEmpty>
-            {searchError
-              ? "Thread search is unavailable."
-              : query.trim()
-                ? "No matching threads."
-                : "No recent threads."}
-          </CommandEmpty>
-        ) : (
-          <CommandGroup heading={query.trim() ? "Threads" : "Recent threads"}>
-            {rows.map((row) => (
-              <ThreadSearchResult
-                key={row.thread.id}
-                row={row}
-                isRunning={runningThreadIds.has(row.thread.id)}
-                hasPendingPermission={pendingPermissionThreadIds.has(row.thread.id)}
-                checks={checksById[row.thread.id]}
-                onSelect={() => handleSelect(row.thread)}
-              />
-            ))}
-          </CommandGroup>
-        )}
-      </CommandList>
+      <ThreadSearchToolbar loading={loading} resultLabel={resultLabel} providers={providers} />
+      <ThreadSearchResults loading={loading} rows={rows} searchError={searchError} hasQuery={hasQuery} renderRow={(row) => <ThreadSearchResult key={row.thread.id} row={row} isRunning={runningThreadIds.has(row.thread.id)} hasPendingPermission={pendingPermissionThreadIds.has(row.thread.id)} checks={checksById[row.thread.id]} onSelect={() => handleSelect(row.thread)} />} />
     </>
   );
 }

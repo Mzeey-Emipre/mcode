@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
@@ -145,6 +145,19 @@ function isPublicOperation(
 const MAX_LATENCY_SAMPLES = 256;
 const MAX_LATENCY_SAMPLE_MS = 24 * 60 * 60 * 1_000;
 
+function validateBrokerLimit(value: number, minimum: number, maximum: number, message: string): void {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) throw new Error(message);
+}
+
+type BrowserInspectResult = Extract<
+  Extract<BrowserAutomationResponse, { ok: true }>['result'],
+  { operation: "inspect" }
+>;
+
+function optionValue<T>(value: T | undefined, fallback: T): T {
+  return value ?? fallback;
+}
+
 function browserV2Recovery(code: BrowserAutomationErrorCode): "inspect" | "reopen" | "wait" | "yield_to_user" | "do_not_retry" {
   switch (code) {
     case "CAPABILITY_CHANGED":
@@ -243,7 +256,7 @@ function evaluateReplayKey(providerId: string, request: Extract<BrowserAutomatio
 }
 
 function hashExpression(expression: string): string {
-  return createHash("sha256").update(expression, "utf8").digest("hex");
+  return NodeCrypto.createHash("sha256").update(expression, "utf8").digest("hex");
 }
 
 function tabsReplayKey(providerId: string, request: Extract<BrowserAutomationRequest, { operation: "tabs" }>): string {
@@ -264,6 +277,54 @@ function targetsMatch(
     left.threadId === right.threadId &&
     left.tabId === right.tabId &&
     left.targetGeneration === right.targetGeneration;
+}
+
+interface RoutingCandidate {
+  host: RegisteredHost;
+  target: BrowserAutomationHostDispatchTarget;
+}
+
+interface HostSelectionCandidate {
+  host: RegisteredHost;
+  target: BrowserAutomationHostDispatchTarget | undefined;
+}
+
+function comparePriority(left: readonly number[], right: readonly number[]): number {
+  for (let index = 0; index < left.length; index++) {
+    const difference = (right[index] ?? 0) - (left[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function targetPriority(candidate: RoutingCandidate): number[] {
+  return [
+    Number(candidate.target.focused),
+    Number(candidate.target.active),
+    candidate.target.lastUsedAt,
+    -candidate.host.pending,
+    -candidate.host.generation,
+    -candidate.target.windowId,
+  ];
+}
+
+function compareRoutingCandidates(left: RoutingCandidate, right: RoutingCandidate): number {
+  return comparePriority(targetPriority(left), targetPriority(right)) || left.target.tabId.localeCompare(right.target.tabId);
+}
+
+function selectedHostPriority(candidate: HostSelectionCandidate): number[] {
+  return [
+    Number(candidate.target !== undefined),
+    Number(candidate.target?.focused ?? false),
+    Number(candidate.target?.active ?? false),
+    candidate.target?.lastUsedAt ?? 0,
+    -candidate.host.pending,
+    -candidate.host.generation,
+  ];
+}
+
+function compareSelectedHosts(left: HostSelectionCandidate, right: HostSelectionCandidate): number {
+  return comparePriority(selectedHostPriority(left), selectedHostPriority(right));
 }
 
 function isExactTargetReplacement(
@@ -296,19 +357,21 @@ function summarizeLatency(values: readonly number[]): BrowserAutomationLatencyPe
   };
 }
 
-function responseWasTruncated(response: BrowserAutomationResponse): boolean {
-  if (!response.ok) return false;
-  const result = response.result as unknown as Record<string, unknown>;
-  const snapshot = typeof result.snapshot === "object" && result.snapshot !== null
-    ? result.snapshot as Record<string, unknown>
-    : null;
-  const screenshot = typeof result.screenshot === "object" && result.screenshot !== null
-    ? result.screenshot as Record<string, unknown>
-    : null;
-  const snapshotScreenshot = snapshot && typeof snapshot.screenshot === "object" && snapshot.screenshot !== null
-    ? snapshot.screenshot as Record<string, unknown>
-    : null;
-  const truncations = [
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function hasTruncation(value: unknown): boolean {
+  return objectRecord(value)?.truncated === true;
+}
+
+function responseTruncationCandidates(result: Record<string, unknown>): unknown[] {
+  const snapshot = objectRecord(result.snapshot);
+  const screenshot = objectRecord(result.screenshot);
+  const snapshotScreenshot = objectRecord(snapshot?.screenshot);
+  return [
     result.truncation,
     screenshot?.truncation,
     snapshot?.visibleTextTruncation,
@@ -319,9 +382,12 @@ function responseWasTruncated(response: BrowserAutomationResponse): boolean {
     snapshot?.actionsTruncation,
     snapshotScreenshot?.truncation,
   ];
-  return truncations.some((candidate) =>
-    typeof candidate === "object" && candidate !== null && (candidate as { truncated?: unknown }).truncated === true,
-  );
+}
+
+function responseWasTruncated(response: BrowserAutomationResponse): boolean {
+  if (!response.ok) return false;
+  const result = response.result as unknown as Record<string, unknown>;
+  return responseTruncationCandidates(result).some(hasTruncation);
 }
 
 function requestWaitsForPage(request: BrowserAutomationRequest): boolean {
@@ -336,75 +402,159 @@ function requestWaitsForPage(request: BrowserAutomationRequest): boolean {
   );
 }
 
+function negotiatedOperations(pending: PendingRequest): BrowserAutomationPublicOperation[] {
+  const allowed = new Set<string>(pending.credentialOperations);
+  const available = new Set(
+    pending.host.registration.capabilities
+      .filter((capability) => capability.available)
+      .map((capability) => capability.operation),
+  );
+  return pending.host.registration.executorDescriptor.operations.filter(
+    (operation): operation is BrowserAutomationPublicOperation => allowed.has(operation) && available.has(operation),
+  );
+}
+
+function inspectObservationReference(result: BrowserInspectResult): string | undefined {
+  return typeof result.observationRef === "string" && result.observationRef.length > 0
+    ? result.observationRef
+    : undefined;
+}
+
+function inspectCapabilities(
+  capabilities: BrowserAutomationPublicOperation[],
+  observationRef: string | undefined,
+): BrowserAutomationPublicOperation[] {
+  return observationRef || !capabilities.includes("act")
+    ? capabilities
+    : capabilities.filter((operation) => operation !== "act");
+}
+
+function inspectReadiness(target: BrowserAutomationHostDispatchTarget | undefined): { ready: boolean; state: "ready" | "target-unavailable" | "human-control"; reason?: string } {
+  if (!target) return { ready: false, state: "target-unavailable", reason: "Visible browser target is unavailable" };
+  if (target.controller?.controller === "human") return { ready: false, state: "human-control", reason: "Visible Preview is under human control" };
+  return { ready: true, state: "ready" };
+}
+
+function boundedInspectSnapshot(
+  snapshot: BrowserInspectResult["snapshot"],
+  maxSnapshotChars: number,
+): BrowserInspectResult["snapshot"] {
+  if (!snapshot || snapshot.visibleText.length <= maxSnapshotChars) return snapshot;
+  return {
+    ...snapshot,
+    visibleText: snapshot.visibleText.slice(0, maxSnapshotChars),
+    visibleTextTruncation: {
+      truncated: true as const,
+      originalCount: snapshot.visibleText.length,
+      reason: "character-limit" as const,
+    },
+  };
+}
+
+function inspectTabs(
+  responseTabs: BrowserInspectResult["tabs"],
+  target: BrowserAutomationHostDispatchTarget | undefined,
+): BrowserInspectResult["tabs"] {
+  return (target ? [target, ...responseTabs.filter((tab) => tab.tabId !== target.tabId)] : responseTabs) as BrowserInspectResult["tabs"];
+}
+
+function inspectGuidance(
+  descriptor: RegisteredHost["registration"]["executorDescriptor"],
+  target: BrowserAutomationHostDispatchTarget | undefined,
+  capabilities: BrowserAutomationPublicOperation[],
+): string {
+  if (target?.controller?.controller === "human") return "Visible Preview under human control. Yield to user before effects.";
+  return `Visible browser executor (${descriptor.runtime}) supports: ${capabilities.join(", ") || "none"}.`;
+}
+
 function shapeNegotiatedResponse(
   response: BrowserAutomationResponse,
   pending: PendingRequest,
 ): BrowserAutomationResponse {
   if (!response.ok) return response;
   const descriptor = pending.host.registration.executorDescriptor;
-  const allowed = new Set<string>(pending.credentialOperations);
-  const liveHostCapabilities = new Set(
-    pending.host.registration.capabilities
-      .filter((capability) => capability.available)
-      .map((capability) => capability.operation),
-  );
-  const negotiatedCapabilities = descriptor.operations.filter((operation): operation is BrowserAutomationPublicOperation =>
-    allowed.has(operation) && liveHostCapabilities.has(operation),
-  );
-  if (response.result.operation === "inspect") {
-    const hostObservationRef = typeof response.result.observationRef === "string" && response.result.observationRef.length > 0
-      ? response.result.observationRef
-      : undefined;
-    const actReady = hostObservationRef !== undefined;
-    const advertisedCapabilities = actReady || !negotiatedCapabilities.includes("act")
-      ? negotiatedCapabilities
-      : negotiatedCapabilities.filter((operation) => operation !== "act");
-    const targetReady = pending.target !== undefined;
-    const guidance = pending.target?.controller?.controller === "human"
-      ? "Visible Preview under human control. Yield to user before effects."
-      : `Visible browser executor (${descriptor.runtime}) supports: ${advertisedCapabilities.join(", ") || "none"}.`;
-    const snapshot = response.result.snapshot && response.result.snapshot.visibleText.length > descriptor.constraints.maxSnapshotChars
-      ? {
-          ...response.result.snapshot,
-          visibleText: response.result.snapshot.visibleText.slice(0, descriptor.constraints.maxSnapshotChars),
-          visibleTextTruncation: {
-            truncated: true as const,
-            originalCount: response.result.snapshot.visibleText.length,
-            reason: "character-limit" as const,
-          },
-        }
-      : response.result.snapshot;
-    const diagnostics = response.result.diagnostics?.slice(0, descriptor.constraints.maxDiagnostics);
-    const inspectedTabs = pending.target
-      ? [pending.target, ...response.result.tabs.filter((tab) => tab.tabId !== pending.target?.tabId)]
-      : response.result.tabs;
-    return {
-      ...response,
-      result: {
-        ...response.result,
-        readiness: !targetReady
-          ? { ready: false, state: "target-unavailable", reason: "Visible browser target is unavailable" }
-          : pending.target?.controller?.controller === "human"
-            ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
-            : { ready: true, state: "ready" },
-        target: pending.target
-          ? { threadId: pending.target.threadId, tabId: pending.target.tabId, targetGeneration: pending.target.targetGeneration, sticky: true }
-          : undefined,
-        tabs: inspectedTabs.slice(0, descriptor.constraints.maxTabs),
-        snapshot,
-        ...(diagnostics ? { diagnostics } : {}),
-        ...(hostObservationRef
-          ? { observationRef: hostObservationRef }
-          : !negotiatedCapabilities.includes("act")
-            ? { observationRef: randomUUID() }
-            : {}),
-        capabilities: advertisedCapabilities,
-        capabilityRevision: descriptor.capabilityRevision,
-        guidance: guidance.slice(0, 4_000),
-      },
-    };
+  if (response.result.operation !== "inspect") return response;
+  const negotiated = negotiatedOperations(pending);
+  const observationRef = inspectObservationReference(response.result);
+  const capabilities = inspectCapabilities(negotiated, observationRef);
+  const diagnostics = response.result.diagnostics?.slice(0, descriptor.constraints.maxDiagnostics);
+  return {
+    ...response,
+    result: {
+      ...response.result,
+      readiness: inspectReadiness(pending.target),
+      target: pending.target && { threadId: pending.target.threadId, tabId: pending.target.tabId, targetGeneration: pending.target.targetGeneration, sticky: true },
+      tabs: inspectTabs(response.result.tabs, pending.target).slice(0, descriptor.constraints.maxTabs),
+      snapshot: boundedInspectSnapshot(response.result.snapshot, descriptor.constraints.maxSnapshotChars),
+      ...(diagnostics ? { diagnostics } : {}),
+      ...(observationRef ? { observationRef } : !negotiated.includes("act") ? { observationRef: NodeCrypto.randomUUID() } : {}),
+      capabilities,
+      capabilityRevision: descriptor.capabilityRevision,
+      guidance: inspectGuidance(descriptor, pending.target, capabilities).slice(0, 4_000),
+    },
+  };
+}
+
+function registrationDescriptor(input: unknown): { runtime?: unknown } | undefined {
+  return typeof input === "object" && input !== null
+    ? (input as { executorDescriptor?: { runtime?: unknown } }).executorDescriptor
+    : undefined;
+}
+
+function assertRegistrationRuntime(
+  input: unknown,
+  registration: BrowserAutomationHostRegistration,
+  authorization: BrowserAutomationHostConnectionAuthorization | null,
+): void {
+  const descriptor = registrationDescriptor(input);
+  if (descriptor && descriptor.runtime !== registration.runtime) {
+    throw new Error("Browser automation executor descriptor runtime does not match host runtime");
   }
-  return response;
+  if (registration.runtime === "web" && authorization?.allowWebRuntime !== true) {
+    throw new Error("Browser automation web host registration is disabled");
+  }
+  if (registration.runtime !== "web" && registration.targetIdentity) {
+    throw new Error("Browser automation target identity is reserved for web hosts");
+  }
+}
+
+function assertRegistrationScope(
+  registration: BrowserAutomationHostRegistration,
+  authorization: BrowserAutomationHostConnectionAuthorization | null,
+): asserts authorization is BrowserAutomationHostConnectionAuthorization {
+  if (!authorization || registration.workspaceIds.some((workspaceId) => !authorization.allowedWorkspaceIds.includes(workspaceId))) {
+    throw new Error("Browser automation host registration is not authorized for this connection");
+  }
+}
+
+function assertTargetIdentity(registration: BrowserAutomationHostRegistration, suppliedDesktopInstanceId: string): void {
+  const targetIdentity = registration.targetIdentity;
+  if (!targetIdentity) return;
+  if (targetIdentity.worktreeIdentity !== registration.worktreeIdentity) {
+    throw new Error("Browser automation target identity does not match its authorized worktree");
+  }
+  if (targetIdentity.connectionId !== suppliedDesktopInstanceId && targetIdentity.connectionId !== "pending-desktop") {
+    throw new Error("Browser automation target identity does not match its connection");
+  }
+  if (!registration.workspaceIds.includes(targetIdentity.workspaceId)) {
+    throw new Error("Browser automation target identity workspace is not authorized");
+  }
+}
+
+function trustedRegistration(
+  input: unknown,
+  authorization: BrowserAutomationHostConnectionAuthorization | null,
+): BrowserAutomationHostRegistration {
+  const registration = BrowserAutomationHostRegistrationSchema().parse(input);
+  assertRegistrationRuntime(input, registration, authorization);
+  assertRegistrationScope(registration, authorization);
+  const trusted = {
+    ...registration,
+    desktopInstanceId: authorization.desktopInstanceId,
+    worktreeIdentity: authorization.worktreeIdentity,
+  };
+  assertTargetIdentity(trusted, registration.desktopInstanceId);
+  return trusted;
 }
 
 /** Routes scoped browser requests to one sticky, capability-compatible renderer host. */
@@ -446,41 +596,27 @@ export class BrowserAutomationBroker {
   };
 
   constructor(options: BrowserAutomationBrokerOptions) {
-    this.send = options.send ?? sendToClient;
-    this.now = options.now ?? Date.now;
-    this.maxPendingRequests = options.maxPendingRequests ?? BROWSER_AUTOMATION_MAX_PENDING_REQUESTS;
-    this.maxAssignments = options.maxAssignments ?? 256;
-    this.assignmentTtlMs = options.assignmentTtlMs ?? 30 * 60_000;
-    this.hostHeartbeatTimeoutMs = options.hostHeartbeatTimeoutMs ?? 30_000;
-    this.maxHosts = options.maxHosts ?? 8;
-    this.maxTargets = options.maxTargets ?? 128;
-    this.maxLatencySamples = options.maxLatencySamples ?? MAX_LATENCY_SAMPLES;
-    this.telemetry = options.telemetry ?? new BrowserAutomationTelemetry();
-    if (
-      !Number.isInteger(this.maxPendingRequests) ||
-      this.maxPendingRequests < 1 ||
-      this.maxPendingRequests > BROWSER_AUTOMATION_MAX_PENDING_REQUESTS
-    ) {
-      throw new Error("Browser automation broker capacity is invalid");
-    }
-    if (!Number.isInteger(this.maxAssignments) || this.maxAssignments < 1 || this.maxAssignments > 4_096) {
-      throw new Error("Browser automation assignment capacity is invalid");
-    }
-    if (!Number.isInteger(this.assignmentTtlMs) || this.assignmentTtlMs < 1_000 || this.assignmentTtlMs > 24 * 60 * 60_000) {
-      throw new Error("Browser automation assignment TTL is invalid");
-    }
-    if (!Number.isInteger(this.hostHeartbeatTimeoutMs) || this.hostHeartbeatTimeoutMs < 1_000 || this.hostHeartbeatTimeoutMs > 5 * 60_000) {
-      throw new Error("Browser automation heartbeat timeout is invalid");
-    }
-    if (!Number.isInteger(this.maxHosts) || this.maxHosts < 1 || this.maxHosts > 64) {
-      throw new Error("Browser automation host capacity is invalid");
-    }
-    if (!Number.isInteger(this.maxTargets) || this.maxTargets < 1 || this.maxTargets > 4_096) {
-      throw new Error("Browser automation target capacity is invalid");
-    }
-    if (!Number.isInteger(this.maxLatencySamples) || this.maxLatencySamples < 1 || this.maxLatencySamples > MAX_LATENCY_SAMPLES) {
-      throw new Error("Browser automation latency sample capacity is invalid");
-    }
+    this.send = optionValue(options.send, sendToClient);
+    this.now = optionValue(options.now, Date.now);
+    this.maxPendingRequests = optionValue(options.maxPendingRequests, BROWSER_AUTOMATION_MAX_PENDING_REQUESTS);
+    this.maxAssignments = optionValue(options.maxAssignments, 256);
+    this.assignmentTtlMs = optionValue(options.assignmentTtlMs, 30 * 60_000);
+    this.hostHeartbeatTimeoutMs = optionValue(options.hostHeartbeatTimeoutMs, 30_000);
+    this.maxHosts = optionValue(options.maxHosts, 8);
+    this.maxTargets = optionValue(options.maxTargets, 128);
+    this.maxLatencySamples = optionValue(options.maxLatencySamples, MAX_LATENCY_SAMPLES);
+    this.telemetry = optionValue(options.telemetry, new BrowserAutomationTelemetry());
+    this.validateLimits();
+  }
+
+  private validateLimits(): void {
+    validateBrokerLimit(this.maxPendingRequests, 1, BROWSER_AUTOMATION_MAX_PENDING_REQUESTS, "Browser automation broker capacity is invalid");
+    validateBrokerLimit(this.maxAssignments, 1, 4_096, "Browser automation assignment capacity is invalid");
+    validateBrokerLimit(this.assignmentTtlMs, 1_000, 24 * 60 * 60_000, "Browser automation assignment TTL is invalid");
+    validateBrokerLimit(this.hostHeartbeatTimeoutMs, 1_000, 5 * 60_000, "Browser automation heartbeat timeout is invalid");
+    validateBrokerLimit(this.maxHosts, 1, 64, "Browser automation host capacity is invalid");
+    validateBrokerLimit(this.maxTargets, 1, 4_096, "Browser automation target capacity is invalid");
+    validateBrokerLimit(this.maxLatencySamples, 1, MAX_LATENCY_SAMPLES, "Browser automation latency sample capacity is invalid");
   }
 
   /** Registers or replaces the single browser host owned by one WebSocket connection. */
@@ -489,75 +625,14 @@ export class BrowserAutomationBroker {
     input: unknown,
     authorization: BrowserAutomationHostConnectionAuthorization | null,
   ): { generation: number; desktopInstanceId: string } {
-    const registration = BrowserAutomationHostRegistrationSchema().parse(input);
-    const rawDescriptor = typeof input === "object" && input !== null
-      ? (input as { executorDescriptor?: { runtime?: unknown } }).executorDescriptor
-      : undefined;
-    if (rawDescriptor && rawDescriptor.runtime !== registration.runtime) {
-      throw new Error("Browser automation executor descriptor runtime does not match host runtime");
-    }
-    if (registration.runtime === "web" && authorization?.allowWebRuntime !== true) {
-      throw new Error("Browser automation web host registration is disabled");
-    }
-    if (registration.runtime !== "web" && registration.targetIdentity) {
-      throw new Error("Browser automation target identity is reserved for web hosts");
-    }
-    if (
-      !authorization ||
-      registration.workspaceIds.some((workspaceId) => !authorization.allowedWorkspaceIds.includes(workspaceId))
-    ) {
-      throw new Error("Browser automation host registration is not authorized for this connection");
-    }
-    const trustedRegistration: BrowserAutomationHostRegistration = {
-      ...registration,
-      desktopInstanceId: authorization.desktopInstanceId,
-      worktreeIdentity: authorization.worktreeIdentity,
-    };
-    if (
-      trustedRegistration.targetIdentity &&
-      trustedRegistration.targetIdentity.worktreeIdentity !== trustedRegistration.worktreeIdentity
-    ) {
-      throw new Error("Browser automation target identity does not match its authorized worktree");
-    }
-    if (
-      trustedRegistration.targetIdentity &&
-      trustedRegistration.targetIdentity.connectionId !== registration.desktopInstanceId &&
-      trustedRegistration.targetIdentity.connectionId !== "pending-desktop"
-    ) {
-      throw new Error("Browser automation target identity does not match its connection");
-    }
-    if (
-      trustedRegistration.targetIdentity &&
-      !trustedRegistration.workspaceIds.includes(trustedRegistration.targetIdentity.workspaceId)
-    ) {
-      throw new Error("Browser automation target identity workspace is not authorized");
-    }
+    const registration = trustedRegistration(input, authorization);
     this.disconnect(socket);
-    const existingOwner = [...this.hostsBySocket.values()].find(
-      (host) => host.registration.hostId === trustedRegistration.hostId,
-    );
-    if (existingOwner) {
-      if (
-        existingOwner.registration.desktopInstanceId !== trustedRegistration.desktopInstanceId ||
-        existingOwner.registration.worktreeIdentity !== trustedRegistration.worktreeIdentity
-      ) {
-        throw new Error("Browser automation host ID is already registered");
-      }
-      if (existingOwner.registration.executorDescriptor?.capabilityRevision !== registration.executorDescriptor?.capabilityRevision) {
-        for (const [key, pending] of this.pending) {
-          if (pending.host !== existingOwner) continue;
-          this.settle(key, pending, failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false));
-        }
-      }
-      this.disconnect(existingOwner.socket);
-    }
-    if (this.hostsBySocket.size >= this.maxHosts) {
-      throw new Error("Browser automation host capacity is exhausted");
-    }
+    this.replaceExistingHost(registration);
+    if (this.hostsBySocket.size >= this.maxHosts) throw new Error("Browser automation host capacity is exhausted");
     const generation = this.nextGeneration++;
     const host: RegisteredHost = {
       socket,
-      registration: trustedRegistration,
+      registration,
       generation,
       lastHeartbeatAt: this.now(),
       pending: 0,
@@ -566,7 +641,26 @@ export class BrowserAutomationBroker {
     };
     host.heartbeatTimer = this.scheduleHeartbeatExpiry(host);
     this.hostsBySocket.set(socket, host);
-    return { generation, desktopInstanceId: authorization.desktopInstanceId };
+    return { generation, desktopInstanceId: registration.desktopInstanceId };
+  }
+
+  private replaceExistingHost(registration: BrowserAutomationHostRegistration): void {
+    const owner = Array.from(this.hostsBySocket.values()).find((host) => host.registration.hostId === registration.hostId);
+    if (!owner) return;
+    if (owner.registration.desktopInstanceId !== registration.desktopInstanceId || owner.registration.worktreeIdentity !== registration.worktreeIdentity) {
+      throw new Error("Browser automation host ID is already registered");
+    }
+    this.rejectChangedCapabilities(owner, registration);
+    this.disconnect(owner.socket);
+  }
+
+  private rejectChangedCapabilities(host: RegisteredHost, registration: BrowserAutomationHostRegistration): void {
+    if (host.registration.executorDescriptor?.capabilityRevision === registration.executorDescriptor?.capabilityRevision) return;
+    for (const [key, pending] of this.pending) {
+      if (pending.host === host) {
+        this.settle(key, pending, failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false));
+      }
+    }
   }
 
   /** Replaces the exact desktop-main-derived targets advertised by one authorized host. */
@@ -578,46 +672,73 @@ export class BrowserAutomationBroker {
   ): void {
     const host = this.requireHost(socket, hostId, generation);
     const targets = BrowserAutomationHostDispatchTargetSchema().array().max(64).parse(input);
-    const retainedByOtherHosts = [...this.hostsBySocket.values()].reduce(
-      (count, candidate) => count + (candidate === host ? 0 : candidate.targets.size),
-      0,
-    );
-    if (retainedByOtherHosts + targets.length > this.maxTargets) {
+    this.assertTargetCapacity(host, targets.length);
+    const next = this.validatedTargets(host, targets);
+    this.invalidateReplacedTargets(host, next);
+    this.rememberTargetGenerations(host, next);
+    host.targets = next;
+  }
+
+  private assertTargetCapacity(host: RegisteredHost, targetCount: number): void {
+    const retainedByOtherHosts = Array.from(this.hostsBySocket.values())
+      .filter((candidate) => candidate !== host)
+      .reduce((count, candidate) => count + candidate.targets.size, 0);
+    if (retainedByOtherHosts + targetCount > this.maxTargets) {
       throw new Error("Browser automation target capacity is exhausted");
     }
-    const next = new Map<string, BrowserAutomationHostDispatchTarget>();
-    for (const target of targets) {
-      if (
-        target.desktopInstanceId !== host.registration.desktopInstanceId ||
-        target.connectionGeneration !== host.generation
-      ) {
-        throw new Error("Browser automation target identity does not match its authorized host");
-      }
-      const key = targetKey(target);
-      if (next.has(key)) throw new Error("Browser automation targets must be unique by thread and tab");
-      const prior = host.targetGenerationTombstones.get(key);
-      if (
-        prior &&
-        (target.targetGeneration < prior.generation ||
-          (target.targetGeneration === prior.generation && target.windowId !== prior.windowId))
-      ) {
-        throw new Error("Browser automation target generation is stale");
-      }
-      next.set(key, target);
-    }
+  }
 
+  private validatedTargets(
+    host: RegisteredHost,
+    targets: readonly BrowserAutomationHostDispatchTarget[],
+  ): Map<string, BrowserAutomationHostDispatchTarget> {
+    const next = new Map<string, BrowserAutomationHostDispatchTarget>();
+    for (const target of targets) this.addValidatedTarget(host, next, target);
+    return next;
+  }
+
+  private addValidatedTarget(
+    host: RegisteredHost,
+    targets: Map<string, BrowserAutomationHostDispatchTarget>,
+    target: BrowserAutomationHostDispatchTarget,
+  ): void {
+    if (target.desktopInstanceId !== host.registration.desktopInstanceId || target.connectionGeneration !== host.generation) {
+      throw new Error("Browser automation target identity does not match its authorized host");
+    }
+    const key = targetKey(target);
+    if (targets.has(key)) throw new Error("Browser automation targets must be unique by thread and tab");
+    const prior = host.targetGenerationTombstones.get(key);
+    if (prior && this.isStaleTargetGeneration(target, prior)) {
+      throw new Error("Browser automation target generation is stale");
+    }
+    targets.set(key, target);
+  }
+
+  private isStaleTargetGeneration(
+    target: BrowserAutomationHostDispatchTarget,
+    prior: { generation: number; windowId: number },
+  ): boolean {
+    return target.targetGeneration < prior.generation
+      || (target.targetGeneration === prior.generation && target.windowId !== prior.windowId);
+  }
+
+  private invalidateReplacedTargets(host: RegisteredHost, next: Map<string, BrowserAutomationHostDispatchTarget>): void {
     for (const [key, oldTarget] of host.targets) {
       const replacement = next.get(key);
       if (replacement && replacement.targetGeneration === oldTarget.targetGeneration && replacement.windowId === oldTarget.windowId) continue;
       this.invalidateTarget(host, key, replacement !== undefined && isExactTargetReplacement(oldTarget, replacement));
     }
+  }
+
+  private rememberTargetGenerations(host: RegisteredHost, next: Map<string, BrowserAutomationHostDispatchTarget>): void {
     for (const [key, target] of next) {
       host.targetGenerationTombstones.delete(key);
-      host.targetGenerationTombstones.set(key, {
-        generation: target.targetGeneration,
-        windowId: target.windowId,
-      });
+      host.targetGenerationTombstones.set(key, { generation: target.targetGeneration, windowId: target.windowId });
     }
+    this.trimTargetTombstones(host, next);
+  }
+
+  private trimTargetTombstones(host: RegisteredHost, next: Map<string, BrowserAutomationHostDispatchTarget>): void {
     while (host.targetGenerationTombstones.size > 128) {
       const oldest = host.targetGenerationTombstones.keys().next().value as string | undefined;
       if (!oldest) break;
@@ -625,11 +746,8 @@ export class BrowserAutomationBroker {
         const current = host.targetGenerationTombstones.get(oldest)!;
         host.targetGenerationTombstones.delete(oldest);
         host.targetGenerationTombstones.set(oldest, current);
-        continue;
-      }
-      host.targetGenerationTombstones.delete(oldest);
+      } else host.targetGenerationTombstones.delete(oldest);
     }
-    host.targets = next;
   }
 
   /** Records liveness for the current generation of one registered host. */
@@ -657,70 +775,60 @@ export class BrowserAutomationBroker {
     const pending = this.pending.get(key);
     if (!pending) return;
     const negotiatedResponse = shapeNegotiatedResponse(response, pending);
-    if (negotiatedResponse.ok && negotiatedResponse.result.operation !== pending.request.operation) {
-      this.settle(
-        key,
-        pending,
-        failure(pending.request, "INVALID_REQUEST", "Browser response operation does not match its request", false),
-      );
-      return;
-    }
-    if (
-      negotiatedResponse.ok &&
-      pending.request.operation === "evaluate" &&
-      negotiatedResponse.result.operation === "evaluate" &&
-      !("outcome" in negotiatedResponse.result)
-    ) {
-      this.settle(
-        key,
-        pending,
-        failure(pending.request, "INVALID_REQUEST", "Browser evaluation response is missing its mutation envelope", false),
-      );
-      return;
-    }
-    if (negotiatedResponse.ok && !pending.target) {
-      if (!responseTarget) {
-        this.settle(
-          key,
-          pending,
-          failure(pending.request, "INVALID_REQUEST", "Browser bootstrap response is missing its exact target", false),
-        );
-        return;
-      }
-      const targetError = this.adoptBootstrapTarget(pending, responseTarget);
-      if (targetError) {
-        this.settle(key, pending, failure(pending.request, "INVALID_REQUEST", targetError, false));
-        return;
-      }
-      if (pending.request.operation === "open") {
-        const replayKey = openReplayKey(pending.providerId, pending.request);
-        if (replayKey) {
-          const replay = this.openReplay.get(replayKey);
-          if (replay) {
-            replay.host = pending.host;
-            replay.target = responseTarget;
-          }
-        }
-      }
-    } else if (responseTarget && pending.target && !targetsMatch(responseTarget, pending.target) && !this.isTabsResponseTarget(pending, responseTarget)) {
-      this.settle(
-        key,
-        pending,
-        failure(
-          pending.request,
-          targetKey(responseTarget) === targetKey(pending.target)
-            ? "STALE_TARGET_GENERATION"
-            : "INVALID_REQUEST",
-          "Browser response target does not match its request",
-          false,
-        ),
-      );
-      return;
-    }
+    const responseError = this.responseValidationError(negotiatedResponse, pending, responseTarget);
+    if (responseError) return this.settle(key, pending, responseError);
     if (negotiatedResponse.ok && pending.request.operation === "tabs" && negotiatedResponse.result.operation === "tabs") {
       this.updateTabsAssignment(pending, negotiatedResponse.result, responseTarget);
     }
     this.settle(key, pending, negotiatedResponse);
+  }
+
+  private responseValidationError(
+    response: BrowserAutomationResponse,
+    pending: PendingRequest,
+    responseTarget: BrowserAutomationHostDispatchTarget | undefined,
+  ): BrowserAutomationResponse | undefined {
+    if (!response.ok) return undefined;
+    if (response.result.operation !== pending.request.operation) {
+      return failure(pending.request, "INVALID_REQUEST", "Browser response operation does not match its request", false);
+    }
+    const evaluationError = this.evaluationResponseError(response, pending);
+    if (evaluationError) return evaluationError;
+    return pending.target
+      ? this.existingTargetResponseError(pending, responseTarget)
+      : this.acceptBootstrapResponse(pending, responseTarget);
+  }
+
+  private evaluationResponseError(response: Extract<BrowserAutomationResponse, { ok: true }>, pending: PendingRequest): BrowserAutomationResponse | undefined {
+    if (pending.request.operation !== "evaluate" || response.result.operation !== "evaluate" || "outcome" in response.result) return undefined;
+    return failure(pending.request, "INVALID_REQUEST", "Browser evaluation response is missing its mutation envelope", false);
+  }
+
+  private acceptBootstrapResponse(
+    pending: PendingRequest,
+    responseTarget: BrowserAutomationHostDispatchTarget | undefined,
+  ): BrowserAutomationResponse | undefined {
+    if (!responseTarget) return failure(pending.request, "INVALID_REQUEST", "Browser bootstrap response is missing its exact target", false);
+    const targetError = this.adoptBootstrapTarget(pending, responseTarget);
+    if (targetError) return failure(pending.request, "INVALID_REQUEST", targetError, false);
+    this.rememberOpenReplayTarget(pending, responseTarget);
+    return undefined;
+  }
+
+  private existingTargetResponseError(
+    pending: PendingRequest,
+    responseTarget: BrowserAutomationHostDispatchTarget | undefined,
+  ): BrowserAutomationResponse | undefined {
+    if (!responseTarget || !pending.target || targetsMatch(responseTarget, pending.target) || this.isTabsResponseTarget(pending, responseTarget)) return undefined;
+    const code = targetKey(responseTarget) === targetKey(pending.target) ? "STALE_TARGET_GENERATION" : "INVALID_REQUEST";
+    return failure(pending.request, code, "Browser response target does not match its request", false);
+  }
+
+  private rememberOpenReplayTarget(pending: PendingRequest, target: BrowserAutomationHostDispatchTarget): void {
+    if (pending.request.operation !== "open") return;
+    const replayKey = openReplayKey(pending.providerId, pending.request);
+    const replay = replayKey ? this.openReplay.get(replayKey) : undefined;
+    if (replay) Object.assign(replay, { host: pending.host, target });
   }
 
   /** Interrupts a pending request after a human or host-side stop signal. */
@@ -784,41 +892,82 @@ export class BrowserAutomationBroker {
 
   /** Executes one validated request under credential and host scope constraints. */
   execute(claims: BrowserAutomationCredentialClaims, input: unknown): Promise<BrowserAutomationResponse> {
-    const cutoff = this.now() - 30 * 60_000;
-    for (const [replayKey, record] of this.openReplay) {
-      if (record.lastUsedAt < cutoff) this.openReplay.delete(replayKey);
-    }
-    for (const [replayKey, record] of this.actReplay) {
-      if (record.lastUsedAt < cutoff) this.actReplay.delete(replayKey);
-    }
-    for (const [replayKey, record] of this.tabsReplay) {
-      if (record.lastUsedAt < cutoff) this.tabsReplay.delete(replayKey);
-    }
+    this.pruneOpenActAndTabsReplay();
     const parsed = BrowserAutomationRequestSchema().safeParse(input);
     if (!parsed.success) return this.executeInternal(claims, input);
-    if (parsed.data.operation === "act") return this.executeAct(claims, parsed.data);
-    if (parsed.data.operation === "evaluate") return this.executeEvaluate(claims, parsed.data);
-    if (parsed.data.operation === "tabs") return this.executeTabs(claims, parsed.data);
-    if (parsed.data.operation !== "open") return this.executeInternal(claims, input);
-    const request = parsed.data;
-    const key = request.args.idempotencyKey;
-    if (!key) return this.executeInternal(claims, input);
+    return this.executeParsedRequest(claims, input, parsed.data);
+  }
+
+  private pruneOpenActAndTabsReplay(): void {
+    const cutoff = this.now() - 30 * 60_000;
+    this.pruneReplayEntries(this.openReplay, cutoff);
+    this.pruneReplayEntries(this.actReplay, cutoff);
+    this.pruneReplayEntries(this.tabsReplay, cutoff);
+  }
+
+  private pruneReplayEntries<T extends { lastUsedAt: number }>(entries: Map<string, T>, cutoff: number): void {
+    for (const [key, entry] of entries) {
+      if (entry.lastUsedAt < cutoff) entries.delete(key);
+    }
+  }
+
+  private executeParsedRequest(
+    claims: BrowserAutomationCredentialClaims,
+    input: unknown,
+    request: BrowserAutomationRequest,
+  ): Promise<BrowserAutomationResponse> {
+    switch (request.operation) {
+      case "act":
+        return this.executeAct(claims, request);
+      case "evaluate":
+        return this.executeEvaluate(claims, request);
+      case "tabs":
+        return this.executeTabs(claims, request);
+      case "open":
+        return this.executeOpen(claims, input, request);
+      default:
+        return this.executeInternal(claims, input);
+    }
+  }
+
+  private executeOpen(
+    claims: BrowserAutomationCredentialClaims,
+    input: unknown,
+    request: Extract<BrowserAutomationRequest, { operation: "open" }>,
+  ): Promise<BrowserAutomationResponse> {
+    if (!request.args.idempotencyKey) return this.executeInternal(claims, input);
     const replayKey = openReplayKey(claims.providerId, request);
-    if (!replayKey) return this.executeInternal(claims, request);
+    if (!replayKey) return this.executeInternal(claims, input);
+    const replay = this.existingOpenReplay(claims, request, replayKey);
+    if (replay) return replay;
+    return this.executeFreshOpen(claims, request, replayKey);
+  }
+
+  private existingOpenReplay(
+    claims: BrowserAutomationCredentialClaims,
+    request: Extract<BrowserAutomationRequest, { operation: "open" }>,
+    replayKey: string,
+  ): Promise<BrowserAutomationResponse> | undefined {
     const fingerprint = JSON.stringify({ url: request.args.url ?? null });
     const existing = this.openReplay.get(replayKey);
-    if (existing) {
-      existing.lastUsedAt = this.now();
-      if (existing.fingerprint !== fingerprint) {
-        return this.finishWithoutDispatch(claims, request, failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_open arguments", false));
-      }
-      return existing.promise.then((response) => this.finishReplay(claims, request, response));
+    if (!existing) return undefined;
+    existing.lastUsedAt = this.now();
+    if (existing.fingerprint !== fingerprint) {
+      return this.finishWithoutDispatch(claims, request, failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_open arguments", false));
     }
+    return existing.promise.then((response) => this.finishReplay(claims, request, response));
+  }
+
+  private executeFreshOpen(
+    claims: BrowserAutomationCredentialClaims,
+    request: Extract<BrowserAutomationRequest, { operation: "open" }>,
+    replayKey: string,
+  ): Promise<BrowserAutomationResponse> {
     const sessionKey = sessionRoutingKey(claims.providerId, claims.providerSessionId);
     if (this.browserMutations.has(sessionKey)) {
       return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
-    const mutationToken = randomUUID();
+    const mutationToken = NodeCrypto.randomUUID();
     this.browserMutations.set(sessionKey, mutationToken);
     const releaseMutation = (): void => {
       if (this.browserMutations.get(sessionKey) === mutationToken) this.browserMutations.delete(sessionKey);
@@ -830,23 +979,27 @@ export class BrowserAutomationBroker {
       resolveReplay = resolve;
     });
     const replayRecord: OpenReplayRecord = {
-      fingerprint,
+      fingerprint: JSON.stringify({ url: request.args.url ?? null }),
       promise: replayPromise,
       host: bootstrapHost,
       lastUsedAt: this.now(),
     };
     this.openReplay.set(replayKey, replayRecord);
-    while (this.openReplay.size > 256) {
-      const oldest = this.openReplay.keys().next().value as string | undefined;
-      if (!oldest) break;
-      this.openReplay.delete(oldest);
-    }
+    this.trimReplayEntries(this.openReplay);
     const promise = this.executeInternal(claims, request).finally(releaseMutation);
     void promise.then((response) => {
       resolveReplay(response);
       if (!response.ok && this.openReplay.get(replayKey) === replayRecord) this.openReplay.delete(replayKey);
     });
     return promise;
+  }
+
+  private trimReplayEntries(entries: Map<string, unknown>): void {
+    while (entries.size > 256) {
+      const oldest = entries.keys().next().value as string | undefined;
+      if (!oldest) return;
+      entries.delete(oldest);
+    }
   }
 
   private executeTabs(
@@ -867,7 +1020,7 @@ export class BrowserAutomationBroker {
     if (this.browserMutations.has(sessionKey)) {
       return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
-    const token = randomUUID();
+    const token = NodeCrypto.randomUUID();
     this.browserMutations.set(sessionKey, token);
     const promise = this.executeInternal(claims, request)
       .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
@@ -909,7 +1062,7 @@ export class BrowserAutomationBroker {
     if (this.browserMutations.has(sessionKey)) {
       return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
-    const token = randomUUID();
+    const token = NodeCrypto.randomUUID();
     this.browserMutations.set(sessionKey, token);
     const promise = this.executeInternal(claims, request)
       .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
@@ -953,7 +1106,7 @@ export class BrowserAutomationBroker {
     if (this.browserMutations.has(sessionKey)) {
       return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
-    const token = randomUUID();
+    const token = NodeCrypto.randomUUID();
     this.browserMutations.set(sessionKey, token);
     const promise = this.executeInternal(claims, request)
       .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
@@ -1005,9 +1158,7 @@ export class BrowserAutomationBroker {
   private executeInternal(claims: BrowserAutomationCredentialClaims, input: unknown): Promise<BrowserAutomationResponse> {
     this.pruneExpiredState();
     const parsed = BrowserAutomationRequestSchema().safeParse(input);
-    if (!parsed.success) {
-      return Promise.reject(new Error("Browser automation request contract is invalid"));
-    }
+    if (!parsed.success) return Promise.reject(new Error("Browser automation request contract is invalid"));
     const request = parsed.data;
     const startedAt = this.now();
     this.recordLifecycle("configuration", claims.providerId, request, undefined, undefined, {
@@ -1031,64 +1182,92 @@ export class BrowserAutomationBroker {
       });
       return Promise.resolve(response);
     };
-    if (
-      request.threadId !== claims.threadId ||
-      request.workspaceId !== claims.workspaceId ||
-      request.providerSessionId !== claims.providerSessionId ||
-      request.providerInstanceId !== claims.mcodeSessionId
-    ) {
-      return finishImmediately(failure(request, "FORBIDDEN", "Browser request scope does not match its credential", false));
+    const admissionFailure = this.requestAdmissionFailure(claims, request);
+    if (admissionFailure) return finishImmediately(admissionFailure);
+    const assignment = this.resolveExecutionAssignment(claims, request);
+    if (!assignment) return this.executeUnassignedRequest(claims, request, finishImmediately);
+    return this.executeAssignedRequest(claims, request, assignment, finishImmediately);
+  }
+
+  private requestAdmissionFailure(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+  ): BrowserAutomationResponse | undefined {
+    const authorizationFailure = this.requestAuthorizationFailure(claims, request);
+    if (authorizationFailure) return authorizationFailure;
+    if (request.deadline <= this.now()) {
+      return failure(request, "DEADLINE_EXCEEDED", "Browser request deadline has elapsed", true);
+    }
+    if (this.pending.size < this.maxPendingRequests) return undefined;
+    this.reliability.capacityRejected = incrementBounded(this.reliability.capacityRejected);
+    return failure(request, "HOST_UNAVAILABLE", "Browser request capacity is exhausted", true);
+  }
+
+  private requestAuthorizationFailure(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+  ): BrowserAutomationResponse | undefined {
+    if (!this.matchesRequestScope(claims, request)) {
+      return failure(request, "FORBIDDEN", "Browser request scope does not match its credential", false);
     }
     if (!isPublicOperation(request.operation) || !claims.allowedOperations.includes(request.operation)) {
-      return finishImmediately(failure(request, "FORBIDDEN", "Browser operation is not allowed by this credential", false));
+      return failure(request, "FORBIDDEN", "Browser operation is not allowed by this credential", false);
     }
     if (request.operation === "evaluate" && claims.permissionCapability !== "privileged") {
-      return finishImmediately(failure(request, "FORBIDDEN", "Browser evaluation requires privileged permission", false));
+      return failure(request, "FORBIDDEN", "Browser evaluation requires privileged permission", false);
     }
-    if (request.deadline <= this.now()) {
-      return finishImmediately(failure(request, "DEADLINE_EXCEEDED", "Browser request deadline has elapsed", true));
-    }
-    if (this.pending.size >= this.maxPendingRequests) {
-      this.reliability.capacityRejected = incrementBounded(this.reliability.capacityRejected);
-      return finishImmediately(failure(request, "HOST_UNAVAILABLE", "Browser request capacity is exhausted", true));
-    }
+    return undefined;
+  }
 
-    // Each fresh keyed browser_open owns a new tab. Duplicate keys are
-    // handled by openReplay before this path and continue to reuse the
-    // original target.
-    const assignment = request.operation === "open" && request.args.idempotencyKey !== undefined
-      ? undefined
-      : request.operation === "tabs"
-        ? this.resolveTabsAssignment(claims, request)
-        : this.resolveAssignment(claims, request);
-    if (!assignment) {
-      if (request.operation === "open") {
-        const host = this.resolveBootstrapHost(claims, request);
-        if (host) return this.executeBootstrap(host, claims.providerId, request);
-      }
-      if (!this.resolveSelectedHost(claims)) {
-        return finishImmediately(failure(request, "HOST_UNAVAILABLE", "No authorized visible Browser host is available", true));
-      }
-      return finishImmediately(failure(request, "TAB_UNAVAILABLE", "No authorized visible browser tab is available", true));
+  private matchesRequestScope(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+  ): boolean {
+    return request.threadId === claims.threadId &&
+      request.workspaceId === claims.workspaceId &&
+      request.providerSessionId === claims.providerSessionId &&
+      request.providerInstanceId === claims.mcodeSessionId;
+  }
+
+  private resolveExecutionAssignment(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+  ): RoutingCandidate | undefined {
+    if (request.operation === "open" && request.args.idempotencyKey !== undefined) return undefined;
+    if (request.operation === "tabs") return this.resolveTabsAssignment(claims, request);
+    return this.resolveAssignment(claims, request);
+  }
+
+  private executeUnassignedRequest(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+    finishImmediately: (response: BrowserAutomationResponse) => Promise<BrowserAutomationResponse>,
+  ): Promise<BrowserAutomationResponse> {
+    if (request.operation === "open") {
+      const host = this.resolveBootstrapHost(claims, request);
+      if (host) return this.executeBootstrap(host, claims.providerId, request);
     }
+    const code = this.resolveSelectedHost(claims) ? "TAB_UNAVAILABLE" : "HOST_UNAVAILABLE";
+    const message = code === "TAB_UNAVAILABLE"
+      ? "No authorized visible browser tab is available"
+      : "No authorized visible Browser host is available";
+    return finishImmediately(failure(request, code, message, true));
+  }
+
+  private executeAssignedRequest(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+    assignment: RoutingCandidate,
+    finishImmediately: (response: BrowserAutomationResponse) => Promise<BrowserAutomationResponse>,
+  ): Promise<BrowserAutomationResponse> {
     const { host, target } = assignment;
     this.sessionHosts.set(sessionRoutingKey(claims.providerId, claims.providerSessionId), host);
     if (!this.supportsOperation(host, request)) {
-      return finishImmediately(failure(
-        request,
-        "UNSUPPORTED_OPERATION",
-        "The assigned browser target does not support this operation",
-        false,
-      ));
+      return finishImmediately(failure(request, "UNSUPPORTED_OPERATION", "The assigned browser target does not support this operation", false));
     }
     if (host.pending >= host.registration.maxPendingRequests) {
       this.reliability.capacityRejected = incrementBounded(this.reliability.capacityRejected);
-      return finishImmediately(failure(
-        request,
-        "HOST_UNAVAILABLE",
-        "The assigned browser target is temporarily at capacity",
-        true,
-      ));
+      return finishImmediately(failure(request, "HOST_UNAVAILABLE", "The assigned browser target is temporarily at capacity", true));
     }
     const dispatch = BrowserAutomationHostDispatchSchema().parse({
       scope: {
@@ -1107,6 +1286,17 @@ export class BrowserAutomationBroker {
       request,
       target,
     });
+    return this.queueDispatch(claims, request, host, target, dispatch, finishImmediately);
+  }
+
+  private queueDispatch(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+    host: RegisteredHost,
+    target: BrowserAutomationHostDispatchTarget,
+    dispatch: BrowserAutomationHostDispatch,
+    finishImmediately: (response: BrowserAutomationResponse) => Promise<BrowserAutomationResponse>,
+  ): Promise<BrowserAutomationResponse> {
     const key = pendingKey(host, request.requestId, request.sequence);
     if (this.pending.has(key)) {
       return finishImmediately(failure(request, "INVALID_REQUEST", "Browser request correlation is already pending", false));
@@ -1141,25 +1331,25 @@ export class BrowserAutomationBroker {
       this.pending.set(key, pending);
       host.pending++;
       this.recordLifecycle("queueing", claims.providerId, request, host, target, { outcome: "queued" });
-      const preflightError = this.revalidatePendingBeforeSend(pending);
-      if (preflightError) {
-        this.settle(key, pending, preflightError);
-        return;
-      }
-      const sent = this.trySend(host.socket, "browserAutomation.request", {
-        hostId: host.registration.hostId,
-        generation: host.generation,
-        dispatch,
-      });
-      if (!sent) {
-        this.settle(key, pending, failure(request, "HOST_UNAVAILABLE", "Browser host disconnected before delivery", true));
-        return;
-      }
-      this.recordLifecycle("execution", claims.providerId, request, host, target, { outcome: "dispatched" });
-      if (requestWaitsForPage(request)) {
-        this.recordLifecycle("page-waiting", claims.providerId, request, host, target, { outcome: "waiting" });
-      }
+      this.sendPendingRequest(key, pending);
     });
+  }
+
+  private sendPendingRequest(key: string, pending: PendingRequest): void {
+    const preflightError = this.revalidatePendingBeforeSend(pending);
+    if (preflightError) return this.settle(key, pending, preflightError);
+    const sent = this.trySend(pending.host.socket, "browserAutomation.request", {
+      hostId: pending.host.registration.hostId,
+      generation: pending.host.generation,
+      dispatch: pending.dispatch,
+    });
+    if (!sent) {
+      return this.settle(key, pending, failure(pending.request, "HOST_UNAVAILABLE", "Browser host disconnected before delivery", true));
+    }
+    this.recordLifecycle("execution", pending.providerId, pending.request, pending.host, pending.target, { outcome: "dispatched" });
+    if (requestWaitsForPage(pending.request)) {
+      this.recordLifecycle("page-waiting", pending.providerId, pending.request, pending.host, pending.target, { outcome: "waiting" });
+    }
   }
 
   /** Removes a disconnected host and settles all work assigned to it. */
@@ -1190,9 +1380,9 @@ export class BrowserAutomationBroker {
 
   /** Settles all pending work and releases every broker-owned lifecycle resource. */
   shutdown(): void {
-    for (const socket of [...this.hostsBySocket.keys()]) this.disconnect(socket);
+    for (const socket of Array.from(this.hostsBySocket.keys())) this.disconnect(socket);
     this.assignments.clear();
-    for (const pending of [...this.pending.values()]) {
+    for (const pending of Array.from(this.pending.values())) {
       this.settle(
         pendingKey(pending.host, pending.request.requestId, pending.request.sequence),
         pending,
@@ -1264,33 +1454,47 @@ export class BrowserAutomationBroker {
     providerSessionId: string,
     reason: BrowserAutomationSessionReleaseReason = "credential-revoked",
   ): number {
-    let removed = 0;
     const sessionKey = sessionRoutingKey(providerId, providerSessionId);
-    const sessionHost = this.sessionHosts.get(sessionKey);
-    if (sessionHost) {
-      this.trySend(sessionHost.socket, "browserAutomation.sessionRelease", {
-        hostId: sessionHost.registration.hostId,
-        generation: sessionHost.generation,
-        providerSessionId,
-        reason,
-      });
-      this.sessionHosts.delete(sessionKey);
-    }
+    this.releaseSessionHost(sessionKey, providerSessionId, reason);
+    const removed = this.removeSessionAssignments(providerId, providerSessionId);
+    this.cancelSessionRequests(providerId, providerSessionId);
+    this.removeSessionReplayEntries(this.openReplay, providerId, providerSessionId);
+    this.removeSessionReplayEntries(this.actReplay, providerId, providerSessionId);
+    this.removeSessionReplayEntries(this.evaluateReplay, providerId, providerSessionId);
+    this.removeSessionReplayEntries(this.tabsReplay, providerId, providerSessionId);
+    this.browserMutations.delete(sessionKey);
+    return removed;
+  }
+
+  private releaseSessionHost(
+    sessionKey: string,
+    providerSessionId: string,
+    reason: BrowserAutomationSessionReleaseReason,
+  ): void {
+    const host = this.sessionHosts.get(sessionKey);
+    if (!host) return;
+    this.trySend(host.socket, "browserAutomation.sessionRelease", {
+      hostId: host.registration.hostId,
+      generation: host.generation,
+      providerSessionId,
+      reason,
+    });
+    this.sessionHosts.delete(sessionKey);
+  }
+
+  private removeSessionAssignments(providerId: string, providerSessionId: string): number {
+    let removed = 0;
     for (const key of this.assignments.keys()) {
-      const [assignedProviderId, assignedProviderSessionId] = JSON.parse(key) as string[];
-      if (
-        assignedProviderId === providerId &&
-        assignedProviderSessionId === providerSessionId
-      ) {
-        this.assignments.delete(key);
-        removed++;
-      }
+      if (!this.keyBelongsToSession(key, providerId, providerSessionId)) continue;
+      this.assignments.delete(key);
+      removed++;
     }
+    return removed;
+  }
+
+  private cancelSessionRequests(providerId: string, providerSessionId: string): void {
     for (const [key, pending] of this.pending) {
-      if (
-        pending.providerId !== providerId ||
-        pending.request.providerSessionId !== providerSessionId
-      ) continue;
+      if (pending.providerId !== providerId || pending.request.providerSessionId !== providerSessionId) continue;
       this.trySend(pending.host.socket, "browserAutomation.cancel", {
         hostId: pending.host.registration.hostId,
         generation: pending.host.generation,
@@ -1305,24 +1509,17 @@ export class BrowserAutomationBroker {
         failure(pending.request, "OPERATION_CANCELLED", "Browser credential was revoked", false),
       );
     }
-    for (const key of this.openReplay.keys()) {
-      const parts = JSON.parse(key) as string[];
-      if (parts[0] === providerId && parts[1] === providerSessionId) this.openReplay.delete(key);
+  }
+
+  private removeSessionReplayEntries<T>(entries: Map<string, T>, providerId: string, providerSessionId: string): void {
+    for (const key of entries.keys()) {
+      if (this.keyBelongsToSession(key, providerId, providerSessionId)) entries.delete(key);
     }
-    for (const key of this.actReplay.keys()) {
-      const parts = JSON.parse(key) as string[];
-      if (parts[0] === providerId && parts[1] === providerSessionId) this.actReplay.delete(key);
-    }
-    for (const key of this.evaluateReplay.keys()) {
-      const parts = JSON.parse(key) as string[];
-      if (parts[0] === providerId && parts[1] === providerSessionId) this.evaluateReplay.delete(key);
-    }
-    for (const key of this.tabsReplay.keys()) {
-      const parts = JSON.parse(key) as string[];
-      if (parts[0] === providerId && parts[1] === providerSessionId) this.tabsReplay.delete(key);
-    }
-    this.browserMutations.delete(sessionRoutingKey(providerId, providerSessionId));
-    return removed;
+  }
+
+  private keyBelongsToSession(key: string, providerId: string, providerSessionId: string): boolean {
+    const [keyProviderId, keyProviderSessionId] = JSON.parse(key) as string[];
+    return keyProviderId === providerId && keyProviderSessionId === providerSessionId;
   }
 
   /** Prunes expired hosts and sticky assignments at an explicit lifecycle checkpoint. */
@@ -1341,7 +1538,7 @@ export class BrowserAutomationBroker {
   private resolveAssignment(
     claims: BrowserAutomationCredentialClaims,
     request: BrowserAutomationRequest,
-  ): { host: RegisteredHost; target: BrowserAutomationHostDispatchTarget } | undefined {
+  ): RoutingCandidate | undefined {
     const key = assignmentKey(claims);
     const assigned = this.assignments.get(key);
     const assignedTarget = assigned?.host.targets.get(assigned.targetKey);
@@ -1355,14 +1552,7 @@ export class BrowserAutomationBroker {
       .flatMap((host) => [...host.targets.values()]
         .filter((target) => target.threadId === claims.threadId)
         .map((target) => ({ host, target })))
-      .sort((a, b) =>
-        Number(b.target.focused) - Number(a.target.focused) ||
-        Number(b.target.active) - Number(a.target.active) ||
-        b.target.lastUsedAt - a.target.lastUsedAt ||
-        a.host.pending - b.host.pending ||
-        a.host.generation - b.host.generation ||
-        a.target.windowId - b.target.windowId ||
-        a.target.tabId.localeCompare(b.target.tabId));
+      .sort(compareRoutingCandidates);
     const selected = candidates[0];
     if (selected) {
       while (this.assignments.size >= this.maxAssignments) this.evictOldestAssignment();
@@ -1394,20 +1584,13 @@ export class BrowserAutomationBroker {
         host,
         target: [...host.targets.values()].find((target) => target.threadId === claims.threadId),
       }))
-      .sort((left, right) =>
-        Number(Boolean(right.target)) - Number(Boolean(left.target)) ||
-        Number(right.target?.focused ?? false) - Number(left.target?.focused ?? false) ||
-        Number(right.target?.active ?? false) - Number(left.target?.active ?? false) ||
-        (right.target?.lastUsedAt ?? 0) - (left.target?.lastUsedAt ?? 0) ||
-        left.host.pending - right.host.pending ||
-        left.host.generation - right.host.generation,
-      )[0]?.host;
+      .sort(compareSelectedHosts)[0]?.host;
   }
 
   private resolveTabsAssignment(
     claims: BrowserAutomationCredentialClaims,
     request: Extract<BrowserAutomationRequest, { operation: "tabs" }>,
-  ): { host: RegisteredHost; target: BrowserAutomationHostDispatchTarget } | undefined {
+  ): RoutingCandidate | undefined {
     const action = request.args.action;
     const assigned = this.assignments.get(assignmentKey(claims));
     if (action !== "select" && action !== "claim" && assigned) {
@@ -1427,7 +1610,7 @@ export class BrowserAutomationBroker {
     claims: BrowserAutomationCredentialClaims,
     request: BrowserAutomationRequest,
     tabId: string,
-  ): { host: RegisteredHost; target: BrowserAutomationHostDispatchTarget } | undefined {
+  ): RoutingCandidate | undefined {
     const sessionHost = this.sessionHosts.get(sessionRoutingKey(claims.providerId, claims.providerSessionId));
     const candidates = [...this.hostsBySocket.values()]
       .filter((host) => !sessionHost || host === sessionHost)
@@ -1435,13 +1618,7 @@ export class BrowserAutomationBroker {
       .flatMap((host) => [...host.targets.values()]
         .filter((target) => target.threadId === claims.threadId && target.tabId === tabId)
         .map((target) => ({ host, target })))
-      .sort((a, b) =>
-        Number(b.target.focused) - Number(a.target.focused) ||
-        Number(b.target.active) - Number(a.target.active) ||
-        b.target.lastUsedAt - a.target.lastUsedAt ||
-        a.host.pending - b.host.pending ||
-        a.host.generation - b.host.generation ||
-        a.target.windowId - b.target.windowId);
+      .sort(compareRoutingCandidates);
     return candidates[0];
   }
 
@@ -1472,36 +1649,56 @@ export class BrowserAutomationBroker {
   }
 
   private revalidatePendingBeforeSend(pending: PendingRequest): BrowserAutomationResponse | null {
-    const host = pending.host;
-    if (this.hostsBySocket.get(host.socket) !== host) {
-      return failure(pending.request, "HOST_UNAVAILABLE", "Browser host changed before delivery", true);
-    }
+    return this.hostDeliveryError(pending)
+      ?? this.credentialDeliveryError(pending)
+      ?? this.capabilityDeliveryError(pending)
+      ?? this.targetDeliveryError(pending);
+  }
+
+  private hostDeliveryError(pending: PendingRequest): BrowserAutomationResponse | null {
+    if (this.hostsBySocket.get(pending.host.socket) === pending.host) return null;
+    return failure(pending.request, "HOST_UNAVAILABLE", "Browser host changed before delivery", true);
+  }
+
+  private credentialDeliveryError(pending: PendingRequest): BrowserAutomationResponse | null {
     if (!isPublicOperation(pending.request.operation) || !pending.credentialOperations.includes(pending.request.operation)) {
       return failure(pending.request, "FORBIDDEN", "Browser operation is no longer allowed by this credential", false);
     }
     if (pending.request.deadline <= this.now()) {
       return failure(pending.request, "DEADLINE_EXCEEDED", "Browser request deadline has elapsed", true);
     }
-    if (pending.dispatch && pending.dispatch.connection.capabilityRevision !== host.registration.executorDescriptor.capabilityRevision) {
+    return null;
+  }
+
+  private capabilityDeliveryError(pending: PendingRequest): BrowserAutomationResponse | null {
+    if (pending.dispatch && pending.dispatch.connection.capabilityRevision !== pending.host.registration.executorDescriptor.capabilityRevision) {
       return failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false);
     }
-    if (!this.supportsOperation(host, pending.request)) {
+    if (!this.supportsOperation(pending.host, pending.request)) {
       return failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false);
-    }
-    if (pending.target) {
-      const currentTarget = host.targets.get(targetKey(pending.target));
-      if (!currentTarget) return failure(pending.request, "TAB_UNAVAILABLE", "Browser target changed before delivery", true);
-      if (!targetsMatch(currentTarget, pending.target)) {
-        return failure(pending.request, "STALE_TARGET_GENERATION", "Browser target changed before delivery", true);
-      }
-      if (
-        currentTarget.controller?.controller !== pending.target.controller?.controller ||
-        currentTarget.controller?.controlEpoch !== pending.target.controller?.controlEpoch
-      ) {
-        return failure(pending.request, "HUMAN_INTERRUPTED", "Browser controller changed before delivery", true);
-      }
     }
     return null;
+  }
+
+  private targetDeliveryError(pending: PendingRequest): BrowserAutomationResponse | null {
+    if (!pending.target) return null;
+    const currentTarget = pending.host.targets.get(targetKey(pending.target));
+    if (!currentTarget) return failure(pending.request, "TAB_UNAVAILABLE", "Browser target changed before delivery", true);
+    if (!targetsMatch(currentTarget, pending.target)) {
+      return failure(pending.request, "STALE_TARGET_GENERATION", "Browser target changed before delivery", true);
+    }
+    if (this.controllerChanged(currentTarget, pending.target)) {
+      return failure(pending.request, "HUMAN_INTERRUPTED", "Browser controller changed before delivery", true);
+    }
+    return null;
+  }
+
+  private controllerChanged(
+    currentTarget: BrowserAutomationHostDispatchTarget,
+    pendingTarget: BrowserAutomationHostDispatchTarget,
+  ): boolean {
+    return currentTarget.controller?.controller !== pendingTarget.controller?.controller
+      || currentTarget.controller?.controlEpoch !== pendingTarget.controller?.controlEpoch;
   }
 
   private resolveBootstrapHost(
@@ -1597,31 +1794,75 @@ export class BrowserAutomationBroker {
       pending.request.workspaceId,
       pending.request.threadId,
     );
+    const target = this.recordTabsResponseTarget(pending, responseTarget);
+    if (this.isTabsSelection(result)) {
+      this.updateSelectedTabsAssignment(key, pending, result.currentTabId, target);
+      return;
+    }
+    this.updateCurrentTabsAssignment(key, pending, result.currentTabId, target);
+  }
+
+  private recordTabsResponseTarget(
+    pending: PendingRequest,
+    responseTarget: BrowserAutomationHostDispatchTarget | undefined,
+  ): BrowserAutomationHostDispatchTarget | undefined {
     const target = responseTarget ?? pending.target;
     if (target && pending.host.targets.has(targetKey(target))) {
       pending.host.targets.set(targetKey(target), target);
     }
-    if (result.action === "select" || result.action === "claim") {
-      const selectedTarget = result.currentTabId
-        ? pending.host.targets.get(JSON.stringify([pending.request.threadId, result.currentTabId])) ??
-          (target?.tabId === result.currentTabId ? target : undefined)
-        : target;
-      if (selectedTarget) this.storeAssignment(key, pending.host, selectedTarget);
-      else this.assignments.delete(key);
-      return;
-    }
-    if (!result.currentTabId) {
+    return target;
+  }
+
+  private isTabsSelection(
+    result: Extract<BrowserAutomationResponse, { ok: true }>['result'] & { operation: "tabs" },
+  ): boolean {
+    return result.action === "select" || result.action === "claim";
+  }
+
+  private updateSelectedTabsAssignment(
+    key: string,
+    pending: PendingRequest,
+    currentTabId: string | undefined,
+    responseTarget: BrowserAutomationHostDispatchTarget | undefined,
+  ): void {
+    const target = currentTabId
+      ? this.currentTabsTarget(pending, currentTabId, responseTarget)
+      : responseTarget;
+    this.storeOrClearAssignment(key, pending.host, target);
+  }
+
+  private updateCurrentTabsAssignment(
+    key: string,
+    pending: PendingRequest,
+    currentTabId: string | undefined,
+    responseTarget: BrowserAutomationHostDispatchTarget | undefined,
+  ): void {
+    if (!currentTabId) {
       this.assignments.delete(key);
       return;
     }
-    const currentTarget = pending.host.targets.get(JSON.stringify([pending.request.threadId, result.currentTabId]));
-    if (currentTarget) {
-      this.storeAssignment(key, pending.host, currentTarget);
-    } else if (target?.tabId === result.currentTabId) {
-      this.storeAssignment(key, pending.host, target);
-    } else {
+    this.storeOrClearAssignment(key, pending.host, this.currentTabsTarget(pending, currentTabId, responseTarget));
+  }
+
+  private currentTabsTarget(
+    pending: PendingRequest,
+    tabId: string,
+    responseTarget: BrowserAutomationHostDispatchTarget | undefined,
+  ): BrowserAutomationHostDispatchTarget | undefined {
+    return pending.host.targets.get(JSON.stringify([pending.request.threadId, tabId]))
+      ?? (responseTarget?.tabId === tabId ? responseTarget : undefined);
+  }
+
+  private storeOrClearAssignment(
+    key: string,
+    host: RegisteredHost,
+    target: BrowserAutomationHostDispatchTarget | undefined,
+  ): void {
+    if (!target) {
       this.assignments.delete(key);
+      return;
     }
+    this.storeAssignment(key, host, target);
   }
 
   private isTabsResponseTarget(
@@ -1714,53 +1955,71 @@ export class BrowserAutomationBroker {
     target: BrowserAutomationHostDispatchTarget,
   ): string | null {
     const host = pending.host;
-    if (
-      target.desktopInstanceId !== host.registration.desktopInstanceId ||
-      target.connectionGeneration !== host.generation ||
-      target.threadId !== pending.request.threadId
-    ) {
+    const key = targetKey(target);
+    const targetError = this.bootstrapTargetError(pending, target, key);
+    if (targetError) return targetError;
+    this.replaceBootstrapTarget(host, key, target);
+    this.storeBootstrapAssignment(pending, key);
+    pending.target = target;
+    return null;
+  }
+
+  private bootstrapTargetError(
+    pending: PendingRequest,
+    target: BrowserAutomationHostDispatchTarget,
+    key: string,
+  ): string | null {
+    if (!this.matchesBootstrapTarget(pending, target)) {
       return "Browser bootstrap target identity does not match its authorized request";
     }
-    const key = targetKey(target);
-    const prior = host.targetGenerationTombstones.get(key);
-    if (
-      prior &&
-      (target.targetGeneration < prior.generation ||
-        (target.targetGeneration === prior.generation && target.windowId !== prior.windowId))
-    ) {
-      return "Browser bootstrap target generation is stale";
-    }
-    const retainedTargets = [...this.hostsBySocket.values()].reduce(
-      (count, candidate) => count + candidate.targets.size,
-      0,
-    );
-    if (!host.targets.has(key) && (host.targets.size >= 64 || retainedTargets >= this.maxTargets)) {
-      return "Browser automation target capacity is exhausted";
-    }
+    const prior = pending.host.targetGenerationTombstones.get(key);
+    if (prior && this.isStaleTargetGeneration(target, prior)) return "Browser bootstrap target generation is stale";
+    if (!this.canAdoptBootstrapTarget(pending.host, key)) return "Browser automation target capacity is exhausted";
+    return null;
+  }
+
+  private matchesBootstrapTarget(
+    pending: PendingRequest,
+    target: BrowserAutomationHostDispatchTarget,
+  ): boolean {
+    return target.desktopInstanceId === pending.host.registration.desktopInstanceId &&
+      target.connectionGeneration === pending.host.generation &&
+      target.threadId === pending.request.threadId;
+  }
+
+  private canAdoptBootstrapTarget(host: RegisteredHost, key: string): boolean {
+    if (host.targets.has(key)) return true;
+    const retainedTargets = Array.from(this.hostsBySocket.values())
+      .reduce((count, candidate) => count + candidate.targets.size, 0);
+    return host.targets.size < 64 && retainedTargets < this.maxTargets;
+  }
+
+  private replaceBootstrapTarget(
+    host: RegisteredHost,
+    key: string,
+    target: BrowserAutomationHostDispatchTarget,
+  ): void {
     const existing = host.targets.get(key);
-    if (
-      existing &&
-      (existing.targetGeneration !== target.targetGeneration || existing.windowId !== target.windowId)
-    ) {
-      this.invalidateTarget(host, key);
-    }
+    if (existing && !targetsMatch(existing, target)) this.invalidateTarget(host, key);
     host.targets.set(key, target);
+    this.rememberBootstrapTargetGeneration(host, key, target);
+  }
+
+  private rememberBootstrapTargetGeneration(
+    host: RegisteredHost,
+    key: string,
+    target: BrowserAutomationHostDispatchTarget,
+  ): void {
     host.targetGenerationTombstones.delete(key);
     host.targetGenerationTombstones.set(key, {
       generation: target.targetGeneration,
       windowId: target.windowId,
     });
-    while (host.targetGenerationTombstones.size > 128) {
-      const oldest = host.targetGenerationTombstones.keys().next().value as string | undefined;
-      if (!oldest) break;
-      if (host.targets.has(oldest)) {
-        const retained = host.targetGenerationTombstones.get(oldest)!;
-        host.targetGenerationTombstones.delete(oldest);
-        host.targetGenerationTombstones.set(oldest, retained);
-        continue;
-      }
-      host.targetGenerationTombstones.delete(oldest);
-    }
+    this.trimTargetTombstones(host, host.targets);
+  }
+
+  private storeBootstrapAssignment(pending: PendingRequest, targetKeyValue: string): void {
+    const host = pending.host;
     while (this.assignments.size >= this.maxAssignments) this.evictOldestAssignment();
     this.assignments.set(
       assignmentKeyParts(
@@ -1770,10 +2029,8 @@ export class BrowserAutomationBroker {
         pending.request.workspaceId,
         pending.request.threadId,
       ),
-      { host, targetKey: key, lastUsedAt: this.now() },
+      { host, targetKey: targetKeyValue, lastUsedAt: this.now() },
     );
-    pending.target = target;
-    return null;
   }
 
   private invalidateTarget(
@@ -1781,30 +2038,57 @@ export class BrowserAutomationBroker {
     removedTargetKey: string,
     preserveTargetTransition = false,
   ): void {
+    this.removeOpenReplayForTarget(host, removedTargetKey);
+    this.removeAssignmentsForTarget(host, removedTargetKey);
+    this.cancelInvalidatedTargetRequests(host, removedTargetKey, preserveTargetTransition);
+  }
+
+  private removeOpenReplayForTarget(host: RegisteredHost, removedTargetKey: string): void {
     for (const [replayKey, record] of this.openReplay) {
       if (record.host === host && record.target && targetKey(record.target) === removedTargetKey) {
         this.openReplay.delete(replayKey);
       }
     }
+  }
+
+  private removeAssignmentsForTarget(host: RegisteredHost, removedTargetKey: string): void {
     for (const [key, assignment] of this.assignments) {
       if (assignment.host === host && assignment.targetKey === removedTargetKey) this.assignments.delete(key);
     }
+  }
+
+  private cancelInvalidatedTargetRequests(
+    host: RegisteredHost,
+    removedTargetKey: string,
+    preserveTargetTransition: boolean,
+  ): void {
     for (const [key, pending] of this.pending) {
-      if (pending.host === host && pending.target && targetKey(pending.target) === removedTargetKey) {
-        const targetRemovalIsRequested = pending.request.operation === "tabs" &&
-          (pending.request.args.action === "close" || pending.request.args.action === "finalize");
-        if (
-          targetRemovalIsRequested ||
-          (preserveTargetTransition &&
-            (pending.request.operation === "open" || pending.request.operation === "navigate"))
-        ) continue;
-        this.settle(
-          key,
-          pending,
-          failure(pending.request, "TAB_UNAVAILABLE", "Visible browser target was removed or replaced", true),
-        );
-      }
+      if (!this.pendingUsesTarget(pending, host, removedTargetKey)) continue;
+      if (this.preserveInvalidatedRequest(pending, preserveTargetTransition)) continue;
+      this.settle(
+        key,
+        pending,
+        failure(pending.request, "TAB_UNAVAILABLE", "Visible browser target was removed or replaced", true),
+      );
     }
+  }
+
+  private pendingUsesTarget(pending: PendingRequest, host: RegisteredHost, targetKeyValue: string): boolean {
+    return pending.host === host && pending.target !== undefined && targetKey(pending.target) === targetKeyValue;
+  }
+
+  private preserveInvalidatedRequest(pending: PendingRequest, preserveTargetTransition: boolean): boolean {
+    if (this.removesOwnTarget(pending.request)) return true;
+    return preserveTargetTransition && this.movesToReplacementTarget(pending.request);
+  }
+
+  private removesOwnTarget(request: BrowserAutomationRequest): boolean {
+    if (request.operation !== "tabs") return false;
+    return request.args.action === "close" || request.args.action === "finalize";
+  }
+
+  private movesToReplacementTarget(request: BrowserAutomationRequest): boolean {
+    return request.operation === "open" || request.operation === "navigate";
   }
 
   private trySend(
@@ -1835,7 +2119,7 @@ export class BrowserAutomationBroker {
 
   private pruneExpiredState(): void {
     const now = this.now();
-    for (const host of [...this.hostsBySocket.values()]) {
+    for (const host of Array.from(this.hostsBySocket.values())) {
       if (now - host.lastHeartbeatAt >= this.hostHeartbeatTimeoutMs) this.disconnect(host.socket);
     }
     for (const [key, assignment] of this.assignments) {

@@ -1,9 +1,9 @@
 /** Tests process-tree termination sequencing and graceful-exit guards. */
-import assert from "node:assert/strict";
-import { test } from "node:test";
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeTest from "node:test";
 import { killProcessTree } from "../../kill-process-tree.mjs";
 
-test("graceful child exit suppresses delayed hard kill", async () => {
+NodeTest.test("graceful child exit suppresses delayed hard kill", async () => {
   const originalKill = process.kill;
   const originalPlatform = process.platform;
   const signals = [];
@@ -17,14 +17,14 @@ test("graceful child exit suppresses delayed hard kill", async () => {
 
   try {
     await killProcessTree(child, { graceMs: 20, useProcessGroup: true });
-    assert.deepEqual(signals, [[-12345, "SIGTERM"]]);
+    NodeAssertStrict.default.deepEqual(signals, [[-12345, "SIGTERM"]]);
   } finally {
     process.kill = originalKill;
     process.platform = originalPlatform;
   }
 });
 
-test("missing process group never falls back to a reused direct PID", async () => {
+NodeTest.test("missing process group never falls back to a reused direct PID", async () => {
   const originalKill = process.kill;
   const originalPlatform = process.platform;
   const signals = [];
@@ -41,14 +41,14 @@ test("missing process group never falls back to a reused direct PID", async () =
       graceMs: 20,
       useProcessGroup: true,
     });
-    assert.deepEqual(signals, [[-12345, "SIGTERM"], [-12345, 0]]);
+    NodeAssertStrict.default.deepEqual(signals, [[-12345, "SIGTERM"], [-12345, 0]]);
   } finally {
     process.kill = originalKill;
     process.platform = originalPlatform;
   }
 });
 
-test("already-exited child receives no signal", async () => {
+NodeTest.test("already-exited child receives no signal", async () => {
   const originalKill = process.kill;
   const originalPlatform = process.platform;
   const signals = [];
@@ -63,14 +63,14 @@ test("already-exited child receives no signal", async () => {
       graceMs: 20,
       useProcessGroup: true,
     });
-    assert.deepEqual(signals, []);
+    NodeAssertStrict.default.deepEqual(signals, []);
   } finally {
     process.kill = originalKill;
     process.platform = originalPlatform;
   }
 });
 
-test("propagates non-ESRCH POSIX termination failures", async () => {
+NodeTest.test("propagates non-ESRCH POSIX termination failures", async () => {
   const originalKill = process.kill;
   const originalPlatform = process.platform;
   process.platform = "linux";
@@ -81,7 +81,7 @@ test("propagates non-ESRCH POSIX termination failures", async () => {
   };
 
   try {
-    await assert.rejects(
+    await NodeAssertStrict.default.rejects(
       () => killProcessTree({ pid: 12345, exitCode: null, signalCode: null }, {
         graceMs: 20,
         useProcessGroup: true,

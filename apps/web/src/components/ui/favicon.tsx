@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -35,6 +35,15 @@ export interface FaviconProps {
  */
 export function Favicon({
   src,
+  ...props
+}: FaviconProps) {
+  if (!src) return <>{props.fallback}</>;
+
+  return <FaviconImage key={src} src={src} {...props} />;
+}
+
+function FaviconImage({
+  src,
   alt = "",
   fallback = null,
   frameTestId,
@@ -42,12 +51,10 @@ export function Favicon({
   className,
   imageClassName,
   framed = true,
-}: FaviconProps) {
+}: Omit<FaviconProps, "src"> & { src: string }) {
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => setFailed(false), [src]);
-
-  if (!src || failed) return <>{fallback}</>;
+  if (failed) return <>{fallback}</>;
 
   return (
     <span

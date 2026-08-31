@@ -45,83 +45,92 @@ export interface ParsedDiffLine {
   isNoNewlineSentinel?: boolean;
 }
 
+type DiffPosition = {
+  oldLine: number;
+  newLine: number;
+  previousOldEnd: number;
+};
+
+const GIT_METADATA_PREFIXES = [
+  "+++",
+  "---",
+  "index ",
+  "new file",
+  "new mode",
+  "old mode",
+  "deleted file",
+  "similarity",
+  "rename",
+  "Binary files",
+] as const;
+
+function headerLine(content: string): ParsedDiffLine {
+  return { type: "header", content, oldLineNo: null, newLineNo: null };
+}
+
+function parseHunkHeader(line: string, position: DiffPosition): ParsedDiffLine {
+  const match = line.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+  if (!match) return headerLine(line);
+
+  const oldStart = parseInt(match[1], 10);
+  const oldCount = match[2] === undefined ? 1 : parseInt(match[2], 10);
+  position.oldLine = oldStart;
+  position.newLine = parseInt(match[3], 10);
+  const hiddenLineCount = Math.max(0, oldStart - position.previousOldEnd);
+  position.previousOldEnd = oldStart + oldCount;
+  return { ...headerLine(line), hiddenLineCount };
+}
+
+function isGitMetadataLine(line: string): boolean {
+  return GIT_METADATA_PREFIXES.some((prefix) => line.startsWith(prefix));
+}
+
+function parseContentLine(line: string, position: DiffPosition): ParsedDiffLine {
+  if (line === "\\ No newline at end of file") {
+    return {
+      type: "context",
+      content: line,
+      oldLineNo: null,
+      newLineNo: null,
+      isNoNewlineSentinel: true,
+    };
+  }
+  if (line.startsWith("+")) {
+    const parsed = { type: "add" as const, content: line.slice(1), oldLineNo: null, newLineNo: position.newLine };
+    position.newLine += 1;
+    return parsed;
+  }
+  if (line.startsWith("-")) {
+    const parsed = { type: "remove" as const, content: line.slice(1), oldLineNo: position.oldLine, newLineNo: null };
+    position.oldLine += 1;
+    return parsed;
+  }
+  const content = line.startsWith(" ") ? line.slice(1) : line;
+  const parsed = { type: "context" as const, content, oldLineNo: position.oldLine, newLineNo: position.newLine };
+  position.oldLine += 1;
+  position.newLine += 1;
+  return parsed;
+}
+
+function parseDiffLine(line: string, position: DiffPosition): ParsedDiffLine {
+  if (line.startsWith("@@")) return parseHunkHeader(line, position);
+  if (line.startsWith("diff ")) {
+    position.previousOldEnd = 1;
+    return headerLine(line);
+  }
+  if (isGitMetadataLine(line)) return headerLine(line);
+  return parseContentLine(line, position);
+}
+
 /** Parse a unified diff string into typed lines with line numbers. */
 export function parseDiffLines(diff: string): ParsedDiffLine[] {
   const lines = diff.split("\n");
   // Remove the trailing empty element produced by a diff string that ends with \n
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  const result: ParsedDiffLine[] = [];
-  let oldLine = 0;
-  let newLine = 0;
   // Tracks the line immediately after the last hunk ended.
   // Initialised to 1 so that a hunk starting at line 1 produces hiddenLineCount=0.
-  let prevOldEnd = 1;
-
-  for (const line of lines) {
-    if (line.startsWith("@@")) {
-      const match = line.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-      if (match) {
-        const oldStart = parseInt(match[1], 10);
-        const oldCount = match[2] !== undefined ? parseInt(match[2], 10) : 1;
-        newLine = parseInt(match[3], 10);
-        oldLine = oldStart;
-
-        // Lines hidden between the end of the previous hunk and the start of this one.
-        // For the first hunk, this equals lines before it in the file (oldStart - 1).
-        const hiddenLineCount = Math.max(0, oldStart - prevOldEnd);
-        prevOldEnd = oldStart + oldCount;
-
-        result.push({
-          type: "header",
-          content: line,
-          oldLineNo: null,
-          newLineNo: null,
-          hiddenLineCount,
-        });
-      } else {
-        result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
-      }
-    } else if (line.startsWith("diff ")) {
-      // New file section in a multi-file diff: reset hunk tracking for the new file
-      prevOldEnd = 1;
-      result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
-    } else if (
-      line.startsWith("+++") ||
-      line.startsWith("---") ||
-      line.startsWith("index ") ||
-      line.startsWith("new file") ||
-      line.startsWith("new mode") ||
-      line.startsWith("old mode") ||
-      line.startsWith("deleted file") ||
-      line.startsWith("similarity") ||
-      line.startsWith("rename") ||
-      line.startsWith("Binary files")
-    ) {
-      // Git metadata lines — mark as header so renderers can skip them
-      result.push({ type: "header", content: line, oldLineNo: null, newLineNo: null });
-    } else if (line === "\\ No newline at end of file") {
-      result.push({
-        type: "context",
-        content: line,
-        oldLineNo: null,
-        newLineNo: null,
-        isNoNewlineSentinel: true,
-      });
-    } else if (line.startsWith("+")) {
-      result.push({ type: "add", content: line.slice(1), oldLineNo: null, newLineNo: newLine });
-      newLine++;
-    } else if (line.startsWith("-")) {
-      result.push({ type: "remove", content: line.slice(1), oldLineNo: oldLine, newLineNo: null });
-      oldLine++;
-    } else {
-      const content = line.startsWith(" ") ? line.slice(1) : line;
-      result.push({ type: "context", content, oldLineNo: oldLine, newLineNo: newLine });
-      oldLine++;
-      newLine++;
-    }
-  }
-
-  return result;
+  const position: DiffPosition = { oldLine: 0, newLine: 0, previousOldEnd: 1 };
+  return lines.map((line) => parseDiffLine(line, position));
 }
 
 /** Index of the first `@@` hunk header in parsed lines, or -1 when none. */

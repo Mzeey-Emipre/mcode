@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -20,7 +20,7 @@ import { ParentAssistantTextCheckpointService } from "../../turns/parent-assista
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
 });
 
 async function eventually(assertion: () => void): Promise<void> {
@@ -132,7 +132,7 @@ describe("AgentService.createAndSend defaults", () => {
   });
 
   it("dispatches a managed New first Turn without Continue when the workspace has no Setup", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-agent-automatic-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-automatic-setup-"));
     roots.push(root);
     const prepare = vi.fn();
     const { threadRepo, workspaceRepo, threadService, service, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
@@ -173,7 +173,7 @@ describe("AgentService.createAndSend defaults", () => {
   });
 
   it("persists each later Turn sent while automatic Setup remains blocked", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-queued-turn-"));
     roots.push(root);
     const { db, threadRepo, workspaceRepo, service, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
       new WorkspaceEnvironmentService({
@@ -237,7 +237,7 @@ describe("AgentService.createAndSend defaults", () => {
   });
 
   it("removes newly persisted attachments when the automatic queue is at capacity", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-capacity-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-queued-turn-capacity-"));
     roots.push(root);
     const { threadRepo, workspaceRepo, service, attachmentService, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
       new WorkspaceEnvironmentService({
@@ -294,7 +294,7 @@ describe("AgentService.createAndSend defaults", () => {
   });
 
   it("removes newly persisted attachments when Thread deletion rejects automatic admission", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-deletion-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-queued-turn-deletion-"));
     roots.push(root);
     const { threadRepo, workspaceRepo, service, attachmentService, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
       new WorkspaceEnvironmentService({
@@ -351,7 +351,7 @@ describe("AgentService.createAndSend defaults", () => {
   });
 
   it("cleans released-gate attachments when a native command handles the send without persisting a Turn", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-handled-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-queued-turn-handled-"));
     roots.push(root);
     const { threadRepo, workspaceRepo, messageRepo, service, attachmentService, goals, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
       new WorkspaceEnvironmentService({
@@ -412,7 +412,7 @@ describe("AgentService.createAndSend defaults", () => {
   });
 
   it("replays a blocked reply with its plan and provenance fields exactly as queued", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-fidelity-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-queued-turn-fidelity-"));
     roots.push(root);
     const { db, threadRepo, workspaceRepo, messageRepo, service, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
       new WorkspaceEnvironmentService({

@@ -2,9 +2,9 @@
  * In-page region drag and element-pick capture helpers for an adopted Preview guest.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import { BrowserWindow, app, ipcMain, type WebContents } from "electron";
 import {
   PREVIEW_ANNOTATION_STRING_MAX,
@@ -912,26 +912,31 @@ function parseElementStylePayload(value: unknown): BrowserPreviewElementStyle | 
 function parseHitTestPayload(parsed: unknown): HitTestResult | null {
   if (!parsed || typeof parsed !== "object") return null;
   const p = parsed as Record<string, unknown>;
-  if (p.ok === false) {
-    return typeof p.code === "string" ? { ok: false, code: p.code } : null;
-  }
+  if (p.ok === false) return parseHitTestFailure(p.code);
   if (p.ok !== true) return null;
   const bounds = parseBoundsRecord(p.bounds);
   if (!bounds) return null;
-  const selectorHint =
-    p.selectorHint == null ? null : sanitizeSelectorHintFromGuest(String(p.selectorHint));
-  let htmlExcerpt: string | null = null;
-  if (p.htmlExcerpt != null && typeof p.htmlExcerpt === "string" && p.htmlExcerpt.length > 0) {
-    const scrubbed = scrubHtmlExcerptForOutbound(p.htmlExcerpt);
-    htmlExcerpt = scrubbed.length > 0 ? scrubbed : null;
-  }
+  return createHitTestSuccess(p, bounds);
+}
+
+function parseHitTestFailure(code: unknown): HitTestResult | null {
+  return typeof code === "string" ? { ok: false, code } : null;
+}
+
+function createHitTestSuccess(p: Record<string, unknown>, bounds: Bounds): HitTestResult {
   return {
     ok: true,
     bounds,
-    selectorHint,
-    htmlExcerpt,
+    selectorHint: p.selectorHint == null ? null : sanitizeSelectorHintFromGuest(String(p.selectorHint)),
+    htmlExcerpt: sanitizeHitTestHtmlExcerpt(p.htmlExcerpt),
     elementStyle: parseElementStylePayload(p.elementStyle),
   };
+}
+
+function sanitizeHitTestHtmlExcerpt(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const scrubbed = scrubHtmlExcerptForOutbound(value);
+  return scrubbed.length > 0 ? scrubbed : null;
 }
 
 /**
@@ -977,31 +982,28 @@ export function abortOverlayCapture(s: PreviewSession, error: string): void {
   endOverlaySession(s);
   const pending = s.overlayPending;
   s.overlayPending = null;
-  if (s.elementPickPollTimer) {
-    clearTimeout(s.elementPickPollTimer);
-    s.elementPickPollTimer = null;
-  }
-  if (s.regionPollTimer) {
-    clearTimeout(s.regionPollTimer);
-    s.regionPollTimer = null;
-  }
+  clearOverlayPollTimers(s);
   const webContents = pending?.webContents ?? resolveActiveCaptureWebContents(s);
-  if (webContents && !webContents.isDestroyed()) {
-    // Both modes are in-guest now. Tear down the right one based on pending
-    // mode; when pending is null (cancel-without-session), strip both as a
-    // belt-and-suspenders.
-    if (pending?.mode === "region") {
-      void removeRgMarqueeHighlighter(webContents);
-    } else if (pending?.mode === "element") {
-      void removeEpPickHighlighter(webContents);
-    } else {
-      void removeRgMarqueeHighlighter(webContents);
-      void removeEpPickHighlighter(webContents);
-    }
-  }
-  if (pending) {
-    pending.finish({ ok: false, error });
-  }
+  removeOverlayHighlighter(webContents, pending?.mode);
+  if (pending) pending.finish({ ok: false, error });
+}
+
+function clearOverlayPollTimers(s: PreviewSession): void {
+  if (s.elementPickPollTimer) clearTimeout(s.elementPickPollTimer);
+  if (s.regionPollTimer) clearTimeout(s.regionPollTimer);
+  s.elementPickPollTimer = null;
+  s.regionPollTimer = null;
+}
+
+function removeOverlayHighlighter(
+  webContents: WebContents | null,
+  mode: "region" | "element" | undefined,
+): void {
+  if (!webContents || webContents.isDestroyed()) return;
+  if (mode === "region") return void removeRgMarqueeHighlighter(webContents);
+  if (mode === "element") return void removeEpPickHighlighter(webContents);
+  void removeRgMarqueeHighlighter(webContents);
+  void removeEpPickHighlighter(webContents);
 }
 
 /**
@@ -1233,47 +1235,11 @@ function schedulePollRegion(s: PreviewSession, hostWin: BrowserWindow): void {
  */
 async function runRegionPollTick(s: PreviewSession, hostWin: BrowserWindow): Promise<void> {
   const pending = s.overlayPending;
-  if (!pending || pending.mode !== "region") return;
-  if (hostWin.isDestroyed()) {
-    abortOverlayCapture(s, "no-window");
-    return;
-  }
-  const webContents = pending.webContents;
-  if (webContents.isDestroyed()) {
-    abortOverlayCapture(s, "no-preview");
-    return;
-  }
-  if (!pendingCaptureStillOwnsSurface(s, webContents)) {
-    abortOverlayCapture(s, "no-preview");
-    return;
-  }
-
-  let payload: RgPollPayload | null = null;
-  try {
-    const raw: unknown = await webContents.executeJavaScript(RG_POLL_JS, true);
-    const text = typeof raw === "string" ? raw : JSON.stringify(raw);
-    payload = JSON.parse(text) as RgPollPayload;
-  } catch {
-    payload = null;
-  }
-
-  // Re-read pending after the await: an earlier tick (or external abort) may have settled it.
-  if (!s.overlayPending || s.overlayPending.mode !== "region") return;
-  if (s.overlayPending.webContents !== webContents) return;
-  if (!pendingCaptureStillOwnsSurface(s, webContents)) {
-    abortOverlayCapture(s, "no-preview");
-    return;
-  }
-
+  if (!overlayPollCanStart(s, pending, "region", hostWin)) return;
+  const payload = await readOverlayPollPayload<RgPollPayload>(pending.webContents, RG_POLL_JS);
+  if (!overlayPollStillCurrent(s, pending, "region")) return;
   if (!payload || payload.state === "gone") {
-    // Guest reloaded / navigated. Re-inject so the next tick can resume.
-    if (!webContents.isDestroyed()) {
-      try {
-        await webContents.executeJavaScript(RG_INJECT_JS, true);
-      } catch {
-        /* navigation still in flight */
-      }
-    }
+    await reinjectOverlayPoll(pending.webContents, RG_INJECT_JS);
     schedulePollRegion(s, hostWin);
     return;
   }
@@ -1304,81 +1270,19 @@ async function runRegionPollTick(s: PreviewSession, hostWin: BrowserWindow): Pro
 async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<void> {
   const pending = s.overlayPending;
   if (!pending || pending.mode !== "region") return;
-
-  if (s.regionPollTimer) {
-    clearTimeout(s.regionPollTimer);
-    s.regionPollTimer = null;
-  }
-
-  const webContents = pending.webContents;
+  clearRegionPollTimer(s);
   if (!overlaySessionStillCurrent(s, pending)) return;
-
   const lb = s.lastBounds;
   if (!lb) {
-    await removeRgMarqueeHighlighter(webContents);
-    if (overlaySessionStillCurrent(s, pending)) {
-      finishOverlaySession(s, pending, { ok: false, error: "no-bounds" });
-    }
+    await finishOverlayCaptureFailure(s, pending, removeRgMarqueeHighlighter, "no-bounds");
     return;
   }
-
   const r = clampRectInPlace(rect, lb.width, lb.height);
   if (r.width < 4 || r.height < 4) {
-    await removeRgMarqueeHighlighter(webContents);
-    if (overlaySessionStillCurrent(s, pending)) {
-      finishOverlaySession(s, pending, { ok: false, error: "region-too-small" });
-    }
+    await finishOverlayCaptureFailure(s, pending, removeRgMarqueeHighlighter, "region-too-small");
     return;
   }
-
-  try {
-    await removeRgMarqueeHighlighter(webContents);
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    const image = await webContents.capturePage(r);
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    const buffer = image.toPNG();
-    if (buffer.length === 0) {
-      finishOverlaySession(s, pending, { ok: false, error: "empty-capture" });
-      return;
-    }
-
-    const id = randomUUID();
-    const stem = previewCaptureFileStem(webContents.getURL());
-    const name = `preview-region-${stem}-${Date.now()}.png`;
-    const tempDir = join(app.getPath("temp"), "mcode-attachments");
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    await mkdir(tempDir, { recursive: true });
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    const tempPath = join(tempDir, `${id}.png`);
-    await writeFile(tempPath, buffer);
-    if (!overlaySessionStillCurrent(s, pending)) return;
-
-    const meta: AttachmentMeta = {
-      id,
-      name,
-      mimeType: "image/png",
-      sizeBytes: buffer.length,
-      sourcePath: tempPath,
-    };
-
-    const capture = await buildBrowserCapturePayload(
-      webContents,
-      r,
-      s.consoleBuffer,
-      snapshotFailedRequestsForCapture(s),
-      s.workspaceId,
-      {
-        captureKind: "region",
-      },
-    );
-
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    finishOverlaySession(s, pending, { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture });
-  } catch {
-    if (s.overlayPending === pending) {
-      finishOverlaySession(s, pending, { ok: false, error: "capture-failed" });
-    }
-  }
+  await completeOverlayCapture(s, pending, r, removeRgMarqueeHighlighter, "region", { captureKind: "region" });
 }
 
 /**
@@ -1402,47 +1306,12 @@ function schedulePoll(s: PreviewSession, hostWin: BrowserWindow): void {
  */
 async function runElementPickPollTick(s: PreviewSession, hostWin: BrowserWindow): Promise<void> {
   const pending = s.overlayPending;
-  if (!pending || pending.mode !== "element") return;
-  if (hostWin.isDestroyed()) {
-    abortOverlayCapture(s, "no-window");
-    return;
-  }
+  if (!overlayPollCanStart(s, pending, "element", hostWin)) return;
   const webContents = pending.webContents;
-  if (webContents.isDestroyed()) {
-    abortOverlayCapture(s, "no-preview");
-    return;
-  }
-  if (!pendingCaptureStillOwnsSurface(s, webContents)) {
-    abortOverlayCapture(s, "no-preview");
-    return;
-  }
-
-  let payload: EpPollPayload | null = null;
-  try {
-    const raw: unknown = await webContents.executeJavaScript(EP_POLL_JS, true);
-    const text = typeof raw === "string" ? raw : JSON.stringify(raw);
-    payload = JSON.parse(text) as EpPollPayload;
-  } catch {
-    payload = null;
-  }
-
-  // Re-read pending after the await: an earlier tick (or external abort) may have settled it.
-  if (!s.overlayPending || s.overlayPending.mode !== "element") return;
-  if (s.overlayPending.webContents !== webContents) return;
-  if (!pendingCaptureStillOwnsSurface(s, webContents)) {
-    abortOverlayCapture(s, "no-preview");
-    return;
-  }
-
+  const payload = await readOverlayPollPayload<EpPollPayload>(webContents, EP_POLL_JS);
+  if (!overlayPollStillCurrent(s, pending, "element")) return;
   if (!payload || payload.state === "gone") {
-    // Guest reloaded / navigated. Re-inject so the next tick can resume.
-    if (!webContents.isDestroyed()) {
-      try {
-        await webContents.executeJavaScript(EP_INJECT_JS, true);
-      } catch {
-        /* navigation still in flight */
-      }
-    }
+    await reinjectOverlayPoll(webContents, EP_INJECT_JS);
     schedulePoll(s, hostWin);
     return;
   }
@@ -1460,6 +1329,55 @@ async function runElementPickPollTick(s: PreviewSession, hostWin: BrowserWindow)
   schedulePoll(s, hostWin);
 }
 
+function overlayPollCanStart(
+  session: PreviewSession,
+  pending: PreviewSession["overlayPending"],
+  mode: "region" | "element",
+  hostWin: BrowserWindow,
+): pending is NonNullable<PreviewSession["overlayPending"]> {
+  if (!pending || pending.mode !== mode) return false;
+  if (hostWin.isDestroyed()) {
+    abortOverlayCapture(session, "no-window");
+    return false;
+  }
+  if (pending.webContents.isDestroyed() || !pendingCaptureStillOwnsSurface(session, pending.webContents)) {
+    abortOverlayCapture(session, "no-preview");
+    return false;
+  }
+  return true;
+}
+
+async function readOverlayPollPayload<T>(webContents: WebContents, script: string): Promise<T | null> {
+  try {
+    const raw: unknown = await webContents.executeJavaScript(script, true);
+    return JSON.parse(typeof raw === "string" ? raw : JSON.stringify(raw)) as T;
+  } catch {
+    return null;
+  }
+}
+
+function overlayPollStillCurrent(
+  session: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+  mode: "region" | "element",
+): boolean {
+  if (session.overlayPending !== pending || pending.mode !== mode) return false;
+  if (!pendingCaptureStillOwnsSurface(session, pending.webContents)) {
+    abortOverlayCapture(session, "no-preview");
+    return false;
+  }
+  return true;
+}
+
+async function reinjectOverlayPoll(webContents: WebContents, script: string): Promise<void> {
+  if (webContents.isDestroyed()) return;
+  try {
+    await webContents.executeJavaScript(script, true);
+  } catch {
+    /* navigation still in flight */
+  }
+}
+
 /**
  * Runs the authoritative hit-test on the commit point and produces the capture payload.
  * Tears down the injected handlers before capturePage so the amber highlight isn't burned in.
@@ -1472,91 +1390,102 @@ async function finishElementPickCapture(
   const pending = s.overlayPending;
   if (!pending || pending.mode !== "element") return;
 
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+  if (!isFiniteElementPickPoint(x, y)) {
     abortOverlayCapture(s, "no-hit");
     return;
   }
-
-  if (s.elementPickPollTimer) {
-    clearTimeout(s.elementPickPollTimer);
-    s.elementPickPollTimer = null;
-  }
-
-  const webContents = pending.webContents;
+  clearElementPickPollTimer(s);
   if (!overlaySessionStillCurrent(s, pending)) return;
-
-  const lb = s.lastBounds;
-  if (!lb) {
-    await removeEpPickHighlighter(webContents);
-    if (overlaySessionStillCurrent(s, pending)) {
-      finishOverlaySession(s, pending, { ok: false, error: "no-bounds" });
-    }
+  const preparation = await prepareElementPickCapture(s, pending, x, y);
+  if (!preparation) return;
+  if (!preparation.ok) {
+    await finishOverlayCaptureFailure(s, pending, removeEpPickHighlighter, preparation.error);
     return;
   }
+  await completeOverlayCapture(s, pending, preparation.bounds, removeEpPickHighlighter, "element", {
+    captureKind: "element",
+    selectorHint: preparation.hit.selectorHint,
+    htmlExcerpt: preparation.hit.htmlExcerpt,
+    elementStyle: preparation.hit.elementStyle,
+  });
+}
 
-  const hit = await runElementHitTest(webContents, x, y, hostBoundsForHitTest(s, webContents));
-  if (!overlaySessionStillCurrent(s, pending)) return;
+function isFiniteElementPickPoint(x: number, y: number): boolean {
+  return Number.isFinite(x) && Number.isFinite(y);
+}
+
+async function prepareElementPickCapture(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+  x: number,
+  y: number,
+): Promise<
+  | { ok: true; bounds: Bounds; hit: Extract<HitTestResult, { ok: true }> }
+  | { ok: false; error: "no-bounds" | "no-hit" | "region-too-small" }
+  | null
+> {
+  const layoutBounds = s.lastBounds;
+  if (!layoutBounds) return { ok: false, error: "no-bounds" };
+  const hit = await runElementHitTest(
+    pending.webContents,
+    x,
+    y,
+    hostBoundsForHitTest(s, pending.webContents),
+  );
+  if (!overlaySessionStillCurrent(s, pending)) return null;
   if (!hit || !hit.ok) {
-    await removeEpPickHighlighter(webContents);
-    if (overlaySessionStillCurrent(s, pending)) {
-      finishOverlaySession(s, pending, { ok: false, error: "no-hit" });
-    }
-    return;
+    return { ok: false, error: "no-hit" };
   }
-
-  const r = clampRectInPlace(hit.bounds, lb.width, lb.height);
-  if (r.width < 4 || r.height < 4) {
-    await removeEpPickHighlighter(webContents);
-    if (overlaySessionStillCurrent(s, pending)) {
-      finishOverlaySession(s, pending, { ok: false, error: "region-too-small" });
-    }
-    return;
+  const bounds = clampRectInPlace(hit.bounds, layoutBounds.width, layoutBounds.height);
+  if (bounds.width < 4 || bounds.height < 4) {
+    return { ok: false, error: "region-too-small" };
   }
+  return { ok: true, bounds, hit };
+}
 
+function clearRegionPollTimer(s: PreviewSession): void {
+  if (s.regionPollTimer) clearTimeout(s.regionPollTimer);
+  s.regionPollTimer = null;
+}
+
+function clearElementPickPollTimer(s: PreviewSession): void {
+  if (s.elementPickPollTimer) clearTimeout(s.elementPickPollTimer);
+  s.elementPickPollTimer = null;
+}
+
+async function finishOverlayCaptureFailure(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+  remove: (webContents: WebContents) => Promise<void>,
+  error: string,
+): Promise<void> {
+  await remove(pending.webContents);
+  if (overlaySessionStillCurrent(s, pending)) {
+    finishOverlaySession(s, pending, { ok: false, error });
+  }
+}
+
+async function completeOverlayCapture(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+  bounds: Bounds,
+  remove: (webContents: WebContents) => Promise<void>,
+  namePrefix: "region" | "element",
+  captureOptions: Parameters<typeof buildBrowserCapturePayload>[5],
+): Promise<void> {
   try {
-    await removeEpPickHighlighter(webContents);
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    const image = await webContents.capturePage(r);
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    const buffer = image.toPNG();
-    if (buffer.length === 0) {
-      finishOverlaySession(s, pending, { ok: false, error: "empty-capture" });
-      return;
-    }
-
-    const id = randomUUID();
-    const stem = previewCaptureFileStem(webContents.getURL());
-    const name = `preview-element-${stem}-${Date.now()}.png`;
-    const tempDir = join(app.getPath("temp"), "mcode-attachments");
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    await mkdir(tempDir, { recursive: true });
-    if (!overlaySessionStillCurrent(s, pending)) return;
-    const tempPath = join(tempDir, `${id}.png`);
-    await writeFile(tempPath, buffer);
-    if (!overlaySessionStillCurrent(s, pending)) return;
-
-    const meta: AttachmentMeta = {
-      id,
-      name,
-      mimeType: "image/png",
-      sizeBytes: buffer.length,
-      sourcePath: tempPath,
-    };
-
+    const buffer = await captureOverlayPng(s, pending, bounds, remove);
+    if (!buffer) return;
+    const meta = await persistOverlayPng(s, pending, buffer, namePrefix);
+    if (!meta) return;
     const capture = await buildBrowserCapturePayload(
-      webContents,
-      r,
+      pending.webContents,
+      bounds,
       s.consoleBuffer,
       snapshotFailedRequestsForCapture(s),
       s.workspaceId,
-      {
-        captureKind: "element",
-        selectorHint: hit.selectorHint,
-        htmlExcerpt: hit.htmlExcerpt,
-        elementStyle: hit.elementStyle,
-      },
+      captureOptions,
     );
-
     if (!overlaySessionStillCurrent(s, pending)) return;
     finishOverlaySession(s, pending, { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture });
   } catch {
@@ -1564,4 +1493,43 @@ async function finishElementPickCapture(
       finishOverlaySession(s, pending, { ok: false, error: "capture-failed" });
     }
   }
+}
+
+async function captureOverlayPng(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+  bounds: Bounds,
+  remove: (webContents: WebContents) => Promise<void>,
+): Promise<Buffer | null> {
+  await remove(pending.webContents);
+  if (!overlaySessionStillCurrent(s, pending)) return null;
+  const buffer = (await pending.webContents.capturePage(bounds)).toPNG();
+  if (!overlaySessionStillCurrent(s, pending)) return null;
+  if (buffer.length > 0) return buffer;
+  finishOverlaySession(s, pending, { ok: false, error: "empty-capture" });
+  return null;
+}
+
+async function persistOverlayPng(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+  buffer: Buffer,
+  namePrefix: "region" | "element",
+): Promise<AttachmentMeta | null> {
+  const id = NodeCrypto.randomUUID();
+  const stem = previewCaptureFileStem(pending.webContents.getURL());
+  const tempDir = NodePath.join(app.getPath("temp"), "mcode-attachments");
+  if (!overlaySessionStillCurrent(s, pending)) return null;
+  await NodeFSPromises.mkdir(tempDir, { recursive: true });
+  if (!overlaySessionStillCurrent(s, pending)) return null;
+  const sourcePath = NodePath.join(tempDir, `${id}.png`);
+  await NodeFSPromises.writeFile(sourcePath, buffer);
+  if (!overlaySessionStillCurrent(s, pending)) return null;
+  return {
+    id,
+    name: `preview-${namePrefix}-${stem}-${Date.now()}.png`,
+    mimeType: "image/png",
+    sizeBytes: buffer.length,
+    sourcePath,
+  };
 }

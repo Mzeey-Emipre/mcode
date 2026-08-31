@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  WindowsProcessScope,
+  createWindowsProcessScopeLayout,
+  WindowsProcessScope as NativeWindowsProcessScope,
   type WindowsProcessScopeNative,
 } from "../windows-process-scope.js";
+
+class WindowsProcessScope extends NativeWindowsProcessScope {
+  constructor(native: WindowsProcessScopeNative | null) {
+    super(native, process.arch);
+  }
+}
 
 function createNative(processIds: number[] = []): WindowsProcessScopeNative {
   return {
@@ -25,6 +32,24 @@ function createNative(processIds: number[] = []): WindowsProcessScopeNative {
 }
 
 describe("WindowsProcessScope", () => {
+  it("uses the documented ia32 and 64-bit native structure sizes", () => {
+    expect(createWindowsProcessScopeLayout("ia32")).toEqual({
+      pointerBytes: 4,
+      extendedLimitSize: 112,
+      processEntrySize: 556,
+      processEntryParentOffset: 24,
+    });
+    expect(createWindowsProcessScopeLayout("x64")).toEqual({
+      pointerBytes: 8,
+      extendedLimitSize: 144,
+      processEntrySize: 568,
+      processEntryParentOffset: 32,
+    });
+    expect(createWindowsProcessScopeLayout("arm64")).toEqual(
+      createWindowsProcessScopeLayout("x64"),
+    );
+  });
+
   it("owns, enumerates, terminates, waits, and closes one process tree", async () => {
     const processIds = [101, 102];
     const native = createNative(processIds);

@@ -196,11 +196,11 @@ describe("workspace environment contracts", () => {
   });
 
   it("accepts the Action lifecycle errors returned by the RPC boundary", () => {
-    expect(WorkspaceEnvironmentErrorSchema.parse({
+    expect(WorkspaceEnvironmentErrorSchema().parse({
       code: "WORKSPACE_ENVIRONMENT_ACTION_RUNNING",
       message: "This Project Action is already running for this Thread",
     }).code).toBe("WORKSPACE_ENVIRONMENT_ACTION_RUNNING");
-    expect(WorkspaceEnvironmentErrorSchema.parse({
+    expect(WorkspaceEnvironmentErrorSchema().parse({
       code: "WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND",
       message: "Project Action not found",
     }).code).toBe("WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND");

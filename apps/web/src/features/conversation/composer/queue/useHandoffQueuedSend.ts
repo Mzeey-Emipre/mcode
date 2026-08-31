@@ -43,19 +43,19 @@ export function useHandoffQueuedSend({
   queueIfGenerating: (queued: HandoffQueuedSend) => boolean;
 } {
   const [queuedSend, setQueuedSend] = useState<HandoffQueuedSend | null>(null);
-  const [hasSeenHandoffTransition, setHasSeenHandoffTransition] = useState(false);
+  const hasSeenHandoffTransitionRef = useRef(false);
   const queuedSendRef = useRef<HandoffQueuedSend | null>(null);
   const onDispatchRef = useRef(onDispatch);
   queuedSendRef.current = queuedSend;
   onDispatchRef.current = onDispatch;
 
   useEffect(() => {
-    setHasSeenHandoffTransition(false);
+    hasSeenHandoffTransitionRef.current = false;
   }, [threadId]);
 
   useEffect(() => {
     if (handoffStatus && handoffStatus !== "generating") {
-      setHasSeenHandoffTransition(true);
+      hasSeenHandoffTransitionRef.current = true;
     }
   }, [handoffStatus]);
 
@@ -64,14 +64,14 @@ export function useHandoffQueuedSend({
       if (
         !threadId ||
         getCurrentHandoffStatus() !== "generating" ||
-        !hasSeenHandoffTransition
+        !hasSeenHandoffTransitionRef.current
       ) {
         return false;
       }
       setQueuedSend(queued);
       return true;
     },
-    [getCurrentHandoffStatus, hasSeenHandoffTransition, threadId],
+    [getCurrentHandoffStatus, threadId],
   );
 
   useEffect(() => {

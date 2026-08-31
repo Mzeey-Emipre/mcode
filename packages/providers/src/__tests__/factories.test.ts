@@ -12,6 +12,7 @@ import { providerProtocolBinding } from "../private/factory.js";
 
 function createHostPorts(): ProviderHostPorts {
   return {
+    runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
     environment: { snapshot: vi.fn(() => ({})) },
     processes: {
       attach: vi.fn(),
@@ -100,9 +101,13 @@ describe("Provider factories", () => {
         { name: "child-cancellation", support: "unsupported" },
       );
     }
-    expect(Object.values(input.host).flatMap((port) => Object.values(port))).toSatisfy(
-      (methods: unknown[]) => methods.every((method) => !vi.mocked(method as never).mock.calls.length),
+    const hostPortMethods = Object.entries(input.host)
+      .filter(([name]) => name !== "runtime")
+      .flatMap(([, port]) => Object.values(port));
+    const hostPortCalls = hostPortMethods.flatMap(
+      (method) => (method as { mock: { calls: unknown[][] } }).mock.calls,
     );
+    expect(hostPortCalls).toEqual([]);
   });
 
   it("rejects invalid configuration before it creates a Provider", () => {

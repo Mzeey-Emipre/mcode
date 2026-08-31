@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { container, Lifecycle } from "tsyringe";
 import {
@@ -64,7 +64,7 @@ function committedEnvelope(eventId: string, delta: string): CanonicalAgentEventE
 }
 
 function createProvider(id: ProviderId): IAgentProvider {
-  return Object.assign(new EventEmitter(), { id }) as unknown as IAgentProvider;
+  return Object.assign(new NodeEvents.EventEmitter(), { id }) as unknown as IAgentProvider;
 }
 
 function createIngress(
@@ -103,7 +103,7 @@ describe("ProviderEventIngress", () => {
       handleProviderEvent: vi.fn(),
       handleProviderFileMutation: vi.fn(),
     });
-    (provider as unknown as EventEmitter).emit("event", { event: { type: "invalid" } });
+    (provider as unknown as NodeEvents.EventEmitter).emit("event", { event: { type: "invalid" } });
 
     expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({ reason: "invalid-runtime-event" }));
   });
@@ -111,7 +111,7 @@ describe("ProviderEventIngress", () => {
   it("keeps provider-runtime identity and source provenance", () => {
     const { provider, received } = createIngress();
 
-    (provider as unknown as EventEmitter).emit("event", runtimeEvent("provider output"));
+    (provider as unknown as NodeEvents.EventEmitter).emit("event", runtimeEvent("provider output"));
 
     expect(received).toEqual([expect.objectContaining({
       providerId: "claude",
@@ -126,7 +126,7 @@ describe("ProviderEventIngress", () => {
     const { ingress, received } = createIngress([createProvider("claude"), cursor]);
 
     ingress.acceptCommitted([committedEnvelope("canonical-first", "canonical output")]);
-    (cursor as unknown as EventEmitter).emit("event", runtimeEvent("provider output"));
+    (cursor as unknown as NodeEvents.EventEmitter).emit("event", runtimeEvent("provider output"));
     await flushIngress();
 
     expect(received).toEqual([
@@ -156,7 +156,7 @@ describe("ProviderEventIngress", () => {
   it("rejects malformed runtime input with a diagnostic", () => {
     const { diagnostics, provider, received } = createIngress();
 
-    (provider as unknown as EventEmitter).emit("event", {
+    (provider as unknown as NodeEvents.EventEmitter).emit("event", {
       event: { type: AgentEventType.TextDelta, threadId: "thread-1", turnExecutionId: EXECUTION_ID, delta: 1 },
     });
 
@@ -189,7 +189,7 @@ describe("ProviderEventIngress", () => {
     const adapter: ProviderEventAdapter = { providerId: "codex", project: vi.fn() };
     const { received } = createIngress([cursor], adapter);
 
-    (cursor as unknown as EventEmitter).emit("event", runtimeEvent("Cursor output"));
+    (cursor as unknown as NodeEvents.EventEmitter).emit("event", runtimeEvent("Cursor output"));
 
     expect(adapter.project).not.toHaveBeenCalled();
     expect(received).toHaveLength(1);
@@ -216,7 +216,7 @@ describe("ProviderEventIngress", () => {
     const codex = createProvider("codex");
     const { diagnostics, received, provider } = createIngress([codex], adapter);
 
-    (provider as unknown as EventEmitter).emit("event", {
+    (provider as unknown as NodeEvents.EventEmitter).emit("event", {
       event: {
         type: AgentEventType.TextDelta,
         threadId: "thread-1",

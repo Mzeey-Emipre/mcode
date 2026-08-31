@@ -1,4 +1,4 @@
-import { performance } from "node:perf_hooks";
+import * as NodePerfHooks from "node:perf_hooks";
 import type Database from "better-sqlite3";
 
 /** Hard limits for one synchronous SQLite write transaction. */
@@ -49,49 +49,10 @@ function assertPositiveLimit(value: number, name: keyof WriteBatchLimits): void 
 export async function runBoundedWriteBatches<T>(
   input: RunBoundedWriteBatchesInput<T>,
 ): Promise<WriteBatchResult> {
-  assertPositiveLimit(input.limits.maxRows, "maxRows");
-  assertPositiveLimit(input.limits.maxBytes, "maxBytes");
-  assertPositiveLimit(input.limits.maxElapsedMs, "maxElapsedMs");
-  if (!Number.isInteger(input.limits.maxRows)) {
-    throw new Error("maxRows must be an integer");
-  }
-
-  const sizes = input.items.map((item, index) => {
-    const bytes = input.byteLength(item);
-    if (!Number.isSafeInteger(bytes) || bytes < 0) {
-      throw new Error(`Row ${index + 1} has an invalid byte size`);
-    }
-    if (bytes > input.limits.maxBytes) {
-      throw new Error(
-        `Row ${index + 1} is ${bytes} bytes and exceeds the ${input.limits.maxBytes}-byte batch limit`,
-      );
-    }
-    return bytes;
-  });
-  const rowCounts = input.items.map((item, index) => {
-    const rows = input.rowCount?.(item) ?? 1;
-    if (!Number.isSafeInteger(rows) || rows <= 0) {
-      throw new Error(`Item ${index + 1} has an invalid row count`);
-    }
-    return rows;
-  });
-  const batchOverheadRows = input.batchOverheadRows ?? 0;
-  if (!Number.isSafeInteger(batchOverheadRows) || batchOverheadRows < 0) {
-    throw new Error("batchOverheadRows must be a non-negative integer");
-  }
-  if (batchOverheadRows >= input.limits.maxRows) {
-    throw new Error("batchOverheadRows must be lower than maxRows");
-  }
-  const batchOverheadBytes = input.batchOverheadBytes ?? 0;
-  if (!Number.isSafeInteger(batchOverheadBytes) || batchOverheadBytes < 0) {
-    throw new Error("batchOverheadBytes must be a non-negative integer");
-  }
-  if (batchOverheadBytes >= input.limits.maxBytes) {
-    throw new Error("batchOverheadBytes must be lower than maxBytes");
-  }
+  const prepared = prepareBoundedWriteInput(input);
   if (input.items.length === 0) return { batches: 0, rows: 0, bytes: 0 };
 
-  const now = input.now ?? performance.now.bind(performance);
+  const now = input.now ?? NodePerfHooks.performance.now.bind(NodePerfHooks.performance);
   const yieldControl = input.yieldControl ?? (() => new Promise<void>((resolve) => setImmediate(resolve)));
   let cursor = 0;
   let batches = 0;
@@ -100,40 +61,15 @@ export async function runBoundedWriteBatches<T>(
 
   while (cursor < input.items.length) {
     const batchStart = cursor;
-    let batchBytes = batchOverheadBytes;
-    let batchRows = batchOverheadRows;
+    let batchBytes = prepared.batchOverheadBytes;
+    let batchRows = prepared.batchOverheadRows;
     const transaction = input.db.transaction(() => {
       const startedAt = now();
       input.onBatchStarted?.();
-      while (cursor < input.items.length) {
-        const rows = cursor - batchStart;
-        const nextBytes = sizes[cursor]!;
-        const nextRows = rowCounts[cursor]!;
-        if (nextRows + batchOverheadRows > input.limits.maxRows) {
-          throw new Error(
-            `Item ${cursor + 1} needs ${nextRows + batchOverheadRows} rows and exceeds the ${input.limits.maxRows}-row batch limit`,
-          );
-        }
-        if (nextBytes + batchOverheadBytes > input.limits.maxBytes) {
-          throw new Error(
-            `Item ${cursor + 1} needs ${nextBytes + batchOverheadBytes} bytes and exceeds the ${input.limits.maxBytes}-byte batch limit`,
-          );
-        }
-        const elapsed = now() - startedAt;
-        if (rows > 0 && (
-          batchRows + nextRows > input.limits.maxRows
-          || batchBytes + nextBytes > input.limits.maxBytes
-          || elapsed >= input.limits.maxElapsedMs
-        )) {
-          break;
-        }
-
-        input.write(input.items[cursor]!);
-        cursor += 1;
-        batchBytes += nextBytes;
-        batchRows += nextRows;
-        if (now() - startedAt >= input.limits.maxElapsedMs) break;
-      }
+      const result = writeBatchTransaction(input, prepared, cursor, batchStart, batchBytes, batchRows, startedAt, now);
+      cursor = result.cursor;
+      batchBytes = result.batchBytes;
+      batchRows = result.batchRows;
       input.onBatchFinishing?.();
     });
     transaction();
@@ -146,4 +82,139 @@ export async function runBoundedWriteBatches<T>(
   }
 
   return { batches, rows: totalRows, bytes: totalBytes };
+}
+
+/** Commit ordered rows in bounded synchronous transactions. */
+export function runBoundedWriteBatchesSync<T>(
+  input: RunBoundedWriteBatchesInput<T>,
+): WriteBatchResult {
+  const prepared = prepareBoundedWriteInput(input);
+  if (input.items.length === 0) return { batches: 0, rows: 0, bytes: 0 };
+
+  const now = input.now ?? NodePerfHooks.performance.now.bind(NodePerfHooks.performance);
+  let cursor = 0;
+  let batches = 0;
+  let totalBytes = 0;
+  let totalRows = 0;
+
+  while (cursor < input.items.length) {
+    const batchStart = cursor;
+    let batchBytes = prepared.batchOverheadBytes;
+    let batchRows = prepared.batchOverheadRows;
+    const transaction = input.db.transaction(() => {
+      const startedAt = now();
+      input.onBatchStarted?.();
+      const result = writeBatchTransaction(input, prepared, cursor, batchStart, batchBytes, batchRows, startedAt, now);
+      cursor = result.cursor;
+      batchBytes = result.batchBytes;
+      batchRows = result.batchRows;
+      input.onBatchFinishing?.();
+    });
+    transaction();
+    batches += 1;
+    totalBytes += batchBytes;
+    totalRows += batchRows;
+    input.onBatchCommitted?.({ batches: 1, rows: batchRows, bytes: batchBytes });
+  }
+
+  return { batches, rows: totalRows, bytes: totalBytes };
+}
+
+function prepareBoundedWriteInput<T>(input: RunBoundedWriteBatchesInput<T>): {
+  readonly sizes: number[];
+  readonly rowCounts: number[];
+  readonly batchOverheadRows: number;
+  readonly batchOverheadBytes: number;
+} {
+  assertBatchLimits(input.limits);
+  const sizes = input.items.map((item, index) => validateItemBytes(input.byteLength(item), index, input.limits));
+  const rowCounts = input.items.map((item, index) => validateItemRows(input.rowCount?.(item) ?? 1, index));
+  const batchOverheadRows = validateBatchOverhead(input.batchOverheadRows ?? 0, input.limits.maxRows, "batchOverheadRows", "maxRows");
+  const batchOverheadBytes = validateBatchOverhead(input.batchOverheadBytes ?? 0, input.limits.maxBytes, "batchOverheadBytes", "maxBytes");
+  return { sizes, rowCounts, batchOverheadRows, batchOverheadBytes };
+}
+
+function assertBatchLimits(limits: WriteBatchLimits): void {
+  assertPositiveLimit(limits.maxRows, "maxRows");
+  assertPositiveLimit(limits.maxBytes, "maxBytes");
+  assertPositiveLimit(limits.maxElapsedMs, "maxElapsedMs");
+  if (!Number.isInteger(limits.maxRows)) throw new Error("maxRows must be an integer");
+}
+
+function validateItemBytes(bytes: number, index: number, limits: WriteBatchLimits): number {
+  if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error(`Row ${index + 1} has an invalid byte size`);
+  if (bytes > limits.maxBytes) {
+    throw new Error(`Row ${index + 1} is ${bytes} bytes and exceeds the ${limits.maxBytes}-byte batch limit`);
+  }
+  return bytes;
+}
+
+function validateItemRows(rows: number, index: number): number {
+  if (!Number.isSafeInteger(rows) || rows <= 0) throw new Error(`Item ${index + 1} has an invalid row count`);
+  return rows;
+}
+
+function validateBatchOverhead(
+  value: number,
+  limit: number,
+  name: "batchOverheadRows" | "batchOverheadBytes",
+  limitName: "maxRows" | "maxBytes",
+): number {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`);
+  if (value >= limit) throw new Error(`${name} must be lower than ${limitName}`);
+  return value;
+}
+
+function writeBatchTransaction<T>(
+  input: RunBoundedWriteBatchesInput<T>,
+  prepared: ReturnType<typeof prepareBoundedWriteInput<T>>,
+  cursor: number,
+  batchStart: number,
+  batchBytes: number,
+  batchRows: number,
+  startedAt: number,
+  now: () => number,
+): { readonly cursor: number; readonly batchBytes: number; readonly batchRows: number } {
+  while (cursor < input.items.length) {
+    const next = batchItem(prepared, cursor, input.limits);
+    if (mustEndBatch(cursor, batchStart, batchRows, batchBytes, next, startedAt, input.limits, now)) break;
+    input.write(input.items[cursor]!);
+    cursor += 1;
+    batchBytes += next.bytes;
+    batchRows += next.rows;
+    if (now() - startedAt >= input.limits.maxElapsedMs) break;
+  }
+  return { cursor, batchBytes, batchRows };
+}
+
+function batchItem(
+  prepared: { readonly sizes: number[]; readonly rowCounts: number[]; readonly batchOverheadRows: number; readonly batchOverheadBytes: number },
+  cursor: number,
+  limits: WriteBatchLimits,
+): { readonly rows: number; readonly bytes: number } {
+  const rows = prepared.rowCounts[cursor]!;
+  const bytes = prepared.sizes[cursor]!;
+  if (rows + prepared.batchOverheadRows > limits.maxRows) {
+    throw new Error(`Item ${cursor + 1} needs ${rows + prepared.batchOverheadRows} rows and exceeds the ${limits.maxRows}-row batch limit`);
+  }
+  if (bytes + prepared.batchOverheadBytes > limits.maxBytes) {
+    throw new Error(`Item ${cursor + 1} needs ${bytes + prepared.batchOverheadBytes} bytes and exceeds the ${limits.maxBytes}-byte batch limit`);
+  }
+  return { rows, bytes };
+}
+
+function mustEndBatch(
+  cursor: number,
+  batchStart: number,
+  batchRows: number,
+  batchBytes: number,
+  next: { readonly rows: number; readonly bytes: number },
+  startedAt: number,
+  limits: WriteBatchLimits,
+  now: () => number,
+): boolean {
+  if (cursor === batchStart) return false;
+  return batchRows + next.rows > limits.maxRows ||
+    batchBytes + next.bytes > limits.maxBytes ||
+    now() - startedAt >= limits.maxElapsedMs;
 }

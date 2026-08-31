@@ -10,6 +10,7 @@ import {
   SUBAGENT_METADATA_MAX_LENGTH,
   ThoughtSegmentRecordSchema,
   ToolCallRecordSchema,
+  type ParentNarrativeRecoveryItem,
   type CanonicalAgentEventEnvelope,
   MAX_TURN_RECOVERIES,
   type ProviderIdentity,
@@ -18,6 +19,7 @@ import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/datab
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../../runtime/persistence/sqlite/bounded-write-batches.js";
+import { PARENT_ASSISTANT_TEXT_RETAINED_LIMITS } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import {
   CANONICAL_AGENT_CONTROL_EVENT_RESERVE,
   CanonicalAgentEventSink,
@@ -174,6 +176,37 @@ function startCanonicalParent(sink: CanonicalAgentEventSink, db: Database.Databa
   });
 }
 
+function parentNarrativeToolCall(index: number): ParentNarrativeRecoveryItem {
+  return {
+    kind: "toolCall",
+    record: {
+      id: `recovery-tool-${index}`,
+      message_id: "",
+      parent_tool_call_id: null,
+      tool_name: "Read",
+      display_name: null,
+      provider_agent_key: null,
+      subagent_identity_key: null,
+      subagent_provider_name: null,
+      subagent_prompt: null,
+      subagent_type: null,
+      subagent_agent_id: null,
+      subagent_duration_ms: null,
+      model: null,
+      reasoning_effort: null,
+      input_summary: `file-${index}`,
+      output_summary: "ok",
+      output_total_bytes: null,
+      output_artifact_path: null,
+      exit_code: null,
+      status: "completed",
+      started_at: NOW,
+      completed_at: NOW,
+      sort_order: index,
+    },
+  };
+}
+
 function executionIdForTurn(db: Database.Database, turnId: string): string {
   const row = db.prepare(
     "SELECT execution_id FROM canonical_agent_turns WHERE id = ?",
@@ -191,6 +224,40 @@ describe("CanonicalAgentEventSink", () => {
     seedThread(db);
     published = vi.fn();
     sink = new CanonicalAgentEventSink(db, published);
+  });
+
+  it("checkpoints parent narrative beyond one write transaction without interrupting its turn", () => {
+    startCanonicalParent(sink, db);
+    const items = Array.from(
+      { length: ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows + 1 },
+      (_, index) => parentNarrativeToolCall(index),
+    );
+    const transactions = vi.spyOn(db, "transaction");
+
+    expect(sink.recordParentNarrativeRecovery({ executionId: EXECUTION_ID, items })).toBe(true);
+
+    expect(transactions.mock.calls.length).toBeGreaterThan(1);
+    expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Running" });
+    expect(sink.loadParentNarrativeRecovery(TURN_ID)).toEqual(items);
+  });
+
+  it("rejects aggregate parent recovery overflow before it writes", () => {
+    startCanonicalParent(sink, db);
+    const recordCount = Math.floor(PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes / 4_000) + 2;
+    const items = Array.from({ length: recordCount }, (_, index) => {
+      const item = parentNarrativeToolCall(index);
+      return {
+        ...item,
+        record: { ...item.record, output_summary: "x".repeat(4_000) },
+      };
+    });
+    const before = db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items").get();
+
+    expect(items.every((item) => Buffer.byteLength(JSON.stringify(item), "utf8")
+      < ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes)).toBe(true);
+    expect(() => sink.recordParentNarrativeRecovery({ executionId: EXECUTION_ID, items }))
+      .toThrow("retained byte capacity");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items").get()).toEqual(before);
   });
 
   it("commits records, a checkpoint, and one conversation revision before publication", () => {
@@ -1907,8 +1974,8 @@ describe("CanonicalAgentEventSink", () => {
     expect(projection.messages[1]).not.toHaveProperty("parentAgentProvenance");
     expect(JSON.stringify(projection.narrativeByMessage)).not.toContain("Unrelated turn");
     const childNarrative = projection.narrativeByMessage[projection.messages[1]!.id]!;
-    childNarrative.tools.forEach((record) => ToolCallRecordSchema.parse(record));
-    childNarrative.thoughts.forEach((record) => ThoughtSegmentRecordSchema.parse(record));
+    childNarrative.tools.forEach((record) => ToolCallRecordSchema().parse(record));
+    childNarrative.thoughts.forEach((record) => ThoughtSegmentRecordSchema().parse(record));
     expect(childNarrative.tools).toEqual([expect.objectContaining({
       tool_name: "Read",
       input_summary: JSON.stringify({ path: "src/app.ts" }),

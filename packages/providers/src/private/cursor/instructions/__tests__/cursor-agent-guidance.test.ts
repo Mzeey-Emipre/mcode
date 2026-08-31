@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   mergeCursorWorkspaceAgentMarkdown,
@@ -11,13 +11,13 @@ describe("mergeCursorWorkspaceAgentMarkdown", () => {
   let project: string;
 
   beforeEach(() => {
-    project = mkdtempSync(join(tmpdir(), "cursor-guide-proj-"));
+    project = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "cursor-guide-proj-"));
   });
 
   it("merges repo root AGENTS.md and .cursor/AGENTS.md in order", () => {
-    writeFileSync(join(project, "AGENTS.md"), "REPO");
-    mkdirSync(join(project, ".cursor"), { recursive: true });
-    writeFileSync(join(project, ".cursor", "AGENTS.md"), "PROJ");
+    NodeFS.writeFileSync(NodePath.join(project, "AGENTS.md"), "REPO");
+    NodeFS.mkdirSync(NodePath.join(project, ".cursor"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(project, ".cursor", "AGENTS.md"), "PROJ");
     const out = mergeCursorWorkspaceAgentMarkdown(project);
     expect(out).toBe("REPO\n\n---\n\nPROJ");
   });

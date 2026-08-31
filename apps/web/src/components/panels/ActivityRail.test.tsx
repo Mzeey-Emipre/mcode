@@ -225,6 +225,27 @@ describe("ActivityRail expansion", () => {
     expect(screen.getByRole("button", { name: "Restore panel" })).toBeInTheDocument();
   });
 
+  it("shows the shared maximize tooltip while retaining the panel action", () => {
+    renderRail();
+    const maximize = screen.getByTestId("rail-maximize-toggle");
+
+    fireEvent.focus(maximize);
+    act(() => vi.runAllTimers());
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toHaveTextContent("Maximize panel");
+
+    fireEvent.click(maximize);
+    expect(handlers.onToggleMaximized).toHaveBeenCalledOnce();
+  });
+
+  it("opens the remaining tab choices and creates the selected tab", () => {
+    renderRail();
+
+    fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
+
+    expect(handlers.onCreate).toHaveBeenCalledWith("preview");
+  });
+
   it("collapses after a focused rail control is removed", () => {
     const { rerender } = render(railElement(["terminal"]));
     const rail = screen.getByTestId("activity-rail");

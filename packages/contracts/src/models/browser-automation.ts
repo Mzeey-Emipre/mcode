@@ -305,56 +305,53 @@ export const BrowserAutomationDiagnosticLocationSchema = lazySchema(() =>
     .trim()
     .min(1)
     .max(BROWSER_AUTOMATION_MAX_URL_CHARS)
-    .superRefine((value, context) => {
-      let parsed: URL;
-      try {
-        parsed = new URL(value);
-      } catch {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid diagnostic location" });
-        return;
-      }
-      if (!diagnosticSchemes.has(parsed.protocol)) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Diagnostic location scheme is not allowed",
-        });
-      }
-      if (parsed.username || parsed.password) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Diagnostic locations cannot contain credentials",
-        });
-      }
-      if (parsed.search || parsed.hash) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Diagnostic locations cannot contain query or fragment data",
-        });
-      }
-      if (parsed.protocol === "data:" && value !== "data:[redacted]") {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Data diagnostic locations must be redacted",
-        });
-      }
-      if (parsed.protocol === "blob:") {
-        try {
-          const inner = new URL(value.slice("blob:".length));
-          if (inner.username || inner.password || inner.search || inner.hash) {
-            context.addIssue({
-              code: z.ZodIssueCode.custom,
-              message: "Blob diagnostic locations must contain a sanitized origin",
-            });
-          }
-        } catch {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "Blob diagnostic location is invalid",
-          });
-        }
-      }
-    }),
+    .superRefine(validateDiagnosticLocation),
 );
+
+function validateDiagnosticLocation(value: string, context: z.RefinementCtx): void {
+  const parsed = parseDiagnosticLocation(value, context);
+  if (!parsed) return;
+  validateDiagnosticUrl(parsed, value, context);
+  if (parsed.protocol === "blob:") validateBlobDiagnosticLocation(value, context);
+}
+
+function parseDiagnosticLocation(value: string, context: z.RefinementCtx): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid diagnostic location" });
+    return null;
+  }
+}
+
+function validateDiagnosticUrl(value: URL, rawValue: string, context: z.RefinementCtx): void {
+  if (!diagnosticSchemes.has(value.protocol)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Diagnostic location scheme is not allowed" });
+  }
+  if (value.username || value.password) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Diagnostic locations cannot contain credentials" });
+  }
+  if (value.search || value.hash) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Diagnostic locations cannot contain query or fragment data" });
+  }
+  if (value.protocol === "data:" && rawValue !== "data:[redacted]") {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Data diagnostic locations must be redacted" });
+  }
+}
+
+function validateBlobDiagnosticLocation(value: string, context: z.RefinementCtx): void {
+  try {
+    const inner = new URL(value.slice("blob:".length));
+    if (inner.username || inner.password || inner.search || inner.hash) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Blob diagnostic locations must contain a sanitized origin",
+      });
+    }
+  } catch {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Blob diagnostic location is invalid" });
+  }
+}
 
 /** One sanitized source or request location in browser diagnostics. */
 export type BrowserAutomationDiagnosticLocation = z.infer<
@@ -878,6 +875,7 @@ const requestBase = {
   deadline: z.number().int().positive(),
   expectedControlEpoch: z.number().int().nonnegative(),
 };
+const requestVariantBaseSchema = z.object(requestBase).strict();
 
 const actTarget = z.object({ target: BrowserAutomationTargetSchema() }).strict();
 const actTimeout = z.number().int().min(1).max(BROWSER_AUTOMATION_MAX_TIMEOUT_MS).optional();
@@ -966,7 +964,7 @@ export type BrowserAutomationTabsArgs = z.infer<ReturnType<typeof BrowserAutomat
 const requestVariant = <T extends BrowserAutomationRequestOperation>(
   operation: T,
   args: z.ZodTypeAny,
-) => z.object({ ...requestBase, operation: z.literal(operation), args }).strict();
+) => requestVariantBaseSchema.extend({ operation: z.literal(operation), args });
 
 /** Versioned, scoped request envelope for every browser operation. */
 export const BrowserAutomationRequestSchema = lazySchema(() =>
@@ -1070,8 +1068,9 @@ const actionResultFields = {
   title: z.string().max(4_096),
   controlEpoch: z.number().int().nonnegative(),
 };
+const actionResultBaseSchema = z.object({ operation: z.never(), ...actionResultFields }).strict();
 const actionResult = <T extends BrowserAutomationRequestOperation>(operation: T) =>
-  z.object({ operation: z.literal(operation), ...actionResultFields }).strict();
+  actionResultBaseSchema.extend({ operation: z.literal(operation) });
 
 /** One content-free receipt for a bounded Browser mutation step. */
 export const BrowserAutomationMutationReceiptSchema = lazySchema(() => z.object({

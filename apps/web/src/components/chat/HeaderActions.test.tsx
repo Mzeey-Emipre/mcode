@@ -352,22 +352,34 @@ describe("HeaderActions - Create PR menu item", () => {
     expect(screen.getByTestId("workspace-menu-open-pr")).toHaveTextContent("PR #42");
   });
 
-  it("explains commit-or-push when no commits are ahead", () => {
+  it("explains commit-or-push when no commits are ahead", async () => {
     mockUseHasCommitsAhead.mockReturnValue(false);
     renderHeaderActions();
-    expect(screen.getByTestId("workspace-menu-commit")).toHaveAttribute(
-      "title",
-      expect.stringContaining("commit and push"),
-    );
+    const item = screen.getByTestId("workspace-menu-commit");
+    const trigger = item.closest<HTMLElement>("[data-slot='tooltip-trigger']") ?? item;
+    const user = userEvent.setup();
+
+    await user.hover(trigger);
+    await waitFor(() => {
+      const tooltip = document.querySelector<HTMLElement>("[data-slot='tooltip-content']");
+      expect(tooltip).toBeVisible();
+      expect(tooltip).toHaveTextContent("Ask the agent to commit and push the changes");
+    });
   });
 
-  it("shows a loading title while commits-ahead state is unknown", () => {
+  it("shows a loading explanation while commits-ahead state is unknown", async () => {
     mockUseHasCommitsAhead.mockReturnValue(null);
     renderHeaderActions();
-    expect(screen.getByTestId("workspace-menu-create-pr")).toHaveAttribute(
-      "title",
-      expect.stringContaining("Waiting for commits"),
-    );
+    const item = screen.getByTestId("workspace-menu-create-pr");
+    const trigger = item.closest<HTMLElement>("[data-slot='tooltip-trigger']") ?? item;
+    const user = userEvent.setup();
+
+    await user.hover(trigger);
+    await waitFor(() => {
+      const tooltip = document.querySelector<HTMLElement>("[data-slot='tooltip-content']");
+      expect(tooltip).toBeVisible();
+      expect(tooltip).toHaveTextContent("Waiting for commits ahead of base branch");
+    });
   });
 });
 

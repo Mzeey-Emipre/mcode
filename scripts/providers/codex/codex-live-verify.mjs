@@ -9,57 +9,17 @@
  *    with whether the model has fired a tool yet this turn.
  * 5. Prints a clear pass/fail report and exits non-zero on regression.
  */
-import { createRequire } from "node:module";
-import { writeFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { request } from "node:http";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { connectMcodeWebSocket } from "./mcode-websocket-client.mjs";
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const require = createRequire(join(REPO_ROOT, "apps", "web", "package.json"));
-const { WebSocket } = require("ws");
+const TRACE_CWD = process.env.CODEX_TRACE_CWD ?? NodePath.join(NodeOS.tmpdir(), "codex-trace");
+const LOG = process.env.CODEX_VERIFY_LOG ?? NodePath.join(NodeOS.tmpdir(), "codex-live-verify.log");
+NodeFS.writeFileSync(LOG, "");
+const w = (s) => { NodeFS.appendFileSync(LOG, s + "\n"); console.log(s); };
 
-const TRACE_CWD = process.env.CODEX_TRACE_CWD ?? join(tmpdir(), "codex-trace");
-const LOG = process.env.CODEX_VERIFY_LOG ?? join(tmpdir(), "codex-live-verify.log");
-writeFileSync(LOG, "");
-const w = (s) => { appendFileSync(LOG, s + "\n"); console.log(s); };
-
-if (!existsSync(TRACE_CWD)) mkdirSync(TRACE_CWD, { recursive: true });
-
-function getHealth() {
-  return new Promise((resolve, reject) => {
-    const port = Number(process.env.MCODE_PORT || 19400);
-    const req = request({ host: "127.0.0.1", port, path: "/health", method: "GET" }, (res) => {
-      let body = "";
-      res.on("data", (c) => (body += c));
-      res.on("end", () => {
-        try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
-      });
-    });
-    req.on("error", reject);
-    req.end();
-  });
-}
-
-const health = await getHealth();
-w(`[health] activeAgents=${health.activeAgents} token=present`);
-
-const PORT = Number(process.env.MCODE_PORT || 19400);
-const ws = new WebSocket(`ws://127.0.0.1:${PORT}/?token=${health.authToken}`);
-const pending = new Map();
-let nextId = 1;
-function rpc(method, params) {
-  const id = String(nextId++);
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject, method });
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-}
-
-let resolveOpen;
-const opened = new Promise((r) => (resolveOpen = r));
-ws.on("open", () => { w("[ws] open"); resolveOpen(); });
+if (!NodeFS.existsSync(TRACE_CWD)) NodeFS.mkdirSync(TRACE_CWD, { recursive: true });
 
 // Classification tracking: walk events in order, mark each TextDelta with the
 // running tool state so we can prove pre-tool deltas have NO isFinalResponse
@@ -69,52 +29,55 @@ let pendingToolUses = 0;
 let hasFiredToolThisTurn = false;
 let toolStartedAt = null;
 let toolEndedAt = null;
-let turnCompleted = false;
 let resolveTurn;
 const turnDone = new Promise((r) => (resolveTurn = r));
 
-ws.on("message", (raw) => {
-  let msg;
-  try { msg = JSON.parse(raw.toString()); } catch { return; }
+function recordToolUse(event) {
+  pendingToolUses++;
+  hasFiredToolThisTurn = true;
+  if (toolStartedAt == null) toolStartedAt = events.length;
+  events.push({ kind: "toolUse", toolName: event.toolName, idx: events.length });
+}
 
-  if (typeof msg.id === "string" && pending.has(msg.id)) {
-    const { resolve, reject, method } = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.error) reject(new Error(`${method} failed: ${msg.error.message}`));
-    else resolve(msg.result);
-    return;
-  }
-  if (msg.type === "push" && msg.channel === "agent.event") {
-    const e = msg.data;
-    if (e.type === "toolUse") {
-      pendingToolUses++;
-      hasFiredToolThisTurn = true;
-      if (toolStartedAt == null) toolStartedAt = events.length;
-      events.push({ kind: "toolUse", toolName: e.toolName, idx: events.length });
-    } else if (e.type === "toolResult") {
-      pendingToolUses = Math.max(0, pendingToolUses - 1);
-      if (pendingToolUses === 0 && toolEndedAt == null) toolEndedAt = events.length;
-      events.push({ kind: "toolResult", idx: events.length });
-    } else if (e.type === "textDelta") {
-      events.push({
-        kind: "textDelta",
-        delta: (e.delta ?? "").slice(0, 50),
-        isFinalResponse: e.isFinalResponse === true,
-        pendingTools: pendingToolUses,
-        hasFiredTool: hasFiredToolThisTurn,
-        idx: events.length,
-      });
-    } else if (e.type === "turnComplete") {
+function recordToolResult() {
+  pendingToolUses = Math.max(0, pendingToolUses - 1);
+  if (pendingToolUses === 0 && toolEndedAt == null) toolEndedAt = events.length;
+  events.push({ kind: "toolResult", idx: events.length });
+}
+
+function recordTextDelta(event) {
+  events.push({
+    kind: "textDelta",
+    delta: (event.delta ?? "").slice(0, 50),
+    isFinalResponse: event.isFinalResponse === true,
+    pendingTools: pendingToolUses,
+    hasFiredTool: hasFiredToolThisTurn,
+    idx: events.length,
+  });
+}
+
+function recordAgentEvent(event) {
+  const recorders = {
+    toolUse: () => recordToolUse(event),
+    toolResult: recordToolResult,
+    textDelta: () => recordTextDelta(event),
+    turnComplete: () => {
       events.push({ kind: "turnComplete", idx: events.length });
-      turnCompleted = true;
       resolveTurn();
-    } else if (e.type === "error") {
-      w(`[event:error] ${JSON.stringify(e).slice(0, 200)}`);
-    }
-  }
-});
+    },
+    error: () => w(`[event:error] ${JSON.stringify(event).slice(0, 200)}`),
+  };
+  recorders[event.type]?.();
+}
 
-await opened;
+const { rpc, close } = await connectMcodeWebSocket({
+  onHealth: (health) => w(`[health] activeAgents=${health.activeAgents} token=present`),
+  onOpen: () => w("[ws] open"),
+  onPush: (message) => {
+    if (message.channel === "agent.event") recordAgentEvent(message.data);
+  },
+  formatError: (method, error) => `${method} failed: ${error.message}`,
+});
 
 // Workspace setup
 const workspaces = await rpc("workspace.list", {});
@@ -182,5 +145,5 @@ const pass =
   hasFiredToolThisTurn;
 
 w(`\n========== RESULT: ${pass ? "PASS ✓" : "FAIL ✗"} ==========`);
-ws.close();
+close();
 process.exit(pass ? 0 : 1);

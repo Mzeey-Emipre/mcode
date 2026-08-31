@@ -1,35 +1,28 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  access,
-  mkdtemp,
-  mkdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { Script } from "node:vm";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeVM from "node:vm";
 import {
   buildServerRuntimeBundles,
   compileServerWithSwc,
 } from "../../../../scripts/build-server-dev-bundle.mjs";
 
-const repoRoot = path.resolve(import.meta.dirname, "../../../..");
+const repoRoot = NodePath.resolve(import.meta.dirname, "../../../..");
 
 describe("buildServerRuntimeBundles", () => {
   let fixtureRoot;
 
   afterEach(async () => {
-    if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true });
+    if (fixtureRoot) await NodeFSPromises.rm(fixtureRoot, { recursive: true, force: true });
   });
 
   it("compiles the server entry as valid CommonJS", async () => {
-    const serverRoot = path.join(repoRoot, "apps/server");
-    const distTsc = path.join(serverRoot, "dist-tsc");
-    const outputRoot = await mkdtemp(path.join(tmpdir(), "server-entry-cjs-"));
-    const serverOutFile = path.join(outputRoot, "server.cjs");
-    const ptyHostOutFile = path.join(outputRoot, "pty-host.cjs");
+    const serverRoot = NodePath.join(repoRoot, "apps/server");
+    const distTsc = NodePath.join(serverRoot, "dist-tsc");
+    const outputRoot = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "server-entry-cjs-"));
+    const serverOutFile = NodePath.join(outputRoot, "server.cjs");
+    const ptyHostOutFile = NodePath.join(outputRoot, "pty-host.cjs");
 
     try {
       compileServerWithSwc(serverRoot);
@@ -38,20 +31,20 @@ describe("buildServerRuntimeBundles", () => {
         serverOutFile,
         ptyHostOutFile,
       });
-      const bundledEntry = await readFile(serverOutFile, "utf8");
+      const bundledEntry = await NodeFSPromises.readFile(serverOutFile, "utf8");
 
-      expect(() => new Script(bundledEntry, { filename: "server.cjs" })).not.toThrow();
+      expect(() => new NodeVM.Script(bundledEntry, { filename: "server.cjs" })).not.toThrow();
     } finally {
-      await rm(outputRoot, { recursive: true, force: true });
-      await rm(distTsc, { recursive: true, force: true });
+      await NodeFSPromises.rm(outputRoot, { recursive: true, force: true });
+      await NodeFSPromises.rm(distTsc, { recursive: true, force: true });
     }
   }, 30_000);
 
   it("emits separate server and PTY host bundles", async () => {
-    fixtureRoot = await mkdtemp(path.join(tmpdir(), "server-runtime-bundles-"));
-    const serverRoot = path.join(fixtureRoot, "server");
-    const serverEntry = path.join(serverRoot, "dist-tsc", "index.js");
-    const ptyHostEntry = path.join(
+    fixtureRoot = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "server-runtime-bundles-"));
+    const serverRoot = NodePath.join(fixtureRoot, "server");
+    const serverEntry = NodePath.join(serverRoot, "dist-tsc", "index.js");
+    const ptyHostEntry = NodePath.join(
       serverRoot,
       "dist-tsc",
       "features",
@@ -59,12 +52,12 @@ describe("buildServerRuntimeBundles", () => {
       "host",
       "pty-host-entry.js",
     );
-    const serverOutFile = path.join(fixtureRoot, "dist", "server.cjs");
-    const ptyHostOutFile = path.join(fixtureRoot, "dist", "pty-host.cjs");
+    const serverOutFile = NodePath.join(fixtureRoot, "dist", "server.cjs");
+    const ptyHostOutFile = NodePath.join(fixtureRoot, "dist", "pty-host.cjs");
 
-    await mkdir(path.dirname(ptyHostEntry), { recursive: true });
-    await writeFile(serverEntry, 'console.log("server-entry");\n');
-    await writeFile(ptyHostEntry, 'console.log("pty-host-entry");\n');
+    await NodeFSPromises.mkdir(NodePath.dirname(ptyHostEntry), { recursive: true });
+    await NodeFSPromises.writeFile(serverEntry, 'console.log("server-entry");\n');
+    await NodeFSPromises.writeFile(ptyHostEntry, 'console.log("pty-host-entry");\n');
 
     await buildServerRuntimeBundles({
       serverRoot,
@@ -73,9 +66,9 @@ describe("buildServerRuntimeBundles", () => {
       production: true,
     });
 
-    await access(serverOutFile);
-    await access(ptyHostOutFile);
-    expect(await readFile(serverOutFile, "utf8")).toContain("server-entry");
-    expect(await readFile(ptyHostOutFile, "utf8")).toContain("pty-host-entry");
+    await NodeFSPromises.access(serverOutFile);
+    await NodeFSPromises.access(ptyHostOutFile);
+    expect(await NodeFSPromises.readFile(serverOutFile, "utf8")).toContain("server-entry");
+    expect(await NodeFSPromises.readFile(ptyHostOutFile, "utf8")).toContain("pty-host-entry");
   }, 30_000);
 });

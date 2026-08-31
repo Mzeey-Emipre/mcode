@@ -190,6 +190,31 @@ function clearPreviewScopeState(
   return { tabSetByScope, liveChromeByScope, persistentTabIdsByScope };
 }
 
+function hasValidPersistentTabIdentity(tab: BrowserTabInfo): boolean {
+  return tab.id.length <= BROWSER_TAB_INFO_STRING_MAX.id &&
+    tab.threadId.length <= BROWSER_TAB_INFO_STRING_MAX.threadId;
+}
+
+function storedPersistentTab(tab: BrowserTabInfo, active: boolean): BrowserTabInfo {
+  return {
+    ...tab,
+    title: tab.title?.slice(0, BROWSER_TAB_INFO_STRING_MAX.title) ?? null,
+    url: tab.url?.slice(0, BROWSER_TAB_INFO_STRING_MAX.url) ?? null,
+    faviconUrl: tab.faviconUrl?.slice(0, BROWSER_TAB_INFO_STRING_MAX.faviconUrl) ?? null,
+    active,
+  };
+}
+
+function replaceOrAppendTab(tabs: readonly BrowserTabInfo[], tab: BrowserTabInfo): BrowserTabInfo[] {
+  return tabs.some((candidate) => candidate.id === tab.id)
+    ? tabs.map((candidate) => candidate.id === tab.id ? tab : candidate)
+    : [...tabs, tab];
+}
+
+function shouldFocusOpenedPage(options: Parameters<PreviewTabsState["openPage"]>[2]): boolean {
+  return !options?.tabId && options?.focusOmnibox !== false && (options?.activate ?? true);
+}
+
 /**
  * Renderer-side source of truth for the in-app browser's pages, mirroring the
  * host tab set and exposing the page add/close/switch actions the activity rail
@@ -198,7 +223,65 @@ function clearPreviewScopeState(
  * back through the desktop bridge. Keyed by scope so a browser bound to one
  * thread does not leak pages into a sibling.
  */
-export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
+export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => {
+  const releaseScopeTargets = (workspaceId: string, scopeId: string): void => {
+    useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
+  };
+  const closePersistentPage = async (
+    workspaceId: string,
+    scopeId: string,
+    tabId: string,
+    options: ClosePageOptions | undefined,
+  ): Promise<void> => {
+    const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
+    if (!get().persistentTabIdsByScope[scopeKey]?.has(tabId)) return;
+    const current = get().tabSetByScope[scopeKey];
+    if (!current || current.tabs.length > 1) {
+      get().setLiveChrome(workspaceId, scopeId, null);
+      get().removePersistentTab(workspaceId, scopeId, tabId);
+      useBrowserAutomationStore.getState().unregisterTarget(workspaceId, scopeId, tabId);
+      return;
+    }
+    set((state) => clearPreviewScopeState(state, scopeKey, true));
+    options?.onLastClose?.();
+    releaseScopeTargets(workspaceId, scopeId);
+  };
+  const closeDesktopScope = async (
+    tabs: PreviewTabsBridgeLike,
+    workspaceId: string,
+    scopeId: string,
+    tabId: string,
+    scopeKey: string,
+    options: ClosePageOptions | undefined,
+  ): Promise<void> => {
+    const result = tabs.closeScope
+      ? await tabs.closeScope(scopeId, workspaceId)
+      : await tabs.close(scopeId, workspaceId, tabId);
+    if (!result.ok) return;
+    set((state) => clearPreviewScopeState(state, scopeKey, true));
+    releaseScopeTargets(workspaceId, scopeId);
+    options?.onLastClose?.();
+  };
+  const closeDesktopPage = async (
+    tabs: PreviewTabsBridgeLike,
+    workspaceId: string,
+    scopeId: string,
+    tabId: string,
+    options: ClosePageOptions | undefined,
+  ): Promise<void> => {
+    const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
+    const current = get().tabSetByScope[scopeKey];
+    if (current && current.tabs.length <= 1) {
+      return closeDesktopScope(tabs, workspaceId, scopeId, tabId, scopeKey, options);
+    }
+    get().setLiveChrome(workspaceId, scopeId, null);
+    const result = await tabs.close(scopeId, workspaceId, tabId);
+    if (!result.ok) return;
+    useBrowserAutomationStore.getState().unregisterTarget(workspaceId, scopeId, tabId);
+    get().setTabSet(workspaceId, scopeId, result.data);
+  };
+
+  return {
   tabSetByScope: {},
   liveChromeByScope: {},
   persistentTabIdsByScope: {},
@@ -220,10 +303,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
   upsertPersistentTab: (workspaceId, scopeId, tab) =>
     set((s) => {
       const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
-      if (
-        tab.id.length > BROWSER_TAB_INFO_STRING_MAX.id ||
-        tab.threadId.length > BROWSER_TAB_INFO_STRING_MAX.threadId
-      ) return s;
+      if (!hasValidPersistentTabIdentity(tab)) return s;
       const persistentIds = new Set(s.persistentTabIdsByScope[scopeKey] ?? []);
       if (!persistentIds.has(tab.id) && persistentIds.size >= MAX_PERSISTENT_WEB_TABS_PER_SCOPE) return s;
       persistentIds.add(tab.id);
@@ -232,16 +312,8 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
         activeTabId: null,
         tabs: [],
       } satisfies BrowserTabSet;
-      const nextTab: BrowserTabInfo = {
-        ...tab,
-        title: tab.title?.slice(0, BROWSER_TAB_INFO_STRING_MAX.title) ?? null,
-        url: tab.url?.slice(0, BROWSER_TAB_INFO_STRING_MAX.url) ?? null,
-        faviconUrl: tab.faviconUrl?.slice(0, BROWSER_TAB_INFO_STRING_MAX.faviconUrl) ?? null,
-        active: current.activeTabId === tab.id,
-      };
-      const tabs = current.tabs.some((candidate) => candidate.id === tab.id)
-        ? current.tabs.map((candidate) => candidate.id === tab.id ? nextTab : candidate)
-        : [...current.tabs, nextTab];
+      const nextTab = storedPersistentTab(tab, current.activeTabId === tab.id);
+      const tabs = replaceOrAppendTab(current.tabs, nextTab);
       return {
         tabSetByScope: {
           ...s.tabSetByScope,
@@ -335,23 +407,18 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
   openPage: async (workspaceId, scopeId, options) => {
     const tabs = bridgeTabs();
     if (!tabs) return null;
-    const activate = options?.activate ?? true;
-    const r = await tabs.open(scopeId, workspaceId, {
-      activate,
+      const r = await tabs.open(scopeId, workspaceId, {
+        activate: options?.activate ?? true,
       ...(options?.tabId ? { tabId: options.tabId } : {}),
       ...(options?.initialAddress ? { initialAddress: options.initialAddress } : {}),
     });
-    if (r.ok) {
+      if (!r.ok) return null;
       get().setTabSet(workspaceId, scopeId, r.data.tabs);
       useBrowserAutomationStore.getState().refreshTarget(workspaceId, scopeId, r.data.tabId);
       // A user-created page is empty; drop the cursor into the URL field so the
       // user can type immediately (matches the panel-open shortcut's UX).
-      if (!options?.tabId && options?.focusOmnibox !== false && (options?.activate ?? true)) {
-        usePreviewFocusStore.getState().requestOmniboxFocus();
-      }
+      if (shouldFocusOpenedPage(options)) usePreviewFocusStore.getState().requestOmniboxFocus();
       return r.data.tabId;
-    }
-    return null;
   },
 
   activatePage: async (workspaceId, scopeId, tabId) => {
@@ -389,44 +456,8 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
 
   closePage: async (workspaceId, scopeId, tabId, opts) => {
     const tabs = bridgeTabs();
-    const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
-    const current = get().tabSetByScope[scopeKey];
-    const isLast = !!current && current.tabs.length <= 1;
-    const clearLastScopeState = () => {
-      set((s) => clearPreviewScopeState(s, scopeKey, true));
-    };
-    if (!tabs) {
-      if (!get().persistentTabIdsByScope[scopeKey]?.has(tabId)) return;
-      if (isLast) {
-        clearLastScopeState();
-        opts?.onLastClose?.();
-        useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
-        return;
-      }
-      get().setLiveChrome(workspaceId, scopeId, null);
-      get().removePersistentTab(workspaceId, scopeId, tabId);
-      useBrowserAutomationStore.getState().unregisterTarget(workspaceId, scopeId, tabId);
-      return;
-    }
-    if (isLast) {
-      const r = tabs.closeScope
-        ? await tabs.closeScope(scopeId, workspaceId)
-        : await tabs.close(scopeId, workspaceId, tabId);
-      if (!r.ok) return;
-      clearLastScopeState();
-      useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
-      opts?.onLastClose?.();
-      return;
-    }
-    get().setLiveChrome(workspaceId, scopeId, null);
-    const r = await tabs.close(scopeId, workspaceId, tabId);
-    if (!r.ok) return;
-    useBrowserAutomationStore.getState().unregisterTarget(workspaceId, scopeId, tabId);
-    // Closing the last page collapses the Browser tab. The host always recreates
-    // a blank fallback page in its returned set, but the tab is gone from the
-    // rail, so drop the scope's set rather than leave that fallback as a phantom
-    // page; reopening Browser re-seeds it via `list`.
-    get().setTabSet(workspaceId, scopeId, isLast ? null : r.data);
+    if (!tabs) return closePersistentPage(workspaceId, scopeId, tabId, opts);
+    return closeDesktopPage(tabs, workspaceId, scopeId, tabId, opts);
   },
 
   clearScope: async (workspaceId, scopeId) => {
@@ -436,7 +467,8 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
     set((s) => clearPreviewScopeState(s, previewTabsScopeKey(workspaceId, scopeId), false));
   },
-}));
+  };
+});
 
 /**
  * The display tab set for a scope: the host-truth set overlaid with the active

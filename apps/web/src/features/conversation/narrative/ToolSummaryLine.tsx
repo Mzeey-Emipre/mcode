@@ -13,6 +13,7 @@ import type { ToolGroup } from "./types";
 import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ShellToolCallRow } from "./ShellToolCallRow";
 import {
   BrowserActivitySummary,
@@ -85,7 +86,12 @@ function ToolCallDetailRow({ toolCall: tc }: { toolCall: ToolCall }) {
       <div className={`${NARRATIVE_TOOL_ROW} text-sm`}>
         <Icon className="size-3.5 shrink-0 text-muted-foreground/75" />
         <span className="shrink-0 font-medium text-foreground/65">{label}</span>
-        <span className={narrativeToolDetailClass("md")} title={detail}>{detail}</span>
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className={narrativeToolDetailClass("md")}>{detail}</span>}
+          />
+          <TooltipContent>{detail}</TooltipContent>
+        </Tooltip>
         {status !== "completed" ? <StatusBadge status={status} /> : null}
       </div>
       {tc.isError && tc.output ? (

@@ -34,6 +34,8 @@ import { logger } from "@mcode/shared";
 import { TerminalService } from "../terminal-service.js";
 import { TerminalReplayBuffer } from "../terminal-replay-buffer.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 function terminalServiceWithReplay(
   replay: TerminalReplayBuffer,
   data: ReturnType<typeof vi.fn>,
@@ -50,6 +52,7 @@ function terminalServiceWithReplay(
     {} as never,
     { clear: vi.fn() } as never,
     {} as never,
+    TEST_HOST_RUNTIME,
   );
   const internals = service as unknown as {
     replayBuffers: Map<string, TerminalReplayBuffer>;
@@ -149,6 +152,7 @@ describe("TerminalService Windows teardown", () => {
       {} as never,
       pidRegistry as never,
       {} as never,
+      TEST_HOST_RUNTIME,
     );
 
     const session = {
@@ -181,7 +185,7 @@ describe("TerminalService Windows teardown", () => {
 
     expect(pty.kill).toHaveBeenCalledOnce();
     expect(killProcessTree).toHaveBeenCalledOnce();
-    expect(killProcessTree).toHaveBeenCalledWith(session.pty.pid);
+    expect(killProcessTree).toHaveBeenCalledWith(session.pty.pid, { platform: "win32" });
     const ptyKill = vi.mocked(pty.kill);
     expect(killProcessTree.mock.invocationCallOrder[0]).toBeLessThan(
       ptyKill.mock.invocationCallOrder[0]!,
@@ -208,6 +212,7 @@ describe("TerminalService Windows teardown", () => {
       { getEnv: () => ({}) } as never,
       { register: vi.fn(), deregister: vi.fn(), clear: vi.fn() } as never,
       { assign: vi.fn(), setDescription: vi.fn() } as never,
+      TEST_HOST_RUNTIME,
     );
 
     for (let index = 0; index < 4; index += 1) service.create("thread-1");
@@ -640,6 +645,7 @@ describe("TerminalService Windows teardown", () => {
       { getEnv: () => environment } as never,
       { register: vi.fn(), deregister: vi.fn(), clear: vi.fn() } as never,
       jobObject as never,
+      TEST_HOST_RUNTIME,
       processScopeFactory as never,
     );
   }

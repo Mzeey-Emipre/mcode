@@ -11,6 +11,7 @@ import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 import { CommandExecutionCard } from "./CommandExecutionCard";
 import { BrowserActivitySummary, isBrowserNarrativeCall } from "./BrowserActivityRow";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ActiveToolRowProps {
   toolCall: ToolCall;
@@ -41,9 +42,12 @@ export function ActiveToolRow({ toolCall }: ActiveToolRowProps) {
     <div className={`${NARRATIVE_TOOL_ROW} px-2 py-1 text-sm`}>
       <Icon className="w-3.5 h-3.5 shrink-0 text-muted-foreground/60" />
       <span className="font-medium text-foreground shrink-0">{label}</span>
-      <span className={narrativeToolDetailClass("sm")} title={detail}>
-        {detail}
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className={narrativeToolDetailClass("sm")}>{detail}</span>}
+        />
+        <TooltipContent>{detail}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

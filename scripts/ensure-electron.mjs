@@ -4,14 +4,14 @@
  * this restores the binary for local desktop workflows.
  */
 
-import { execFileSync } from "child_process";
-import { createRequire } from "module";
-import { existsSync, readFileSync } from "fs";
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = resolve(__dirname, "..");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const rootDir = NodePath.resolve(__dirname, "..");
 
 /** Maximum time allowed for one Electron binary download attempt. */
 export const ELECTRON_INSTALL_TIMEOUT_MS = 180_000;
@@ -21,9 +21,9 @@ export const ELECTRON_INSTALL_TIMEOUT_MS = 180_000;
  * @param {string} [desktopRoot] - Path to apps/desktop; defaults to monorepo layout.
  * @returns {string}
  */
-export function resolveElectronPackageDir(desktopRoot = resolve(rootDir, "apps", "desktop")) {
-  const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
-  return dirname(desktopRequire.resolve("electron/package.json"));
+export function resolveElectronPackageDir(desktopRoot = NodePath.resolve(rootDir, "apps", "desktop")) {
+  const desktopRequire = NodeModule.createRequire(NodePath.resolve(desktopRoot, "package.json"));
+  return NodePath.dirname(desktopRequire.resolve("electron/package.json"));
 }
 
 /**
@@ -32,11 +32,11 @@ export function resolveElectronPackageDir(desktopRoot = resolve(rootDir, "apps",
  * @returns {boolean}
  */
 export function isElectronBinaryInstalled(electronPkgDir) {
-  const pathFile = resolve(electronPkgDir, "path.txt");
-  if (!existsSync(pathFile)) return false;
-  const rel = readFileSync(pathFile, "utf-8").trim();
+  const pathFile = NodePath.resolve(electronPkgDir, "path.txt");
+  if (!NodeFS.existsSync(pathFile)) return false;
+  const rel = NodeFS.readFileSync(pathFile, "utf-8").trim();
   if (!rel) return false;
-  return existsSync(resolve(electronPkgDir, "dist", rel));
+  return NodeFS.existsSync(NodePath.resolve(electronPkgDir, "dist", rel));
 }
 
 /**
@@ -45,7 +45,7 @@ export function isElectronBinaryInstalled(electronPkgDir) {
  * @param {number} [timeoutMs]
  */
 export function runElectronInstall(electronPkgDir, timeoutMs = ELECTRON_INSTALL_TIMEOUT_MS) {
-  execFileSync(process.execPath, [resolve(electronPkgDir, "install.js")], {
+  NodeChildProcess.execFileSync(process.execPath, [NodePath.resolve(electronPkgDir, "install.js")], {
     stdio: "inherit",
     cwd: electronPkgDir,
     env: process.env,
@@ -57,7 +57,7 @@ export function runElectronInstall(electronPkgDir, timeoutMs = ELECTRON_INSTALL_
  * Download the Electron binary if install.js was skipped.
  * @param {string} [desktopRoot]
  */
-export function ensureElectronBinary(desktopRoot = resolve(rootDir, "apps", "desktop")) {
+export function ensureElectronBinary(desktopRoot = NodePath.resolve(rootDir, "apps", "desktop")) {
   if (process.env.ELECTRON_SKIP_BINARY_DOWNLOAD === "1") {
     throw new Error(
       "ELECTRON_SKIP_BINARY_DOWNLOAD=1 is set but desktop dev needs the Electron binary. " +
@@ -79,7 +79,7 @@ export function ensureElectronBinary(desktopRoot = resolve(rootDir, "apps", "des
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {
   ensureElectronBinary();
   console.log("Electron binary ready.");
 }

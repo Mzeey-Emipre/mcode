@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { HandoffStorage } from "../handoff-storage.js";
 import type { HandoffArtifact } from "../../artifacts/handoff-types.js";
@@ -10,12 +10,12 @@ let dir: string;
 let storage: HandoffStorage;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "handoff-store-"));
+  dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "handoff-store-"));
   storage = HandoffStorage.forTesting({ mcodeDirFn: () => dir });
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  NodeFS.rmSync(dir, { recursive: true, force: true });
 });
 
 function makeArtifact(overrides: Partial<HandoffArtifact["meta"]> = {}): HandoffArtifact {
@@ -46,14 +46,14 @@ describe("HandoffStorage", () => {
   it("write creates handoffs/<ulid>/handoff.md and handoff.json", async () => {
     const a = makeArtifact();
     const ulid = await storage.write("t_child", a);
-    expect(existsSync(join(dir, "threads", "t_child", "handoffs", ulid, "handoff.md"))).toBe(true);
-    expect(existsSync(join(dir, "threads", "t_child", "handoffs", ulid, "handoff.json"))).toBe(true);
+    expect(NodeFS.existsSync(NodePath.join(dir, "threads", "t_child", "handoffs", ulid, "handoff.md"))).toBe(true);
+    expect(NodeFS.existsSync(NodePath.join(dir, "threads", "t_child", "handoffs", ulid, "handoff.json"))).toBe(true);
   });
 
   it("write injects YAML frontmatter into the markdown", async () => {
     const a = makeArtifact();
     const ulid = await storage.write("t_child", a);
-    const md = readFileSync(join(dir, "threads", "t_child", "handoffs", ulid, "handoff.md"), "utf8");
+    const md = NodeFS.readFileSync(NodePath.join(dir, "threads", "t_child", "handoffs", ulid, "handoff.md"), "utf8");
     expect(md.startsWith("---\n")).toBe(true);
     expect(md).toContain("schemaVersion: 1");
     expect(md).toContain("ladderStep: B");
@@ -72,22 +72,22 @@ describe("HandoffStorage", () => {
   });
 
   it("copyAttachments duplicates source files into the child's attachments dir", async () => {
-    const srcDir = mkdtempSync(join(tmpdir(), "att-src-"));
-    const srcFile = join(srcDir, "screenshot.png");
-    writeFileSync(srcFile, Buffer.from([1, 2, 3, 4]));
+    const srcDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "att-src-"));
+    const srcFile = NodePath.join(srcDir, "screenshot.png");
+    NodeFS.writeFileSync(srcFile, Buffer.from([1, 2, 3, 4]));
 
     await storage.copyAttachments("t_child", [
       { id: "att_1", absolutePath: srcFile, originalName: "screenshot.png", mime: "image/png", parentMessageId: "m_5" },
     ]);
 
-    expect(existsSync(join(dir, "threads", "t_child", "attachments", "att_1.png"))).toBe(true);
-    rmSync(srcDir, { recursive: true, force: true });
+    expect(NodeFS.existsSync(NodePath.join(dir, "threads", "t_child", "attachments", "att_1.png"))).toBe(true);
+    NodeFS.rmSync(srcDir, { recursive: true, force: true });
   });
 
   it("skips copying attachments that exceed the 25MB cap and records sentinel sha256", async () => {
-    const srcDir = mkdtempSync(join(tmpdir(), "att-large-"));
-    const srcFile = join(srcDir, "huge.bin");
-    writeFileSync(srcFile, Buffer.from([0]));
+    const srcDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "att-large-"));
+    const srcFile = NodePath.join(srcDir, "huge.bin");
+    NodeFS.writeFileSync(srcFile, Buffer.from([0]));
 
     // Inject a custom statFn that reports the file as oversized without writing real bytes.
     const oversizedStatFn = async (_path: string) => ({ size: 26 * 1024 * 1024 });
@@ -102,14 +102,14 @@ describe("HandoffStorage", () => {
 
     expect(manifest).toHaveLength(1);
     expect(manifest[0].sha256).toBe("<skipped>");
-    expect(existsSync(join(dir, "threads", "t_child", "attachments", "att_large.bin"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(dir, "threads", "t_child", "attachments", "att_large.bin"))).toBe(false);
 
-    rmSync(srcDir, { recursive: true, force: true });
+    NodeFS.rmSync(srcDir, { recursive: true, force: true });
   });
 
   it("deleteThreadFiles removes the entire thread subtree", async () => {
     await storage.write("t_child", makeArtifact());
     await storage.deleteThreadFiles("t_child");
-    expect(existsSync(join(dir, "threads", "t_child"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(dir, "threads", "t_child"))).toBe(false);
   });
 });

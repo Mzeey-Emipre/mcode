@@ -1,9 +1,9 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EventEmitter } from "events";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -24,7 +24,6 @@ import {
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { TaskPersistenceService } from "../../tasks/task-persistence-service.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import {
   ParentAssistantTextCheckpointService,
   PARENT_ASSISTANT_TEXT_RETAINED_LIMITS,
@@ -52,6 +51,31 @@ import type { TaskRepo } from "../persistence/task-repo.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
+
+type NarrativeTestTurnRuntime = {
+  start: (threadId: string) => { turnExecutionId: string };
+  snapshot: (threadId: string) => { turnExecutionId: string | null; phase: string } | undefined;
+};
+
+function normalizedNarrativeProviderEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return event.type === AgentEventType.TurnComplete
+    ? { reason: "completed", costUsd: null, ...event }
+    : event;
+}
+
+function needsNarrativeTurnExecutionId(event: unknown): event is Record<string, unknown> {
+  return Boolean(
+    event
+    && typeof event === "object"
+    && isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
+    && !(event as { turnExecutionId?: string }).turnExecutionId,
+  );
+}
+
+function providerRuntimeEventForNarrativeTest(eventName: string, event: unknown): unknown {
+  if (eventName !== "event" || !event || typeof event !== "object" || "event" in event) return event;
+  return runtimeProviderEvent(event as AgentEvent);
+}
 import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { CodexCollaborationEventAdapter } from "../../collaboration/adapters/codex-collaboration-event-adapter.js";
 import { ProviderEventIngress } from "../../../providers/composition/provider-event-ingress.js";
@@ -113,7 +137,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 
 interface Built {
   service: AgentService;
-  providerEmitter: EventEmitter;
+  providerEmitter: NodeEvents.EventEmitter;
   canonicalSink: CanonicalAgentEventSink;
   db: Database.Database;
   thoughtBulk: ReturnType<typeof vi.fn>;
@@ -133,7 +157,7 @@ function build(options: {
   onProviderEvent?: (event: AgentEvent) => void;
 } = {}): Built {
   const thread = makeThread();
-  const providerEmitter = Object.assign(new EventEmitter(), {
+  const providerEmitter = Object.assign(new NodeEvents.EventEmitter(), {
     id: "codex" as const,
   });
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
@@ -288,31 +312,20 @@ function build(options: {
   // Provider adapters always stamp turn-scoped events with the active execution
   // identity. Keep this fixture aligned with that production boundary while
   // leaving each test focused on the narrative payload it emits.
-  const turnRuntime = (service as unknown as {
-    turnRuntime: { start: (threadId: string) => { turnExecutionId: string }; snapshot: (threadId: string) => {
-      turnExecutionId: string | null;
-      phase: string;
-    } | undefined };
-  }).turnRuntime;
+  const turnRuntime = (service as unknown as { turnRuntime: NarrativeTestTurnRuntime }).turnRuntime;
   turnRuntime.start(THREAD_ID);
   const emit = providerEmitter.emit.bind(providerEmitter);
   providerEmitter.emit = ((eventName: string, event?: unknown, ...args: unknown[]) => {
     if (eventName === "event" && event && typeof event === "object") {
-      const providerEvent = event as Record<string, unknown>;
-      event = providerEvent.type === AgentEventType.TurnComplete
-        ? { reason: "completed", costUsd: null, ...providerEvent }
-        : providerEvent;
-      if (isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
-        && !(event as { turnExecutionId?: string }).turnExecutionId) {
+      event = normalizedNarrativeProviderEvent(event as Record<string, unknown>);
+      if (needsNarrativeTurnExecutionId(event)) {
         const runtime = turnRuntime.snapshot(THREAD_ID);
         event = { ...(event as Record<string, unknown>), turnExecutionId: runtime?.turnExecutionId };
       }
     }
     return emit(
       eventName,
-      eventName === "event" && event && typeof event === "object" && !("event" in event)
-        ? runtimeProviderEvent(event as AgentEvent)
-        : event,
+      providerRuntimeEventForNarrativeTest(eventName, event),
       ...args,
     );
   }) as typeof providerEmitter.emit;
@@ -740,10 +753,10 @@ describe("AgentService narrative persistence", () => {
   it("resumes a journal-blocked boundary after SQLite recovers without another provider event", async () => {
     const db = openMemoryDatabase();
     const now = "2026-08-24T10:00:00.000Z";
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-agent-journal-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-agent-journal-"));
     const filesystem = await vi.importActual<typeof import("node:fs")>("node:fs");
-    vi.mocked(existsSync).mockImplementation(filesystem.existsSync);
-    vi.mocked(statSync).mockImplementation(filesystem.statSync);
+    vi.mocked(NodeFS.existsSync).mockImplementation(filesystem.existsSync);
+    vi.mocked(NodeFS.statSync).mockImplementation(filesystem.statSync);
     db.prepare(
       "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
     ).run("ws-1", "Workspace", "/workspace", now, now);
@@ -818,11 +831,11 @@ describe("AgentService narrative persistence", () => {
     } finally {
       appendChunkSpy.mockRestore();
       appendRecoveredChunkSpy.mockRestore();
-      vi.mocked(existsSync).mockImplementation(() => true);
-      vi.mocked(statSync).mockImplementation(() => ({ isDirectory: () => true }) as ReturnType<typeof statSync>);
+      vi.mocked(NodeFS.existsSync).mockImplementation(() => true);
+      vi.mocked(NodeFS.statSync).mockImplementation(() => ({ isDirectory: () => true }) as ReturnType<typeof NodeFS.statSync>);
       vi.useRealTimers();
       db.close();
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
@@ -2527,7 +2540,7 @@ describe("AgentService narrative persistence", () => {
   });
 
   it("rejects provider continuation evidence targeting another canonical thread", () => {
-    const { service, canonicalSink } = build();
+    const { service: _service, canonicalSink } = build();
     const sink = canonicalSink as unknown as {
       loadThreadByProviderIdentity: ReturnType<typeof vi.fn>;
       loadTurnByProviderIdentity: ReturnType<typeof vi.fn>;
@@ -2582,7 +2595,7 @@ describe("AgentService narrative persistence", () => {
   });
 
   it("records a failure signal when attributed child routing lacks parent execution context", () => {
-    const { service, canonicalSink } = build();
+    const { service: _service, canonicalSink } = build();
     const diagnostic = vi.fn(() => true);
     (canonicalSink as unknown as {
       recordCodexChildRoutingDiagnostic: typeof diagnostic;
@@ -2617,7 +2630,7 @@ describe("AgentService narrative persistence", () => {
   });
 
   it("consumes every child projection kind before parent narrative persistence", () => {
-    const { service, canonicalSink, thoughtBulk, hookBulk, toolBulk } = build();
+    const { service: _service, canonicalSink, thoughtBulk, hookBulk, toolBulk } = build();
     (canonicalSink as unknown as {
       recordCodexChildRoutingDiagnostic: () => boolean;
     }).recordCodexChildRoutingDiagnostic = vi.fn(() => true);
@@ -2653,7 +2666,7 @@ describe("AgentService narrative persistence", () => {
   });
 
   it("fails closed when an attributed child event has no canonical owner", () => {
-    const { service, canonicalSink } = build();
+    const { service: _service, canonicalSink } = build();
     const diagnostic = vi.fn(() => false);
     (canonicalSink as unknown as {
       recordCodexChildRoutingDiagnostic: typeof diagnostic;

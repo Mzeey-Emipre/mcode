@@ -6,15 +6,14 @@
  * `packages/providers/src/__tests__/codex/codex-protocol-coverage.test.ts`.
  *
  * Usage:
- *   bun scripts/codex-protocol-capture.mjs <cwd> packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson
+ *   bun scripts/providers/codex/codex-protocol-capture.mjs <cwd> packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson
  *
  * Requires: `codex` on PATH, ChatGPT auth, network.
  */
-import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { execSync } from "node:child_process";
-import readline from "node:readline";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import { startCodexAppServer } from "./app-server-client.mjs";
 
 const [, , cwd, outFile] = process.argv;
 if (!cwd || !outFile) {
@@ -22,11 +21,11 @@ if (!cwd || !outFile) {
   process.exit(2);
 }
 
-mkdirSync(dirname(outFile), { recursive: true });
+NodeFS.mkdirSync(NodePath.dirname(outFile), { recursive: true });
 
 let codexVersion = "unknown";
 try {
-  codexVersion = execSync("codex --version", { encoding: "utf8", timeout: 5000 }).trim();
+  codexVersion = NodeChildProcess.execSync("codex --version", { encoding: "utf8", timeout: 5000 }).trim();
 } catch {
   /* optional */
 }
@@ -54,82 +53,89 @@ const SCENARIOS = [
 ];
 
 function log(obj) {
-  appendFileSync(outFile, JSON.stringify(obj) + "\n");
+  NodeFS.appendFileSync(outFile, JSON.stringify(obj) + "\n");
 }
 
-writeFileSync(outFile, "");
+NodeFS.writeFileSync(outFile, "");
 log({ type: "meta", codexVersion, cwd, capturedAt: new Date().toISOString() });
 
-const proc = spawn("codex", ["app-server"], {
-  cwd,
-  stdio: ["pipe", "pipe", "pipe"],
-  shell: true,
-  windowsHide: true,
-});
-
-let nextId = 1;
-const pending = new Map();
 let seq = 0;
 let activeScenario = null;
 let activeTurnId = null;
 let resolveTurnDone = null;
 
-function send(method, params) {
-  const id = nextId++;
-  proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject, method });
-  });
-}
-
-const rl = readline.createInterface({ input: proc.stdout });
-
-rl.on("line", (line) => {
-  if (!line.trim()) return;
-  let msg;
-  try {
-    msg = JSON.parse(line);
-  } catch {
-    return;
-  }
-  if (msg.id != null && pending.has(msg.id)) {
-    const { resolve, reject, method } = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.error) reject(new Error(`${method}: ${msg.error.message}`));
-    else resolve(msg.result);
-    return;
-  }
-  if (!msg.method) return;
-  seq++;
-  const p = msg.params ?? {};
-  const item = p.item ?? {};
-  log({
+function buildNotification(msg) {
+  const params = msg.params ?? {};
+  const item = params.item ?? {};
+  return addRawNotification({
     type: "notification",
     scenario: activeScenario,
-    seq,
+    seq: ++seq,
     method: msg.method,
-    threadId: p.threadId,
-    turnId: p.turnId,
-    itemId: p.itemId ?? item.id,
+    threadId: params.threadId,
+    turnId: params.turnId,
+    itemId: params.itemId ?? item.id,
     itemType: item.type,
-    deltaLen: typeof p.delta === "string" ? p.delta.length : undefined,
-    turnStatus: p.turn?.status,
-    turnItemsLen: Array.isArray(p.turn?.items) ? p.turn.items.length : undefined,
-    command: typeof item.command === "string" ? item.command.slice(0, 120) : undefined,
-    tool: typeof item.tool === "string" ? item.tool : undefined,
-    summaryLen: Array.isArray(item.summary) ? item.summary.length : undefined,
-    ...(INCLUDE_RAW ? { raw: msg } : {}),
-  });
-  if (msg.method === "turn/completed" && p.turnId === activeTurnId && resolveTurnDone) {
-    const done = resolveTurnDone;
-    resolveTurnDone = null;
-    done(p.turn?.status ?? "completed");
-  }
-});
+    ...buildNotificationDetails(params, item),
+  }, msg);
+}
 
-proc.stderr.on("data", (d) => {
-  log({ type: "stderr", scenario: activeScenario, text: d.toString().slice(0, 400) });
+function buildNotificationDetails(params, item) {
+  return {
+    deltaLen: readStringLength(params.delta),
+    turnStatus: params.turn?.status,
+    turnItemsLen: readArrayLength(params.turn?.items),
+    command: readCommand(item.command),
+    tool: readString(item.tool),
+    summaryLen: readArrayLength(item.summary),
+  };
+}
+
+function readStringLength(value) {
+  return typeof value === "string" ? value.length : undefined;
+}
+
+function readArrayLength(value) {
+  return Array.isArray(value) ? value.length : undefined;
+}
+
+function readCommand(value) {
+  return typeof value === "string" ? value.slice(0, 120) : undefined;
+}
+
+function readString(value) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function addRawNotification(notification, msg) {
+  return INCLUDE_RAW ? { ...notification, raw: msg } : notification;
+}
+
+function resolveCompletedTurn(msg) {
+  const params = msg.params ?? {};
+  if (msg.method !== "turn/completed" || params.turnId !== activeTurnId || !resolveTurnDone) {
+    return;
+  }
+  const done = resolveTurnDone;
+  resolveTurnDone = null;
+  done(params.turn?.status ?? "completed");
+}
+
+function handleMessage(msg) {
+  if (!msg.method) return;
+  log(buildNotification(msg));
+  resolveCompletedTurn(msg);
+}
+
+const client = startCodexAppServer({
+  cwd,
+  onNotification: handleMessage,
+  onStderr: (data) => {
+    log({ type: "stderr", scenario: activeScenario, text: data.toString().slice(0, 400) });
+  },
+  formatError: (method, error) => `${method}: ${error.message}`,
 });
+const send = client.request;
 
 async function runScenario(scenario) {
   activeScenario = scenario.id;
@@ -152,7 +158,7 @@ async function runScenario(scenario) {
   log({ type: "scenario_end", id: scenario.id, status });
   if (scenario.id === "C_file_touch") {
     try {
-      unlinkSync(join(cwd, SCRATCH_FILE));
+      NodeFS.unlinkSync(NodePath.join(cwd, SCRATCH_FILE));
     } catch {
       /* ignore */
     }
@@ -184,10 +190,5 @@ try {
   log({ type: "fatal", message: String(err?.message ?? err) });
   process.exitCode = 1;
 } finally {
-  try {
-    proc.stdin.end();
-  } catch {
-    /* ignore */
-  }
-  setTimeout(() => proc.kill(), 2000);
+  client.close(2000);
 }

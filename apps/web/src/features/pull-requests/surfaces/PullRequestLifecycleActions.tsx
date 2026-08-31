@@ -35,6 +35,17 @@ import { pullRequestCapabilityReason } from "./PullRequestMutationError";
 
 type LifecycleEffect = "readiness" | "close" | "merge";
 
+interface LifecycleActionReasons {
+  readiness: string | null;
+  close: string | null;
+  merge: string | null;
+}
+
+interface LifecycleDialogTargets {
+  targetReadiness?: PullRequestReadiness;
+  initialMergeMethod?: PullRequestMergeMethod;
+}
+
 function mergeMethodLabel(method: PullRequestMergeMethod): string {
   if (method === "squash") return "Squash and merge";
   if (method === "rebase") return "Rebase and merge";
@@ -74,6 +85,246 @@ function unavailableReason(
   return null;
 }
 
+function lifecycleActionReasons(
+  detail: PullRequestDetail,
+  capabilities: PullRequestCapabilities | null,
+): LifecycleActionReasons {
+  return {
+    readiness: unavailableReason(detail, capabilities?.readiness, "readiness"),
+    close: unavailableReason(detail, capabilities?.close, "close"),
+    merge: unavailableReason(detail, capabilities?.merge, "merge"),
+  };
+}
+
+function nextReadinessFor(detail: PullRequestDetail): PullRequestReadiness {
+  return detail.readiness === "draft" ? "ready" : "draft";
+}
+
+function readinessActionLabel(readiness: PullRequestReadiness): string {
+  return readiness === "ready" ? "Mark ready for review" : "Convert to draft";
+}
+
+function activeCapabilityFor(
+  effect: LifecycleEffect,
+  capabilities: PullRequestCapabilities | null,
+): PullRequestCapability | null | undefined {
+  if (effect === "readiness") return capabilities?.readiness;
+  if (effect === "close") return capabilities?.close;
+  return capabilities?.merge;
+}
+
+function lifecycleDialogTargets(
+  effect: LifecycleEffect,
+  targetReadiness: PullRequestReadiness | undefined,
+  targetMergeMethod: PullRequestMergeMethod,
+): LifecycleDialogTargets {
+  if (effect === "readiness") return { targetReadiness };
+  if (effect === "merge") return { initialMergeMethod: targetMergeMethod };
+  return {};
+}
+
+function requestRefresh(
+  onRefresh: () => Promise<boolean> | boolean,
+  onRefreshClick: (() => void) | undefined,
+): void {
+  if (onRefreshClick) {
+    onRefreshClick();
+    return;
+  }
+  void onRefresh();
+}
+
+interface LifecycleRemoteActionsProps {
+  detail: PullRequestDetail;
+  mergeReason: string | null;
+  nextReadiness: PullRequestReadiness;
+  readinessReason: string | null;
+  onOpenReadiness: () => void;
+  onOpenMerge: (method: PullRequestMergeMethod) => void;
+}
+
+function LifecycleRemoteActions({
+  detail,
+  mergeReason,
+  nextReadiness,
+  readinessReason,
+  onOpenReadiness,
+  onOpenMerge,
+}: LifecycleRemoteActionsProps) {
+  return (
+    <DropdownMenuGroup>
+      <DropdownMenuItem
+        disabled={Boolean(readinessReason)}
+        className="text-xs"
+        onClick={onOpenReadiness}
+      >
+        <CircleDot size={13} aria-hidden />
+        {readinessActionLabel(nextReadiness)}
+      </DropdownMenuItem>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger disabled={Boolean(mergeReason)} className="text-xs">
+          <GitMerge size={13} aria-hidden />
+          Merge
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="min-w-52">
+          <DropdownMenuGroup>
+            {detail.mergeMethods.map((method) => (
+              <DropdownMenuItem
+                key={method}
+                className="text-xs"
+                onClick={() => onOpenMerge(method)}
+              >
+                <GitMerge size={13} aria-hidden />
+                {mergeMethodLabel(method)}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      {mergeReason ? <MenuReason reason={mergeReason} /> : null}
+    </DropdownMenuGroup>
+  );
+}
+
+function MenuReason({ reason }: { reason: string }) {
+  return (
+    <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal leading-5 text-muted-foreground">
+      {reason}
+    </DropdownMenuLabel>
+  );
+}
+
+function RefreshMenuItem({
+  refreshing,
+  onRefresh,
+}: {
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <DropdownMenuItem disabled={refreshing} className="text-xs" onClick={onRefresh}>
+      {refreshing ? <Spinner size={13} aria-hidden /> : <RefreshCw size={13} aria-hidden />}
+      Refresh
+    </DropdownMenuItem>
+  );
+}
+
+function ForkMenuItem({
+  label,
+  allowed,
+  onClick,
+}: {
+  label: string;
+  allowed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <DropdownMenuItem disabled={!allowed} className="text-xs" onClick={onClick}>
+      <GitFork size={13} aria-hidden />
+      {label}
+    </DropdownMenuItem>
+  );
+}
+
+interface LifecycleUtilityActionsProps {
+  forkAllowed: boolean;
+  forkUnavailableReason: string | null;
+  refreshing: boolean;
+  onFork?: () => void;
+  onForkInBackground?: () => void;
+  onRefresh: () => void;
+}
+
+function LifecycleUtilityActions({
+  forkAllowed,
+  forkUnavailableReason,
+  refreshing,
+  onFork,
+  onForkInBackground,
+  onRefresh,
+}: LifecycleUtilityActionsProps) {
+  return (
+    <DropdownMenuGroup>
+      <RefreshMenuItem refreshing={refreshing} onRefresh={onRefresh} />
+      {onFork ? <ForkMenuItem label="Fork" allowed={forkAllowed} onClick={onFork} /> : null}
+      {onForkInBackground ? (
+        <ForkMenuItem
+          label="Fork in background"
+          allowed={forkAllowed}
+          onClick={onForkInBackground}
+        />
+      ) : null}
+      {!forkAllowed && forkUnavailableReason ? <MenuReason reason={forkUnavailableReason} /> : null}
+    </DropdownMenuGroup>
+  );
+}
+
+function LifecycleCloseActions({
+  closeReason,
+  readinessReason,
+  onClose,
+}: {
+  closeReason: string | null;
+  readinessReason: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <DropdownMenuGroup>
+      <DropdownMenuItem
+        disabled={Boolean(closeReason)}
+        className="text-xs text-destructive"
+        onClick={onClose}
+      >
+        <XCircle size={13} aria-hidden />
+        Close pull request
+      </DropdownMenuItem>
+      {readinessReason || closeReason ? <MenuReason reason={readinessReason ?? closeReason ?? ""} /> : null}
+    </DropdownMenuGroup>
+  );
+}
+
+interface LifecycleActionDialogProps {
+  activeEffect: LifecycleEffect | null;
+  capabilities: PullRequestCapabilities | null;
+  detail: PullRequestDetail;
+  mutationTransport?: PullRequestMutationTransport;
+  readTransport?: PullRequestTransport;
+  targetMergeMethod: PullRequestMergeMethod;
+  targetReadiness: PullRequestReadiness | undefined;
+  onRefresh: () => Promise<boolean> | boolean;
+  onClose: () => void;
+}
+
+function LifecycleActionDialog({
+  activeEffect,
+  capabilities,
+  detail,
+  mutationTransport,
+  readTransport,
+  targetMergeMethod,
+  targetReadiness,
+  onRefresh,
+  onClose,
+}: LifecycleActionDialogProps) {
+  if (!activeEffect) return null;
+  const targets = lifecycleDialogTargets(activeEffect, targetReadiness, targetMergeMethod);
+  return (
+    <PullRequestLifecycleDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      detail={detail}
+      effect={activeEffect}
+      capability={activeCapabilityFor(activeEffect, capabilities)}
+      mutationTransport={mutationTransport}
+      readTransport={readTransport}
+      onRefresh={onRefresh}
+      {...targets}
+    />
+  );
+}
+
 /** Renders one overflow menu for pull request lifecycle, refresh, and fork actions. */
 export function PullRequestLifecycleActions({
   detail,
@@ -95,15 +346,8 @@ export function PullRequestLifecycleActions({
     useState<PullRequestReadiness>();
   const [targetMergeMethod, setTargetMergeMethod] =
     useState<PullRequestMergeMethod>(detail.defaultMergeMethod);
-  const readinessReason = unavailableReason(
-    detail,
-    capabilities?.readiness,
-    "readiness",
-  );
-  const closeReason = unavailableReason(detail, capabilities?.close, "close");
-  const mergeReason = unavailableReason(detail, capabilities?.merge, "merge");
-  const nextReadiness: PullRequestReadiness =
-    detail.readiness === "draft" ? "ready" : "draft";
+  const reasons = lifecycleActionReasons(detail, capabilities);
+  const nextReadiness = nextReadinessFor(detail);
 
   const openReadiness = (): void => {
     setTargetReadiness(nextReadiness);
@@ -114,21 +358,6 @@ export function PullRequestLifecycleActions({
     setTargetMergeMethod(method);
     setActiveEffect("merge");
   };
-
-  const refresh = (): void => {
-    if (onRefreshClick) {
-      onRefreshClick();
-      return;
-    }
-    void onRefresh();
-  };
-
-  const activeCapability =
-    activeEffect === "readiness"
-      ? capabilities?.readiness
-      : activeEffect === "close"
-        ? capabilities?.close
-        : capabilities?.merge;
 
   return (
     <>
@@ -147,127 +376,45 @@ export function PullRequestLifecycleActions({
           }
         />
         <DropdownMenuContent align="end" sideOffset={4} className="min-w-64">
-          <DropdownMenuGroup>
-            <DropdownMenuItem
-              disabled={Boolean(readinessReason)}
-              className="text-xs"
-              onClick={openReadiness}
-            >
-              <CircleDot size={13} aria-hidden />
-              {nextReadiness === "ready"
-                ? "Mark ready for review"
-                : "Convert to draft"}
-            </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger
-                disabled={Boolean(mergeReason)}
-                className="text-xs"
-              >
-                <GitMerge size={13} aria-hidden />
-                Merge
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="min-w-52">
-                <DropdownMenuGroup>
-                  {detail.mergeMethods.map((method) => (
-                    <DropdownMenuItem
-                      key={method}
-                      className="text-xs"
-                      onClick={() => openMerge(method)}
-                    >
-                      <GitMerge size={13} aria-hidden />
-                      {mergeMethodLabel(method)}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            {mergeReason ? (
-              <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal leading-5 text-muted-foreground">
-                {mergeReason}
-              </DropdownMenuLabel>
-            ) : null}
-          </DropdownMenuGroup>
+          <LifecycleRemoteActions
+            detail={detail}
+            mergeReason={reasons.merge}
+            nextReadiness={nextReadiness}
+            readinessReason={reasons.readiness}
+            onOpenReadiness={openReadiness}
+            onOpenMerge={openMerge}
+          />
 
           <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem
-              disabled={refreshing}
-              className="text-xs"
-              onClick={refresh}
-            >
-              {refreshing ? (
-                <Spinner size={13} aria-hidden />
-              ) : (
-                <RefreshCw size={13} aria-hidden />
-              )}
-              Refresh
-            </DropdownMenuItem>
-            {onFork ? (
-              <DropdownMenuItem
-                disabled={!forkAllowed}
-                className="text-xs"
-                onClick={onFork}
-              >
-                <GitFork size={13} aria-hidden />
-                Fork
-              </DropdownMenuItem>
-            ) : null}
-            {onForkInBackground ? (
-              <DropdownMenuItem
-                disabled={!forkAllowed}
-                className="text-xs"
-                onClick={onForkInBackground}
-              >
-                <GitFork size={13} aria-hidden />
-                Fork in background
-              </DropdownMenuItem>
-            ) : null}
-            {!forkAllowed && forkUnavailableReason ? (
-              <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal leading-5 text-muted-foreground">
-                {forkUnavailableReason}
-              </DropdownMenuLabel>
-            ) : null}
-          </DropdownMenuGroup>
+          <LifecycleUtilityActions
+            forkAllowed={forkAllowed}
+            forkUnavailableReason={forkUnavailableReason}
+            refreshing={refreshing}
+            onFork={onFork}
+            onForkInBackground={onForkInBackground}
+            onRefresh={() => requestRefresh(onRefresh, onRefreshClick)}
+          />
 
           <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem
-              disabled={Boolean(closeReason)}
-              className="text-xs text-destructive"
-              onClick={() => setActiveEffect("close")}
-            >
-              <XCircle size={13} aria-hidden />
-              Close pull request
-            </DropdownMenuItem>
-            {readinessReason || closeReason ? (
-              <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal leading-5 text-muted-foreground">
-                {readinessReason ?? closeReason}
-              </DropdownMenuLabel>
-            ) : null}
-          </DropdownMenuGroup>
+          <LifecycleCloseActions
+            closeReason={reasons.close}
+            readinessReason={reasons.readiness}
+            onClose={() => setActiveEffect("close")}
+          />
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {activeEffect ? (
-        <PullRequestLifecycleDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setActiveEffect(null);
-          }}
-          detail={detail}
-          effect={activeEffect}
-          targetReadiness={
-            activeEffect === "readiness" ? targetReadiness : undefined
-          }
-          initialMergeMethod={
-            activeEffect === "merge" ? targetMergeMethod : undefined
-          }
-          capability={activeCapability}
-          mutationTransport={mutationTransport}
-          readTransport={readTransport}
-          onRefresh={onRefresh}
-        />
-      ) : null}
+      <LifecycleActionDialog
+        activeEffect={activeEffect}
+        capabilities={capabilities}
+        detail={detail}
+        mutationTransport={mutationTransport}
+        readTransport={readTransport}
+        targetMergeMethod={targetMergeMethod}
+        targetReadiness={targetReadiness}
+        onRefresh={onRefresh}
+        onClose={() => setActiveEffect(null)}
+      />
     </>
   );
 }

@@ -4,7 +4,7 @@
  * memory before the process reaches an unrecoverable heap limit.
  */
 
-import { getHeapStatistics } from "node:v8";
+import * as NodeV8 from "node:v8";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import { logger } from "@mcode/shared";
@@ -36,7 +36,7 @@ export interface MemoryPressureSnapshot {
   ratio: number;
 }
 
-type HeapStats = Pick<ReturnType<typeof getHeapStatistics>, "used_heap_size" | "heap_size_limit">;
+type HeapStats = Pick<ReturnType<typeof NodeV8.getHeapStatistics>, "used_heap_size" | "heap_size_limit">;
 
 /** Warm idle delay: 30 seconds after last agent finishes. */
 const WARM_IDLE_DELAY_MS = 30_000;
@@ -100,7 +100,7 @@ export class MemoryPressureService {
    * Reject starting a new turn while another active turn has pushed the heap
    * into the critical band.
    */
-  assertCanStartTurn(stats: HeapStats = getHeapStatistics()): void {
+  assertCanStartTurn(stats: HeapStats = NodeV8.getHeapStatistics()): void {
     const snapshot = this.heapSnapshot(stats);
     if (this.activeTurns.size > 0 || this.pressure.level === "critical" || snapshot.level !== "normal") {
       this.setPressure(snapshot);
@@ -212,7 +212,7 @@ export class MemoryPressureService {
     this.activeHeapTimer = null;
   }
 
-  private sampleActiveHeap(stats: HeapStats = getHeapStatistics()): void {
+  private sampleActiveHeap(stats: HeapStats = NodeV8.getHeapStatistics()): void {
     if (this.activeTurns.size === 0) return;
     const snapshot = this.heapSnapshot(stats);
 

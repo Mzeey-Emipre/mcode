@@ -1,17 +1,17 @@
-import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { describe, expect, it } from "vitest";
 
 describe("pull request diff row memory", () => {
   it("keeps a real 20,000-line V8 model within the 16 MiB cache", () => {
     const webRoot = process.cwd();
-    const script = resolve(webRoot, "scripts/check-pull-request-code-memory.mts");
-    const tsxLoader = createRequire(import.meta.url).resolve("tsx");
-    const result = spawnSync(
+    const script = NodePath.resolve(webRoot, "scripts/check-pull-request-code-memory.mts");
+    const tsxLoader = NodeModule.createRequire(import.meta.url).resolve("tsx");
+    const result = NodeChildProcess.spawnSync(
       process.execPath,
-      ["--expose-gc", "--import", pathToFileURL(tsxLoader).href, script],
+      ["--expose-gc", "--import", NodeURL.pathToFileURL(tsxLoader).href, script],
       { cwd: webRoot, encoding: "utf8", timeout: 30_000 },
     );
 

@@ -1,20 +1,44 @@
 import "reflect-metadata";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { routeMessage, type RouterDeps } from "../ws-router.js";
 import { WorkspaceEnvironmentService } from "../../../features/projects/environment/workspace-environment-service.js";
 import { openMemoryDatabase } from "../../../runtime/persistence/sqlite/database.js";
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
 });
 
 describe("workspace environment RPC", () => {
+  const actionRun = {
+    threadId: "thread-1",
+    workspaceId: "workspace-1",
+    actionId: "action-1",
+    runId: "run-1",
+    revision: 0,
+    terminalSessionId: "terminal-1",
+    actionName: "Run app",
+    status: "running",
+    snapshot: {
+      platform: "linux",
+      script: "bun run dev",
+      checkoutPath: "/project",
+      terminal: { executable: "bash", arguments: [] },
+      environmentNames: [],
+    },
+    createdAt: "2026-08-30T00:00:00.000Z",
+    startedAt: "2026-08-30T00:00:00.000Z",
+    finishedAt: null,
+    exitCode: null,
+    transcript: "",
+    transcriptTruncated: false,
+  };
+
   it("serves valid read/save calls and reports malformed payloads structurally", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);
     const workspaceEnvironmentService = new WorkspaceEnvironmentService(root);
     const deps = {
@@ -52,9 +76,9 @@ describe("workspace environment RPC", () => {
   });
 
   it("routes storage selection and approval clearing through the workspace environment boundary", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);
-    const baseCheckout = join(root, "base");
+    const baseCheckout = NodePath.join(root, "base");
     const workspace = { id: "workspace-1", path: baseCheckout };
     const workspaceEnvironmentService = new WorkspaceEnvironmentService({
       mcodeDir: root,
@@ -88,8 +112,128 @@ describe("workspace environment RPC", () => {
     expect(malformed.error?.code).toBe("WORKSPACE_ENVIRONMENT_VALIDATION");
   });
 
+  it("routes command approval with the exact reviewed command", async () => {
+    const approveCommand = vi.fn().mockResolvedValue(undefined);
+    const params = {
+      threadId: "thread-1",
+      target: { kind: "action", actionId: "action-1" },
+      fingerprint: "a".repeat(64),
+    };
+    const deps = {
+      workspaceEnvironmentService: { approveCommand },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "approve",
+      method: "workspace.environment.command.approve",
+      params,
+    }), deps);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toBeUndefined();
+    expect(approveCommand).toHaveBeenCalledExactlyOnceWith(params);
+  });
+
+  it("routes automatic Setup retry with the target thread", async () => {
+    const snapshot = { gate: "not-required", attempt: null, queuedTurns: [] };
+    const retryAutomaticSetup = vi.fn().mockResolvedValue(snapshot);
+    const params = { threadId: "thread-1" };
+    const deps = {
+      workspaceEnvironmentService: { retryAutomaticSetup },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "retry",
+      method: "workspace.environment.automaticSetup.retry",
+      params,
+    }), deps);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual(snapshot);
+    expect(retryAutomaticSetup).toHaveBeenCalledExactlyOnceWith(params);
+  });
+
+  it("routes Project Action list with its thread id", async () => {
+    const list = vi.fn().mockReturnValue([actionRun]);
+    const deps = { projectActionService: { list } } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "action-list",
+      method: "workspace.environment.action.list",
+      params: { threadId: actionRun.threadId },
+    }), deps);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({ runs: [actionRun] });
+    expect(list).toHaveBeenCalledExactlyOnceWith(actionRun.threadId);
+  });
+
+  it("routes Project Action get with its slot", async () => {
+    const get = vi.fn().mockReturnValue(actionRun);
+    const params = { threadId: actionRun.threadId, actionId: actionRun.actionId };
+    const deps = { projectActionService: { get } } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "action-get",
+      method: "workspace.environment.action.get",
+      params,
+    }), deps);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({ run: actionRun });
+    expect(get).toHaveBeenCalledExactlyOnceWith(params);
+  });
+
+  it("routes Project Action start with its slot", async () => {
+    const start = vi.fn().mockResolvedValue(actionRun);
+    const params = { threadId: actionRun.threadId, actionId: actionRun.actionId };
+    const deps = { projectActionService: { start } } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "action-start",
+      method: "workspace.environment.action.start",
+      params,
+    }), deps);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual(actionRun);
+    expect(start).toHaveBeenCalledExactlyOnceWith(params);
+  });
+
+  it("routes Project Action stop with its slot and wraps the retained run", async () => {
+    const stop = vi.fn().mockResolvedValue(actionRun);
+    const params = { threadId: actionRun.threadId, actionId: actionRun.actionId };
+    const deps = { projectActionService: { stop } } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "action-stop",
+      method: "workspace.environment.action.stop",
+      params,
+    }), deps);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({ run: actionRun });
+    expect(stop).toHaveBeenCalledExactlyOnceWith(params);
+  });
+
+  it("routes Project Action restart with its slot", async () => {
+    const restart = vi.fn().mockResolvedValue(actionRun);
+    const params = { threadId: actionRun.threadId, actionId: actionRun.actionId };
+    const deps = { projectActionService: { restart } } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "action-restart",
+      method: "workspace.environment.action.restart",
+      params,
+    }), deps);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual(actionRun);
+    expect(restart).toHaveBeenCalledExactlyOnceWith(params);
+  });
+
   it("starts and reads the typed transient manual Setup attempt", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);
     const workspaceEnvironmentService = new WorkspaceEnvironmentService({
       mcodeDir: root,
@@ -145,7 +289,7 @@ describe("workspace environment RPC", () => {
   });
 
   it("routes strict automatic Setup lifecycle reads and recovery mutations", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);
     const database = openMemoryDatabase();
     const workspaceEnvironmentService = new WorkspaceEnvironmentService({

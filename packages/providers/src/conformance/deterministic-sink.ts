@@ -46,43 +46,9 @@ export class DeterministicCanonicalSink implements ProviderEventSinkPort {
     }
     const acceptedBefore = this.accepted.length;
     for (const draft of batch.events) {
-      CanonicalAgentEventSchema.parse(draft.payload);
-      if (draft.routing.threadId !== batch.threadId || draft.routing.turnId !== batch.turnId || draft.routing.executionId !== batch.executionId) {
-        throw new TypeError("Provider event routing does not match its batch");
-      }
-      const fingerprint = JSON.stringify(draft);
-      const prior = this.acceptedDrafts.get(draft.eventId);
-      if (prior !== undefined) {
-        if (prior !== fingerprint) throw new TypeError(`Conflicting replay for Provider event ${draft.eventId}`);
-        continue;
-      }
-      if (this.terminalType !== null) {
-        this.addDiagnostic(`Ignored event ${draft.payload.type} after ${this.terminalType}`);
-        continue;
-      }
-      if (this.accepted.length >= this.limits.maxEvents - 1) {
-        this.acceptOverflow(batch, draft.sourceProviderId);
-        break;
-      }
-      this.acceptedDrafts.set(draft.eventId, fingerprint);
-      if (TERMINAL_TYPES.has(draft.payload.type)) this.terminalType = draft.payload.type;
-      this.acceptEnvelope(draft);
+      if (this.acceptDraft(batch, draft) === "overflow") break;
     }
-    return {
-      commit: {
-        outcome: this.terminalType === "ingest.overflow"
-          ? "ingest-overflow"
-          : this.accepted.length === acceptedBefore
-            ? "duplicate"
-            : "committed",
-        conversationRevision: this.accepted.length,
-        rosterRevision: 0,
-        acceptedThrough: this.accepted.length,
-        durableThrough: this.accepted.length,
-        eventCount: this.accepted.length - acceptedBefore,
-      },
-      delivery: { ingress: "queued" },
-    };
+    return this.submissionReceipt(acceptedBefore);
   }
 
   /** Returns an immutable snapshot of accepted events and bounded diagnostics. */
@@ -103,6 +69,48 @@ export class DeterministicCanonicalSink implements ProviderEventSinkPort {
       serverTimestamps: { acceptedAt: timestamp, persistedAt: timestamp },
     });
     this.accepted.push(envelope);
+  }
+
+  private acceptDraft(batch: ProviderEventBatch, draft: ProviderEventBatch["events"][number]): "accepted" | "skipped" | "overflow" {
+    CanonicalAgentEventSchema.parse(draft.payload);
+    this.validateDraftRouting(batch, draft);
+    const fingerprint = JSON.stringify(draft);
+    const prior = this.acceptedDrafts.get(draft.eventId);
+    if (prior !== undefined) return this.resolvePriorDraft(draft.eventId, prior, fingerprint);
+    if (this.terminalType !== null) {
+      this.addDiagnostic(`Ignored event ${draft.payload.type} after ${this.terminalType}`);
+      return "skipped";
+    }
+    if (this.accepted.length >= this.limits.maxEvents - 1) {
+      this.acceptOverflow(batch, draft.sourceProviderId);
+      return "overflow";
+    }
+    this.acceptedDrafts.set(draft.eventId, fingerprint);
+    if (TERMINAL_TYPES.has(draft.payload.type)) this.terminalType = draft.payload.type;
+    this.acceptEnvelope(draft);
+    return "accepted";
+  }
+
+  private validateDraftRouting(batch: ProviderEventBatch, draft: ProviderEventBatch["events"][number]): void {
+    const routing = draft.routing;
+    if (routing.threadId !== batch.threadId || routing.turnId !== batch.turnId || routing.executionId !== batch.executionId) {
+      throw new TypeError("Provider event routing does not match its batch");
+    }
+  }
+
+  private resolvePriorDraft(eventId: string, prior: string, fingerprint: string): "skipped" {
+    if (prior !== fingerprint) throw new TypeError(`Conflicting replay for Provider event ${eventId}`);
+    return "skipped";
+  }
+
+  private submissionReceipt(acceptedBefore: number): ProviderEventSubmissionReceipt {
+    const eventCount = this.accepted.length - acceptedBefore;
+    const outcome = this.terminalType === "ingest.overflow"
+      ? "ingest-overflow"
+      : eventCount === 0
+        ? "duplicate"
+        : "committed";
+    return { commit: { outcome, conversationRevision: this.accepted.length, rosterRevision: 0, acceptedThrough: this.accepted.length, durableThrough: this.accepted.length, eventCount }, delivery: { ingress: "queued" } };
   }
 
   private acceptOverflow(batch: ProviderEventBatch, providerId: string): void {

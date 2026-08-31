@@ -1,5 +1,5 @@
-import { existsSync } from "fs";
-import { isAbsolute } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import type { IpcMain } from "electron";
 
 import type { OpenInRegistry } from "../registry/registry.js";
@@ -25,10 +25,10 @@ export function registerOpenInHandlers({
   ipcMain.handle(
     "open-in",
     async (_event, appId: string, targetPath: unknown, line?: number) => {
-      if (typeof targetPath !== "string" || !isAbsolute(targetPath)) {
+      if (typeof targetPath !== "string" || !NodePath.isAbsolute(targetPath)) {
         throw new Error("Open-in path must be absolute");
       }
-      if (!existsSync(targetPath)) {
+      if (!NodeFS.existsSync(targetPath)) {
         throw new Error(`Path does not exist: ${targetPath}`);
       }
       await registry.launch(appId, { path: targetPath, line });

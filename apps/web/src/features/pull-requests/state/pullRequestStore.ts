@@ -229,102 +229,128 @@ async function cancelOperation(
   }
 }
 
-async function loadPage(
+interface StartedListPage {
+  append: boolean;
+  before: PullRequestStoreState;
+  cursor: string | null;
+  operationId: string;
+  relationship: PullRequestInboxRelationship;
+  transport: PullRequestTransport;
+}
+
+function beginListPage(
   append: boolean,
-  transportOverride?: PullRequestTransport,
-): Promise<void> {
-  const transport = transportOverride ?? getPullRequestTransport();
+  transportOverride: PullRequestTransport | undefined,
+): StartedListPage | null {
   const before = usePullRequestStore.getState();
   const cursor = append ? before.nextCursor : null;
-  if (append && !cursor) return;
-  const requestRelationship = append
+  if (append && !cursor) return null;
+  const operationId = createOperationId("list");
+  const relationship = append
     ? (before.loadedRelationship ?? before.relationship)
     : before.relationship;
-
-  const operationId = createOperationId("list");
   usePullRequestStore.setState({
     activeListOperationId: operationId,
     status: before.orderedKeys.length > 0 ? "refreshing" : "loading",
     error: null,
   });
-  await cancelOperation(before.activeListOperationId, transport);
-  if (usePullRequestStore.getState().activeListOperationId !== operationId)
-    return;
+  return {
+    append,
+    before,
+    cursor,
+    operationId,
+    relationship,
+    transport: transportOverride ?? getPullRequestTransport(),
+  };
+}
+
+function isCurrentListOperation(operationId: string): boolean {
+  return usePullRequestStore.getState().activeListOperationId === operationId;
+}
+
+function listRequest(started: StartedListPage) {
+  return started.transport.list({
+    operationId: started.operationId,
+    provider: "github",
+    relationships: getRelationshipsForInboxTab(started.relationship),
+    states: started.before.states,
+    ...(started.cursor ? { cursor: started.cursor } : {}),
+    limit: 30,
+  });
+}
+
+function failListLoad(error: PullRequestError): void {
+  usePullRequestStore.setState((state) => ({
+    activeListOperationId: null,
+    status: "error",
+    error,
+    stale: state.orderedKeys.length > 0,
+  }));
+}
+
+function listLoadError(error: unknown): PullRequestError {
+  return {
+    code: "remote_unavailable",
+    message: error instanceof Error ? error.message.slice(0, 512) : "Pull request read failed",
+  };
+}
+
+function completeListLoad(
+  started: StartedListPage,
+  result: Extract<Awaited<ReturnType<PullRequestTransport["list"]>>, { ok: true }>,
+): void {
+  const page: PullRequestPageCacheEntry = {
+    items: result.items,
+    nextCursor: result.nextCursor,
+    snapshotVersion: result.snapshotVersion,
+    fetchedAt: result.fetchedAt,
+    staleAt: result.staleAt,
+  };
+  const pages = (started.append ? [...started.before.pages, page] : [page]).slice(-MAX_CACHED_PAGES);
+  const normalized = mergeNormalizedResults(
+    started.append ? started.before.entities : {},
+    started.append ? started.before.orderedKeys : [],
+    page.items,
+  );
+  const selectedKey = started.before.selectedKey && normalized.entities[started.before.selectedKey]
+    ? started.before.selectedKey
+    : (normalized.orderedKeys[0] ?? null);
+  usePullRequestStore.setState({
+    ...normalized,
+    pages,
+    loadedRelationship: started.relationship,
+    selectedKey,
+    nextCursor: normalized.orderedKeys.length >= MAX_NORMALIZED_RESULTS ? null : result.nextCursor,
+    snapshotVersion: result.snapshotVersion,
+    fetchedAt: Date.parse(result.fetchedAt),
+    staleAt: Date.parse(result.staleAt),
+    stale: false,
+    status: "ready",
+    error: null,
+    limitations: result.limitations,
+    activeListOperationId: null,
+  });
+}
+
+async function loadPage(
+  append: boolean,
+  transportOverride?: PullRequestTransport,
+): Promise<void> {
+  const started = beginListPage(append, transportOverride);
+  if (!started) return;
+  await cancelOperation(started.before.activeListOperationId, started.transport);
+  if (!isCurrentListOperation(started.operationId)) return;
 
   try {
-    const result = await transport.list({
-      operationId,
-      provider: "github",
-      relationships: getRelationshipsForInboxTab(requestRelationship),
-      states: before.states,
-      ...(cursor ? { cursor } : {}),
-      limit: 30,
-    });
-    if (usePullRequestStore.getState().activeListOperationId !== operationId)
-      return;
-
+    const result = await listRequest(started);
+    if (!isCurrentListOperation(started.operationId)) return;
     if (!result.ok) {
-      usePullRequestStore.setState((state) => ({
-        activeListOperationId: null,
-        status: "error",
-        error: result.error,
-        stale: state.orderedKeys.length > 0,
-      }));
+      failListLoad(result.error);
       return;
     }
-
-    const page: PullRequestPageCacheEntry = {
-      items: result.items,
-      nextCursor: result.nextCursor,
-      snapshotVersion: result.snapshotVersion,
-      fetchedAt: result.fetchedAt,
-      staleAt: result.staleAt,
-    };
-    const pages = (append ? [...before.pages, page] : [page]).slice(
-      -MAX_CACHED_PAGES,
-    );
-    const normalized = mergeNormalizedResults(
-      append ? before.entities : {},
-      append ? before.orderedKeys : [],
-      page.items,
-    );
-    const selectedKey =
-      before.selectedKey && normalized.entities[before.selectedKey]
-        ? before.selectedKey
-        : (normalized.orderedKeys[0] ?? null);
-    usePullRequestStore.setState({
-      ...normalized,
-      pages,
-      loadedRelationship: requestRelationship,
-      selectedKey,
-      nextCursor:
-        normalized.orderedKeys.length >= MAX_NORMALIZED_RESULTS
-          ? null
-          : result.nextCursor,
-      snapshotVersion: result.snapshotVersion,
-      fetchedAt: Date.parse(result.fetchedAt),
-      staleAt: Date.parse(result.staleAt),
-      stale: false,
-      status: "ready",
-      error: null,
-      limitations: result.limitations,
-      activeListOperationId: null,
-    });
+    completeListLoad(started, result);
   } catch (error) {
-    if (usePullRequestStore.getState().activeListOperationId !== operationId)
-      return;
-    usePullRequestStore.setState((state) => ({
-      activeListOperationId: null,
-      status: "error",
-      stale: state.orderedKeys.length > 0,
-      error: {
-        code: "remote_unavailable",
-        message:
-          error instanceof Error
-            ? error.message.slice(0, 512)
-            : "Pull request read failed",
-      },
-    }));
+    if (isCurrentListOperation(started.operationId)) failListLoad(listLoadError(error));
   }
 }
 

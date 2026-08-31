@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { ensurePlaywright } from "../../.codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
 import { startElectron } from "../../.codex/skills/electorn-live-testing/scripts/start-electron.mjs";
 import { stopElectron } from "../../.codex/skills/electorn-live-testing/scripts/stop-electron.mjs";
@@ -44,47 +44,63 @@ export function parsePackagedWindowsArguments(args = process.argv.slice(2)) {
 export function validateAccelerationPair(results) {
   const failures = [];
   for (const mode of ["disabled", "default"]) {
-    const result = results[mode];
-    if (!result) {
-      failures.push(`${mode} packaged result is missing`);
-      continue;
-    }
-    if (result.accelerationMode !== mode) {
-      failures.push(`${mode} packaged result has the wrong acceleration mode`);
-    }
-    if (result.packaged !== true || result.buildMode !== "production") {
-      failures.push(`${mode} result is not a packaged production run`);
-    }
-    if (result.devToolsOpen !== false) {
-      failures.push(`${mode} packaged run did not confirm closed DevTools`);
-    }
-    const expectedGpuCompositing = mode === "default" ? "enabled" : "disabled_software";
-    if (result.gpuFeatureStatus?.gpu_compositing !== expectedGpuCompositing) {
-      failures.push(`${mode} packaged run reported unexpected GPU compositing status`);
-    }
-    if (!result.correctness?.passed) {
-      failures.push(`${mode} packaged correctness checks failed`);
-    }
+    validatePackagedMode(results[mode], mode, failures);
   }
-  if (results.disabled && results.default) {
-    if (results.disabled.sourceRevision !== results.default.sourceRevision) {
-      failures.push("packaged results use different source revisions");
-    }
-    if (
-      JSON.stringify(results.disabled.comparisonContract) !==
-      JSON.stringify(results.default.comparisonContract)
-    ) {
-      failures.push("packaged results use different workload contracts");
-    }
-    if (
-      results.disabled.gpuType !== results.default.gpuType ||
-      JSON.stringify(results.disabled.deviceIdentity) !==
-        JSON.stringify(results.default.deviceIdentity)
-    ) {
-      failures.push("packaged results use different device identities");
-    }
-  }
+  validatePackagedPairConsistency(results, failures);
   return { passed: failures.length === 0, failures };
+}
+
+function validatePackagedMode(result, mode, failures) {
+  if (!result) {
+    failures.push(`${mode} packaged result is missing`);
+    return;
+  }
+  validatePackagedModeContract(result, mode, failures);
+  validatePackagedModeGpuState(result, mode, failures);
+  if (!result.correctness?.passed) failures.push(`${mode} packaged correctness checks failed`);
+}
+
+function validatePackagedModeContract(result, mode, failures) {
+  if (result.accelerationMode !== mode) failures.push(`${mode} packaged result has the wrong acceleration mode`);
+  if (result.packaged !== true || result.buildMode !== "production") {
+    failures.push(`${mode} result is not a packaged production run`);
+  }
+  if (result.devToolsOpen !== false) failures.push(`${mode} packaged run did not confirm closed DevTools`);
+}
+
+function validatePackagedModeGpuState(result, mode, failures) {
+  const expected = mode === "default" ? "enabled" : "disabled_software";
+  if (result.gpuFeatureStatus?.gpu_compositing !== expected) {
+    failures.push(`${mode} packaged run reported unexpected GPU compositing status`);
+  }
+}
+
+function validatePackagedPairConsistency(results, failures) {
+  if (!results.disabled || !results.default) return;
+  validateMatchingSourceRevision(results, failures);
+  validateMatchingWorkloadContract(results, failures);
+  validateMatchingDeviceIdentity(results, failures);
+}
+
+function validateMatchingSourceRevision(results, failures) {
+  if (results.disabled.sourceRevision !== results.default.sourceRevision) {
+    failures.push("packaged results use different source revisions");
+  }
+}
+
+function validateMatchingWorkloadContract(results, failures) {
+  if (JSON.stringify(results.disabled.comparisonContract) !== JSON.stringify(results.default.comparisonContract)) {
+    failures.push("packaged results use different workload contracts");
+  }
+}
+
+function validateMatchingDeviceIdentity(results, failures) {
+  if (
+    results.disabled.gpuType !== results.default.gpuType
+    || JSON.stringify(results.disabled.deviceIdentity) !== JSON.stringify(results.default.deviceIdentity)
+  ) {
+    failures.push("packaged results use different device identities");
+  }
 }
 
 /** Builds the primary frame-cadence comparison for each locked workload. */
@@ -144,15 +160,15 @@ export function buildProcessSummary(result) {
 }
 
 function resolveOutputFile(repoRoot, args) {
-  const outputRoot = resolve(repoRoot, ".dev", "verification", "performance");
+  const outputRoot = NodePath.resolve(repoRoot, ".dev", "verification", "performance");
   const requested = readArgument(args, "--output");
   const outputFile = requested
-    ? resolve(repoRoot, requested)
-    : join(outputRoot, "packaged-windows-acceleration.json");
+    ? NodePath.resolve(repoRoot, requested)
+    : NodePath.join(outputRoot, "packaged-windows-acceleration.json");
   if (!outputFile.toLowerCase().endsWith(".json")) {
     throw new Error("--output must use the .json extension");
   }
-  const outputRelativePath = relative(outputRoot, outputFile);
+  const outputRelativePath = NodePath.relative(outputRoot, outputFile);
   if (outputRelativePath.length === 0 || outputRelativePath.startsWith("..")) {
     throw new Error("--output must name a file inside .dev/verification/performance");
   }
@@ -161,7 +177,7 @@ function resolveOutputFile(repoRoot, args) {
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolveCommand, rejectCommand) => {
-    const child = spawn(command, args, {
+    const child = NodeChildProcess.spawn(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
       shell: false,
@@ -184,9 +200,9 @@ function runCommand(command, args, options = {}) {
 }
 
 function resolvePackageRoot(requireFromDesktop, packageName) {
-  let current = dirname(requireFromDesktop.resolve(packageName));
-  while (!existsSync(join(current, "package.json"))) {
-    const parent = dirname(current);
+  let current = NodePath.dirname(requireFromDesktop.resolve(packageName));
+  while (!NodeFS.existsSync(NodePath.join(current, "package.json"))) {
+    const parent = NodePath.dirname(current);
     if (parent === current) {
       throw new Error(`Could not resolve package root for ${packageName}`);
     }
@@ -196,10 +212,10 @@ function resolvePackageRoot(requireFromDesktop, packageName) {
 }
 
 async function buildPackagedApp(repoRoot) {
-  const desktopRoot = join(repoRoot, "apps", "desktop");
-  const desktopRequire = createRequire(join(desktopRoot, "package.json"));
+  const desktopRoot = NodePath.join(repoRoot, "apps", "desktop");
+  const desktopRequire = NodeModule.createRequire(NodePath.join(desktopRoot, "package.json"));
   const desktopPackage = JSON.parse(
-    await readFile(join(desktopRoot, "package.json"), "utf8"),
+    await NodeFSPromises.readFile(NodePath.join(desktopRoot, "package.json"), "utf8"),
   );
   const buildEnv = {
     ...process.env,
@@ -212,29 +228,29 @@ async function buildPackagedApp(repoRoot) {
     cwd: repoRoot,
     env: buildEnv,
   });
-  const stageRoot = join(repoRoot, ".dev", "packaged-performance-app");
-  await rm(stageRoot, { recursive: true, force: true });
-  await mkdir(stageRoot, { recursive: true });
+  const stageRoot = NodePath.join(repoRoot, ".dev", "packaged-performance-app");
+  await NodeFSPromises.rm(stageRoot, { recursive: true, force: true });
+  await NodeFSPromises.mkdir(stageRoot, { recursive: true });
   await Promise.all([
-    cp(join(desktopRoot, "build"), join(stageRoot, "build"), {
+    NodeFSPromises.cp(NodePath.join(desktopRoot, "build"), NodePath.join(stageRoot, "build"), {
       recursive: true,
       dereference: true,
     }),
-    cp(join(desktopRoot, "dist"), join(stageRoot, "dist"), {
+    NodeFSPromises.cp(NodePath.join(desktopRoot, "dist"), NodePath.join(stageRoot, "dist"), {
       recursive: true,
       dereference: true,
     }),
-    cp(join(desktopRoot, "scripts"), join(stageRoot, "scripts"), {
+    NodeFSPromises.cp(NodePath.join(desktopRoot, "scripts"), NodePath.join(stageRoot, "scripts"), {
       recursive: true,
       dereference: true,
     }),
   ]);
   const nativeDependencies = ["better-sqlite3", "koffi", "node-pty"];
   for (const dependency of nativeDependencies) {
-    const dependencyRoot = dirname(
+    const dependencyRoot = NodePath.dirname(
       desktopRequire.resolve(`${dependency}/package.json`),
     );
-    await cp(dependencyRoot, join(stageRoot, "node_modules", dependency), {
+    await NodeFSPromises.cp(dependencyRoot, NodePath.join(stageRoot, "node_modules", dependency), {
       recursive: true,
       dereference: true,
     });
@@ -245,15 +261,15 @@ async function buildPackagedApp(repoRoot) {
     "resedit",
   ]) {
     const dependencyRoot = resolvePackageRoot(desktopRequire, dependency);
-    await cp(dependencyRoot, join(stageRoot, "node_modules", ...dependency.split("/")), {
+    await NodeFSPromises.cp(dependencyRoot, NodePath.join(stageRoot, "node_modules", ...dependency.split("/")), {
       recursive: true,
       dereference: true,
     });
   }
   const reseditRoot = resolvePackageRoot(desktopRequire, "resedit");
-  const reseditRequire = createRequire(join(reseditRoot, "package.json"));
+  const reseditRequire = NodeModule.createRequire(NodePath.join(reseditRoot, "package.json"));
   const peLibraryRoot = resolvePackageRoot(reseditRequire, "pe-library");
-  await cp(peLibraryRoot, join(stageRoot, "node_modules", "pe-library"), {
+  await NodeFSPromises.cp(peLibraryRoot, NodePath.join(stageRoot, "node_modules", "pe-library"), {
     recursive: true,
     dereference: true,
   });
@@ -275,17 +291,17 @@ async function buildPackagedApp(repoRoot) {
       npmRebuild: false,
       directories: {
         ...desktopPackage.build.directories,
-        output: join(desktopRoot, "release"),
+        output: NodePath.join(desktopRoot, "release"),
       },
     },
   };
-  await writeFile(
-    join(stageRoot, "package.json"),
+  await NodeFSPromises.writeFile(
+    NodePath.join(stageRoot, "package.json"),
     `${JSON.stringify(stagedPackage, null, 2)}\n`,
     "utf8",
   );
-  await writeFile(
-    join(stageRoot, "package-lock.json"),
+  await NodeFSPromises.writeFile(
+    NodePath.join(stageRoot, "package-lock.json"),
     `${JSON.stringify({
       name: stagedPackage.name,
       version: stagedPackage.version,
@@ -315,7 +331,7 @@ async function buildPackagedApp(repoRoot) {
       env: buildEnv,
     },
   );
-  const executablePath = join(
+  const executablePath = NodePath.join(
     repoRoot,
     "apps",
     "desktop",
@@ -323,7 +339,7 @@ async function buildPackagedApp(repoRoot) {
     "win-unpacked",
     "Mcode.exe",
   );
-  if (!existsSync(executablePath)) {
+  if (!NodeFS.existsSync(executablePath)) {
     throw new Error(`Packaged executable is missing: ${executablePath}`);
   }
   return executablePath;
@@ -339,8 +355,8 @@ async function runPackagedMode(
 ) {
   const sessionFileName = `electron-packaged-performance-${accelerationMode}.json`;
   const modeOutputFile = outputFile.replace(/\.json$/i, `.${accelerationMode}.json`);
-  const modeOutputRelative = relative(repoRoot, modeOutputFile);
-  if (existsSync(join(repoRoot, ".dev", sessionFileName))) {
+  const modeOutputRelative = NodePath.relative(repoRoot, modeOutputFile);
+  if (NodeFS.existsSync(NodePath.join(repoRoot, ".dev", sessionFileName))) {
     stopElectron(repoRoot, { sessionFileName });
   }
   let started = false;
@@ -376,18 +392,18 @@ async function runPackagedMode(
       ],
       { cwd: repoRoot },
     );
-    return JSON.parse(await readFile(modeOutputFile, "utf8"));
+    return JSON.parse(await NodeFSPromises.readFile(modeOutputFile, "utf8"));
   } finally {
-    if (started) {
-      try {
-        stopElectron(repoRoot, { sessionFileName });
-      } catch (error) {
-        const retry = stopElectron(repoRoot, { sessionFileName });
-        if (retry.status !== "already-stopped" && retry.status !== "not-running") {
-          throw error;
-        }
-      }
-    }
+    if (started) stopPackagedElectron(repoRoot, sessionFileName);
+  }
+}
+
+function stopPackagedElectron(repoRoot, sessionFileName) {
+  try {
+    stopElectron(repoRoot, { sessionFileName });
+  } catch (error) {
+    const retry = stopElectron(repoRoot, { sessionFileName });
+    if (retry.status !== "already-stopped" && retry.status !== "not-running") throw error;
   }
 }
 
@@ -399,15 +415,15 @@ export async function runPackagedWindowsAcceleration(
   if (process.platform !== "win32") {
     throw new Error("The packaged acceleration comparison requires Windows");
   }
-  const root = resolve(repoRoot);
+  const root = NodePath.resolve(repoRoot);
   const options = parsePackagedWindowsArguments(args);
   const outputFile = resolveOutputFile(root, args);
-  await mkdir(dirname(outputFile), { recursive: true });
+  await NodeFSPromises.mkdir(NodePath.dirname(outputFile), { recursive: true });
   ensureRuntimeRoot(root);
   seedFixtureRepo(root);
   ensurePlaywright(root);
 
-  const desktopRequire = createRequire(join(root, "apps", "desktop", "package.json"));
+  const desktopRequire = NodeModule.createRequire(NodePath.join(root, "apps", "desktop", "package.json"));
   const electronVersion = desktopRequire("electron/package.json").version;
   const executablePath = await buildPackagedApp(root);
   const results = {};
@@ -440,7 +456,7 @@ export async function runPackagedWindowsAcceleration(
         : "inconclusive",
     results,
   };
-  await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  await NodeFSPromises.writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
   process.stdout.write(`Packaged Windows acceleration result: ${outputFile}\n`);
   if (!correctness.passed) process.exitCode = 1;
   return result;

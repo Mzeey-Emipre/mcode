@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import type Database from "better-sqlite3";
 import type {
@@ -117,8 +117,8 @@ export class ExternalThreadControlPairingService {
   /** Create a pairing and return its plaintext credential exactly once. */
   create(input: ExternalThreadControlPairingInput): ExternalThreadControlPairingSecret {
     const normalized = normalizePairingInput(input);
-    const pairingId = randomUUID();
-    const credential = randomBytes(CREDENTIAL_BYTES).toString("base64url");
+    const pairingId = NodeCrypto.randomUUID();
+    const credential = NodeCrypto.randomBytes(CREDENTIAL_BYTES).toString("base64url");
     const now = new Date().toISOString();
     const create = this.db.transaction(() => {
       const active = this.db.prepare(
@@ -194,8 +194,8 @@ export class ExternalThreadControlPairingService {
     if (normalized.integrationId !== old.integrationId) {
       throw new ExternalThreadControlPairingError("conflict", "Pairing replacement must preserve integration identity");
     }
-    const successorId = randomUUID();
-    const credential = randomBytes(CREDENTIAL_BYTES).toString("base64url");
+    const successorId = NodeCrypto.randomUUID();
+    const credential = NodeCrypto.randomBytes(CREDENTIAL_BYTES).toString("base64url");
     const now = new Date().toISOString();
     const replace = this.db.transaction(() => {
       const result = this.db.prepare(
@@ -403,22 +403,48 @@ export class ExternalThreadControlPairingService {
 }
 
 function normalizePairingInput(input: ExternalThreadControlPairingInput): ExternalThreadControlPairingInput {
-  const workspaceIds = [...new Set(input.workspaceIds.map((value) => value.trim()).filter(Boolean))];
+  const integrationId = input.integrationId.trim();
+  const workspaceIds = normalizeWorkspaceIds(input.workspaceIds);
   const scopes = [...new Set(input.scopes)];
-  if (workspaceIds.length > 100 || workspaceIds.some((workspaceId) => workspaceId.length > 128)
-    || scopes.some((scope) => !VALID_SCOPES.has(scope))
-    || !input.integrationId.trim() || input.integrationId.trim().length > 128
-    || !Number.isSafeInteger(input.callsPerMinute) || input.callsPerMinute < 1 || input.callsPerMinute > 10_000
-    || !Number.isSafeInteger(input.maxActiveThreads) || input.maxActiveThreads < 1 || input.maxActiveThreads > 1_000) {
+  if (!isValidPairingPolicy(input, integrationId, workspaceIds, scopes)) {
     throw new ExternalThreadControlPairingError("conflict", "External pairing policy is invalid");
   }
   return {
-    integrationId: input.integrationId.trim(),
+    integrationId,
     workspaceIds,
     scopes,
     callsPerMinute: Math.trunc(input.callsPerMinute),
     maxActiveThreads: Math.trunc(input.maxActiveThreads),
   };
+}
+
+function normalizeWorkspaceIds(workspaceIds: readonly string[]): string[] {
+  return [...new Set(workspaceIds.map((value) => value.trim()).filter(Boolean))];
+}
+
+function isValidPairingPolicy(
+  input: ExternalThreadControlPairingInput,
+  integrationId: string,
+  workspaceIds: string[],
+  scopes: ExternalThreadControlScope[],
+): boolean {
+  return isValidIntegrationId(integrationId)
+    && isValidWorkspaceIds(workspaceIds)
+    && scopes.every((scope) => VALID_SCOPES.has(scope))
+    && isIntegerWithin(input.callsPerMinute, 1, 10_000)
+    && isIntegerWithin(input.maxActiveThreads, 1, 1_000);
+}
+
+function isValidIntegrationId(integrationId: string): boolean {
+  return integrationId.length > 0 && integrationId.length <= 128;
+}
+
+function isValidWorkspaceIds(workspaceIds: string[]): boolean {
+  return workspaceIds.length <= 100 && workspaceIds.every((workspaceId) => workspaceId.length <= 128);
+}
+
+function isIntegerWithin(value: number, minimum: number, maximum: number): boolean {
+  return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
 
 function rowToPairing(row: PairingRow): ExternalThreadControlPairingRecord {
@@ -441,13 +467,13 @@ function rowToPairing(row: PairingRow): ExternalThreadControlPairingRecord {
 }
 
 function hashCredential(credential: string): string {
-  return createHash("sha256").update(credential, "utf8").digest("hex");
+  return NodeCrypto.createHash("sha256").update(credential, "utf8").digest("hex");
 }
 
 function constantTimeHashEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, "hex");
   const rightBuffer = Buffer.from(right, "hex");
-  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+  return leftBuffer.length === rightBuffer.length && NodeCrypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function parseResult(resultJson: string | null): Record<string, unknown> {

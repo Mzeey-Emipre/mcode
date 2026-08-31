@@ -9,7 +9,6 @@ import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
-import { AgentService } from "../agent-service.js";
 import { createAgentServiceForTest } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
@@ -24,7 +23,7 @@ import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 
 // Stub broadcast so we can assert push events without a real WebSocket server.
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
@@ -55,7 +54,7 @@ function buildService(db: Database.Database) {
 
   // Provider stub: extends EventEmitter (matches real provider shape) and
   // resolves sendTurn immediately so the turn "completes" without I/O.
-  const providerStub = Object.assign(new EventEmitter(), {
+  const providerStub = Object.assign(new NodeEvents.EventEmitter(), {
     id: "claude" as const,
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,

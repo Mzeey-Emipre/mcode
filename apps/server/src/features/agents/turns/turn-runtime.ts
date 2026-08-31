@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type {
   AgentEvent,
   AgentEventType,
@@ -36,7 +36,7 @@ export class TurnRuntimeRegistry {
   start(threadId: string): TurnRuntimeSnapshot {
     const snapshot: RuntimeState = {
       threadId,
-      turnExecutionId: randomUUID(),
+      turnExecutionId: NodeCrypto.randomUUID(),
       phase: "running",
       terminalized: false,
     };
@@ -67,32 +67,9 @@ export class TurnRuntimeRegistry {
   normalizeEvent(event: AgentEvent): AgentEvent | undefined {
     if (!isTurnScopedEvent(event)) return event;
     const current = this.states.get(event.threadId);
-    if (event.type === "turnStarted") {
-      if (!event.turnExecutionId) return undefined;
-      if (current?.terminalized && current.phase === "completed") {
-        const resumed: RuntimeState = {
-          threadId: event.threadId,
-          turnExecutionId: event.turnExecutionId,
-          phase: "running",
-          terminalized: false,
-        };
-        this.states.set(event.threadId, resumed);
-        return event;
-      }
-      if (!current || current.turnExecutionId !== event.turnExecutionId || current.terminalized) {
-        return undefined;
-      }
-      return event;
-    }
-    if (event.type === "turnComplete"
-      && current?.terminalized
-      && current.phase === "completed"
-      && event.turnExecutionId === current.turnExecutionId) {
-      return event;
-    }
-    if (!current || current.turnExecutionId === null || current.terminalized || !event.turnExecutionId) return undefined;
-    if (event.turnExecutionId !== current.turnExecutionId) return undefined;
-    return event;
+    return event.type === "turnStarted"
+      ? this.normalizeTurnStarted(event, current)
+      : this.normalizeTurnEvent(event, current);
   }
 
   /** Accept the first terminal signal for the active execution only. */
@@ -144,5 +121,36 @@ export class TurnRuntimeRegistry {
       turnExecutionId: state.turnExecutionId,
       phase: state.phase,
     };
+  }
+
+  private normalizeTurnStarted(event: AgentEvent, current: RuntimeState | undefined): AgentEvent | undefined {
+    if (!event.turnExecutionId) return undefined;
+    if (current?.terminalized && current.phase === "completed") {
+      this.states.set(event.threadId, {
+        threadId: event.threadId,
+        turnExecutionId: event.turnExecutionId,
+        phase: "running",
+        terminalized: false,
+      });
+      return event;
+    }
+    return current && current.turnExecutionId === event.turnExecutionId && !current.terminalized
+      ? event
+      : undefined;
+  }
+
+  private normalizeTurnEvent(event: AgentEvent, current: RuntimeState | undefined): AgentEvent | undefined {
+    if (this.isDuplicateCompletion(event, current)) return event;
+    if (!current || current.turnExecutionId === null || current.terminalized || !event.turnExecutionId) {
+      return undefined;
+    }
+    return event.turnExecutionId === current.turnExecutionId ? event : undefined;
+  }
+
+  private isDuplicateCompletion(event: AgentEvent, current: RuntimeState | undefined): boolean {
+    return event.type === "turnComplete"
+      && current?.terminalized === true
+      && current.phase === "completed"
+      && event.turnExecutionId === current.turnExecutionId;
   }
 }

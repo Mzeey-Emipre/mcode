@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/time";
 import type { ToolCall } from "@/transport/types";
@@ -25,6 +25,71 @@ function derivePhaseLabel(toolCalls: readonly ToolCall[]): string {
   }
 
   return "Preparing...";
+}
+
+function elapsedSeconds(startTime: number | undefined): number {
+  return startTime ? Math.floor((Date.now() - startTime) / 1000) : 0;
+}
+
+function advanceRunningEpoch(
+  isAgentRunning: boolean,
+  previousRunningRef: React.MutableRefObject<boolean>,
+  runningEpochRef: React.MutableRefObject<number>,
+): number {
+  if (isAgentRunning && !previousRunningRef.current) {
+    runningEpochRef.current += 1;
+  }
+  previousRunningRef.current = isAgentRunning;
+  return runningEpochRef.current;
+}
+
+function deriveIndicatorPhase(
+  isAgentRunning: boolean,
+  completedExitEpoch: number,
+  runningEpoch: number,
+): IndicatorPhase {
+  if (isAgentRunning) return "running";
+  return completedExitEpoch === runningEpoch ? "done" : "exiting";
+}
+
+function useNarrativeIndicatorLifecycle(
+  startTime: number | undefined,
+  isAgentRunning: boolean,
+): { elapsed: number; phase: IndicatorPhase } {
+  const previousRunningRef = useRef(isAgentRunning);
+  const runningEpochRef = useRef(isAgentRunning ? 0 : -1);
+  const elapsedRef = useRef(elapsedSeconds(startTime));
+  const [, setElapsedTick] = useState(0);
+  const [completedExitEpoch, setCompletedExitEpoch] = useState(
+    isAgentRunning ? -1 : runningEpochRef.current,
+  );
+  const runningEpoch = advanceRunningEpoch(
+    isAgentRunning,
+    previousRunningRef,
+    runningEpochRef,
+  );
+  if (isAgentRunning) elapsedRef.current = elapsedSeconds(startTime);
+  const phase = deriveIndicatorPhase(isAgentRunning, completedExitEpoch, runningEpoch);
+
+  useEffect(() => {
+    if (phase !== "exiting") return;
+    const timer = setTimeout(() => setCompletedExitEpoch(runningEpoch), EXIT_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [phase, runningEpoch]);
+
+  useEffect(() => {
+    // Freeze the elapsed readout once the turn ends so the exit animation
+    // fades out a stable value instead of ticking mid-fade.
+    if (!startTime || !isAgentRunning) return;
+
+    const interval = setInterval(() => {
+      setElapsedTick((tick) => tick + 1);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [startTime, isAgentRunning]);
+
+  return { elapsed: elapsedRef.current, phase };
 }
 
 /** Props for {@link NarrativeIndicator}: step counts, active tools, and turn start time. */
@@ -62,40 +127,7 @@ export function NarrativeIndicator({
   startTime,
   isAgentRunning,
 }: NarrativeIndicatorProps) {
-  const [elapsed, setElapsed] = useState(0);
-  // Initializing from isAgentRunning means a fresh mount after the turn ended
-  // never replays the exit animation — only a live running→stopped transition does.
-  const [phase, setPhase] = useState<IndicatorPhase>(
-    isAgentRunning ? "running" : "done",
-  );
-
-  useEffect(() => {
-    if (isAgentRunning) {
-      setPhase("running");
-      return;
-    }
-    setPhase((prev) => (prev === "running" ? "exiting" : prev));
-  }, [isAgentRunning]);
-
-  useEffect(() => {
-    if (phase !== "exiting") return;
-    const timer = setTimeout(() => setPhase("done"), EXIT_DURATION_MS);
-    return () => clearTimeout(timer);
-  }, [phase]);
-
-  useEffect(() => {
-    // Freeze the elapsed readout once the turn ends so the exit animation
-    // fades out a stable value instead of ticking mid-fade.
-    if (!startTime || !isAgentRunning) return;
-
-    setElapsed(Math.floor((Date.now() - startTime) / 1000));
-
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [startTime, isAgentRunning]);
+  const { elapsed, phase } = useNarrativeIndicatorLifecycle(startTime, isAgentRunning);
 
   const phaseLabel = useMemo(() => derivePhaseLabel(activeToolCalls), [activeToolCalls]);
 

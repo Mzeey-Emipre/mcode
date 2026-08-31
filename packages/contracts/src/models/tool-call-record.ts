@@ -180,7 +180,7 @@ export const ToolCallStatusSchema = z.enum(["running", "completed", "failed", "c
 export type ToolCallStatus = z.infer<typeof ToolCallStatusSchema>;
 
 /** Persisted tool call record linked to an assistant message. */
-export const ToolCallRecordSchema = z.object({
+export const ToolCallRecordSchema = lazySchema(() => z.object({
   id: z.string(),
   message_id: z.string(),
   parent_tool_call_id: z.string().nullable(),
@@ -205,7 +205,7 @@ export const ToolCallRecordSchema = z.object({
   started_at: z.string(),
   completed_at: z.string().nullable(),
   sort_order: z.number(),
-});
+}));
 
 /** Persisted tool call record linked to an assistant message. */
-export type ToolCallRecord = z.infer<typeof ToolCallRecordSchema>;
+export type ToolCallRecord = z.infer<ReturnType<typeof ToolCallRecordSchema>>;

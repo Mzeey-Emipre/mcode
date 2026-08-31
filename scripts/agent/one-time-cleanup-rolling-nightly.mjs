@@ -9,14 +9,14 @@
  * Without --confirm, prints what would be deleted but takes no action.
  */
 
-import { execFileSync } from "child_process";
+import * as NodeChildProcess from "node:child_process";
 
 const REPO = "mzeey-empire/mcode";
 const TAG = "nightly";
 const confirm = process.argv.includes("--confirm");
 
 function gh(args) {
-  return execFileSync("gh", args, { encoding: "utf8" });
+  return NodeChildProcess.execFileSync("gh", args, { encoding: "utf8" });
 }
 
 function ghJson(args) {

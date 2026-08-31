@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import type * as NodeChildProcess from "node:child_process";
 import { logger } from "@mcode/shared";
 import { getCatalogEntry, type Settings } from "@mcode/contracts";
 import type { ProviderHostPorts } from "../../../host-ports.js";
@@ -20,7 +20,7 @@ export interface CursorAcpProcessSpawnerDeps {
   getBrowserContext: (sessionId: string) => CursorBrowserContext | undefined;
   registerOpening: (sessionId: string, runtime: AcpSessionRuntime) => void;
   clearOpening: (sessionId: string) => void;
-  onChildExit: (sessionId: string, child: ChildProcess) => void;
+  onChildExit: (sessionId: string, child: NodeChildProcess.ChildProcess) => void;
   bridge: CursorAcpClientBridge;
 }
 
@@ -37,7 +37,11 @@ export class CursorAcpProcessSpawner {
     settings: Settings,
   ): Promise<CursorSessionState> {
     let lastError: unknown = null;
-    const processIdentity = cursorAcpProcessIdentity(settings, permissionMode);
+    const processIdentity = cursorAcpProcessIdentity(
+      settings,
+      permissionMode,
+      this.deps.host.runtime.platform,
+    );
     for (const cliPath of cursorCliProbeBinaries(settings)) {
       try {
         return await this.spawnOneCli(cliPath, sessionId, threadId, cwd, permissionMode, processIdentity);
@@ -66,9 +70,13 @@ export class CursorAcpProcessSpawner {
     const runtime = await AcpSessionRuntime.start({
       spawnSpec: {
         command: cliPath,
-        args: buildCursorAcpArgs({ permissionMode }),
+        args: buildCursorAcpArgs({
+          permissionMode,
+          platform: this.deps.host.runtime.platform,
+        }),
         cwd,
         env: this.deps.getEnvironment(),
+        shell: this.deps.host.runtime.platform === "win32",
       },
       callbacks: {
         onPermissionRequest: async (request) => entry

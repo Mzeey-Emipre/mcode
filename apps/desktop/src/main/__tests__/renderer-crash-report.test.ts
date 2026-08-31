@@ -63,7 +63,7 @@ vi.mock("@mcode/contracts", () => ({
   })),
 }));
 
-vi.mock("../../features/open-in/index.js", () => ({ openInRegistry: vi.fn() }));
+vi.mock("../../features/open-in/index.js", () => ({ registerOpenInHandlers: vi.fn() }));
 vi.mock("../../features/server-runtime/index.js", () => ({
   ServerRuntime: class {
     start = vi.fn();

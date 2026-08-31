@@ -1,11 +1,12 @@
 import { FileText, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactElement } from "react";
 import type { McodeBrowserCapture } from "@mcode/contracts";
 import { isVirtualBrowserContextAttachment } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
 import { ATTACHMENT_REMOVE_HIT_AREA } from "@/lib/ui-hit-target";
 import { useHorizontalScrollEdges } from "@/hooks/useHorizontalScrollEdges";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { FileAttachmentTile } from "./FileAttachmentTile";
 import { ImageAttachmentLightbox } from "./ImageAttachmentLightbox";
@@ -47,6 +48,23 @@ function getBrowserCaptureSpillHints(capture: McodeBrowserCapture | undefined): 
     .filter(Boolean)
     .join("\n\n");
   return { line, title };
+}
+
+function BrowserCaptureTooltip({
+  title,
+  children,
+}: {
+  title: string | undefined;
+  children: ReactElement;
+}) {
+  if (!title) return children;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent>{title}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** Horizontal strip of pending attachment thumbnails or file tiles with per-item remove actions. */
@@ -131,25 +149,25 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
 
           if (isContextOnly) {
             return (
-              <div
-                key={att.id}
-                className={cn(
-                  "group relative flex-shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted/60 transition-all duration-150",
-                  "hover:border-primary/40 hover:bg-muted/80",
-                )}
-                title={spill?.title}
-              >
-                <div className="flex h-[72px] w-[140px] flex-col justify-center gap-0.5 px-3 py-1">
-                  <div className="flex min-h-0 items-center gap-2">
-                    <FileText size={18} className="shrink-0 text-primary" />
-                    <span className="truncate text-xs font-medium text-foreground">Page context</span>
+              <BrowserCaptureTooltip key={att.id} title={spill?.title}>
+                <div
+                  className={cn(
+                    "group relative flex-shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted/60 transition-all duration-150",
+                    "hover:border-primary/40 hover:bg-muted/80",
+                  )}
+                >
+                  <div className="flex h-[72px] w-[140px] flex-col justify-center gap-0.5 px-3 py-1">
+                    <div className="flex min-h-0 items-center gap-2">
+                      <FileText size={18} className="shrink-0 text-primary" />
+                      <span className="truncate text-xs font-medium text-foreground">Page context</span>
+                    </div>
+                    <span className="block max-w-[120px] truncate pl-[26px] text-xs leading-tight text-muted-foreground">
+                      {spill ? spill.line : "No image"}
+                    </span>
+                    {removeButton(att.name, att.id)}
                   </div>
-                  <span className="block max-w-[120px] truncate pl-[26px] text-xs leading-tight text-muted-foreground">
-                    {spill ? spill.line : "No image"}
-                  </span>
-                  {removeButton(att.name, att.id)}
                 </div>
-              </div>
+              </BrowserCaptureTooltip>
             );
           }
 
@@ -160,48 +178,48 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
             // hydration warning. The wrapper div carries the "group" so
             // group-hover still reveals the remove control.
             return (
-              <div
-                key={att.id}
-                className="group relative h-[72px] w-[72px] flex-shrink-0"
-                title={spill?.title}
-              >
-                <button
-                  type="button"
-                  className={cn(
-                    "relative flex h-full w-full cursor-pointer overflow-hidden rounded-lg border p-0 text-left outline-none",
-                    "border-border/60 bg-muted/60 transition-[border-color,background-color,filter]",
-                    "hover:border-primary/45 hover:bg-muted/80 hover:brightness-[1.04]",
-                    "focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                  )}
-                  aria-label={`Preview image ${att.name}`}
-                  onClick={() =>
-                    setImagePreview({
-                      items: previewableImages.map((a) => ({
-                        src: a.previewUrl,
-                        title: a.name,
-                      })),
-                      initialIndex: slideIndex >= 0 ? slideIndex : 0,
-                    })
-                  }
-                >
-                  {spill ? (
-                    <span
-                      className="absolute bottom-0.5 left-0.5 right-0.5 z-10 truncate rounded bg-background/85 px-0.5 text-center text-xs font-medium text-foreground/90 shadow-sm"
-                      title={spill.title}
-                    >
-                      + spill file
-                    </span>
-                  ) : null}
-                  <img
-                    src={att.previewUrl}
-                    alt={att.name}
-                    className="h-full w-full object-cover"
-                    draggable={false}
-                  />
-                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-black/25 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-                </button>
-                {removeButton(att.name, att.id)}
-              </div>
+              <BrowserCaptureTooltip key={att.id} title={spill?.title}>
+                <div className="group relative h-[72px] w-[72px] flex-shrink-0">
+                  <button
+                    type="button"
+                    className={cn(
+                      "relative flex h-full w-full cursor-pointer overflow-hidden rounded-lg border p-0 text-left outline-none",
+                      "border-border/60 bg-muted/60 transition-[border-color,background-color,filter]",
+                      "hover:border-primary/45 hover:bg-muted/80 hover:brightness-[1.04]",
+                      "focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    )}
+                    aria-label={`Preview image ${att.name}`}
+                    onClick={() =>
+                      setImagePreview({
+                        items: previewableImages.map((a) => ({
+                          src: a.previewUrl,
+                          title: a.name,
+                        })),
+                        initialIndex: slideIndex >= 0 ? slideIndex : 0,
+                      })
+                    }
+                  >
+                    {spill ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="absolute bottom-0.5 left-0.5 right-0.5 z-10 truncate rounded bg-background/85 px-0.5 text-center text-xs font-medium text-foreground/90 shadow-sm" />}
+                        >
+                          + spill file
+                        </TooltipTrigger>
+                        <TooltipContent>{spill.title}</TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                    <img
+                      src={att.previewUrl}
+                      alt={att.name}
+                      className="h-full w-full object-cover"
+                      draggable={false}
+                    />
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-black/25 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                  </button>
+                  {removeButton(att.name, att.id)}
+                </div>
+              </BrowserCaptureTooltip>
             );
           }
 

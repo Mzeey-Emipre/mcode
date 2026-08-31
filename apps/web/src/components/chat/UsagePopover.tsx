@@ -3,7 +3,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { useThreadStore } from "../../stores/threadStore";
 import { useThreadRecord } from "../../stores/thread-selectors";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import type { QuotaCategory } from "@mcode/contracts";
+import type { ProviderUsageInfo, QuotaCategory } from "@mcode/contracts";
+import type { ThreadContextUsage } from "@/stores/thread-record";
 import { useEffect, useRef, type ReactNode } from "react";
 import { formatUsageResetText } from "@/lib/usage-reset-format";
 
@@ -78,6 +79,142 @@ function QuotaRow({ category }: { category: QuotaCategory }) {
   );
 }
 
+function UsageProviderHeader({
+  providerId,
+  model,
+  contextEntry,
+  usageStatus,
+}: {
+  providerId: string;
+  model: string | null | undefined;
+  contextEntry: ThreadContextUsage | undefined;
+  usageStatus: ProviderUsageInfo["usageStatus"] | undefined;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <div>
+        <div className="text-sm font-medium capitalize">{providerId}</div>
+        {model ? (
+          <div className="text-xs text-muted-foreground">
+            {model}
+            {contextEntry?.costMultiplier != null && ` · ${contextEntry.costMultiplier}×`}
+          </div>
+        ) : null}
+      </div>
+      {usageStatus === "stale" ? (
+        <div className="text-right font-mono text-xs uppercase tracking-wider text-muted-foreground/60">STALE</div>
+      ) : null}
+    </div>
+  );
+}
+
+function UsageQuotaSection({ usageInfo }: { usageInfo: ProviderUsageInfo | undefined }) {
+  const categories = usageInfo?.quotaCategories ?? [];
+  if (categories.length === 0) {
+    const unavailableMessage = usageInfo?.usageStatus === "unsupported"
+      ? "Usage not supported for this provider"
+      : usageInfo?.usageStatus === "ready-empty"
+        ? "No capped quota reported"
+        : "Usage unavailable";
+    return <div className="text-xs text-muted-foreground">{unavailableMessage}</div>;
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">Quota</div>
+      {categories.map((category) => <QuotaRow key={category.label} category={category} />)}
+    </div>
+  );
+}
+
+function UsageRefreshStatus({ usageInfo }: { usageInfo: ProviderUsageInfo | undefined }) {
+  const status = usageInfo?.usageStatus;
+  if (!usageInfo || (status !== "stale" && status !== "unavailable")) return null;
+  const detail = status === "stale"
+    ? `Could not refresh. Showing last update from ${usageInfo.fetchedAt ?? "this session"}.`
+    : "Usage unavailable.";
+  return <div className="text-xs text-muted-foreground">{detail}{usageInfo.diagnostic ? ` ${usageInfo.diagnostic}` : ""}</div>;
+}
+
+function ContextUsage({ contextEntry }: { contextEntry: ThreadContextUsage | undefined }) {
+  const tokensIn = contextEntry?.lastTokensIn ?? 0;
+  const contextWindow = contextEntry?.contextWindow;
+  if (tokensIn === 0 || !contextWindow) return null;
+  return (
+    <div className="space-y-1 border-t border-border pt-2">
+      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">Context window</div>
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">Used</span>
+        <span className="text-foreground/70">{formatTokens(tokensIn)} / {formatTokens(contextWindow)}</span>
+      </div>
+      <UsageBar percent={tokensIn / contextWindow} label={`Context usage: ${formatTokens(tokensIn)} of ${formatTokens(contextWindow)} tokens`} />
+    </div>
+  );
+}
+
+function UsageMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded bg-muted/40 px-2 py-1.5">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-xs text-foreground/80">{formatTokens(value)}</div>
+    </div>
+  );
+}
+
+function CacheUsageMetrics({ contextEntry }: { contextEntry: ThreadContextUsage | undefined }) {
+  return (
+    <>
+      {contextEntry?.cacheReadTokens != null ? <UsageMetric label="cache read" value={contextEntry.cacheReadTokens} /> : null}
+      {contextEntry?.cacheWriteTokens != null ? <UsageMetric label="cache write" value={contextEntry.cacheWriteTokens} /> : null}
+    </>
+  );
+}
+
+function LastTurnUsage({ contextEntry }: { contextEntry: ThreadContextUsage | undefined }) {
+  const tokensIn = contextEntry?.lastTokensIn ?? 0;
+  const tokensOut = contextEntry?.tokensOut ?? 0;
+  if (tokensIn === 0 && tokensOut === 0) return <div className="border-t border-border pt-2 text-xs text-muted-foreground">No turn data yet</div>;
+  return (
+    <div className="space-y-2 border-t border-border pt-2">
+      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">Last turn</div>
+      <div className="grid grid-cols-2 gap-1.5">
+        <UsageMetric label="in" value={tokensIn} />
+        <UsageMetric label="out" value={tokensOut} />
+        <CacheUsageMetrics contextEntry={contextEntry} />
+      </div>
+    </div>
+  );
+}
+
+function UsagePopoverDetails({
+  providerId,
+  model,
+  contextEntry,
+  usageInfo,
+}: {
+  providerId: string;
+  model: string | null | undefined;
+  contextEntry: ThreadContextUsage | undefined;
+  usageInfo: ProviderUsageInfo | undefined;
+}) {
+  const sessionCost = usageInfo?.sessionCostUsd;
+  return (
+    <div className="space-y-3 p-3">
+      <UsageProviderHeader providerId={providerId} model={model} contextEntry={contextEntry} usageStatus={usageInfo?.usageStatus} />
+      <UsageQuotaSection usageInfo={usageInfo} />
+      <UsageRefreshStatus usageInfo={usageInfo} />
+      {sessionCost != null ? (
+        <div className="flex items-center justify-between border-t border-border pt-2 text-xs">
+          <span className="text-muted-foreground">Session cost</span>
+          <span className="text-foreground/70">${sessionCost.toFixed(4)}</span>
+        </div>
+      ) : null}
+      <ContextUsage contextEntry={contextEntry} />
+      <LastTurnUsage contextEntry={contextEntry} />
+    </div>
+  );
+}
+
 /** Usage popover showing quota, context window, and last turn data. */
 export function UsagePopover({ threadId, children, onOpenChange, side = "top", align = "end" }: UsagePopoverProps) {
   const contextEntry = useThreadRecord(threadId, (r) => r.context);
@@ -100,132 +237,13 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
     hasFetched.current = false;
   }, [threadId, providerId]);
 
-  const categories = usageInfo?.quotaCategories ?? [];
-  const sessionCost = usageInfo?.sessionCostUsd;
-  const tokensIn = contextEntry?.lastTokensIn ?? 0;
-  const tokensOut = contextEntry?.tokensOut ?? 0;
-  const contextWindow = contextEntry?.contextWindow;
-  const hasContext = tokensIn > 0 && contextWindow;
-  const hasTurn = tokensIn > 0 || tokensOut > 0;
-
   return (
     <Popover onOpenChange={handleOpenChange}>
       <PopoverTrigger render={<span style={{ display: "contents" }} />}>
         {children}
       </PopoverTrigger>
       <PopoverContent side={side} align={align} sideOffset={8} className="w-72 p-0">
-        <div className="space-y-3 p-3">
-          {/* Provider header */}
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium capitalize">{providerId}</div>
-              {activeThread?.model && (
-                <div className="text-xs text-muted-foreground">
-                  {activeThread.model}
-                  {contextEntry?.costMultiplier != null && ` · ${contextEntry.costMultiplier}×`}
-                </div>
-              )}
-            </div>
-            {usageInfo?.usageStatus === "stale" ? (
-              <div className="text-right font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
-                STALE
-              </div>
-            ) : null}
-          </div>
-
-          {/* Quota section */}
-          {categories.length > 0 ? (
-            <div className="space-y-2">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
-                Quota
-              </div>
-              {categories.map((cat) => (
-                <QuotaRow key={cat.label} category={cat} />
-              ))}
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">
-              {usageInfo?.usageStatus === "unsupported"
-                ? "Usage not supported for this provider"
-                : usageInfo?.usageStatus === "ready-empty"
-                  ? "No capped quota reported"
-                  : "Usage unavailable"}
-            </div>
-          )}
-
-          {(usageInfo?.usageStatus === "stale" || usageInfo?.usageStatus === "unavailable") && (
-            <div className="text-xs text-muted-foreground">
-              {usageInfo.usageStatus === "stale"
-                ? `Could not refresh. Showing last update from ${usageInfo.fetchedAt ?? "this session"}.`
-                : "Usage unavailable."}
-              {usageInfo.diagnostic ? ` ${usageInfo.diagnostic}` : ""}
-            </div>
-          )}
-
-          {/* Session cost (Claude only) */}
-          {sessionCost != null && (
-            <div className="flex items-center justify-between border-t border-border pt-2 text-xs">
-              <span className="text-muted-foreground">Session cost</span>
-              <span className="text-foreground/70">${sessionCost.toFixed(4)}</span>
-            </div>
-          )}
-
-          {/* Context window section */}
-          {hasContext && (
-            <div className="space-y-1 border-t border-border pt-2">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
-                Context window
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Used</span>
-                <span className="text-foreground/70">
-                  {formatTokens(tokensIn)} / {formatTokens(contextWindow)}
-                </span>
-              </div>
-              <UsageBar
-                percent={tokensIn / contextWindow}
-                label={`Context usage: ${formatTokens(tokensIn)} of ${formatTokens(contextWindow)} tokens`}
-              />
-            </div>
-          )}
-
-          {/* Last turn section */}
-          {hasTurn ? (
-            <div className="space-y-2 border-t border-border pt-2">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
-                Last turn
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                <div className="rounded bg-muted/40 px-2 py-1.5">
-                  <div className="text-xs text-muted-foreground">in</div>
-                  <div className="text-xs text-foreground/80">{formatTokens(tokensIn)}</div>
-                </div>
-                <div className="rounded bg-muted/40 px-2 py-1.5">
-                  <div className="text-xs text-muted-foreground">out</div>
-                  <div className="text-xs text-foreground/80">
-                    {formatTokens(tokensOut)}
-                  </div>
-                </div>
-                {contextEntry?.cacheReadTokens != null && (
-                  <div className="rounded bg-muted/40 px-2 py-1.5">
-                    <div className="text-xs text-muted-foreground">cache read</div>
-                    <div className="text-xs text-foreground/80">{formatTokens(contextEntry.cacheReadTokens)}</div>
-                  </div>
-                )}
-                {contextEntry?.cacheWriteTokens != null && (
-                  <div className="rounded bg-muted/40 px-2 py-1.5">
-                    <div className="text-xs text-muted-foreground">cache write</div>
-                    <div className="text-xs text-foreground/80">{formatTokens(contextEntry.cacheWriteTokens)}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="border-t border-border pt-2 text-xs text-muted-foreground">
-              No turn data yet
-            </div>
-          )}
-        </div>
+        <UsagePopoverDetails providerId={providerId} model={activeThread?.model} contextEntry={contextEntry} usageInfo={usageInfo} />
       </PopoverContent>
     </Popover>
   );

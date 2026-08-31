@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import * as NodeHTTP from "node:http";
 import { createReliabilityHarnessAdapter, readReliabilityHarnessCapability } from "../control.js";
 
 function databaseStub() {
@@ -169,8 +169,8 @@ describe("reliability harness server adapter", () => {
   });
 });
 
-function requestStub(body: string, token: string): IncomingMessage {
-  const request = new ReadableRequest(body) as unknown as IncomingMessage;
+function requestStub(body: string, token: string): NodeHTTP.IncomingMessage {
+  const request = new ReadableRequest(body) as unknown as NodeHTTP.IncomingMessage;
   request.headers = { "x-mcode-reliability-token": token };
   request.method = "POST";
   request.url = "/__mcode/reliability";
@@ -191,11 +191,11 @@ class ReadableRequest {
   }
 }
 
-function responseStub(): ServerResponse & { writeHead: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> } {
+function responseStub(): NodeHTTP.ServerResponse & { writeHead: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> } {
   return {
     headersSent: false,
     writableEnded: false,
     writeHead: vi.fn(),
     end: vi.fn(),
-  } as unknown as ServerResponse & { writeHead: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
+  } as unknown as NodeHTTP.ServerResponse & { writeHead: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
 }

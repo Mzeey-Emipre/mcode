@@ -3,7 +3,7 @@
  * Provides creation and retrieval operations for persisted thought segments.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { ThoughtSegmentRecord } from "@mcode/contracts";
@@ -73,7 +73,7 @@ export class ThoughtSegmentRepo {
 
   /** Create a single thought segment record and return the fully-populated record. */
   create(input: CreateThoughtSegmentInput): ThoughtSegmentRecord {
-    const id = input.id ?? randomUUID();
+    const id = input.id ?? NodeCrypto.randomUUID();
     const isFinalResponse = input.isFinalResponse ?? 0;
     this.stmtInsert.run(
       id,
@@ -101,7 +101,7 @@ export class ThoughtSegmentRepo {
     const tx = this.db.transaction((items: CreateThoughtSegmentInput[]) => {
       for (const item of items) {
         this.stmtInsert.run(
-          item.id ?? randomUUID(),
+          item.id ?? NodeCrypto.randomUUID(),
           item.messageId,
           item.text,
           item.startedAt,
@@ -126,7 +126,7 @@ export class ThoughtSegmentRepo {
       byteLength: (item) => Buffer.byteLength(JSON.stringify(item), "utf8"),
       write: (item) => {
         this.stmtInsert.run(
-          item.id ?? randomUUID(),
+          item.id ?? NodeCrypto.randomUUID(),
           item.messageId,
           item.text,
           item.startedAt,

@@ -4,7 +4,7 @@ import type {
   IProviderRegistry,
   ProviderRuntimeEvent,
 } from "@mcode/contracts";
-import type { EventEmitter } from "node:events";
+import type * as NodeEvents from "node:events";
 
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import { WorkspaceEnvironmentService } from "../../../projects/index.js";
@@ -54,7 +54,7 @@ export function runtimeProviderEvent(event: AgentEvent): ProviderRuntimeEvent {
 }
 
 /** Make a test EventEmitter publish provider runtime envelopes. */
-export function wrapProviderEmitterForRuntimeEvents<T extends EventEmitter>(emitter: T): T {
+export function wrapProviderEmitterForRuntimeEvents<T extends NodeEvents.EventEmitter>(emitter: T): T {
   const emit = emitter.emit.bind(emitter);
   emitter.emit = ((eventName: string, event?: unknown, ...args: unknown[]) => {
     if (eventName !== "event" || !event || typeof event !== "object" || "event" in event) {
@@ -125,6 +125,7 @@ export function createAgentServiceForTest(
   const tracker = new TurnFileTracker(
     (cwd, ref, path) => snapshotService.getFileAtRef(cwd, ref, path),
     () => undefined,
+    "win32",
   );
   const finalizer = new TurnFinalizer(
     messageRepo,
@@ -184,6 +185,7 @@ export function createAgentServiceForTest(
     resolvedGoals,
     workspaceEnvironmentService,
     fileService,
+    "linux",
   );
   const conversationProjection = new TurnConversationProjectionService(
     threadRepo,

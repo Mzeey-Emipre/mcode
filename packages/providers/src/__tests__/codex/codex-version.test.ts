@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("child_process", () => ({
+vi.mock("node:child_process", () => ({
   spawnSync: vi.fn(),
 }));
 
-import { spawnSync } from "child_process";
+import * as NodeChildProcess from "node:child_process";
 import { meetsMinVersion, checkCodexVersion, clearVersionCache } from "../../private/codex/codex-version.js";
 
-const mockSpawnSync = vi.mocked(spawnSync);
+const mockSpawnSync = vi.mocked(NodeChildProcess.spawnSync);
 
 describe("meetsMinVersion", () => {
   it("returns true when version meets minimum", () => {
@@ -127,7 +127,7 @@ describe("checkCodexVersion error messages", () => {
   });
 
   it("returns error when CLI exits with non-zero status", () => {
-    vi.mocked(spawnSync).mockReturnValueOnce({
+    vi.mocked(NodeChildProcess.spawnSync).mockReturnValueOnce({
       pid: 123,
       status: 1,
       signal: null,

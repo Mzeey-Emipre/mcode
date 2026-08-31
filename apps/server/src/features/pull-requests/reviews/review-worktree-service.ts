@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import type {
   InteractionMode,
@@ -44,6 +44,13 @@ interface ResolvedReviewSource {
   contract: PullRequestReviewSource;
   git: PullRequestReviewGitSource;
 }
+
+type ReviewTaskProvisionResult =
+  | Extract<
+    Awaited<ReturnType<PullRequestReviewGitService["provisionPullRequestReviewWorktree"]>>,
+    { kind: "requires_reuse" }
+  >
+  | { kind: "committed"; value: { threadId: string; link: PullRequestReviewLinkDto } };
 
 class CanonicalReviewTaskWonError extends Error {
   constructor(readonly winner: PullRequestReviewLinkDto) {
@@ -124,111 +131,111 @@ export class ReviewWorktreeService {
       }
 
       try {
-        const source = await this.loadAndValidateSource(request.identity);
-        const workspace = await this.resolveWorkspace(
-          source.git.baseRepositoryUrl,
-          request.workspaceId,
-        );
-        if ("error" in workspace) return { ok: false, error: workspace.error };
-
-        const compatible = await this.pullRequestReviews.findCompatiblePullRequestReviewWorktrees(
-          workspace.workspace.path,
-          source.git,
-        );
-
-        if (request.action === "prepare") {
-          if (compatible[0]) {
-            return {
-              ok: true,
-              status: "existing_worktree",
-              source: source.contract,
-              workspace: workspace.candidate,
-              worktree: compatible[0],
-            };
-          }
-          const suggestedWorktreeName = this.suggestWorktreeName(source.contract);
-          return {
-            ok: true,
-            status: "confirmation_required",
-            source: source.contract,
-            workspace: workspace.candidate,
-            suggestedWorktreeName,
-            destinationPath: this.pullRequestReviews.getReviewWorktreeDestination(
-              workspace.workspace.path,
-              suggestedWorktreeName,
-            ),
-          };
-        }
-
-        if (source.contract.expectedHeadOid.toLowerCase() !== request.expectedHeadOid.toLowerCase()) {
-          return {
-            ok: false,
-            error: {
-              code: "conflict",
-              message: "The pull request head changed. Refresh before creating the Review task.",
-            },
-          };
-        }
-
-        let mutation;
-        try {
-          mutation = await this.pullRequestReviews.provisionPullRequestReviewWorktreeAndCommit(
-            workspace.workspace.path,
-            source.git,
-            request.action === "create_new"
-              ? { action: "create_new", worktreeName: request.worktreeName }
-              : { action: "reuse_existing", candidateId: request.candidateId },
-            (provisioned) => {
-              try {
-                return this.persistReviewTask(
-                  request.identity,
-                  source,
-                  workspace.workspace.id,
-                  provisioned,
-                );
-              } catch (error) {
-                const winner = this.findActiveCanonicalLink(request.identity);
-                if (winner) throw new CanonicalReviewTaskWonError(winner);
-                throw error;
-              }
-            },
-          );
-        } catch (error) {
-          if (error instanceof CanonicalReviewTaskWonError) {
-            return {
-              ok: true,
-              status: "ready",
-              reused: true,
-              reviewLink: error.winner,
-            };
-          }
-          throw error;
-        }
-        if (mutation.kind === "requires_reuse") {
-          return {
-            ok: true,
-            status: "existing_worktree",
-            source: source.contract,
-            workspace: workspace.candidate,
-            worktree: mutation.candidate,
-          };
-        }
-        const warnings = await this.seedInitialContext(
-          mutation.value.threadId,
-          request.intent,
-          source.remote,
-        );
-        return {
-          ok: true,
-          status: "ready",
-          reused: false,
-          reviewLink: mutation.value.link,
-          ...(warnings.length > 0 ? { warnings } : {}),
-        };
+        return await this.createReviewTaskUnderLock(request);
       } catch (error) {
         return { ok: false, error: this.toPullRequestError(error) };
       }
     });
+  }
+
+  private async createReviewTaskUnderLock(
+    request: PullRequestCreateReviewTaskRequest,
+  ): Promise<PullRequestCreateReviewTaskResult> {
+    const source = await this.loadAndValidateSource(request.identity);
+    const workspace = await this.resolveWorkspace(source.git.baseRepositoryUrl, request.workspaceId);
+    if ("error" in workspace) return { ok: false, error: workspace.error };
+    const compatible = await this.pullRequestReviews.findCompatiblePullRequestReviewWorktrees(
+      workspace.workspace.path,
+      source.git,
+    );
+    if (request.action === "prepare") return this.prepareReviewTask(source, workspace, compatible);
+    return this.completeReviewTask(request, source, workspace);
+  }
+
+  private prepareReviewTask(
+    source: ResolvedReviewSource,
+    workspace: Exclude<Awaited<ReturnType<ReviewWorktreeService["resolveWorkspace"]>>, { error: PullRequestError }>,
+    compatible: Awaited<ReturnType<PullRequestReviewGitService["findCompatiblePullRequestReviewWorktrees"]>>,
+  ): PullRequestCreateReviewTaskResult {
+    if (compatible[0]) {
+      return { ok: true, status: "existing_worktree", source: source.contract,
+        workspace: workspace.candidate, worktree: compatible[0] };
+    }
+    const suggestedWorktreeName = this.suggestWorktreeName(source.contract);
+    return {
+      ok: true,
+      status: "confirmation_required",
+      source: source.contract,
+      workspace: workspace.candidate,
+      suggestedWorktreeName,
+      destinationPath: this.pullRequestReviews.getReviewWorktreeDestination(
+        workspace.workspace.path,
+        suggestedWorktreeName,
+      ),
+    };
+  }
+
+  private async completeReviewTask(
+    request: Exclude<PullRequestCreateReviewTaskRequest, { action: "prepare" }>,
+    source: ResolvedReviewSource,
+    workspace: Exclude<Awaited<ReturnType<ReviewWorktreeService["resolveWorkspace"]>>, { error: PullRequestError }>,
+  ): Promise<PullRequestCreateReviewTaskResult> {
+    if (source.contract.expectedHeadOid.toLowerCase() !== request.expectedHeadOid.toLowerCase()) {
+      return { ok: false, error: { code: "conflict", message: "The pull request head changed. Refresh before creating the Review task." } };
+    }
+    const mutation = await this.provisionReviewTask(request, source, workspace.workspace.id, workspace.workspace.path);
+    if (mutation instanceof CanonicalReviewTaskWonError) {
+      return { ok: true, status: "ready", reused: true, reviewLink: mutation.winner };
+    }
+    if (mutation.kind === "requires_reuse") {
+      return { ok: true, status: "existing_worktree", source: source.contract,
+        workspace: workspace.candidate, worktree: mutation.candidate };
+    }
+    const warnings = await this.seedInitialContext(mutation.value.threadId, request.intent, source.remote);
+    return { ok: true, status: "ready", reused: false, reviewLink: mutation.value.link,
+      ...(warnings.length > 0 ? { warnings } : {}) };
+  }
+
+  private async provisionReviewTask(
+    request: Exclude<PullRequestCreateReviewTaskRequest, { action: "prepare" }>,
+    source: ResolvedReviewSource,
+    workspaceId: string,
+    workspacePath: string,
+  ): Promise<
+    | ReviewTaskProvisionResult
+    | CanonicalReviewTaskWonError
+  > {
+    try {
+      return await this.pullRequestReviews.provisionPullRequestReviewWorktreeAndCommit(
+        workspacePath,
+        source.git,
+        request.action === "create_new"
+          ? { action: "create_new", worktreeName: request.worktreeName }
+          : { action: "reuse_existing", candidateId: request.candidateId },
+        (provisioned) => this.persistCanonicalReviewTask(request.identity, source, workspaceId, provisioned),
+      );
+    } catch (error) {
+      if (error instanceof CanonicalReviewTaskWonError) return error;
+      throw error;
+    }
+  }
+
+  private persistCanonicalReviewTask(
+    identity: PullRequestIdentity,
+    source: ResolvedReviewSource,
+    workspaceId: string,
+    provisioned: Extract<
+      Awaited<ReturnType<PullRequestReviewGitService["provisionPullRequestReviewWorktree"]>>,
+      { kind: "ready" }
+    >,
+  ): { threadId: string; link: PullRequestReviewLinkDto } {
+    try {
+      return this.persistReviewTask(identity, source, workspaceId, provisioned);
+    } catch (error) {
+      const winner = this.findActiveCanonicalLink(identity);
+      if (winner) throw new CanonicalReviewTaskWonError(winner);
+      throw error;
+    }
   }
 
   /** Restore the durable pull request linkage for one active canonical Review task. */
@@ -511,7 +518,7 @@ export class ReviewWorktreeService {
       let link = existing
         ? this.reviewLinkRepo.replaceLocalCheckout(linkIdentity, checkout)
         : this.reviewLinkRepo.insert({
-            worktreeId: randomUUID(),
+            worktreeId: NodeCrypto.randomUUID(),
             ...linkIdentity,
             ...checkout,
           });

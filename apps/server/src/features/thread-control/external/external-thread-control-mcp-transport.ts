@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { AsyncLocalStorage } from "node:async_hooks";
+import * as NodeCrypto from "node:crypto";
+import * as NodeAsyncHooks from "node:async_hooks";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   ThreadCreateBatchInputSchema,
@@ -47,7 +47,7 @@ export interface ExternalThreadControlMcpRequest extends ExternalThreadControlMc
 export interface ExternalThreadControlMcpSession {
   dispatch(request: ExternalThreadControlMcpRequest): Promise<Record<string, unknown>>;
   createServer(credential?: string): McpServer;
-  contextStorage: AsyncLocalStorage<ExternalThreadControlMcpContext>;
+  contextStorage: NodeAsyncHooks.AsyncLocalStorage<ExternalThreadControlMcpContext>;
 }
 
 /** Creates an authenticated, replay-safe external MCP adapter. */
@@ -55,7 +55,7 @@ export function createExternalThreadControlMcpSession(options: {
   pairingService: ExternalThreadControlPairingService;
   service: ThreadControlService;
 }): ExternalThreadControlMcpSession {
-  const contextStorage = new AsyncLocalStorage<ExternalThreadControlMcpContext>();
+  const contextStorage = new NodeAsyncHooks.AsyncLocalStorage<ExternalThreadControlMcpContext>();
   const inFlight = new Map<string, Promise<Record<string, unknown>>>();
 
   const dispatch = async (request: ExternalThreadControlMcpRequest): Promise<Record<string, unknown>> => {
@@ -181,7 +181,7 @@ function createToolResult(structuredContent: Record<string, unknown>) {
 
 /** Stable request fingerprint used to reject same-delivery payload changes. */
 export function requestFingerprint(toolName: string, arguments_: unknown): string {
-  return createHash("sha256").update(stableStringify({ toolName, arguments: arguments_ }), "utf8").digest("hex");
+  return NodeCrypto.createHash("sha256").update(stableStringify({ toolName, arguments: arguments_ }), "utf8").digest("hex");
 }
 
 function stableStringify(value: unknown): string {

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   TERMINAL_CHECKPOINT_CHUNK_BYTES,
@@ -31,6 +31,8 @@ import {
   type TerminalBackendSender,
 } from "../../terminal-backend.js";
 import { ModernTerminalBackend } from "../modern-terminal-backend.js";
+
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const attachmentId = "00000000-0000-4000-8000-000000000002";
@@ -143,7 +145,7 @@ function makeHarness() {
     closeSession: vi.fn(async () => makeSnapshot()),
     dispose: vi.fn(),
   } as unknown as TerminalSessionService;
-  const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20);
+  const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, TEST_HOST_RUNTIME);
   const frames: Uint8Array[] = [];
   const sender: TerminalBackendSender = {
     json: vi.fn(),
@@ -232,7 +234,7 @@ describe("ModernTerminalBackend", () => {
       lastCommandSeq: "0",
     }, harness.client);
     const data = new TextEncoder().encode("checkpoint");
-    const sha256 = createHash("sha256").update(data).digest("hex");
+    const sha256 = NodeCrypto.createHash("sha256").update(data).digest("hex");
     const begun = await harness.backend.routeV1("terminal.session.checkpoint.begin", {
       sessionId,
       attachmentId,
@@ -410,7 +412,7 @@ describe("ModernTerminalBackend", () => {
       lastCommandSeq: "0",
     }, harness.client);
     const data = new TextEncoder().encode("checkpoint");
-    const sha256 = createHash("sha256").update(data).digest("hex");
+    const sha256 = NodeCrypto.createHash("sha256").update(data).digest("hex");
     const begun = await harness.backend.routeV1("terminal.session.checkpoint.begin", {
       sessionId,
       attachmentId,
@@ -488,7 +490,7 @@ describe("ModernTerminalBackend", () => {
       health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
       diagnostics: vi.fn(() => ({ lastHeartbeatMsAgo: 0, queueBytes: 0, eventLoopLagMs: 0, hostRssBytes: "0" })),
     } as unknown as PtyHostAdapter & { health(): PtyHostHealth; diagnostics(): PtyHostDiagnostics };
-    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, undefined, () => "workspace-1");
+    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, TEST_HOST_RUNTIME, undefined, () => "workspace-1");
 
     const prepared = await backend.startPreparedCommand({ threadId: "thread-1", script: "Write-Output fast" });
     const output = vi.fn();
@@ -545,7 +547,7 @@ describe("ModernTerminalBackend", () => {
         health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
         diagnostics: vi.fn(() => ({ lastHeartbeatMsAgo: 0, queueBytes: 0, eventLoopLagMs: 0, hostRssBytes: "0" })),
       } as unknown as PtyHostAdapter & { health(): PtyHostHealth; diagnostics(): PtyHostDiagnostics };
-      const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, undefined, () => "workspace-1");
+      const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, TEST_HOST_RUNTIME, undefined, () => "workspace-1");
 
       const prepared = await backend.startPreparedCommand({ threadId: "thread-1", script: "Write-Output crash" });
       const exit = vi.fn();
@@ -589,7 +591,7 @@ describe("ModernTerminalBackend", () => {
       health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
       diagnostics: vi.fn(() => ({ lastHeartbeatMsAgo: 0, queueBytes: 0, eventLoopLagMs: 0, hostRssBytes: "0" })),
     } as unknown as PtyHostAdapter & { health(): PtyHostHealth; diagnostics(): PtyHostDiagnostics };
-    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, undefined, () => "workspace-1");
+    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, TEST_HOST_RUNTIME, undefined, () => "workspace-1");
 
     const prepared = await backend.startPreparedCommand({ threadId: "thread-1", script: "Write-Output noisy" });
     publishHeadless?.({
@@ -627,7 +629,7 @@ describe("ModernTerminalBackend", () => {
       health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
       diagnostics: vi.fn(() => ({ lastHeartbeatMsAgo: 0, queueBytes: 0, eventLoopLagMs: 0, hostRssBytes: "0" })),
     } as unknown as PtyHostAdapter & { health(): PtyHostHealth; diagnostics(): PtyHostDiagnostics };
-    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, undefined, () => "workspace-1");
+    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, TEST_HOST_RUNTIME, undefined, () => "workspace-1");
 
     const failure = await backend.startPreparedCommand({
       threadId: "thread-1",

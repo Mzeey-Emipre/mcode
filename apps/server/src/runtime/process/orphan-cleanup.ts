@@ -6,8 +6,8 @@
  * credits after an unclean shutdown.
  */
 
-import { existsSync, readFileSync } from "fs";
-import { execSync } from "child_process";
+import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import type { PtyPidRegistry } from "../../features/terminal/host/pty-pid-registry.js";
 
 /** Subset of the lock file contents we care about for orphan detection. */
@@ -33,20 +33,21 @@ const KNOWN_SERVER_BASENAMES = new Set(["node", "node.exe", "bun", "bun.exe"]);
  * Returns null if the name cannot be determined (e.g., /proc unavailable).
  * Used as the default for `OrphanCleanupDeps.getProcessName`.
  */
-function defaultGetProcessName(pid: number): string | null {
+function defaultGetProcessName(pid: number, platform: NodeJS.Platform): string | null {
   try {
-    if (process.platform === "win32") {
+    if (platform === "win32") {
       // tasklist /FO CSV outputs: "node.exe","1234","Console","1","5,192 K"
-      const out = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
+      const out = NodeChildProcess.execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
         timeout: 3000,
         encoding: "utf-8",
-      } as Parameters<typeof execSync>[1]);
+      } as Parameters<typeof NodeChildProcess.execSync>[1]);
       const match = /^"([^"]+)"/.exec(String(out).trim());
       return match ? match[1] : null;
-    } else {
+    } else if (platform === "linux") {
       // /proc/pid/comm is the fastest path on Linux.
-      return readFileSync(`/proc/${pid}/comm`, "utf-8").trim();
+      return NodeFS.readFileSync(`/proc/${pid}/comm`, "utf-8").trim();
     }
+    return null;
   } catch {
     return null;
   }
@@ -78,8 +79,8 @@ export interface OrphanCleanupDeps {
   getProcessName?: (pid: number) => string | null;
   /** Current process PID. Defaults to process.pid. */
   currentPid?: number;
-  /** Current platform string. Defaults to process.platform. */
-  platform?: NodeJS.Platform;
+  /** Current platform string. */
+  platform: NodeJS.Platform;
 }
 
 /** Injectable dependencies for {@link reapOrphanedPtys}. */
@@ -87,8 +88,27 @@ export interface ReapOrphanedPtysDeps {
   processKill?: (pid: number, signal: number | string) => void;
   execSync?: (cmd: string, opts?: { stdio?: "ignore"; timeout?: number }) => Buffer | string;
   getProcessName?: (pid: number) => string | null;
-  /** Current platform string. Defaults to process.platform. */
-  platform?: NodeJS.Platform;
+  /** Current platform string. */
+  platform: NodeJS.Platform;
+}
+
+type StalePtyEntry = ReturnType<PtyPidRegistry["loadStale"]>[number];
+
+interface ReapContext {
+  processKill: (pid: number, signal: number | string) => void;
+  execSync: NonNullable<ReapOrphanedPtysDeps["execSync"]>;
+  getProcessName: NonNullable<ReapOrphanedPtysDeps["getProcessName"]>;
+  platform: NodeJS.Platform;
+}
+
+/** Creates the process dependencies used while reaping stale PTYs. */
+function createReapContext(deps: ReapOrphanedPtysDeps): ReapContext {
+  return {
+    processKill: deps.processKill ?? ((pid, signal) => process.kill(pid, signal as never)),
+    execSync: deps.execSync ?? ((cmd, opts) => NodeChildProcess.execSync(cmd, opts)),
+    getProcessName: deps.getProcessName ?? ((pid) => defaultGetProcessName(pid, deps.platform)),
+    platform: deps.platform,
+  };
 }
 
 /**
@@ -103,115 +123,156 @@ export interface ReapOrphanedPtysDeps {
 export function reapOrphanedPtys(
   registry: PtyPidRegistry,
   logger: MinLogger,
-  deps: ReapOrphanedPtysDeps = {},
+  deps: ReapOrphanedPtysDeps,
 ): void {
-  const {
-    processKill = (pid, signal) => process.kill(pid, signal as never),
-    execSync: execSyncFn = (cmd, opts) => execSync(cmd, opts),
-    getProcessName = defaultGetProcessName,
-    platform = process.platform,
-  } = deps;
+  const context = createReapContext(deps);
 
   const stale = registry.loadStale();
   if (stale.length === 0) return;
 
-  for (const entry of stale) {
-    try {
-      processKill(entry.pid, 0);
-    } catch {
-      continue; // Already dead
-    }
+  for (const entry of stale) reapOrphanedPty(entry, logger, context);
+}
 
-    // Guard against the catastrophic kill(-1, SIGKILL) path: on Unix,
-    // -entry.pid with pid=1 would signal every process the user can reach.
-    if (entry.pid <= 1) {
-      logger.warn("Skipping orphaned PTY with unsafe PID", { ptyId: entry.ptyId, pid: entry.pid });
-      continue;
-    }
+/** Reaps one verified PTY left by a crashed server. */
+function reapOrphanedPty(entry: StalePtyEntry, logger: MinLogger, context: ReapContext): void {
+  if (!isProcessAlive(entry.pid, context.processKill)) return;
+  if (!hasSafePtyPid(entry, logger)) return;
+  if (!matchesRecordedPtyImage(entry, logger, context.getProcessName)) return;
 
-    const currentName = getProcessName(entry.pid);
-    if (currentName === null) {
-      // Cannot verify identity (e.g. no /proc on this platform). Skip to avoid
-      // killing an unrelated process that reused the PID.
-      logger.warn("Cannot verify orphaned PTY process identity; skipping kill", {
-        ptyId: entry.ptyId,
-        pid: entry.pid,
-      });
-      continue;
-    }
-    const basename = currentName.toLowerCase().split(/[\\/]/).pop() ?? "";
-    const recorded = entry.imageName.toLowerCase().split(/[\\/]/).pop() ?? "";
-    if (basename !== recorded) {
-      logger.warn("Orphaned PTY PID belongs to a different process; skipping kill", {
-        ptyId: entry.ptyId,
-        pid: entry.pid,
-        recordedName: entry.imageName,
-        currentName,
-      });
-      continue;
-    }
+  logger.debug("Reaping orphaned PTY process from previous crash", {
+    ptyId: entry.ptyId,
+    pid: entry.pid,
+    imageName: entry.imageName,
+  });
+  if (!killOrphanedPty(entry, logger, context)) return;
 
-    logger.debug("Reaping orphaned PTY process from previous crash", {
+  logger.warn("Reaped orphaned PTY process from previous crash", {
+    ptyId: entry.ptyId,
+    pid: entry.pid,
+    imageName: entry.imageName,
+  });
+}
+
+/** Checks whether a PID still accepts signal zero. */
+function isProcessAlive(pid: number, processKill: ReapContext["processKill"]): boolean {
+  try {
+    processKill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Rejects PID values that could turn a group kill into a broad signal. */
+function hasSafePtyPid(entry: StalePtyEntry, logger: MinLogger): boolean {
+  if (entry.pid > 1) return true;
+  logger.warn("Skipping orphaned PTY with unsafe PID", { ptyId: entry.ptyId, pid: entry.pid });
+  return false;
+}
+
+/** Confirms that the live process still has the shell image stored in the registry. */
+function matchesRecordedPtyImage(
+  entry: StalePtyEntry,
+  logger: MinLogger,
+  getProcessName: ReapContext["getProcessName"],
+): boolean {
+  const currentName = getProcessName(entry.pid);
+  if (currentName === null) {
+    logger.warn("Cannot verify orphaned PTY process identity; skipping kill", { ptyId: entry.ptyId, pid: entry.pid });
+    return false;
+  }
+  if (processBasename(currentName) === processBasename(entry.imageName)) return true;
+
+  logger.warn("Orphaned PTY PID belongs to a different process; skipping kill", {
+    ptyId: entry.ptyId,
+    pid: entry.pid,
+    recordedName: entry.imageName,
+    currentName,
+  });
+  return false;
+}
+
+/** Returns a normalized process image basename. */
+function processBasename(imageName: string): string {
+  return imageName.toLowerCase().split(/[\\/]/).pop() ?? "";
+}
+
+/** Kills an orphaned PTY with platform-specific tree containment. */
+function killOrphanedPty(entry: StalePtyEntry, logger: MinLogger, context: ReapContext): boolean {
+  return context.platform === "win32"
+    ? killWindowsOrphanedPty(entry, logger, context.execSync)
+    : killUnixOrphanedPty(entry, logger, context.processKill);
+}
+
+/** Kills a Windows PTY tree and treats a disappeared process as success. */
+function killWindowsOrphanedPty(
+  entry: StalePtyEntry,
+  logger: MinLogger,
+  execSyncFn: ReapContext["execSync"],
+): boolean {
+  try {
+    execSyncFn(`taskkill /T /F /PID ${entry.pid}`, { stdio: "ignore", timeout: 5000 });
+    return true;
+  } catch (error) {
+    if (isWindowsProcessGone(error)) return true;
+    logger.warn("Failed to kill orphaned PTY process tree", {
       ptyId: entry.ptyId,
       pid: entry.pid,
-      imageName: entry.imageName,
+      error: errorMessage(error),
     });
-
-    let killSucceeded = false;
-    if (platform === "win32") {
-      try {
-        execSyncFn(`taskkill /T /F /PID ${entry.pid}`, { stdio: "ignore", timeout: 5000 });
-        killSucceeded = true;
-      } catch (killErr) {
-        const e = killErr as NodeJS.ErrnoException & { code?: string | number; stderr?: string };
-        const alreadyGone =
-          (typeof e.code === "number" && e.code === 128) ||
-          (typeof e.stderr === "string" && /not found/i.test(e.stderr));
-        if (alreadyGone) {
-          killSucceeded = true;
-        } else {
-          logger.warn("Failed to kill orphaned PTY process tree", {
-            ptyId: entry.ptyId,
-            pid: entry.pid,
-            error: e instanceof Error ? e.message : String(e),
-          });
-        }
-      }
-    } else {
-      try {
-        processKill(-entry.pid, "SIGKILL");
-        killSucceeded = true;
-      } catch (groupErr) {
-        if ((groupErr as NodeJS.ErrnoException)?.code === "ESRCH") {
-          killSucceeded = true;
-        } else {
-          // Group kill failed (e.g. EPERM) — fall through to direct kill.
-          try {
-            processKill(entry.pid, "SIGKILL");
-            killSucceeded = true;
-          } catch (directErr) {
-            if ((directErr as NodeJS.ErrnoException)?.code === "ESRCH") {
-              killSucceeded = true;
-            } else {
-              logger.warn("Failed to kill orphaned PTY process", {
-                ptyId: entry.ptyId,
-                pid: entry.pid,
-                error: directErr instanceof Error ? directErr.message : String(directErr),
-              });
-            }
-          }
-        }
-      }
-    }
-
-    if (killSucceeded) {
-      logger.warn("Reaped orphaned PTY process from previous crash", {
-        ptyId: entry.ptyId,
-        pid: entry.pid,
-        imageName: entry.imageName,
-      });
-    }
+    return false;
   }
+}
+
+/** Checks for taskkill's already-gone responses. */
+function isWindowsProcessGone(error: unknown): boolean {
+  const value = error as NodeJS.ErrnoException & { code?: string | number; stderr?: string };
+  return (typeof value.code === "number" && value.code === 128) || (typeof value.stderr === "string" && /not found/i.test(value.stderr));
+}
+
+/** Kills a Unix PTY group, then the process when it lacks a process group. */
+function killUnixOrphanedPty(
+  entry: StalePtyEntry,
+  logger: MinLogger,
+  processKill: ReapContext["processKill"],
+): boolean {
+  try {
+    processKill(-entry.pid, "SIGKILL");
+    return true;
+  } catch (groupError) {
+    if (isMissingProcess(groupError)) return true;
+  }
+  return killUnixPtyDirectly(entry, logger, processKill);
+}
+
+/** Kills the PTY process when its process group could not be signalled. */
+function killUnixPtyDirectly(
+  entry: StalePtyEntry,
+  logger: MinLogger,
+  processKill: ReapContext["processKill"],
+): boolean {
+  try {
+    processKill(entry.pid, "SIGKILL");
+    return true;
+  } catch (error) {
+    if (isMissingProcess(error)) return true;
+    logger.warn("Failed to kill orphaned PTY process", {
+      ptyId: entry.ptyId,
+      pid: entry.pid,
+      error: errorMessage(error),
+    });
+    return false;
+  }
+}
+
+/** Checks for a missing POSIX process. */
+function isMissingProcess(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException)?.code === "ESRCH";
+}
+
+/** Formats an unknown thrown value for structured logging. */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -222,86 +283,111 @@ export function reapOrphanedPtys(
  * or the process is already dead.
  */
 export function killOrphanedServer(deps: OrphanCleanupDeps): void {
-  const {
-    lockFilePath,
-    logger,
-    processKill = (pid, signal) => process.kill(pid, signal as never),
-    execSync: execSyncFn = (cmd, opts) => execSync(cmd, opts),
-    getProcessName = defaultGetProcessName,
-    currentPid = process.pid,
-    platform = process.platform,
-  } = deps;
+  const context = createServerCleanupContext(deps);
 
   try {
-    if (!existsSync(lockFilePath)) return;
+    const pid = readOrphanedServerPid(deps.lockFilePath, context.currentPid);
+    if (pid === null || !isProcessAlive(pid, context.processKill)) return;
 
-    const raw = readFileSync(lockFilePath, "utf-8");
-    const lock = JSON.parse(raw) as LockFile;
-    // Reject PID 1 explicitly: kill(-1, SIGTERM) signals every process owned
-    // by the calling user, which is catastrophic.
-    if (typeof lock.pid !== "number" || !Number.isInteger(lock.pid) || lock.pid <= 1 || lock.pid === currentPid) return;
-
-    // Check if the old process is still alive by sending signal 0.
-    try {
-      processKill(lock.pid, 0);
-    } catch {
-      // Process is already dead; nothing to clean up.
+    const identity = getServerProcessIdentity(pid, context.getProcessName);
+    if (identity.kind === "unrecognized") {
+      deps.logger.warn("Orphaned lock PID does not belong to a known server process; skipping kill", {
+        pid,
+        name: identity.name,
+      });
       return;
     }
 
-    // Verify the process image name matches a known server binary before
-    // killing. This guards against PID reuse: if the OS recycled the PID to an
-    // unrelated process between the liveness check and the kill, we skip.
-    const processName = getProcessName(lock.pid);
-    const identityVerified = processName !== null;
-    if (identityVerified) {
-      const basename = processName.toLowerCase().split(/[\\/]/).pop() ?? "";
-      const isKnownServer = KNOWN_SERVER_BASENAMES.has(basename);
-      if (!isKnownServer) {
-        logger.warn("Orphaned lock PID does not belong to a known server process; skipping kill", {
-          pid: lock.pid,
-          name: processName,
-        });
-        return;
-      }
-    }
-
-    logger.warn("Found orphaned server process, killing", { pid: lock.pid });
-
-    if (platform === "win32") {
-      // /T kills the process tree, /F forces termination. Timeout prevents
-      // blocking server startup if taskkill hangs on a deep process tree.
-      try {
-        execSyncFn(`taskkill /T /F /PID ${lock.pid}`, { stdio: "ignore", timeout: 5000 });
-      } catch {
-        // Process may have exited between the liveness check and the kill.
-      }
-    } else if (identityVerified) {
-      // Identity confirmed: safe to kill the process group to catch SDK children.
-      try {
-        processKill(-lock.pid, "SIGTERM");
-      } catch {
-        // Fallback: kill just the named process if process-group kill fails
-        // (e.g. the old server was not a process group leader).
-        try {
-          processKill(lock.pid, "SIGTERM");
-        } catch {
-          // Already dead.
-        }
-      }
-    } else {
-      // Identity unknown (e.g. no /proc on macOS): only kill the specific
-      // process, never the group, to avoid collateral damage on recycled PIDs.
-      logger.warn("Could not verify process identity; killing single process only", { pid: lock.pid });
-      try {
-        processKill(lock.pid, "SIGTERM");
-      } catch {
-        // Already dead.
-      }
-    }
-  } catch (err) {
-    logger.warn("Failed to clean up orphaned server", {
-      error: err instanceof Error ? err.message : String(err),
+    deps.logger.warn("Found orphaned server process, killing", { pid });
+    killOrphanedServerProcess(pid, identity, deps.logger, context);
+  } catch (error) {
+    deps.logger.warn("Failed to clean up orphaned server", {
+      error: errorMessage(error),
     });
+  }
+}
+
+interface ServerCleanupContext {
+  processKill: (pid: number, signal: number | string) => void;
+  execSync: NonNullable<OrphanCleanupDeps["execSync"]>;
+  getProcessName: NonNullable<OrphanCleanupDeps["getProcessName"]>;
+  currentPid: number;
+  platform: NodeJS.Platform;
+}
+
+type ServerProcessIdentity = { kind: "verified" } | { kind: "unknown" } | { kind: "unrecognized"; name: string };
+
+/** Creates the process dependencies used while clearing an orphaned server. */
+function createServerCleanupContext(deps: OrphanCleanupDeps): ServerCleanupContext {
+  return {
+    processKill: deps.processKill ?? ((pid, signal) => process.kill(pid, signal as never)),
+    execSync: deps.execSync ?? ((cmd, opts) => NodeChildProcess.execSync(cmd, opts)),
+    getProcessName: deps.getProcessName ?? ((pid) => defaultGetProcessName(pid, deps.platform)),
+    currentPid: deps.currentPid ?? process.pid,
+    platform: deps.platform,
+  };
+}
+
+/** Reads and validates the previous server PID from the lock file. */
+function readOrphanedServerPid(lockFilePath: string, currentPid: number): number | null {
+  if (!NodeFS.existsSync(lockFilePath)) return null;
+  const lock = JSON.parse(NodeFS.readFileSync(lockFilePath, "utf-8")) as LockFile;
+  if (typeof lock.pid !== "number" || !Number.isInteger(lock.pid) || lock.pid <= 1 || lock.pid === currentPid) return null;
+  return lock.pid;
+}
+
+/** Classifies the live process before a destructive signal is sent. */
+function getServerProcessIdentity(
+  pid: number,
+  getProcessName: ServerCleanupContext["getProcessName"],
+): ServerProcessIdentity {
+  const name = getProcessName(pid);
+  if (name === null) return { kind: "unknown" };
+  return KNOWN_SERVER_BASENAMES.has(processBasename(name)) ? { kind: "verified" } : { kind: "unrecognized", name };
+}
+
+/** Kills the previous server with the broadest safe containment for its identity. */
+function killOrphanedServerProcess(
+  pid: number,
+  identity: ServerProcessIdentity,
+  logger: MinLogger,
+  context: ServerCleanupContext,
+): void {
+  if (context.platform === "win32") {
+    killWindowsServerTree(pid, context.execSync);
+    return;
+  }
+  if (identity.kind === "verified") {
+    killVerifiedUnixServer(pid, context.processKill);
+    return;
+  }
+  logger.warn("Could not verify process identity; killing single process only", { pid });
+  killProcessSilently(pid, context.processKill);
+}
+
+/** Kills a Windows server process tree after its identity check. */
+function killWindowsServerTree(pid: number, execSyncFn: ServerCleanupContext["execSync"]): void {
+  try {
+    execSyncFn(`taskkill /T /F /PID ${pid}`, { stdio: "ignore", timeout: 5000 });
+  } catch {
+    // The process can exit after its liveness check.
+  }
+}
+
+/** Kills a verified Unix server group, then the root process as a fallback. */
+function killVerifiedUnixServer(pid: number, processKill: ServerCleanupContext["processKill"]): void {
+  try {
+    processKill(-pid, "SIGTERM");
+  } catch {
+    killProcessSilently(pid, processKill);
+  }
+}
+
+/** Sends SIGTERM to one process and ignores an already-exited process. */
+function killProcessSilently(pid: number, processKill: ServerCleanupContext["processKill"]): void {
+  try {
+    processKill(pid, "SIGTERM");
+  } catch {
+    // The process can exit after its liveness check.
   }
 }

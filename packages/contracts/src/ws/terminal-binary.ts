@@ -97,59 +97,101 @@ const validateIds = (frame: TerminalBinaryFrame): void => {
 };
 
 const validatePayload = (frame: TerminalBinaryFrame): void => {
-  const { kind, payload } = frame;
-  if (payload.byteLength > TERMINAL_MAX_PAYLOAD_BYTES) throw new Error("Terminal payload exceeds 64 KiB");
-  if (["input", "output"].includes(kind)) {
-    if (payload.byteLength === 0) throw new Error(`Terminal ${kind} payload is empty`);
+  if (frame.payload.byteLength > TERMINAL_MAX_PAYLOAD_BYTES) {
+    throw new Error("Terminal payload exceeds 64 KiB");
   }
-  if (kind === "input") validateUtf8(payload, kind);
-  if (kind === "resize") {
-    if (payload.byteLength !== 4) throw new Error("Terminal resize payload must be four bytes");
-    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-    const cols = view.getUint16(0, false);
-    const rows = view.getUint16(2, false);
-    if (cols < 1 || cols > TERMINAL_MAX_COLS || rows < 1 || rows > 500) {
-      throw new Error("Terminal resize dimensions are out of range");
-    }
-  }
-  if (["outputAck", "commandAck"].includes(kind) && payload.byteLength !== 0) {
-    throw new Error(`Terminal ${kind} payload must be empty`);
-  }
-  if (["input", "resize", "outputAck", "output", "hydrationComplete", "state"].includes(kind) && frame.relatedSeq !== "0") {
-    throw new Error(`Terminal ${kind} related sequence must be zero`);
-  }
-  if (["checkpointChunk", "hydrationChunk"].includes(kind)) {
-    if (payload.byteLength === 0) throw new Error(`Terminal ${kind} payload is empty`);
-    const chunks = BigInt(frame.relatedSeq);
-    const index = BigInt(frame.primarySeq);
-    if (chunks < 1n || chunks > 128n || index >= chunks) throw new Error(`Terminal ${kind} sequence is invalid`);
-  }
-  if (kind === "hydrationComplete") {
-    if (payload.byteLength > 4_096) throw new Error("Terminal hydration payload exceeds 4 KiB");
-    const descriptor = readJson(payload, TerminalHydrationDescriptorSchema(), "hydrationComplete");
-    if (descriptor.lastOutputSeq !== null && descriptor.lastOutputSeq !== frame.primarySeq) {
-      throw new Error("Terminal hydrationComplete sequence does not match its payload");
-    }
-  }
-  if (kind === "state") {
-    if (payload.byteLength > 2_048) throw new Error("Terminal state payload exceeds 2 KiB");
-    readJson(payload, statePayloadSchema, "state");
-  }
-  if (kind === "gap") {
-    if (payload.byteLength > 2_048) throw new Error("Terminal gap payload exceeds 2 KiB");
-    const gap = readJson(payload, TerminalGapSchema(), "gap");
-    if (gap.firstMissingSeq !== frame.primarySeq || gap.lastMissingSeq !== frame.relatedSeq) {
-      throw new Error("Terminal gap sequence does not match its payload");
-    }
-  }
-  if (kind === "exitBarrier") {
-    if (payload.byteLength > 2_048) throw new Error("Terminal exit payload exceeds 2 KiB");
-    const barrier = readJson(payload, exitBarrierPayloadSchema, "exitBarrier");
-    if (barrier.finalOutputSeq !== frame.primarySeq) {
-      throw new Error("Terminal exitBarrier sequence does not match its payload");
-    }
-  }
+  validateNonEmptyPayload(frame);
+  validateRelatedSequence(frame);
+  PAYLOAD_VALIDATORS[frame.kind]?.(frame);
 };
+
+const ZERO_RELATED_SEQUENCE_KINDS = new Set<TerminalBinaryFrameKind>([
+  "input",
+  "resize",
+  "outputAck",
+  "output",
+  "hydrationComplete",
+  "state",
+]);
+
+const PAYLOAD_VALIDATORS: Partial<Record<TerminalBinaryFrameKind, (frame: TerminalBinaryFrame) => void>> = {
+  input: validateInputPayload,
+  resize: validateResizePayload,
+  outputAck: validateEmptyPayload,
+  commandAck: validateEmptyPayload,
+  checkpointChunk: validateChunkPayload,
+  hydrationChunk: validateChunkPayload,
+  hydrationComplete: validateHydrationPayload,
+  state: validateStatePayload,
+  gap: validateGapPayload,
+  exitBarrier: validateExitBarrierPayload,
+};
+
+function validateNonEmptyPayload(frame: TerminalBinaryFrame): void {
+  if (["input", "output"].includes(frame.kind) && frame.payload.byteLength === 0) {
+    throw new Error(`Terminal ${frame.kind} payload is empty`);
+  }
+}
+
+function validateRelatedSequence(frame: TerminalBinaryFrame): void {
+  if (ZERO_RELATED_SEQUENCE_KINDS.has(frame.kind) && frame.relatedSeq !== "0") {
+    throw new Error(`Terminal ${frame.kind} related sequence must be zero`);
+  }
+}
+
+function validateInputPayload(frame: TerminalBinaryFrame): void {
+  validateUtf8(frame.payload, frame.kind);
+}
+
+function validateResizePayload(frame: TerminalBinaryFrame): void {
+  if (frame.payload.byteLength !== 4) throw new Error("Terminal resize payload must be four bytes");
+  const view = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
+  const cols = view.getUint16(0, false);
+  const rows = view.getUint16(2, false);
+  if (cols < 1 || cols > TERMINAL_MAX_COLS || rows < 1 || rows > 500) {
+    throw new Error("Terminal resize dimensions are out of range");
+  }
+}
+
+function validateEmptyPayload(frame: TerminalBinaryFrame): void {
+  if (frame.payload.byteLength !== 0) throw new Error(`Terminal ${frame.kind} payload must be empty`);
+}
+
+function validateChunkPayload(frame: TerminalBinaryFrame): void {
+  if (frame.payload.byteLength === 0) throw new Error(`Terminal ${frame.kind} payload is empty`);
+  const chunks = BigInt(frame.relatedSeq);
+  const index = BigInt(frame.primarySeq);
+  if (chunks < 1n || chunks > 128n || index >= chunks) throw new Error(`Terminal ${frame.kind} sequence is invalid`);
+}
+
+function validateHydrationPayload(frame: TerminalBinaryFrame): void {
+  if (frame.payload.byteLength > 4_096) throw new Error("Terminal hydration payload exceeds 4 KiB");
+  const descriptor = readJson(frame.payload, TerminalHydrationDescriptorSchema(), "hydrationComplete");
+  if (descriptor.lastOutputSeq !== null && descriptor.lastOutputSeq !== frame.primarySeq) {
+    throw new Error("Terminal hydrationComplete sequence does not match its payload");
+  }
+}
+
+function validateStatePayload(frame: TerminalBinaryFrame): void {
+  if (frame.payload.byteLength > 2_048) throw new Error("Terminal state payload exceeds 2 KiB");
+  readJson(frame.payload, statePayloadSchema, "state");
+}
+
+function validateGapPayload(frame: TerminalBinaryFrame): void {
+  if (frame.payload.byteLength > 2_048) throw new Error("Terminal gap payload exceeds 2 KiB");
+  const gap = readJson(frame.payload, TerminalGapSchema(), "gap");
+  if (gap.firstMissingSeq !== frame.primarySeq || gap.lastMissingSeq !== frame.relatedSeq) {
+    throw new Error("Terminal gap sequence does not match its payload");
+  }
+}
+
+function validateExitBarrierPayload(frame: TerminalBinaryFrame): void {
+  if (frame.payload.byteLength > 2_048) throw new Error("Terminal exit payload exceeds 2 KiB");
+  const barrier = readJson(frame.payload, exitBarrierPayloadSchema, "exitBarrier");
+  if (barrier.finalOutputSeq !== frame.primarySeq) {
+    throw new Error("Terminal exitBarrier sequence does not match its payload");
+  }
+}
 
 /** Encodes one strict Terminal v1 binary frame. */
 export function encodeTerminalFrame(frame: TerminalBinaryFrame): Uint8Array {
@@ -192,50 +234,119 @@ export function encodeTerminalFrame(frame: TerminalBinaryFrame): Uint8Array {
 
 /** Decodes and validates one strict Terminal v1 binary frame. */
 export function decodeTerminalFrame(bytes: Uint8Array): TerminalBinaryFrame {
+  const header = decodeTerminalFrameHeader(bytes);
+  const reader = { bytes, offset: TERMINAL_BINARY_HEADER_BYTES };
+  const frame = decodeTerminalFrameBody(header, reader);
+  validateDecodedFrameIds(frame);
+  validateIds(frame);
+  validatePayload(frame);
+  return frame;
+}
+
+type DecodedTerminalFrameHeader = {
+  readonly kind: TerminalBinaryFrameKind;
+  readonly view: DataView;
+  readonly sessionLength: number;
+  readonly attachmentLength: number;
+  readonly hydrationLength: number;
+  readonly uploadLength: number;
+  readonly payloadLength: number;
+};
+
+function decodeTerminalFrameHeader(bytes: Uint8Array): DecodedTerminalFrameHeader {
+  validateTerminalFrameLength(bytes);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  validateTerminalFramePrefix(bytes, view);
+  const kind = decodeTerminalFrameKind(view);
+  const lengths = decodeTerminalFrameLengths(view);
+  validateTerminalFrameBodyLength(bytes.length, lengths);
+  return { kind, view, ...lengths };
+}
+
+function validateTerminalFrameLength(bytes: Uint8Array): void {
   if (bytes.length < TERMINAL_BINARY_HEADER_BYTES) throw new Error("Terminal frame header is truncated");
   if (bytes.length > TERMINAL_BINARY_MAX_FRAME_BYTES) throw new Error("Terminal frame exceeds 70,000 bytes");
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes[0] !== TERMINAL_BINARY_MAGIC[0] || bytes[1] !== TERMINAL_BINARY_MAGIC[1]) throw new Error("Terminal frame magic is invalid");
+}
+
+function validateTerminalFramePrefix(bytes: Uint8Array, view: DataView): void {
+  if (bytes[0] !== TERMINAL_BINARY_MAGIC[0] || bytes[1] !== TERMINAL_BINARY_MAGIC[1]) {
+    throw new Error("Terminal frame magic is invalid");
+  }
   if (view.getUint8(2) !== 1) throw new Error("Terminal frame version is unsupported");
-  const kind = kindByCode.get(view.getUint8(3));
-  if (!kind) throw new Error("Terminal frame kind is unsupported");
   if (view.getUint16(4, false) !== 0) throw new Error("Terminal frame flags must be zero");
   if (view.getUint16(50, false) !== 0) throw new Error("Terminal frame reserved bytes must be zero");
+}
+
+function decodeTerminalFrameKind(view: DataView): TerminalBinaryFrameKind {
+  const kind = kindByCode.get(view.getUint8(3));
+  if (!kind) throw new Error("Terminal frame kind is unsupported");
+  return kind;
+}
+
+function decodeTerminalFrameLengths(view: DataView): Omit<DecodedTerminalFrameHeader, "kind" | "view"> {
   const sessionLength = view.getUint16(6, false);
   const attachmentLength = view.getUint16(8, false);
   const hydrationLength = view.getUint16(10, false);
   const uploadLength = view.getUint16(12, false);
-  if (sessionLength !== 36 || attachmentLength !== 36 || ![0, 36].includes(hydrationLength) || ![0, 36].includes(uploadLength)) {
-    throw new Error("Terminal frame ID lengths are invalid");
-  }
+  validateTerminalFrameIdLengths(sessionLength, attachmentLength, hydrationLength, uploadLength);
   const payloadLength = view.getUint32(46, false);
   if (payloadLength > TERMINAL_MAX_PAYLOAD_BYTES) throw new Error("Terminal payload exceeds 64 KiB");
-  const expected = TERMINAL_BINARY_HEADER_BYTES + sessionLength + attachmentLength + hydrationLength + uploadLength + payloadLength;
-  if (bytes.length !== expected) throw new Error("Terminal frame length has truncation or trailing bytes");
-  let offset = TERMINAL_BINARY_HEADER_BYTES;
-  const readId = (length: number): string | undefined => {
-    if (length === 0) return undefined;
-    const value = decoder.decode(bytes.subarray(offset, offset + length));
-    offset += length;
-    return value;
+  return { sessionLength, attachmentLength, hydrationLength, uploadLength, payloadLength };
+}
+
+function validateTerminalFrameIdLengths(
+  sessionLength: number,
+  attachmentLength: number,
+  hydrationLength: number,
+  uploadLength: number,
+): void {
+  if (sessionLength === 36 && attachmentLength === 36 && [0, 36].includes(hydrationLength) && [0, 36].includes(uploadLength)) return;
+  throw new Error("Terminal frame ID lengths are invalid");
+}
+
+function validateTerminalFrameBodyLength(
+  byteLength: number,
+  lengths: Omit<DecodedTerminalFrameHeader, "kind" | "view">,
+): void {
+  const expected = TERMINAL_BINARY_HEADER_BYTES + lengths.sessionLength + lengths.attachmentLength + lengths.hydrationLength + lengths.uploadLength + lengths.payloadLength;
+  if (byteLength !== expected) throw new Error("Terminal frame length has truncation or trailing bytes");
+}
+
+function decodeTerminalFrameBody(
+  header: DecodedTerminalFrameHeader,
+  reader: { readonly bytes: Uint8Array; offset: number },
+): TerminalBinaryFrame {
+  const sessionId = readTerminalFrameId(reader, header.sessionLength)!;
+  const attachmentId = readTerminalFrameId(reader, header.attachmentLength)!;
+  const hydrationId = readTerminalFrameId(reader, header.hydrationLength);
+  const uploadId = readTerminalFrameId(reader, header.uploadLength);
+  return {
+    kind: header.kind,
+    sessionId,
+    attachmentId,
+    ...optionalTerminalFrameIds(hydrationId, uploadId),
+    hostGeneration: header.view.getBigUint64(14, false).toString(),
+    attachmentEpoch: header.view.getBigUint64(22, false).toString(),
+    primarySeq: header.view.getBigUint64(30, false).toString(),
+    relatedSeq: header.view.getBigUint64(38, false).toString(),
+    payload: new Uint8Array(reader.bytes.subarray(reader.offset, reader.offset + header.payloadLength)),
   };
-  const frame: TerminalBinaryFrame = {
-    kind,
-    sessionId: readId(sessionLength)!,
-    attachmentId: readId(attachmentLength)!,
-    ...(hydrationLength ? { hydrationId: readId(hydrationLength)! } : {}),
-    ...(uploadLength ? { uploadId: readId(uploadLength)! } : {}),
-    hostGeneration: view.getBigUint64(14, false).toString(),
-    attachmentEpoch: view.getBigUint64(22, false).toString(),
-    primarySeq: view.getBigUint64(30, false).toString(),
-    relatedSeq: view.getBigUint64(38, false).toString(),
-    payload: new Uint8Array(bytes.subarray(offset, offset + payloadLength)),
-  };
+}
+
+function readTerminalFrameId(reader: { readonly bytes: Uint8Array; offset: number }, length: number): string | undefined {
+  if (length === 0) return undefined;
+  const value = decoder.decode(reader.bytes.subarray(reader.offset, reader.offset + length));
+  reader.offset += length;
+  return value;
+}
+
+function optionalTerminalFrameIds(hydrationId: string | undefined, uploadId: string | undefined): Pick<TerminalBinaryFrame, "hydrationId" | "uploadId"> {
+  return { ...(hydrationId ? { hydrationId } : {}), ...(uploadId ? { uploadId } : {}) };
+}
+
+function validateDecodedFrameIds(frame: TerminalBinaryFrame): void {
   validateUuid(frame.sessionId, "session ID");
   validateUuid(frame.attachmentId, "attachment ID");
   if (frame.hydrationId) validateUuid(frame.hydrationId, "hydration ID");
   if (frame.uploadId) validateUuid(frame.uploadId, "upload ID");
-  validateIds(frame);
-  validatePayload(frame);
-  return frame;
 }

@@ -46,42 +46,48 @@ export function migrateTerminalSettingsDocument(value: unknown): TerminalSetting
   if (!isRecord(value)) {
     return { status: "blocked", reason: "malformed", original: value };
   }
+  return value.meta !== undefined
+    ? migrateCurrentTerminalSettings(value)
+    : migrateLegacyTerminalSettings(value);
+}
 
-  if (value.meta !== undefined) {
-    if (
-      !isRecord(value.meta)
-      || value.meta.schemaVersion !== TERMINAL_SETTINGS_SCHEMA_VERSION
-    ) {
-      return { status: "blocked", reason: "future-version", original: value };
-    }
-    const current = SettingsSchema().safeParse(value);
-    if (!current.success) {
-      return {
-        status: "blocked",
-        reason: hasMissingCustomProfileReference(value)
-          ? "missing-profile-reference"
-          : "malformed",
-        original: value,
-      };
-    }
-    if (current.data.terminal.presentation.fontFamily !== LEGACY_TERMINAL_DEFAULT_FONT_FAMILY) {
-      return { status: "current", document: current.data };
-    }
+function migrateCurrentTerminalSettings(
+  value: Record<string, unknown>,
+): TerminalSettingsMigrationResult {
+  if (!isRecord(value.meta) || value.meta.schemaVersion !== TERMINAL_SETTINGS_SCHEMA_VERSION) {
+    return { status: "blocked", reason: "future-version", original: value };
+  }
+  const current = SettingsSchema().safeParse(value);
+  if (!current.success) {
     return {
-      status: "migrated",
-      document: {
-        ...current.data,
-        terminal: {
-          ...current.data.terminal,
-          presentation: {
-            ...current.data.terminal.presentation,
-            fontFamily: TERMINAL_DEFAULT_FONT_FAMILY,
-          },
-        },
-      },
+      status: "blocked",
+      reason: hasMissingCustomProfileReference(value)
+        ? "missing-profile-reference"
+        : "malformed",
+      original: value,
     };
   }
+  if (current.data.terminal.presentation.fontFamily !== LEGACY_TERMINAL_DEFAULT_FONT_FAMILY) {
+    return { status: "current", document: current.data };
+  }
+  return {
+    status: "migrated",
+    document: {
+      ...current.data,
+      terminal: {
+        ...current.data.terminal,
+        presentation: {
+          ...current.data.terminal.presentation,
+          fontFamily: TERMINAL_DEFAULT_FONT_FAMILY,
+        },
+      },
+    },
+  };
+}
 
+function migrateLegacyTerminalSettings(
+  value: Record<string, unknown>,
+): TerminalSettingsMigrationResult {
   const legacyTerminal = legacyTerminalSchema.safeParse(value.terminal ?? {});
   if (!legacyTerminal.success) {
     return { status: "blocked", reason: "malformed", original: value };
@@ -101,20 +107,7 @@ export function migrateTerminalSettingsDocument(value: unknown): TerminalSetting
     meta: { schemaVersion: TERMINAL_SETTINGS_SCHEMA_VERSION },
     terminal: {
       ...defaults.terminal,
-      behavior: {
-        ...defaults.terminal.behavior,
-        ...(legacy.scrollback === undefined
-          ? {}
-          : { scrollback: migrateLegacyTerminalScrollback(legacy.scrollback) }),
-        ...(legacy.confirmOnKill === undefined
-          ? {}
-          : {
-              confirmOnKill:
-                legacy.confirmOnKill === "never" || legacy.confirmOnKill === "always"
-                  ? legacy.confirmOnKill
-                  : "withChildProcesses",
-            }),
-      },
+      behavior: migrateLegacyTerminalBehavior(defaults.terminal.behavior, legacy),
       flowControl: {
         ...defaults.terminal.flowControl,
         ...legacy.flowControl,
@@ -125,6 +118,28 @@ export function migrateTerminalSettingsDocument(value: unknown): TerminalSetting
   return migrated.success
     ? { status: "migrated", document: migrated.data }
     : { status: "blocked", reason: "malformed", original: value };
+}
+
+function migrateLegacyTerminalBehavior(
+  defaults: Settings["terminal"]["behavior"],
+  legacy: z.infer<typeof legacyTerminalSchema>,
+): Settings["terminal"]["behavior"] {
+  const behavior = { ...defaults };
+  if (legacy.scrollback !== undefined) {
+    behavior.scrollback = migrateLegacyTerminalScrollback(legacy.scrollback);
+  }
+  if (legacy.confirmOnKill !== undefined) {
+    behavior.confirmOnKill = mapLegacyConfirmOnKill(legacy.confirmOnKill);
+  }
+  return behavior;
+}
+
+function mapLegacyConfirmOnKill(
+  confirmOnKill: z.infer<typeof legacyTerminalSchema>["confirmOnKill"],
+): Settings["terminal"]["behavior"]["confirmOnKill"] {
+  return confirmOnKill === "never" || confirmOnKill === "always"
+    ? confirmOnKill
+    : "withChildProcesses";
 }
 
 function hasMissingCustomProfileReference(value: Record<string, unknown>): boolean {

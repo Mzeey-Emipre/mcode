@@ -138,6 +138,16 @@ describe("ProjectSetup controls", () => {
     await waitFor(() => expect(onApprove).toHaveBeenCalledOnce());
   });
 
+  it("shows output without a command when Setup has no resolved script", () => {
+    render(<ProjectSetupAttemptCard attempt={{
+      ...failedAttempt,
+      snapshot: { ...failedAttempt.snapshot, script: null },
+    }} />);
+
+    expect(screen.queryByLabelText("Setup command")).toBeNull();
+    expect(screen.getByLabelText("Setup output")).toHaveTextContent("missing dependency");
+  });
+
   it("renders the accepted icon-led Setup status states without a badge", async () => {
     const passed = render(<ProjectSetupAttemptCard attempt={{ ...failedAttempt, status: "passed", outcome: "success", exitCode: 0 }} />);
     await act(async () => { await Promise.resolve(); });

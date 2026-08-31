@@ -1,5 +1,6 @@
 import type {
   IProviderRegistry,
+  IAgentProvider,
   ProviderId,
   ThreadCreateInput,
   ThreadTargetListResult,
@@ -40,29 +41,12 @@ export class DelegationTargetResolver {
     for (const provider of this.providers.resolveAll()) {
       const catalog = getCatalogEntry(provider.id);
       if (catalog.comingSoon || !settings.provider.enabled[provider.id]) continue;
-      try {
-        this.availability?.assertUsable(provider.id);
-        const models = await this.models.listModels(provider.id);
-        const usableModels = this.usableModels(models);
-        if (usableModels.length === 0) continue;
-        const globalDefaultModel = globalProviderId === provider.id
-          ? globalModelId
-          : undefined;
-        const defaultModelId = globalDefaultModel && usableModels.some((model) => model.id === globalDefaultModel)
-          ? globalDefaultModel
-          : undefined;
-        targets.push({
-          providerId: provider.id,
-          name: catalog.name,
-          models: usableModels.slice(0, 100).map((model) => ({
-            id: model.id,
-            name: model.name.trim() || model.id,
-          })),
-          ...(defaultModelId ? { defaultModelId } : {}),
-        });
-      } catch {
-        // Discovery is best-effort. Unavailable providers are omitted without diagnostics.
-      }
+      const target = await this.listProviderTarget(
+        provider.id,
+        catalog.name,
+        globalProviderId === provider.id ? globalModelId : undefined,
+      );
+      if (target) targets.push(target);
       if (targets.length >= 20) break;
     }
     return { providers: targets };
@@ -74,34 +58,80 @@ export class DelegationTargetResolver {
     const globalProviderId = settings.model.defaults.provider;
     const globalModelId = settings.model.defaults.id.trim();
     const providerId = (input.providerId ?? globalProviderId) as ProviderId;
-    let provider;
+    const provider = this.resolveProvider(providerId);
+    if (!provider) return { status: "invalid_provider" };
+    const model = this.requestedModel(input, providerId, globalProviderId, globalModelId);
+    if (model.status) return model.status;
+    return this.resolveAvailableModel(provider, model.id, model.requiresExplicitModel);
+  }
+
+  private async listProviderTarget(
+    providerId: ProviderId,
+    providerName: string,
+    globalDefaultModel: string | undefined,
+  ): Promise<ThreadTargetListResult["providers"][number] | undefined> {
     try {
-      provider = this.providers.resolve(providerId);
+      this.availability?.assertUsable(providerId);
+      const models = this.usableModels(await this.models.listModels(providerId));
+      if (models.length === 0) return undefined;
+      const defaultModelId = globalDefaultModel && models.some((model) => model.id === globalDefaultModel)
+        ? globalDefaultModel
+        : undefined;
+      return {
+        providerId,
+        name: providerName,
+        models: models.slice(0, 100).map((model) => ({
+          id: model.id,
+          name: model.name.trim() || model.id,
+        })),
+        ...(defaultModelId ? { defaultModelId } : {}),
+      };
     } catch {
-      return { status: "invalid_provider" };
+      // Discovery is best-effort. Unavailable providers are omitted without diagnostics.
+      return undefined;
     }
-    const explicitProvider = input.providerId !== undefined;
-    const requiresExplicitModel = explicitProvider
+  }
+
+  private resolveProvider(providerId: ProviderId): IAgentProvider | undefined {
+    try {
+      return this.providers.resolve(providerId);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private requestedModel(
+    input: Pick<ThreadCreateInput, "providerId" | "modelId">,
+    providerId: ProviderId,
+    globalProviderId: ProviderId,
+    globalModelId: string,
+  ):
+    | { id: string; requiresExplicitModel: boolean; status?: undefined }
+    | { status: Extract<DelegationTargetResolution, { status: "model_required" }> } {
+    const requiresExplicitModel = input.providerId !== undefined
       && input.modelId === undefined
       && providerId !== globalProviderId;
-    let modelId = input.modelId;
-    if (modelId === undefined) {
-      if (requiresExplicitModel) return { status: "model_required" };
-      modelId = globalModelId;
-    }
+    if (requiresExplicitModel) return { status: { status: "model_required" } };
+    return { id: input.modelId ?? globalModelId, requiresExplicitModel };
+  }
+
+  private async resolveAvailableModel(
+    provider: IAgentProvider,
+    modelId: string,
+    requiresExplicitModel: boolean,
+  ): Promise<DelegationTargetResolution> {
     try {
       this.availability?.assertUsable(provider.id);
       const models = this.usableModels(await this.models.listModels(provider.id));
       if (!models.some((model) => model.id === modelId)) {
         return requiresExplicitModel ? { status: "model_required" } : { status: "invalid_model" };
       }
+      return { status: "resolved", providerId: provider.id, modelId };
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("No provider registered")) {
-        return { status: "invalid_provider" };
-      }
-      return { status: "discovery_failed" };
+      return error instanceof Error && error.message.startsWith("No provider registered")
+        ? { status: "invalid_provider" }
+        : { status: "discovery_failed" };
     }
-    return { status: "resolved", providerId: provider.id, modelId };
   }
 
   private usableModels(models: Awaited<ReturnType<ModelCacheService["listModels"]>>) {

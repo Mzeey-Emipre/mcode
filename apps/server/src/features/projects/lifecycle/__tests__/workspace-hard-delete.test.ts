@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { existsSync } from "fs";
+import * as NodeFS from "node:fs";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -22,6 +22,7 @@ import { killDescendantsByName } from "../../../../runtime/process/containment/p
 import type { GitExecutor } from "../../git/execution/index.js";
 
 const mockGitExecutor = { exec: vi.fn() } as unknown as GitExecutor;
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
 vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>();
@@ -371,7 +372,7 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
   let worker: CleanupWorker;
 
   beforeEach(() => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
     vi.mocked(killDescendantsByName).mockClear();
 
     db = openMemoryDatabase();
@@ -405,11 +406,12 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
       mockTerminalService,
       mockGitWorktrees,
       createCleanupWorktreeSafetyServiceMock(),
-      new RepositoryGitMutationLock(),
+      new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       mockAttachmentService,
       mockHandoffStorage,
       { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      TEST_HOST_RUNTIME,
       undefined,
       undefined,
     );
@@ -499,7 +501,7 @@ describe("CleanupWorker - startup reconciliation", () => {
   let worker: CleanupWorker;
 
   beforeEach(() => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
 
     db = openMemoryDatabase();
     cleanupJobRepo = new CleanupJobRepo(db);
@@ -532,11 +534,12 @@ describe("CleanupWorker - startup reconciliation", () => {
       mockTerminalService,
       mockGitWorktrees,
       createCleanupWorktreeSafetyServiceMock(),
-      new RepositoryGitMutationLock(),
+      new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       mockAttachmentService,
       mockHandoffStorage,
       { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      TEST_HOST_RUNTIME,
       undefined,
       undefined,
     );
@@ -596,7 +599,7 @@ describe("CleanupWorker - shared branch protection", () => {
   let worker: CleanupWorker;
 
   beforeEach(() => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
     vi.mocked(killDescendantsByName).mockClear();
 
     db = openMemoryDatabase();
@@ -610,7 +613,7 @@ describe("CleanupWorker - shared branch protection", () => {
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, undefined, undefined);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, TEST_HOST_RUNTIME, undefined, undefined);
   });
 
   afterEach(() => { worker.dispose(); });
@@ -796,11 +799,12 @@ describe("CleanupWorker - exhausted retries", () => {
       { killByThread: vi.fn() } as any,
       { removeWorktree: vi.fn().mockResolvedValue(true), isRegisteredWorktreePath: vi.fn().mockReturnValue(true) } as any,
       createCleanupWorktreeSafetyServiceMock(),
-      new RepositoryGitMutationLock(),
+      new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       { removeForThread: vi.fn() } as any,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as any,
       { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      TEST_HOST_RUNTIME,
       undefined,
       undefined,
     );
@@ -845,7 +849,7 @@ describe("CleanupWorker - missing directory handling", () => {
   let worker: CleanupWorker;
 
   beforeEach(() => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
     vi.mocked(killDescendantsByName).mockClear();
 
     db = openMemoryDatabase();
@@ -859,7 +863,7 @@ describe("CleanupWorker - missing directory handling", () => {
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, undefined, undefined);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, TEST_HOST_RUNTIME, undefined, undefined);
   });
 
   afterEach(() => { worker.dispose(); });
@@ -879,7 +883,7 @@ describe("CleanupWorker - missing directory handling", () => {
     });
 
     // Both workspace and worktree paths missing
-    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(false);
 
     await worker.processOneJob();
 
@@ -904,7 +908,7 @@ describe("CleanupWorker - missing directory handling", () => {
       branch: "feat/x",
     });
 
-    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(false);
 
     await worker.processOneJob();
 
@@ -929,7 +933,7 @@ describe("CleanupWorker - idempotent retry", () => {
   let worker: CleanupWorker;
 
   beforeEach(() => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
     vi.mocked(killDescendantsByName).mockClear();
 
     db = openMemoryDatabase();
@@ -943,7 +947,7 @@ describe("CleanupWorker - idempotent retry", () => {
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, undefined, undefined);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, TEST_HOST_RUNTIME, undefined, undefined);
   });
 
   afterEach(() => { worker.dispose(); });

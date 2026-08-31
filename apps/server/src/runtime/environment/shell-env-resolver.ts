@@ -3,17 +3,21 @@
  * Windows registry machine + user hives, for passing to child processes.
  */
 
-import { execFile } from "node:child_process";
-import { userInfo } from "node:os";
-import { promisify } from "node:util";
-import { injectable } from "tsyringe";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
+import * as NodeUtil from "node:util";
+import { inject, injectable } from "tsyringe";
 import { logger } from "@mcode/shared";
 import { flattenProcessEnv, parseNewlineDelimitedEnv, parseNullDelimitedEnv } from "./shell-env-utils.js";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 
 const RESOLVE_TIMEOUT_MS = 5000;
 const MAX_ENV_BUFFER_BYTES = 32 * 1024 * 1024;
+
+interface ShellEnvResolverHost {
+  readonly platform: NodeJS.Platform;
+}
 
 // Re-export for call sites that only need helpers without pulling tsyringe metadata.
 export { flattenProcessEnv, parseNewlineDelimitedEnv, parseNullDelimitedEnv } from "./shell-env-utils.js";
@@ -25,9 +29,11 @@ export { flattenProcessEnv, parseNewlineDelimitedEnv, parseNullDelimitedEnv } fr
 export class ShellEnvResolver {
   private lastSuccess: Record<string, string> | null = null;
   private readonly bootEnv: Record<string, string>;
+  private readonly platform: NodeJS.Platform;
 
-  constructor() {
+  constructor(@inject("HostRuntime") hostRuntime: ShellEnvResolverHost) {
     this.bootEnv = flattenProcessEnv(process.env);
+    this.platform = hostRuntime.platform;
   }
 
   /**
@@ -44,7 +50,7 @@ export class ShellEnvResolver {
       return fromEnv;
     }
     try {
-      const fromOs = userInfo().shell?.trim();
+      const fromOs = NodeOS.userInfo().shell?.trim();
       if (fromOs) {
         return fromOs;
       }
@@ -60,10 +66,7 @@ export class ShellEnvResolver {
    */
   async resolveFreshAsync(): Promise<Record<string, string>> {
     try {
-      const resolved =
-        process.platform === "win32"
-          ? await this.resolveWindowsAsync()
-          : await this.resolveUnixAsync();
+      const resolved = await this.resolveCurrentPlatformAsync();
       if (Object.keys(resolved).length === 0) {
         throw new Error("resolved env empty");
       }
@@ -75,6 +78,12 @@ export class ShellEnvResolver {
       });
       return this.lastSuccess ?? { ...this.bootEnv };
     }
+  }
+
+  private async resolveCurrentPlatformAsync(): Promise<Record<string, string>> {
+    if (this.platform === "win32") return this.resolveWindowsAsync();
+    if (this.platform === "darwin" || this.platform === "linux") return this.resolveUnixAsync();
+    throw new Error(`Unsupported shell environment platform: ${this.platform}`);
   }
 
   private async resolveUnixAsync(): Promise<Record<string, string>> {

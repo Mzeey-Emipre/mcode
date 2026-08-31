@@ -1,0 +1,22 @@
+{
+  "name": "@mcode/oxlint-plugin",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "bun build ./src/index.ts --target=node --format=esm --outfile=./dist/index.mjs",
+    "test": "bun run build && node --input-type=module --eval \"const { startVitest } = await import('vitest/node'); await startVitest('test', [], { run: true })\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@oxlint/plugins": "^1.80.0"
+  },
+  "devDependencies": {
+    "oxlint": "^1.80.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.0"
+  }
+}

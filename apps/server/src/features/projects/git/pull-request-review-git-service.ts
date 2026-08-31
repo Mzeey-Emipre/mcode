@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { realpath } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 import { getMcodeDir, logger, validateWorktreeName } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { normalizePathForComparison } from "../../../shared/filesystem/path-identity.js";
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
 import type { GitExecutor } from "./execution/index.js";
@@ -95,7 +96,7 @@ interface ReviewProvisionAttempt {
 
 function safeReviewRefComponent(value: string): string {
   const readable = value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  const hash = createHash("sha256").update(value).digest("hex").slice(0, 10);
+  const hash = NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 10);
   return `${readable.slice(0, 30) || "repository"}-${hash}`;
 }
 
@@ -113,6 +114,86 @@ function assertSafeReviewBranch(value: string, label: string): void {
   }
 }
 
+function hasInvalidPullRequestReviewSource(source: PullRequestReviewGitSource): boolean {
+  return hasInvalidRepositoryNodeIds(source)
+    || hasInvalidPullRequestNumber(source.pullRequestNumber)
+    || !/^[0-9a-f]{40,64}$/i.test(source.headOid)
+    || !normalizedRepositoryKey(source.baseRepositoryUrl)
+    || !normalizedRepositoryKey(source.headRepositoryUrl);
+}
+
+function hasInvalidRepositoryNodeIds(source: PullRequestReviewGitSource): boolean {
+  return !source.repositoryNodeId
+    || source.repositoryNodeId.length > 256
+    || !source.headRepositoryNodeId
+    || source.headRepositoryNodeId.length > 256;
+}
+
+function hasInvalidPullRequestNumber(pullRequestNumber: number): boolean {
+  return !Number.isInteger(pullRequestNumber)
+    || pullRequestNumber <= 0
+    || pullRequestNumber > 2_147_483_647;
+}
+
+function isCompatibleReviewBranch(
+  branch: ReviewBranchRecord,
+  source: PullRequestReviewGitSource,
+  expectedUpstream: string,
+): boolean {
+  return branch.oid.toLowerCase() === source.headOid.toLowerCase()
+    && branch.upstream === expectedUpstream
+    && branch.worktreePath.length > 0;
+}
+
+function reviewImmutableRef(source: PullRequestReviewGitSource): string {
+  return `refs/mcode/pull-requests/${safeReviewRefComponent(source.repositoryNodeId)}/${source.pullRequestNumber}/${source.headOid.toLowerCase()}`;
+}
+
+function reviewBranchCandidates(source: PullRequestReviewGitSource): string[] {
+  const candidates = [exactReviewHeadBranchName(source)];
+  const fallback = fallbackReviewBranchName(source);
+  for (let suffix = 1; suffix <= 99; suffix += 1) {
+    candidates.push(suffixedReviewBranchName(fallback, suffix));
+  }
+  return candidates.filter((candidate): candidate is string => candidate !== null);
+}
+
+function exactReviewHeadBranchName(source: PullRequestReviewGitSource): string | null {
+  const baseKey = normalizedRepositoryKey(source.baseRepositoryUrl);
+  const headKey = normalizedRepositoryKey(source.headRepositoryUrl);
+  return baseKey === headKey && source.headRef.length <= 100 ? source.headRef : null;
+}
+
+function fallbackReviewBranchName(source: PullRequestReviewGitSource): string {
+  return sanitizeReviewBranchPart(
+    `mcode/pr-${source.pullRequestNumber}-${sanitizeReviewBranchAtom(source.headOwner)}-${sanitizeReviewBranchAtom(source.headRef)}-${source.headOid.slice(0, 7)}`,
+  ).slice(0, 100);
+}
+
+function suffixedReviewBranchName(fallback: string, suffix: number): string {
+  const suffixText = suffix === 1 ? "" : `-${suffix}`;
+  return `${fallback.slice(0, 100 - suffixText.length)}${suffixText}`;
+}
+
+function isReusableReviewBranch(
+  branch: ReviewBranchRecord,
+  source: PullRequestReviewGitSource,
+  remoteName: string,
+): boolean {
+  return !branch.worktreePath
+    && branch.oid.toLowerCase() === source.headOid.toLowerCase()
+    && branch.upstream === `${remoteName}/${source.headRef}`;
+}
+
+function unavailableReviewBranchError(sawDivergence: boolean): PullRequestReviewGitError {
+  return new PullRequestReviewGitError(
+    sawDivergence ? "branch_diverged" : "branch_occupied",
+    sawDivergence
+      ? "Every safe Review branch candidate is occupied by different history or tracking."
+      : "No safe local Review branch name is available.",
+  );
+}
+
 /** Provisions and validates Review worktrees for immutable pull request heads. */
 @injectable()
 export class PullRequestReviewGitService {
@@ -124,22 +205,29 @@ export class PullRequestReviewGitService {
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
     @inject(GitRepositoryService)
     gitRepository: GitRepositoryService,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
     @inject(WorktreeDirectoryRemover, { isOptional: true })
     worktreeDirectoryRemover?: WorktreeDirectoryRemover,
     @inject(RepositoryGitMutationLock, { isOptional: true })
     repositoryMutationLock?: RepositoryGitMutationLock,
   ) {
-    this.worktreeDirectoryRemover = worktreeDirectoryRemover ?? new WorktreeDirectoryRemover();
-    this.repositoryMutationLock = repositoryMutationLock ?? new RepositoryGitMutationLock();
+    this.worktreeDirectoryRemover = worktreeDirectoryRemover
+      ?? new WorktreeDirectoryRemover({ platform: this.hostRuntime.platform });
+    this.repositoryMutationLock = repositoryMutationLock
+      ?? new RepositoryGitMutationLock(this.hostRuntime);
     this.gitRepository = gitRepository;
   }
 
   /** Resolve a server-owned Review worktree leaf beneath the managed worktree root. */
   getReviewWorktreeDestination(repoPath: string, worktreeName: string): string {
     validateWorktreeName(worktreeName);
-    const base = resolve(getManagedWorktreeBaseDir(repoPath));
-    const destination = resolve(base, worktreeName);
-    if (!isPathWithin(base, destination) || normalizePathForComparison(base) === normalizePathForComparison(destination)) {
+    const base = NodePath.resolve(getManagedWorktreeBaseDir(repoPath));
+    const destination = NodePath.resolve(base, worktreeName);
+    if (
+      !isPathWithin(base, destination, this.hostRuntime.platform)
+      || normalizePathForComparison(base, this.hostRuntime.platform)
+        === normalizePathForComparison(destination, this.hostRuntime.platform)
+    ) {
       throw new PullRequestReviewGitError(
         "path_collision",
         "The Review worktree destination is outside managed storage.",
@@ -235,111 +323,9 @@ export class PullRequestReviewGitService {
     let completed = false;
 
     try {
-      const branches = await this.listReviewBranches(repoPath);
-      const expectedUpstream = `${attempt.remoteName}/${source.headRef}`;
-      const compatibleBranches = branches
-        .filter((branch) =>
-          branch.oid.toLowerCase() === source.headOid.toLowerCase()
-          && branch.upstream === expectedUpstream
-          && branch.worktreePath.length > 0,
-        );
-      const compatibleWorktrees = (
-        await Promise.all(
-          compatibleBranches.map((branch) =>
-            this.toReviewCandidate(repoPath, source, attempt.remoteName, branch),
-          ),
-        )
-      ).filter((candidate): candidate is PullRequestReviewGitCandidate => candidate !== null);
-
-      if (request.action === "reuse_existing") {
-        const candidate = compatibleWorktrees.find(
-          (item) => item.candidateId === request.candidateId,
-        );
-        if (!candidate) {
-          throw new PullRequestReviewGitError(
-            "conflict",
-            "The selected Review worktree is no longer compatible with this pull request head.",
-          );
-        }
-        await this.deleteReviewImmutableRef(attempt);
-        completed = true;
-        return {
-          kind: "ready",
-          disposition: "reused",
-          path: candidate.path,
-          name: candidate.name,
-          branch: candidate.branch,
-          managed: candidate.managed,
-          pushRemote: attempt.remoteName,
-          pushRef: source.headRef,
-          managedRemoteName: attempt.createdRemote ? attempt.remoteName : null,
-          rollback: this.createReviewRollback(attempt),
-        };
-      }
-
-      if (compatibleWorktrees.length > 0) {
-        await this.rollbackPullRequestReviewAttempt(attempt);
-        completed = true;
-        return { kind: "requires_reuse", candidate: compatibleWorktrees[0]! };
-      }
-
-      const destination = this.getReviewWorktreeDestination(repoPath, request.worktreeName);
-      await this.assertFreshManagedReviewDestination(repoPath, destination);
-      const selected = await this.selectReviewBranch(
-        repoPath,
-        source,
-        attempt.remoteName,
-        branches,
-      );
-
-      attempt.createdWorktreePath = destination;
-      if (selected.created) {
-        attempt.createdBranch = selected.name;
-        await this.gitExecutor.exec(
-          ["-C", repoPath, "worktree", "add", "-b", selected.name, destination, attempt.immutableRef],
-          { timeout: 60_000 },
-        );
-      } else {
-        await this.gitExecutor.exec(
-          ["-C", repoPath, "worktree", "add", destination, selected.name],
-          { timeout: 60_000 },
-        );
-      }
-      const canonicalDestination = await realpath(destination);
-      const canonicalBase = await realpath(getManagedWorktreeBaseDir(repoPath));
-      if (!isPathWithin(canonicalBase, canonicalDestination)) {
-        throw new PullRequestReviewGitError(
-          "path_collision",
-          "The created Review worktree escaped managed storage.",
-        );
-      }
-      attempt.createdWorktreePath = canonicalDestination;
-      if (selected.created) {
-        await this.gitExecutor.exec(
-          [
-            "-C",
-            repoPath,
-            "branch",
-            `--set-upstream-to=${attempt.remoteName}/${source.headRef}`,
-            selected.name,
-          ],
-          { timeout: 10_000 },
-        );
-      }
-      await this.deleteReviewImmutableRef(attempt);
+      const result = await this.provisionReviewWorktreeForAttempt(repoPath, source, request, attempt);
       completed = true;
-      return {
-        kind: "ready",
-        disposition: "created",
-        path: canonicalDestination,
-        name: request.worktreeName,
-        branch: selected.name,
-        managed: true,
-        pushRemote: attempt.remoteName,
-        pushRef: source.headRef,
-        managedRemoteName: attempt.createdRemote ? attempt.remoteName : null,
-        rollback: this.createReviewRollback(attempt),
-      };
+      return result;
     } catch (error) {
       if (!completed) await this.rollbackPullRequestReviewAttempt(attempt);
       throw error;
@@ -402,24 +388,143 @@ export class PullRequestReviewGitService {
   }
 
   private validatePullRequestReviewSource(source: PullRequestReviewGitSource): void {
-    if (
-      !source.repositoryNodeId
-      || source.repositoryNodeId.length > 256
-      || !source.headRepositoryNodeId
-      || source.headRepositoryNodeId.length > 256
-      || !Number.isInteger(source.pullRequestNumber)
-      || source.pullRequestNumber <= 0
-      || source.pullRequestNumber > 2_147_483_647
-      || !/^[0-9a-f]{40,64}$/i.test(source.headOid)
-      || !normalizedRepositoryKey(source.baseRepositoryUrl)
-      || !normalizedRepositoryKey(source.headRepositoryUrl)
-    ) {
+    if (hasInvalidPullRequestReviewSource(source)) {
       throw new PullRequestReviewGitError(
         "head_missing",
         "The pull request head metadata is invalid.",
       );
     }
     assertSafeReviewBranch(source.headRef, "Pull request head ref");
+  }
+
+  private async provisionReviewWorktreeForAttempt(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+    request: PullRequestReviewGitProvisionRequest,
+    attempt: ReviewProvisionAttempt,
+  ): Promise<PullRequestReviewGitProvisionResult> {
+    const branches = await this.listReviewBranches(repoPath);
+    const compatibleWorktrees = await this.compatibleReviewWorktrees(repoPath, source, attempt.remoteName, branches);
+    if (request.action === "reuse_existing") {
+      return this.reuseReviewWorktree(request, source, attempt, compatibleWorktrees);
+    }
+    if (compatibleWorktrees.length > 0) {
+      await this.rollbackPullRequestReviewAttempt(attempt);
+      return { kind: "requires_reuse", candidate: compatibleWorktrees[0]! };
+    }
+    return this.createReviewWorktree(repoPath, source, request, attempt, branches);
+  }
+
+  private async compatibleReviewWorktrees(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+    remoteName: string,
+    branches: readonly ReviewBranchRecord[],
+  ): Promise<PullRequestReviewGitCandidate[]> {
+    const expectedUpstream = `${remoteName}/${source.headRef}`;
+    const compatibleBranches = branches.filter((branch) => isCompatibleReviewBranch(branch, source, expectedUpstream));
+    const candidates = await Promise.all(
+      compatibleBranches.map((branch) => this.toReviewCandidate(repoPath, source, remoteName, branch)),
+    );
+    return candidates.filter((candidate): candidate is PullRequestReviewGitCandidate => candidate !== null);
+  }
+
+  private async reuseReviewWorktree(
+    request: Extract<PullRequestReviewGitProvisionRequest, { action: "reuse_existing" }>,
+    source: PullRequestReviewGitSource,
+    attempt: ReviewProvisionAttempt,
+    candidates: readonly PullRequestReviewGitCandidate[],
+  ): Promise<Extract<PullRequestReviewGitProvisionResult, { kind: "ready" }>> {
+    const candidate = candidates.find((item) => item.candidateId === request.candidateId);
+    if (!candidate) {
+      throw new PullRequestReviewGitError(
+        "conflict",
+        "The selected Review worktree is no longer compatible with this pull request head.",
+      );
+    }
+    await this.deleteReviewImmutableRef(attempt);
+    return this.reviewWorktreeReadyResult("reused", source, attempt, candidate);
+  }
+
+  private async createReviewWorktree(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+    request: Extract<PullRequestReviewGitProvisionRequest, { action: "create_new" }>,
+    attempt: ReviewProvisionAttempt,
+    branches: ReviewBranchRecord[],
+  ): Promise<Extract<PullRequestReviewGitProvisionResult, { kind: "ready" }>> {
+    const destination = this.getReviewWorktreeDestination(repoPath, request.worktreeName);
+    await this.assertFreshManagedReviewDestination(repoPath, destination);
+    const selected = await this.selectReviewBranch(repoPath, source, attempt.remoteName, branches);
+    const canonicalDestination = await this.addReviewWorktree(repoPath, source, attempt, destination, selected);
+    await this.deleteReviewImmutableRef(attempt);
+    return this.reviewWorktreeReadyResult("created", source, attempt, {
+      path: canonicalDestination,
+      name: request.worktreeName,
+      branch: selected.name,
+      managed: true,
+    });
+  }
+
+  private async addReviewWorktree(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+    attempt: ReviewProvisionAttempt,
+    destination: string,
+    selected: { name: string; created: boolean },
+  ): Promise<string> {
+    attempt.createdWorktreePath = destination;
+    if (selected.created) {
+      attempt.createdBranch = selected.name;
+      await this.gitExecutor.exec(
+        ["-C", repoPath, "worktree", "add", "-b", selected.name, destination, attempt.immutableRef],
+        { timeout: 60_000 },
+      );
+    } else {
+      await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", destination, selected.name], { timeout: 60_000 });
+    }
+    const canonicalDestination = await this.assertReviewWorktreeDestination(repoPath, destination);
+    attempt.createdWorktreePath = canonicalDestination;
+    if (selected.created) await this.setReviewBranchUpstream(repoPath, source, attempt.remoteName, selected.name);
+    return canonicalDestination;
+  }
+
+  private async assertReviewWorktreeDestination(repoPath: string, destination: string): Promise<string> {
+    const canonicalDestination = await NodeFSPromises.realpath(destination);
+    const canonicalBase = await NodeFSPromises.realpath(getManagedWorktreeBaseDir(repoPath));
+    if (!isPathWithin(canonicalBase, canonicalDestination, this.hostRuntime.platform)) {
+      throw new PullRequestReviewGitError("path_collision", "The created Review worktree escaped managed storage.");
+    }
+    return canonicalDestination;
+  }
+
+  private async setReviewBranchUpstream(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+    remoteName: string,
+    branchName: string,
+  ): Promise<void> {
+    await this.gitExecutor.exec(
+      ["-C", repoPath, "branch", `--set-upstream-to=${remoteName}/${source.headRef}`, branchName],
+      { timeout: 10_000 },
+    );
+  }
+
+  private reviewWorktreeReadyResult(
+    disposition: "created" | "reused",
+    source: PullRequestReviewGitSource,
+    attempt: ReviewProvisionAttempt,
+    candidate: Pick<PullRequestReviewGitCandidate, "path" | "name" | "branch" | "managed">,
+  ): Extract<PullRequestReviewGitProvisionResult, { kind: "ready" }> {
+    return {
+      kind: "ready",
+      disposition,
+      ...candidate,
+      pushRemote: attempt.remoteName,
+      pushRef: source.headRef,
+      managedRemoteName: attempt.createdRemote ? attempt.remoteName : null,
+      rollback: this.createReviewRollback(attempt),
+    };
   }
 
   private async listReviewBranches(repoPath: string): Promise<ReviewBranchRecord[]> {
@@ -455,17 +560,17 @@ export class PullRequestReviewGitService {
     remoteName: string,
     branch: ReviewBranchRecord,
   ): Promise<PullRequestReviewGitCandidate | null> {
-    if (!branch.worktreePath || !existsSync(branch.worktreePath)) return null;
+    if (!branch.worktreePath || !NodeFS.existsSync(branch.worktreePath)) return null;
     let canonicalPath: string;
     try {
-      canonicalPath = realpathSync(branch.worktreePath);
+      canonicalPath = NodeFS.realpathSync(branch.worktreePath);
     } catch {
       return null;
     }
-    const normalizedPath = normalizePathForComparison(canonicalPath);
-    const candidateId = createHash("sha256")
+    const normalizedPath = normalizePathForComparison(canonicalPath, this.hostRuntime.platform);
+    const candidateId = NodeCrypto.createHash("sha256")
       .update([
-        normalizePathForComparison(repoPath),
+        normalizePathForComparison(repoPath, this.hostRuntime.platform),
         source.repositoryNodeId,
         String(source.pullRequestNumber),
         source.headOid.toLowerCase(),
@@ -476,17 +581,17 @@ export class PullRequestReviewGitService {
       .digest("base64url");
     let managed = false;
     const managedRoot = getManagedWorktreeBaseDir(repoPath);
-    if (existsSync(managedRoot)) {
+    if (NodeFS.existsSync(managedRoot)) {
       try {
-        const canonicalManagedRoot = await realpath(managedRoot);
-        managed = isPathWithin(canonicalManagedRoot, canonicalPath);
+        const canonicalManagedRoot = await NodeFSPromises.realpath(managedRoot);
+        managed = isPathWithin(canonicalManagedRoot, canonicalPath, this.hostRuntime.platform);
       } catch {
         managed = false;
       }
     }
     return {
       candidateId,
-      name: (basename(canonicalPath) || "worktree").slice(0, 100),
+      name: (NodePath.basename(canonicalPath) || "worktree").slice(0, 100),
       path: canonicalPath,
       branch: branch.name,
       managed,
@@ -497,130 +602,167 @@ export class PullRequestReviewGitService {
     repoPath: string,
     source: PullRequestReviewGitSource,
   ): Promise<ReviewProvisionAttempt> {
-    if (!existsSync(repoPath)) {
+    this.assertReviewRepositoryAvailable(repoPath);
+    const remotes = await this.gitRepository.listNormalizedRemotes(repoPath);
+    const baseKey = normalizedRepositoryKey(source.baseRepositoryUrl)!;
+    const headKey = normalizedRepositoryKey(source.headRepositoryUrl)!;
+    const baseRemote = this.requireBaseReviewRemote(remotes, baseKey);
+    const remote = await this.resolveReviewRemote(repoPath, source, remotes, baseRemote, baseKey, headKey);
+    const attempt = await this.createReviewProvisionAttempt(repoPath, source, remote);
+    return this.fetchPullRequestReviewHead(attempt, source);
+  }
+
+  private assertReviewRepositoryAvailable(repoPath: string): void {
+    if (!NodeFS.existsSync(repoPath)) {
       throw new PullRequestReviewGitError(
         "workspace_mapping_missing",
         "The mapped Workspace repository is unavailable.",
       );
     }
-    const remotes = await this.gitRepository.listNormalizedRemotes(repoPath);
-    const baseKey = normalizedRepositoryKey(source.baseRepositoryUrl)!;
-    const headKey = normalizedRepositoryKey(source.headRepositoryUrl)!;
-    const baseRemote = remotes.find(
-      (remote) => normalizedRepositoryKey(remote.webUrl) === baseKey,
-    );
+  }
+
+  private requireBaseReviewRemote(
+    remotes: readonly NormalizedGitRemote[],
+    baseKey: string,
+  ): NormalizedGitRemote {
+    const baseRemote = remotes.find((remote) => normalizedRepositoryKey(remote.webUrl) === baseKey);
     if (!baseRemote) {
       throw new PullRequestReviewGitError(
         "workspace_mapping_missing",
         "The mapped Workspace no longer has a matching repository remote.",
       );
     }
+    return baseRemote;
+  }
 
-    let remote: NormalizedGitRemote | undefined;
-    for (const candidate of remotes.filter(
-      (item) => normalizedRepositoryKey(item.webUrl) === headKey,
-    )) {
-      if (await this.remotePushTargetMatches(repoPath, candidate, headKey)) {
-        remote = candidate;
-        break;
-      }
+  private async resolveReviewRemote(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+    remotes: readonly NormalizedGitRemote[],
+    baseRemote: NormalizedGitRemote,
+    baseKey: string,
+    headKey: string,
+  ): Promise<{ remote: NormalizedGitRemote; created: boolean }> {
+    const existing = await this.findReviewHeadRemote(repoPath, remotes, headKey);
+    if (existing) return { remote: existing, created: false };
+    if (baseKey === headKey && await this.remotePushTargetMatches(repoPath, baseRemote, headKey)) {
+      return { remote: baseRemote, created: false };
     }
-    let createdRemote = false;
-    if (
-      !remote
-      && baseKey === headKey
-      && await this.remotePushTargetMatches(repoPath, baseRemote, headKey)
-    ) {
-      remote = baseRemote;
-    }
-    if (!remote) {
-      const remoteName = `mcode-pr-${createHash("sha256")
-        .update(source.headRepositoryNodeId)
-        .digest("hex")
-        .slice(0, 12)}`;
-      try {
-        await this.gitExecutor.exec(
-          ["-C", repoPath, "remote", "add", remoteName, source.headRepositoryUrl],
-          { timeout: 10_000 },
-        );
-      } catch {
-        throw new PullRequestReviewGitError(
-          "conflict",
-          `The managed remote ${remoteName} already exists with another repository URL.`,
-        );
-      }
-      createdRemote = true;
-      remote = {
-        name: remoteName,
-        rawUrl: source.headRepositoryUrl,
-        ...normalizeRemoteIdentity(source.headRepositoryUrl)!,
-      };
-    }
+    return this.createReviewHeadRemote(repoPath, source);
+  }
 
-    const remoteTrackingRef = `refs/remotes/${remote.name}/${source.headRef}`;
-    const immutableRef = `refs/mcode/pull-requests/${safeReviewRefComponent(source.repositoryNodeId)}/${source.pullRequestNumber}/${source.headOid.toLowerCase()}`;
-    const previousRemoteTrackingOid = await this.readReviewRefOid(repoPath, remoteTrackingRef);
-    const attempt: ReviewProvisionAttempt = {
+  private async findReviewHeadRemote(
+    repoPath: string,
+    remotes: readonly NormalizedGitRemote[],
+    headKey: string,
+  ): Promise<NormalizedGitRemote | null> {
+    for (const remote of remotes) {
+      if (normalizedRepositoryKey(remote.webUrl) !== headKey) continue;
+      if (await this.remotePushTargetMatches(repoPath, remote, headKey)) return remote;
+    }
+    return null;
+  }
+
+  private async createReviewHeadRemote(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+  ): Promise<{ remote: NormalizedGitRemote; created: true }> {
+    const remoteName = `mcode-pr-${NodeCrypto.createHash("sha256")
+      .update(source.headRepositoryNodeId)
+      .digest("hex")
+      .slice(0, 12)}`;
+    try {
+      await this.gitExecutor.exec(
+        ["-C", repoPath, "remote", "add", remoteName, source.headRepositoryUrl],
+        { timeout: 10_000 },
+      );
+    } catch {
+      throw new PullRequestReviewGitError(
+        "conflict",
+        `The managed remote ${remoteName} already exists with another repository URL.`,
+      );
+    }
+    return {
+      remote: { name: remoteName, rawUrl: source.headRepositoryUrl, ...normalizeRemoteIdentity(source.headRepositoryUrl)! },
+      created: true,
+    };
+  }
+
+  private async createReviewProvisionAttempt(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+    remote: { remote: NormalizedGitRemote; created: boolean },
+  ): Promise<ReviewProvisionAttempt> {
+    const remoteTrackingRef = `refs/remotes/${remote.remote.name}/${source.headRef}`;
+    return {
       repoPath,
-      remoteName: remote.name,
-      createdRemote,
+      remoteName: remote.remote.name,
+      createdRemote: remote.created,
       remoteTrackingRef,
-      previousRemoteTrackingOid,
+      previousRemoteTrackingOid: await this.readReviewRefOid(repoPath, remoteTrackingRef),
       fetchedOid: source.headOid.toLowerCase(),
-      immutableRef,
+      immutableRef: reviewImmutableRef(source),
       createdImmutableRef: false,
       createdWorktreePath: null,
       createdBranch: null,
     };
+  }
 
+  private async fetchPullRequestReviewHead(
+    attempt: ReviewProvisionAttempt,
+    source: PullRequestReviewGitSource,
+  ): Promise<ReviewProvisionAttempt> {
     try {
       await this.gitExecutor.exec(
-        [
-          "-C",
-          repoPath,
-          "fetch",
-          "--no-tags",
-          remote.name,
-          `+refs/heads/${source.headRef}:${remoteTrackingRef}`,
-        ],
+        ["-C", attempt.repoPath, "fetch", "--no-tags", attempt.remoteName, `+refs/heads/${source.headRef}:${attempt.remoteTrackingRef}`],
         { timeout: 60_000 },
       );
-      const fetchedOid = await this.readReviewRefOid(repoPath, "FETCH_HEAD");
-      if (!fetchedOid || fetchedOid.toLowerCase() !== source.headOid.toLowerCase()) {
-        throw new PullRequestReviewGitError(
-          "conflict",
-          "The pull request head changed while the Review worktree was being prepared.",
-        );
-      }
-
-      const existingImmutableOid = await this.readReviewRefOid(repoPath, immutableRef);
-      if (existingImmutableOid && existingImmutableOid.toLowerCase() !== fetchedOid.toLowerCase()) {
-        throw new PullRequestReviewGitError(
-          "conflict",
-          "The immutable pull request ref is already owned by another head.",
-        );
-      }
-      if (!existingImmutableOid) {
-        try {
-          await this.gitExecutor.exec(
-            ["-C", repoPath, "update-ref", immutableRef, fetchedOid, ""],
-            { timeout: 10_000 },
-          );
-          attempt.createdImmutableRef = true;
-        } catch {
-          const racedOid = await this.readReviewRefOid(repoPath, immutableRef);
-          if (!racedOid || racedOid.toLowerCase() !== fetchedOid.toLowerCase()) {
-            throw new PullRequestReviewGitError(
-              "conflict",
-              "Another Review worktree setup changed the immutable pull request ref.",
-            );
-          }
-        }
-      }
+      const fetchedOid = await this.requireFetchedPullRequestHead(attempt.repoPath, source.headOid);
+      await this.ensureImmutableReviewRef(attempt, fetchedOid);
       return attempt;
     } catch (error) {
       await this.rollbackPullRequestReviewAttempt(attempt);
       throw error;
+    }
+  }
+
+  private async requireFetchedPullRequestHead(repoPath: string, expectedHeadOid: string): Promise<string> {
+    const fetchedOid = await this.readReviewRefOid(repoPath, "FETCH_HEAD");
+    if (!fetchedOid || fetchedOid.toLowerCase() !== expectedHeadOid.toLowerCase()) {
+      throw new PullRequestReviewGitError(
+        "conflict",
+        "The pull request head changed while the Review worktree was being prepared.",
+      );
+    }
+    return fetchedOid;
+  }
+
+  private async ensureImmutableReviewRef(attempt: ReviewProvisionAttempt, fetchedOid: string): Promise<void> {
+    const existingOid = await this.readReviewRefOid(attempt.repoPath, attempt.immutableRef);
+    if (existingOid) return this.assertImmutableReviewRefMatches(existingOid, fetchedOid);
+    try {
+      await this.gitExecutor.exec(
+        ["-C", attempt.repoPath, "update-ref", attempt.immutableRef, fetchedOid, ""],
+        { timeout: 10_000 },
+      );
+      attempt.createdImmutableRef = true;
+    } catch {
+      const racedOid = await this.readReviewRefOid(attempt.repoPath, attempt.immutableRef);
+      if (!racedOid || racedOid.toLowerCase() !== fetchedOid.toLowerCase()) {
+        throw new PullRequestReviewGitError(
+          "conflict",
+          "Another Review worktree setup changed the immutable pull request ref.",
+        );
+      }
+    }
+  }
+
+  private assertImmutableReviewRefMatches(existingOid: string, fetchedOid: string): void {
+    if (existingOid.toLowerCase() !== fetchedOid.toLowerCase()) {
+      throw new PullRequestReviewGitError(
+        "conflict",
+        "The immutable pull request ref is already owned by another head.",
+      );
     }
   }
 
@@ -643,69 +785,65 @@ export class PullRequestReviewGitService {
     remoteName: string,
     branches: ReviewBranchRecord[],
   ): Promise<{ name: string; created: boolean }> {
-    const baseKey = normalizedRepositoryKey(source.baseRepositoryUrl);
-    const headKey = normalizedRepositoryKey(source.headRepositoryUrl);
-    const exactHeadName = baseKey === headKey && source.headRef.length <= 100
-      ? source.headRef
-      : null;
-    const fallback = sanitizeReviewBranchPart(
-      `mcode/pr-${source.pullRequestNumber}-${sanitizeReviewBranchAtom(source.headOwner)}-${sanitizeReviewBranchAtom(source.headRef)}-${source.headOid.slice(0, 7)}`,
-    ).slice(0, 100);
-    const names: string[] = [];
-    if (exactHeadName) names.push(exactHeadName);
-    for (let suffix = 1; suffix <= 99; suffix++) {
-      const suffixText = suffix === 1 ? "" : `-${suffix}`;
-      names.push(`${fallback.slice(0, 100 - suffixText.length)}${suffixText}`);
-    }
-
     let sawDivergence = false;
-    for (const name of [...new Set(names)]) {
-      try {
-        assertSafeReviewBranch(name, "Review branch");
-        await this.gitExecutor.exec(
-          ["-C", repoPath, "check-ref-format", "--branch", name],
-          { timeout: 5_000 },
-        );
-      } catch {
-        continue;
-      }
-      const existing = branches.find((branch) => branch.name === name);
-      if (!existing) return { name, created: true };
-      if (
-        !existing.worktreePath
-        && existing.oid.toLowerCase() === source.headOid.toLowerCase()
-        && existing.upstream === `${remoteName}/${source.headRef}`
-      ) {
-        return { name, created: false };
-      }
-      sawDivergence = true;
+    for (const name of new Set(reviewBranchCandidates(source))) {
+      const selected = await this.reviewBranchSelection(repoPath, source, remoteName, branches, name);
+      if (selected.kind === "selected") return selected.branch;
+      if (selected.kind === "diverged") sawDivergence = true;
     }
-    throw new PullRequestReviewGitError(
-      sawDivergence ? "branch_diverged" : "branch_occupied",
-      sawDivergence
-        ? "Every safe Review branch candidate is occupied by different history or tracking."
-        : "No safe local Review branch name is available.",
-    );
+    throw unavailableReviewBranchError(sawDivergence);
+  }
+
+  private async reviewBranchSelection(
+    repoPath: string,
+    source: PullRequestReviewGitSource,
+    remoteName: string,
+    branches: readonly ReviewBranchRecord[],
+    name: string,
+  ): Promise<{ kind: "invalid" | "diverged" } | { kind: "selected"; branch: { name: string; created: boolean } }> {
+    if (!(await this.isValidReviewBranchName(repoPath, name))) return { kind: "invalid" };
+    const existing = branches.find((branch) => branch.name === name);
+    if (!existing) return { kind: "selected", branch: { name, created: true } };
+    if (isReusableReviewBranch(existing, source, remoteName)) {
+      return { kind: "selected", branch: { name, created: false } };
+    }
+    return { kind: "diverged" };
+  }
+
+  private async isValidReviewBranchName(repoPath: string, name: string): Promise<boolean> {
+    try {
+      assertSafeReviewBranch(name, "Review branch");
+      await this.gitExecutor.exec(
+        ["-C", repoPath, "check-ref-format", "--branch", name],
+        { timeout: 5_000 },
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async assertFreshManagedReviewDestination(
     repoPath: string,
     destination: string,
   ): Promise<void> {
-    if (existsSync(destination)) {
+    if (NodeFS.existsSync(destination)) {
       throw new PullRequestReviewGitError(
         "path_collision",
         "The Review worktree destination already exists.",
       );
     }
-    const managedRoot = resolve(getMcodeDir(), "worktrees");
-    mkdirSync(managedRoot, { recursive: true });
+    const managedRoot = NodePath.resolve(getMcodeDir(), "worktrees");
+    NodeFS.mkdirSync(managedRoot, { recursive: true });
     const base = ensureManagedWorktreeBaseDir(repoPath);
     const [realManagedRoot, realBase] = await Promise.all([
-      realpath(managedRoot),
-      realpath(base),
+      NodeFSPromises.realpath(managedRoot),
+      NodeFSPromises.realpath(base),
     ]);
-    if (!isPathWithin(realManagedRoot, realBase) || !isPathWithin(realBase, destination)) {
+    if (
+      !isPathWithin(realManagedRoot, realBase, this.hostRuntime.platform)
+      || !isPathWithin(realBase, destination, this.hostRuntime.platform)
+    ) {
       throw new PullRequestReviewGitError(
         "path_collision",
         "The Review worktree destination escapes managed storage.",
@@ -763,7 +901,11 @@ export class PullRequestReviewGitService {
           { timeout: 30_000 },
         );
       } catch {
-        if (isPathWithin(getManagedWorktreeBaseDir(attempt.repoPath), attempt.createdWorktreePath)) {
+        if (isPathWithin(
+          getManagedWorktreeBaseDir(attempt.repoPath),
+          attempt.createdWorktreePath,
+          this.hostRuntime.platform,
+        )) {
           await this.worktreeDirectoryRemover.remove(attempt.createdWorktreePath).catch(() => undefined);
           await this.gitExecutor.exec(
             [

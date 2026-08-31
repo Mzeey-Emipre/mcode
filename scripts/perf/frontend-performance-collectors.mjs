@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { cpus, platform, release, totalmem } from "node:os";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
 
 function percentile(sortedSamples, quantile) {
   return sortedSamples[Math.ceil(sortedSamples.length * quantile) - 1] ?? Number.NaN;
@@ -191,6 +191,56 @@ async function readElectronProcessMetrics(page) {
   });
 }
 
+async function readChromiumMetrics(session, mode) {
+  if (!session || mode !== "production") return null;
+  return metricMap((await session.send("Performance.getMetrics")).metrics);
+}
+
+async function readModeProcessMetrics(page, mode) {
+  return mode === "production" ? readElectronProcessMetrics(page) : null;
+}
+
+async function startTrace(session) {
+  if (!session) return null;
+  const traceEvents = [];
+  const onTraceData = ({ value }) => traceEvents.push(...value);
+  session.on("Tracing.dataCollected", onTraceData);
+  await session.send("Tracing.start", {
+    categories: "devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline.frame",
+    transferMode: "ReportEvents",
+  });
+  return { session, traceEvents, onTraceData };
+}
+
+async function stopTrace(trace) {
+  if (!trace) return;
+  const completed = new Promise((resolveComplete) => {
+    trace.session.once("Tracing.tracingComplete", resolveComplete);
+  });
+  await trace.session.send("Tracing.end");
+  await completed;
+  trace.session.off("Tracing.dataCollected", trace.onTraceData);
+}
+
+function buildChromiumAttribution(mode, traceEnabled, before, after, signals, traceEvents) {
+  if (mode === "production") {
+    return {
+      scriptingMs: metricDelta(before, after, "ScriptDuration"),
+      layoutMs: metricDelta(before, after, "LayoutDuration"),
+      taskMs: metricDelta(before, after, "TaskDuration"),
+      longTasksMs: signals.longTasks,
+      frameCadence: summarizeFrames(signals.frameTimes),
+      ...summarizeTrace(traceEvents),
+    };
+  }
+  if (traceEnabled) return { ...summarizeTrace(traceEvents), longTasksMs: signals.longTasks };
+  return null;
+}
+
+function buildReactAttribution(mode, signals) {
+  return mode === "profiling" ? { commits: signals.commits, rowRenders: signals.rowRenders } : null;
+}
+
 /** Creates the mode-specific React, Chromium, and Electron process collector. */
 export async function createModeSignalCollector(page, mode) {
   if (mode !== "profiling" && mode !== "production") {
@@ -209,56 +259,30 @@ export async function createModeSignalCollector(page, mode) {
       const indexes = await resetAttributionRuntime(page);
       const traceEnabled = mode === "production" || options.trace === true;
       const activeSession = traceEnabled ? await ensureSession() : null;
-      const before = activeSession && mode === "production"
-        ? metricMap((await activeSession.send("Performance.getMetrics")).metrics)
-        : null;
-      const processBefore = mode === "production" ? await readElectronProcessMetrics(page) : null;
-      const traceEvents = [];
-      const onTraceData = ({ value }) => traceEvents.push(...value);
-      if (activeSession) {
-        activeSession.on("Tracing.dataCollected", onTraceData);
-        await activeSession.send("Tracing.start", {
-          categories: "devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline.frame",
-          transferMode: "ReportEvents",
-        });
-      }
+      const before = await readChromiumMetrics(activeSession, mode);
+      const processBefore = await readModeProcessMetrics(page, mode);
+      const trace = await startTrace(activeSession);
       let result;
       try {
         result = await operation();
       } finally {
-        if (activeSession) {
-          const completed = new Promise((resolveComplete) => {
-            activeSession.once("Tracing.tracingComplete", resolveComplete);
-          });
-          await activeSession.send("Tracing.end");
-          await completed;
-          activeSession.off("Tracing.dataCollected", onTraceData);
-        }
+        await stopTrace(trace);
       }
-      const processAfter = mode === "production" ? await readElectronProcessMetrics(page) : null;
-      const after = activeSession && mode === "production"
-        ? metricMap((await activeSession.send("Performance.getMetrics")).metrics)
-        : null;
+      const processAfter = await readModeProcessMetrics(page, mode);
+      const after = await readChromiumMetrics(activeSession, mode);
       const signals = await readAttributionRuntime(page, indexes);
-      const chromium = mode === "production"
-        ? {
-            scriptingMs: metricDelta(before, after, "ScriptDuration"),
-            layoutMs: metricDelta(before, after, "LayoutDuration"),
-            taskMs: metricDelta(before, after, "TaskDuration"),
-            longTasksMs: signals.longTasks,
-            frameCadence: summarizeFrames(signals.frameTimes),
-            ...summarizeTrace(traceEvents),
-          }
-        : traceEnabled
-          ? { ...summarizeTrace(traceEvents), longTasksMs: signals.longTasks }
-          : null;
       return {
         result,
         attribution: {
-          react: mode === "profiling"
-            ? { commits: signals.commits, rowRenders: signals.rowRenders }
-            : null,
-          chromium,
+          react: buildReactAttribution(mode, signals),
+          chromium: buildChromiumAttribution(
+            mode,
+            traceEnabled,
+            before,
+            after,
+            signals,
+            trace?.traceEvents ?? [],
+          ),
           electronProcess: processBefore && processAfter
             ? { before: processBefore, after: processAfter }
             : null,
@@ -277,12 +301,12 @@ export async function createModeSignalCollector(page, mode) {
 
 /** Returns stable host and source metadata for a performance result. */
 export function collectRunEnvironment(repoRoot, runtimeVersions = {}) {
-  const cpuList = cpus();
-  const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], {
+  const cpuList = NodeOS.cpus();
+  const sourceRevision = NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: repoRoot,
     encoding: "utf8",
   }).trim();
-  const dirty = execFileSync("git", ["status", "--porcelain"], {
+  const dirty = NodeChildProcess.execFileSync("git", ["status", "--porcelain"], {
     cwd: repoRoot,
     encoding: "utf8",
   }).trim().length > 0;
@@ -294,9 +318,9 @@ export function collectRunEnvironment(repoRoot, runtimeVersions = {}) {
       arch: process.arch,
       cpuCount: cpuList.length,
       cpuModel: cpuList[0]?.model ?? "unknown",
-      memoryBytes: totalmem(),
-      platform: platform(),
-      release: release(),
+      memoryBytes: NodeOS.totalmem(),
+      platform: NodeOS.platform(),
+      release: NodeOS.release(),
     },
     versions: {
       node: process.versions.node,

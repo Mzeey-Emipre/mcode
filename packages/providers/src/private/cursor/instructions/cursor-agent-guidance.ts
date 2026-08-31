@@ -4,16 +4,16 @@
  * repository `AGENTS.md`, and `.cursor/AGENTS.md` under the session working directory.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { SkillInfo } from "@mcode/contracts";
 
 /** Reads a Markdown file when it exists and is non-empty after trim. */
 function readOptionalMarkdownFile(filePath: string): string | undefined {
-  if (!existsSync(filePath)) return undefined;
+  if (!NodeFS.existsSync(filePath)) return undefined;
   try {
-    const text = readFileSync(filePath, "utf-8").trim();
+    const text = NodeFS.readFileSync(filePath, "utf-8").trim();
     return text.length > 0 ? text : undefined;
   } catch {
     return undefined;
@@ -28,9 +28,9 @@ function readOptionalMarkdownFile(filePath: string): string | undefined {
  */
 export function mergeCursorWorkspaceAgentMarkdown(cwd: string): string | undefined {
   const chunks: string[] = [];
-  const repo = readOptionalMarkdownFile(join(cwd, "AGENTS.md"));
+  const repo = readOptionalMarkdownFile(NodePath.join(cwd, "AGENTS.md"));
   if (repo) chunks.push(repo);
-  const project = readOptionalMarkdownFile(join(cwd, ".cursor", "AGENTS.md"));
+  const project = readOptionalMarkdownFile(NodePath.join(cwd, ".cursor", "AGENTS.md"));
   if (project) chunks.push(project);
   if (chunks.length === 0) return undefined;
   return chunks.join("\n\n---\n\n");
@@ -56,7 +56,7 @@ function capAgentMarkdown(markdown: string): string {
  */
 export function buildCursorAgentGuidanceMarkdown(cwd: string): string | undefined {
   const chunks: string[] = [];
-  const user = readOptionalMarkdownFile(join(homedir(), ".cursor", "AGENTS.md"));
+  const user = readOptionalMarkdownFile(NodePath.join(NodeOS.homedir(), ".cursor", "AGENTS.md"));
   if (user) chunks.push(user);
   const workspace = mergeCursorWorkspaceAgentMarkdown(cwd);
   if (workspace) chunks.push(workspace);

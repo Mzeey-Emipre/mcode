@@ -2,10 +2,10 @@
  * CI-only helper that prepares the desktop package and invokes electron-builder.
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { sanitizePackageManifest } from "./sanitize-package-manifest.mjs";
 
 const MAX_ATTEMPTS = 3;
@@ -51,25 +51,26 @@ export async function runElectronBuilderWithRetry({
   maxAttempts = MAX_ATTEMPTS,
   diagnosticLimitBytes = DEFAULT_DIAGNOSTIC_LIMIT_BYTES,
 }) {
-  if (typeof runAttempt !== "function") {
-    throw new TypeError("runAttempt must be a function");
-  }
-  const attemptLimit = Math.min(Math.max(Number(maxAttempts) || MAX_ATTEMPTS, 1), MAX_ATTEMPTS);
+  assertRunAttempt(runAttempt);
+  const attemptLimit = boundedAttemptLimit(maxAttempts);
+  return runElectronBuilderAttempts(runAttempt, attemptLimit, diagnosticLimitBytes);
+}
+
+function assertRunAttempt(runAttempt) {
+  if (typeof runAttempt !== "function") throw new TypeError("runAttempt must be a function");
+}
+
+function boundedAttemptLimit(maxAttempts) {
+  return Math.min(Math.max(Number(maxAttempts) || MAX_ATTEMPTS, 1), MAX_ATTEMPTS);
+}
+
+async function runElectronBuilderAttempts(runAttempt, attemptLimit, diagnosticLimitBytes) {
   let lastResult;
   for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
     lastResult = await runAttempt(attempt);
     if (lastResult?.status === 0) return lastResult;
-    const output = String(lastResult?.output ?? "");
-    const diagnostics = boundedTail(output, diagnosticLimitBytes);
-    const classification =
-      lastResult?.classification ?? classifyElectronBuilderFailure(output);
-    if (!classification.retryable || attempt === attemptLimit) {
-      throw packageFailure({
-        status: lastResult?.status ?? 1,
-        diagnostics,
-        attempts: attempt,
-        attemptLimit,
-      });
+    if (shouldStopElectronBuilderRetries(lastResult, attempt, attemptLimit)) {
+      throw electronBuilderAttemptFailure(lastResult, attempt, attemptLimit, diagnosticLimitBytes);
     }
     console.warn(
       `[ci-package] Retrying transient Electron download failure (${attempt + 1}/${attemptLimit})`,
@@ -83,24 +84,39 @@ export async function runElectronBuilderWithRetry({
   });
 }
 
+function shouldStopElectronBuilderRetries(result, attempt, attemptLimit) {
+  const output = String(result?.output ?? "");
+  const classification = result?.classification ?? classifyElectronBuilderFailure(output);
+  return !classification.retryable || attempt === attemptLimit;
+}
+
+function electronBuilderAttemptFailure(result, attempts, attemptLimit, diagnosticLimitBytes) {
+  return packageFailure({
+    status: result?.status ?? 1,
+    diagnostics: boundedTail(result?.output, diagnosticLimitBytes),
+    attempts,
+    attemptLimit,
+  });
+}
+
 function findElectronBuilderCli(desktopRoot) {
   const candidates = [
-    resolve(desktopRoot, "node_modules/electron-builder/out/cli/cli.js"),
-    resolve(desktopRoot, "../../node_modules/electron-builder/out/cli/cli.js"),
+    NodePath.resolve(desktopRoot, "node_modules/electron-builder/out/cli/cli.js"),
+    NodePath.resolve(desktopRoot, "../../node_modules/electron-builder/out/cli/cli.js"),
   ];
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+    if (NodeFS.existsSync(candidate)) return candidate;
   }
-  const bunDir = resolve(desktopRoot, "../../node_modules/.bun");
-  if (existsSync(bunDir)) {
-    for (const entry of readdirSync(bunDir)) {
+  const bunDir = NodePath.resolve(desktopRoot, "../../node_modules/.bun");
+  if (NodeFS.existsSync(bunDir)) {
+    for (const entry of NodeFS.readdirSync(bunDir)) {
       if (!entry.startsWith("electron-builder@")) continue;
-      const candidate = resolve(
+      const candidate = NodePath.resolve(
         bunDir,
         entry,
         "node_modules/electron-builder/out/cli/cli.js",
       );
-      if (existsSync(candidate)) return candidate;
+      if (NodeFS.existsSync(candidate)) return candidate;
     }
   }
   throw new Error("[ci-package] electron-builder CLI not found");
@@ -114,7 +130,7 @@ function runElectronBuilderAttempt({
   diagnosticLimitBytes,
 }) {
   return new Promise((resolveAttempt) => {
-    const child = spawn(nodeExecutable, args, {
+    const child = NodeChildProcess.spawn(nodeExecutable, args, {
       cwd,
       env,
       stdio: ["inherit", "pipe", "pipe"],
@@ -160,22 +176,22 @@ function runElectronBuilderAttempt({
 }
 
 async function packageDesktop() {
-  const scriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-  const pkgPath = resolve(scriptRoot, "package.json");
-  const pkg = sanitizePackageManifest(JSON.parse(readFileSync(pkgPath, "utf8")));
-  writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  const scriptRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..", "..", "..");
+  const pkgPath = NodePath.resolve(scriptRoot, "package.json");
+  const pkg = sanitizePackageManifest(JSON.parse(NodeFS.readFileSync(pkgPath, "utf8")));
+  NodeFS.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   console.log("[ci-package] Stripped workspace:* entries from package.json dependency fields");
 
-  writeFileSync(
-    resolve(scriptRoot, "package-lock.json"),
+  NodeFS.writeFileSync(
+    NodePath.resolve(scriptRoot, "package-lock.json"),
     `${JSON.stringify({ name: pkg.name, version: pkg.version, lockfileVersion: 3, packages: {} }, null, 2)}\n`,
   );
   console.log("[ci-package] Created minimal package-lock.json");
 
-  const rootPackagePath = resolve(scriptRoot, "..", "..", "package.json");
-  const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8"));
+  const rootPackagePath = NodePath.resolve(scriptRoot, "..", "..", "package.json");
+  const rootPackage = JSON.parse(NodeFS.readFileSync(rootPackagePath, "utf8"));
   delete rootPackage.workspaces;
-  writeFileSync(rootPackagePath, `${JSON.stringify(rootPackage, null, 2)}\n`);
+  NodeFS.writeFileSync(rootPackagePath, `${JSON.stringify(rootPackage, null, 2)}\n`);
   console.log("[ci-package] Stripped workspaces from root package.json");
 
   const separator = process.platform === "win32" ? ";" : ":";
@@ -184,7 +200,7 @@ async function packageDesktop() {
     .filter((entry) => !entry.includes(".bun"))
     .join(separator);
   console.log("[ci-package] Installing native dependencies with npm...");
-  const npmResult = spawnSync("npm", ["install", "--no-audit", "--no-fund"], {
+  const npmResult = NodeChildProcess.spawnSync("npm", ["install", "--no-audit", "--no-fund"], {
     cwd: scriptRoot,
     stdio: "inherit",
     env: { ...process.env, PATH: filteredPath },
@@ -208,6 +224,6 @@ async function packageDesktop() {
   return result;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)) {
   await packageDesktop();
 }

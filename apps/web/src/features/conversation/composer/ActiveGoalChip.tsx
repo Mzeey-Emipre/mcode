@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Goal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { GoalState } from "@mcode/contracts";
 import { isGoalOpen } from "@mcode/contracts";
 import { useActiveGoalActions } from "./useActiveGoalActions";
@@ -101,18 +102,39 @@ function ActiveGoalChipTrigger({
         />
       ) : goalLabel}
       {goal.controls.canClear === true ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="size-6 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-label="Clear active goal"
-          title="Clear active goal"
-          disabled={isClearingGoal}
-          onClick={onClear}
-        >
-          <X size={12} aria-hidden />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              isClearingGoal ? (
+                <span className="inline-flex">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="size-6 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    aria-label="Clear active goal"
+                    disabled
+                    onClick={onClear}
+                  >
+                    <X size={12} aria-hidden />
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="size-6 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                  aria-label="Clear active goal"
+                  onClick={onClear}
+                >
+                  <X size={12} aria-hidden />
+                </Button>
+              )
+            }
+          />
+          <TooltipContent>Clear active goal</TooltipContent>
+        </Tooltip>
       ) : null}
     </span>
   );

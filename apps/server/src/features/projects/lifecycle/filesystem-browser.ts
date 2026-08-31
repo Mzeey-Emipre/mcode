@@ -5,10 +5,10 @@
  */
 
 import { injectable } from "tsyringe";
-import { stat, readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { homedir, platform } from "node:os";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 
 /** Maximum number of directory entries returned in a single browse response. */
 const MAX_ENTRIES = 500;
@@ -19,6 +19,12 @@ const DRIVES_CACHE_TTL_MS = 5_000;
 
 let cachedDrives: { name: string; isDir: boolean }[] | null = null;
 let cachedDrivesAt = 0;
+
+type BrowseTarget = {
+  path: string;
+  isDirectory: boolean;
+  isExactDirectory: boolean;
+};
 
 /**
  * Probe `A:\` through `Z:\` synchronously and return the ones that exist.
@@ -34,7 +40,7 @@ function listWindowsDrives(): { name: string; isDir: boolean }[] {
   for (let code = "A".charCodeAt(0); code <= "Z".charCodeAt(0); code++) {
     const letter = String.fromCharCode(code);
     const root = `${letter}:\\`;
-    if (existsSync(root)) {
+    if (NodeFS.existsSync(root)) {
       drives.push({ name: root, isDir: true });
     }
   }
@@ -63,62 +69,13 @@ export class FilesystemBrowser {
     /** Whether the requested path resolved to an existing directory without fallback. */
     isExactDirectory: boolean;
   }> {
-    // Drive enumeration (Windows): bare `/` is a UI affordance to surface drives,
-    // since drives have no common parent in the Windows filesystem model.
-    if (input === "/" && platform() === "win32") {
-      return {
-        path: "/",
-        parent: null,
-        entries: listWindowsDrives(),
-        isExactDirectory: false,
-      };
-    }
+    if (isWindowsDrivePicker(input)) return windowsDrivePickerResponse();
 
-    // Expand ~ to home directory, then resolve to an absolute path.
-    // Lookahead restricts the match to standalone `~` and `~/...` so inputs
-    // like `~foo` are passed through untouched rather than rewritten.
-    let target = input.replace(/^~(?=$|[\\/])/, homedir());
-    target = resolve(target);
+    const target = await resolveBrowseTarget(input);
+    if (!target) return windowsDrivePickerResponse();
+    const dir = target.isDirectory ? target.path : NodePath.dirname(target.path);
 
-    // Walk up to the nearest existing path (handles ghost paths from stale state).
-    let attempts = 0;
-    let resolvedToAncestor = false;
-    while (target && attempts++ < 50) {
-      try {
-        await stat(target);
-        break;
-      } catch {
-        resolvedToAncestor = true;
-        const parent = dirname(target);
-        if (parent === target) break; // reached filesystem root
-        target = parent;
-      }
-    }
-
-    // Final stat can still reject when the ancestor walk lands on a path that
-    // disappeared (e.g. an ejected drive root on Windows). Fall back to the
-    // drives list on Windows or the root directory on POSIX so the RPC always
-    // resolves to a usable browse response.
-    let s;
-    try {
-      s = await stat(target);
-    } catch {
-      resolvedToAncestor = true;
-      if (platform() === "win32") {
-        return {
-          path: "/",
-          parent: null,
-          entries: listWindowsDrives(),
-          isExactDirectory: false,
-        };
-      }
-      target = "/";
-      s = await stat(target);
-    }
-    // When the resolved target is a file, browse its parent directory.
-    const dir = s.isDirectory() ? target : dirname(target);
-
-    const dirents = await readdir(dir, { withFileTypes: true });
+    const dirents = await NodeFSPromises.readdir(dir, { withFileTypes: true });
     const entries = dirents
       .map((d) => ({ name: d.name, isDir: d.isDirectory() }))
       .sort((a, b) => {
@@ -128,12 +85,63 @@ export class FilesystemBrowser {
       })
       .slice(0, MAX_ENTRIES);
 
-    const parentDir = dirname(dir);
+    const parentDir = NodePath.dirname(dir);
     return {
       path: dir,
       parent: parentDir === dir ? null : parentDir,
       entries,
-      isExactDirectory: !resolvedToAncestor && s.isDirectory(),
+      isExactDirectory: target.isExactDirectory,
     };
   }
+}
+
+function isWindowsDrivePicker(input: string): boolean {
+  return input === "/" && NodeOS.platform() === "win32";
+}
+
+function windowsDrivePickerResponse(): {
+  path: string;
+  parent: null;
+  entries: { name: string; isDir: boolean }[];
+  isExactDirectory: false;
+} {
+  return {
+    path: "/",
+    parent: null,
+    entries: listWindowsDrives(),
+    isExactDirectory: false,
+  };
+}
+
+function resolveBrowsePath(input: string): string {
+  return NodePath.resolve(input.replace(/^~(?=$|[\\/])/, NodeOS.homedir()));
+}
+
+async function resolveBrowseTarget(input: string): Promise<BrowseTarget | null> {
+  let path = resolveBrowsePath(input);
+  let resolvedToAncestor = false;
+
+  for (let attempts = 0; attempts < 50; attempts += 1) {
+    try {
+      const details = await NodeFSPromises.stat(path);
+      return {
+        path,
+        isDirectory: details.isDirectory(),
+        isExactDirectory: !resolvedToAncestor && details.isDirectory(),
+      };
+    } catch {
+      resolvedToAncestor = true;
+      const parent = NodePath.dirname(path);
+      if (parent === path) break;
+      path = parent;
+    }
+  }
+
+  return resolveFallbackBrowseTarget();
+}
+
+async function resolveFallbackBrowseTarget(): Promise<BrowseTarget | null> {
+  if (NodeOS.platform() === "win32") return null;
+  const details = await NodeFSPromises.stat("/");
+  return { path: "/", isDirectory: details.isDirectory(), isExactDirectory: false };
 }

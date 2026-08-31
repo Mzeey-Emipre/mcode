@@ -9,10 +9,11 @@ import { broadcast, broadcastTerminalData, maxBufferedAmount, onSessionChange, s
 import { PortPush } from "../transport/port-push.js";
 import { IpcPushServer, generateIpcPath } from "../transport/ipc-push-server.js";
 import { logger, getMcodeDir } from "@mcode/shared";
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
-import { join } from "path";
-import { randomUUID } from "crypto";
-import { execFileSync } from "child_process";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
 import { killOrphanedServer, reapOrphanedPtys } from "../../runtime/process/orphan-cleanup.js";
 import { PtyPidRegistry } from "../../features/terminal/host/pty-pid-registry.js";
 
@@ -137,14 +138,14 @@ const PREFERRED_PORT = parseInt(process.env.MCODE_PORT ?? "19400", 10);
 const MAX_PORT_ATTEMPTS = 10;
 
 /** Path to the server lock file used for service discovery across instances. */
-const LOCK_FILE_PATH = join(getMcodeDir(), "server.lock");
+const LOCK_FILE_PATH = NodePath.join(getMcodeDir(), "server.lock");
 
 /**
  * Path to the clean-shutdown breadcrumb. Written at the end of shutdown() and
  * deleted on startup. Absence at startup implies the previous process died
  * without running shutdown(): the primary diagnostic for #290-class restarts.
  */
-const SHUTDOWN_MARKER_PATH = join(getMcodeDir(), ".clean-shutdown");
+const SHUTDOWN_MARKER_PATH = NodePath.join(getMcodeDir(), ".clean-shutdown");
 
 /**
  * Host address to bind the server to.
@@ -163,15 +164,15 @@ function resolveAuthToken(): string {
   const fromEnv = process.env.MCODE_AUTH_TOKEN;
   if (fromEnv) return fromEnv;
 
-  const secretPath = join(getMcodeDir(), "auth-secret");
-  if (existsSync(secretPath)) {
-    const token = readFileSync(secretPath, "utf-8").trim();
+  const secretPath = NodePath.join(getMcodeDir(), "auth-secret");
+  if (NodeFS.existsSync(secretPath)) {
+    const token = NodeFS.readFileSync(secretPath, "utf-8").trim();
     if (token) return token;
   }
 
-  const token = randomUUID();
-  mkdirSync(getMcodeDir(), { recursive: true });
-  writeFileSync(secretPath, token, { mode: 0o600 });
+  const token = NodeCrypto.randomUUID();
+  NodeFS.mkdirSync(getMcodeDir(), { recursive: true });
+  NodeFS.writeFileSync(secretPath, token, { mode: 0o600 });
   return token;
 }
 
@@ -207,19 +208,21 @@ logger.info("Single-instance dev mode resolved", {
   worktreeIdentityPresent: WORKTREE_IDENTITY !== null,
 });
 
-// Clean-shutdown breadcrumb check. If the marker is missing AND a prior lock
-// file exists, the previous server process did not run shutdown() to completion.
-// Log it so operators have a diagnostic trail for issue #290-class unclean
-// exits. The lock-file gate prevents false positives on fresh installs and on
-// test runs that import this module without ever starting a server.
-if (existsSync(SHUTDOWN_MARKER_PATH)) {
-  unlinkSync(SHUTDOWN_MARKER_PATH);
-} else if (existsSync(LOCK_FILE_PATH)) {
-  logger.warn(
-    "Previous server process did not shut down gracefully: no clean-shutdown marker found",
-    { markerPath: SHUTDOWN_MARKER_PATH },
-  );
+/** Records an unclean previous exit, then clears a clean-shutdown marker. */
+function inspectCleanShutdownMarker(): void {
+  if (NodeFS.existsSync(SHUTDOWN_MARKER_PATH)) {
+    NodeFS.unlinkSync(SHUTDOWN_MARKER_PATH);
+    return;
+  }
+  if (NodeFS.existsSync(LOCK_FILE_PATH)) {
+    logger.warn(
+      "Previous server process did not shut down gracefully: no clean-shutdown marker found",
+      { markerPath: SHUTDOWN_MARKER_PATH },
+    );
+  }
 }
+
+inspectCleanShutdownMarker();
 
 /** Standalone dev: populate MCODE_GIT_BRANCH / MCODE_GIT_TOPLEVEL before DB path selection. */
 function applyDevGitCheckoutEnv(): void {
@@ -227,7 +230,7 @@ function applyDevGitCheckoutEnv(): void {
   const cwd = process.cwd();
   if (!process.env.MCODE_GIT_BRANCH) {
     try {
-      const stdout = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      const stdout = NodeChildProcess.execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
         cwd,
         timeout: 3000,
         encoding: "utf8",
@@ -242,7 +245,7 @@ function applyDevGitCheckoutEnv(): void {
   }
   if (!process.env.MCODE_GIT_TOPLEVEL) {
     try {
-      const stdout = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      const stdout = NodeChildProcess.execFileSync("git", ["rev-parse", "--show-toplevel"], {
         cwd,
         timeout: 3000,
         encoding: "utf8",
@@ -407,7 +410,7 @@ const portPush = new PortPush();
 const ipcServer = new IpcPushServer();
 
 /** Platform-appropriate IPC path for this server process. */
-const ipcPath = generateIpcPath(process.pid, getMcodeDir());
+const ipcPath = generateIpcPath(process.pid, getMcodeDir(), hostRuntime.platform);
 
 ipcServer.onConnection((port) => {
   logger.info("IPC push client connected");
@@ -544,12 +547,17 @@ void legacyConversationMigration.runToCompletion().then((result) => {
     error: error instanceof Error ? error.message : String(error),
   });
 });
-const startupRecovery = turnRecoveryService.reconcileOnStartup();
-if (startupRecovery.interrupted.length > 0) {
-  logger.info("Interrupted unproved executions during startup recovery", {
-    count: startupRecovery.interrupted.length,
-  });
+/** Reconciles incomplete turns and reports any execution interrupted at boot. */
+function recoverTurnsAtStartup(): void {
+  const startupRecovery = turnRecoveryService.reconcileOnStartup();
+  if (startupRecovery.interrupted.length > 0) {
+    logger.info("Interrupted unproved executions during startup recovery", {
+      count: startupRecovery.interrupted.length,
+    });
+  }
 }
+
+recoverTurnsAtStartup();
 
 // Register broadcast callback so settings changes propagate to clients
 providerAvailability.onChange((list) => {
@@ -585,29 +593,37 @@ providerAvailability
 // Start background worktree cleanup worker
 cleanupWorker.start();
 
-// Run snapshot garbage collection on startup
-const maxAge = parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10);
-const removed = turnSnapshotRepo.deleteExpired(maxAge);
-if (removed > 0) {
-  logger.info(`Cleaned up ${removed} expired turn snapshots`);
+/** Removes expired turn snapshots before accepting new work. */
+function removeExpiredSnapshots(): void {
+  const maxAge = parseInt(process.env.SNAPSHOT_MAX_AGE_DAYS ?? "30", 10);
+  const removed = turnSnapshotRepo.deleteExpired(maxAge);
+  if (removed > 0) logger.info(`Cleaned up ${removed} expired turn snapshots`);
 }
 
-// Initialize HEAD file watchers for all existing workspaces so branch changes
-// are detected after a server restart. Also correct any stale is_git_repo = false
-// values (can occur when git was unavailable at workspace creation time).
-const allWorkspaces = workspaceRepo.listAll();
-for (const ws of allWorkspaces) {
-  gitWatcherService.watchWorkspace(ws.id, ws.path);
-  for (const thread of threadService.list(ws.id)) {
+removeExpiredSnapshots();
+
+/** Starts workspace and worktree Git watchers, then repairs stale Git flags. */
+function initializeWorkspaceWatchers(): ReturnType<typeof workspaceRepo.listAll> {
+  const allWorkspaces = workspaceRepo.listAll();
+  for (const workspace of allWorkspaces) initializeWorkspaceWatcher(workspace);
+  return allWorkspaces;
+}
+
+/** Starts watchers and repairs metadata for one persisted workspace. */
+function initializeWorkspaceWatcher(workspace: ReturnType<typeof workspaceRepo.listAll>[number]): void {
+  gitWatcherService.watchWorkspace(workspace.id, workspace.path);
+  for (const thread of threadService.list(workspace.id)) {
     if (thread.mode === "worktree" && thread.worktree_path) {
       gitWatcherService.watchThreadWorktree(thread.id, thread.worktree_path);
     }
   }
-  if (!ws.is_git_repo && existsSync(join(ws.path, ".git"))) {
-    workspaceRepo.setIsGitRepo(ws.id, true);
-    logger.info("Corrected stale is_git_repo=false at startup", { workspaceId: ws.id, path: ws.path });
+  if (!workspace.is_git_repo && NodeFS.existsSync(NodePath.join(workspace.path, ".git"))) {
+    workspaceRepo.setIsGitRepo(workspace.id, true);
+    logger.info("Corrected stale is_git_repo=false at startup", { workspaceId: workspace.id, path: workspace.path });
   }
 }
+
+const allWorkspaces = initializeWorkspaceWatchers();
 
 // Begin watching the user's Claude skills/commands/plugins directories so the
 // skill registry stays current without a server restart.
@@ -616,8 +632,8 @@ skillWatcherService.registerDebouncedInvalidateListener(() => {
   cursorProvider.onSkillRegistryDebouncedInvalidation();
 });
 
-// Seed CI check watcher with all threads that have open PRs
-{
+/** Seeds CI watching from threads that still have open pull requests. */
+function seedCiWatcher(allWorkspaces: ReturnType<typeof workspaceRepo.listAll>): void {
   const workspacePaths = new Map(allWorkspaces.map((ws) => [ws.id, ws.path]));
   const allThreads: ReturnType<typeof threadService.list> = [];
   for (const ws of allWorkspaces) {
@@ -633,14 +649,21 @@ skillWatcherService.registerDebouncedInvalidateListener(() => {
   });
 }
 
-for (const provider of providerRegistry.resolveAll()) {
+seedCiWatcher(allWorkspaces);
+
+/** Registers provider events that persist native plan output. */
+function registerProviderPlanListeners(): void {
+  for (const provider of providerRegistry.resolveAll()) {
   // ExitPlanMode: Claude SDK's native plan output. The provider intercepts
   // the tool call, captures the plan markdown, and emits this event. We
   // persist the plan and broadcast to clients.
   provider.on("exit_plan_mode", (data: { threadId: string; planMarkdown: string }) => {
     planTurnService.handleExitPlanMode(data.threadId, data.planMarkdown);
   });
+  }
 }
+
+registerProviderPlanListeners();
 
 providerCatalogService.onChanged((change) => {
   broadcast("provider.catalogChanged", change);
@@ -652,6 +675,7 @@ codexCatalogService.onSkillsChanged((cwd) => {
 
 // Create and start HTTP + WS server
 const { httpServer, wss } = createWsServer({
+  runtime: hostRuntime,
   workspaceService,
   workspaceEnvironmentService,
   projectActionService,
@@ -720,7 +744,7 @@ const { httpServer, wss } = createWsServer({
   instanceToken: INSTANCE_TOKEN,
   worktreeIdentity: WORKTREE_IDENTITY,
   resolveBrowserAutomationHostAuthorization: () => ({
-    desktopInstanceId: randomUUID(),
+    desktopInstanceId: NodeCrypto.randomUUID(),
     worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
     allowedWorkspaceIds: workspaceService.list().map((workspace) => workspace.id),
     allowWebRuntime: WEB_AUTOMATION_ENABLED,
@@ -766,7 +790,7 @@ function listen(port: number): void {
           version: process.env.MCODE_VERSION ?? "0.0.0",
           ipcPath,
         });
-        writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
+        NodeFS.writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
         logger.info("Server lock file written", { path: LOCK_FILE_PATH });
       } catch (err) {
         logger.warn("Failed to write server lock file", { error: String(err) });
@@ -813,12 +837,12 @@ function startServerAndSubscribe(): void {
 // Kill any orphaned server from a previous unclean shutdown before binding
 // the new IPC socket and HTTP port, so zombie SDK subprocesses are stopped
 // before the new server accepts work.
-killOrphanedServer({ lockFilePath: LOCK_FILE_PATH, logger });
+killOrphanedServer({ lockFilePath: LOCK_FILE_PATH, logger, platform: hostRuntime.platform });
 
 // Reap any PTY processes left alive from a previous crash. Runs after
 // killOrphanedServer so the server process tree is clean before we inspect PTY PIDs.
 const pidRegistry = container.resolve<PtyPidRegistry>("PtyPidRegistry");
-reapOrphanedPtys(pidRegistry, logger);
+reapOrphanedPtys(pidRegistry, logger, { platform: hostRuntime.platform });
 projectActionService.recoverStaleRuns();
 
 async function bootstrapServer(): Promise<void> {
@@ -870,10 +894,7 @@ async function shutdown(): Promise<void> {
   shutdownCoordinator.setPhase("close external thread-control runtime");
   await externalThreadControlMcpRuntime.close();
 
-  // Clean up IPC socket file on non-Windows
-  if (process.platform !== "win32") {
-    try { unlinkSync(ipcPath); } catch { /* already removed */ }
-  }
+  removeIpcSocket(ipcPath, hostRuntime.platform);
 
   // 1. Capture active thread IDs before stopAll() clears them
   const activeThreadIds = agentService.runtimeAccess().activeThreadIds();
@@ -931,11 +952,7 @@ async function shutdown(): Promise<void> {
   await captureCleanupFailure(() => ciWatcherService.dispose());
 
   // 9. Close all WebSocket clients and shut down the WS server
-  for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.close(1001, "Server shutting down");
-    }
-  }
+  closeWebSocketClients(wss.clients);
 
   // 10. Await WS and HTTP server close so pending handshakes can finish
   shutdownCoordinator.setPhase("close HTTP and WebSocket servers");
@@ -968,7 +985,7 @@ async function shutdown(): Promise<void> {
   // detects an unclean exit (missing marker + present lock = warn).
   try {
     shutdownCoordinator.setPhase("write clean-shutdown marker");
-    writeFileSync(SHUTDOWN_MARKER_PATH, String(Date.now()), {
+    NodeFS.writeFileSync(SHUTDOWN_MARKER_PATH, String(Date.now()), {
       mode: 0o600,
       encoding: "utf-8",
     });
@@ -983,7 +1000,7 @@ async function shutdown(): Promise<void> {
   // 13. Remove server lock file
   shutdownCoordinator.setPhase("remove server lock");
   try {
-    unlinkSync(LOCK_FILE_PATH);
+    NodeFS.unlinkSync(LOCK_FILE_PATH);
   } catch {
     // Lock file may already be gone
   }
@@ -991,6 +1008,20 @@ async function shutdown(): Promise<void> {
   shutdownCoordinator.setPhase("complete shutdown");
   logger.info("Shutdown complete");
   process.exit(0);
+}
+
+/** Removes the Unix IPC socket after its listener is closed. */
+function removeIpcSocket(path: string, platform: NodeJS.Platform): void {
+  if (platform === "win32") return;
+  if (platform !== "darwin" && platform !== "linux") return;
+  try { NodeFS.unlinkSync(path); } catch { /* already removed */ }
+}
+
+/** Sends the normal shutdown close code to every open WebSocket client. */
+function closeWebSocketClients(clients: Iterable<WebSocket>): void {
+  for (const client of clients) {
+    if (client.readyState === WebSocket.OPEN) client.close(1001, "Server shutting down");
+  }
 }
 
 let shutdownCoordinator: ShutdownCoordinator;

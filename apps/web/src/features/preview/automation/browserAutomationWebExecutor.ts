@@ -168,32 +168,40 @@ function sameOrigin(url: string): boolean {
   }
 }
 
+function hasPermittedFrameOrigin(origin: string | undefined, frameUrl: string): boolean {
+  if (origin && origin !== "null") return origin === window.location.origin;
+  const frameAddress = new URL(frameUrl || "about:blank", window.location.href);
+  return frameAddress.protocol === "about:" || frameAddress.origin === window.location.origin;
+}
+
 function currentDocument(iframe: WebIframe): Document | null {
   try {
     const document = iframe.contentDocument;
     if (!document) return null;
-    const origin = document.location?.origin;
-    if (origin && origin !== "null" && origin !== window.location.origin) return null;
-    if (origin === "null") {
-      const frameUrl = new URL(iframe.src || "about:blank", window.location.href);
-      if (frameUrl.protocol !== "about:" && frameUrl.origin !== window.location.origin) return null;
-    }
-    return document;
+    return hasPermittedFrameOrigin(document.location?.origin, iframe.src) ? document : null;
   } catch {
     return null;
   }
 }
 
-function isHiddenElementSelf(element: Element): boolean {
-  if (element.hasAttribute("hidden") || element.hasAttribute("inert") || element.getAttribute("aria-hidden") === "true") return true;
+function hasHiddenAttributes(element: Element): boolean {
+  return element.hasAttribute("hidden") || element.hasAttribute("inert") || element.getAttribute("aria-hidden") === "true";
+}
+
+function hasHiddenInlineStyle(element: Element): boolean {
   const style = element.getAttribute("style") ?? "";
-  if (/display\s*:\s*none/i.test(style) || /visibility\s*:\s*(?:hidden|collapse)/i.test(style)) return true;
+  return /display\s*:\s*none/i.test(style) || /visibility\s*:\s*(?:hidden|collapse)/i.test(style);
+}
+
+function hasHiddenComputedStyle(element: Element): boolean {
   const view = element.ownerDocument.defaultView;
-  if (view) {
-    const computed = view.getComputedStyle(element);
-    if (computed.display === "none" || computed.visibility === "hidden" || computed.visibility === "collapse") return true;
-  }
-  return false;
+  if (!view) return false;
+  const computed = view.getComputedStyle(element);
+  return computed.display === "none" || computed.visibility === "hidden" || computed.visibility === "collapse";
+}
+
+function isHiddenElementSelf(element: Element): boolean {
+  return hasHiddenAttributes(element) || hasHiddenInlineStyle(element) || hasHiddenComputedStyle(element);
 }
 
 function isSemanticElement(element: Element): boolean {
@@ -203,74 +211,87 @@ function isSemanticElement(element: Element): boolean {
     tagName === "textarea" || element.hasAttribute("role");
 }
 
-function boundedElementText(element: Element, limit: number, budget: SnapshotBudget): { text: string; budgetExhausted: boolean } {
-  const parts: string[] = [];
-  let length = 0;
-  const stack: SnapshotNode[] = [];
-  let budgetExhausted = false;
-  let localVisited = 0;
-  let localPending = 0;
-  const pushLocal = (node: Node, hidden = false): boolean => {
-    if (localVisited + localPending >= WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES ||
-      budget.visited + budget.pending >= WEB_SNAPSHOT_MAX_SCAN_NODES) return false;
-    stack.push({ node, hidden });
-    localPending += 1;
-    budget.pending += 1;
-    return true;
-  };
-  const popLocal = (): SnapshotNode | undefined => {
-    const entry = stack.pop();
-    if (!entry) return undefined;
-    localPending -= 1;
-    localVisited += 1;
-    budget.pending -= 1;
-    budget.visited += 1;
-    return entry;
-  };
-  const children = element.childNodes;
-  const initialChildLimit = Math.min(
-    children.length,
-    Math.max(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES - localVisited - localPending),
-    Math.max(0, WEB_SNAPSHOT_MAX_SCAN_NODES - budget.visited - budget.pending),
-  );
-  if (initialChildLimit < children.length) budgetExhausted = true;
-  for (let index = initialChildLimit - 1; index >= 0; index -= 1) {
-    if (!pushLocal(children[index]!)) {
-      budgetExhausted = true;
-      break;
-    }
+class BoundedElementTextCollector {
+  private readonly parts: string[] = [];
+  private readonly stack: SnapshotNode[] = [];
+  private length = 0;
+  private localVisited = 0;
+  private localPending = 0;
+  private budgetExhausted = false;
+
+  public constructor(
+    private readonly limit: number,
+    private readonly budget: SnapshotBudget,
+  ) {}
+
+  public collect(element: Element): { text: string; budgetExhausted: boolean } {
+    this.enqueueChildren(element.childNodes);
+    while (this.canContinue()) this.visitNext();
+    if (this.stack.length > 0) this.budgetExhausted = true;
+    this.budget.pending -= this.localPending;
+    return { text: this.parts.join("").trim().slice(0, this.limit), budgetExhausted: this.budgetExhausted };
   }
-  while (stack.length > 0 && length < limit && localVisited < WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES && budget.visited < WEB_SNAPSHOT_MAX_SCAN_NODES) {
-    const entry = popLocal()!;
-    const node = entry.node;
-    if (node.nodeType === 3) {
-      if (entry.hidden) continue;
-      const value = node.nodeValue ?? "";
-      const retained = value.slice(0, limit - length);
-      parts.push(retained);
-      length += retained.length;
-      continue;
-    }
-    if (node.nodeType !== 1 || entry.hidden) continue;
-    const hidden = isHiddenElementSelf(node as Element);
-    if (hidden) continue;
-    const children = node.childNodes;
+
+  private canContinue(): boolean {
+    return this.stack.length > 0 && this.length < this.limit &&
+      this.localVisited < WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES &&
+      this.budget.visited < WEB_SNAPSHOT_MAX_SCAN_NODES;
+  }
+
+  private push(node: Node): boolean {
+    if (this.localVisited + this.localPending >= WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES ||
+      this.budget.visited + this.budget.pending >= WEB_SNAPSHOT_MAX_SCAN_NODES) return false;
+    this.stack.push({ node, hidden: false });
+    this.localPending += 1;
+    this.budget.pending += 1;
+    return true;
+  }
+
+  private pop(): SnapshotNode | undefined {
+    const entry = this.stack.pop();
+    if (!entry) return undefined;
+    this.localPending -= 1;
+    this.localVisited += 1;
+    this.budget.pending -= 1;
+    this.budget.visited += 1;
+    return entry;
+  }
+
+  private enqueueChildren(children: NodeListOf<ChildNode> | NodeList): void {
     const childLimit = Math.min(
       children.length,
-      Math.max(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES - localVisited - localPending),
-      Math.max(0, WEB_SNAPSHOT_MAX_SCAN_NODES - budget.visited - budget.pending),
+      Math.max(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES - this.localVisited - this.localPending),
+      Math.max(0, WEB_SNAPSHOT_MAX_SCAN_NODES - this.budget.visited - this.budget.pending),
     );
-    if (childLimit < children.length) budgetExhausted = true;
+    if (childLimit < children.length) this.budgetExhausted = true;
     for (let index = childLimit - 1; index >= 0; index -= 1) {
-      if (!pushLocal(children[index]!, hidden)) {
-        budgetExhausted = true;
-        break;
+      if (!this.push(children[index]!)) {
+        this.budgetExhausted = true;
+        return;
       }
     }
   }
-  if (stack.length > 0) budgetExhausted = true;
-  budget.pending -= localPending;
-  return { text: parts.join("").trim().slice(0, limit), budgetExhausted };
+
+  private visitNext(): void {
+    const entry = this.pop();
+    if (!entry || entry.hidden) return;
+    if (entry.node.nodeType === 3) {
+      this.appendText(entry.node.nodeValue ?? "");
+      return;
+    }
+    if (entry.node.nodeType !== 1 || isHiddenElementSelf(entry.node as Element)) return;
+    this.enqueueChildren(entry.node.childNodes);
+  }
+
+  private appendText(value: string): void {
+    const retained = value.slice(0, this.limit - this.length);
+    this.parts.push(retained);
+    this.length += retained.length;
+  }
+}
+
+function boundedElementText(element: Element, limit: number, budget: SnapshotBudget): { text: string; budgetExhausted: boolean } {
+  return new BoundedElementTextCollector(limit, budget).collect(element);
 }
 
 interface BoundedSnapshotData {
@@ -287,81 +308,134 @@ interface BoundedSnapshotData {
   elementsTruncation: { truncated: false } | { truncated: true; originalCount: number; reason: "entry-limit" };
 }
 
-function collectBoundedSnapshot(document: Document): BoundedSnapshotData {
-  const elements: BoundedSnapshotData["elements"] = [];
-  const textParts: string[] = [];
-  let textLength = 0;
-  let textTruncated = false;
-  let elementCount = 0;
-  let scanLimitReached = false;
-  const root = document.body ?? document.documentElement;
-  const budget: SnapshotBudget = { visited: 0, pending: 0 };
-  const stack: SnapshotNode[] = [];
-  if (root && !pushSnapshotNode(stack, root, budget)) scanLimitReached = true;
-  while (stack.length > 0 && budget.visited < WEB_SNAPSHOT_MAX_SCAN_NODES) {
-    if ((textTruncated || textLength >= BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS) && elementCount > BROWSER_AUTOMATION_MAX_ELEMENTS) {
-      if (textLength >= BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS) textTruncated = true;
-      break;
+function snapshotElementValue(element: Element): string | undefined {
+  if (!("value" in element) || typeof (element as HTMLInputElement).value !== "string") return undefined;
+  if (isCredentialValue(element)) return undefined;
+  return (element as HTMLInputElement).value.slice(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT);
+}
+
+function isSnapshotIgnoredElement(element: Element): boolean {
+  return isHiddenElementSelf(element) || ["script", "style", "noscript", "template"].includes(element.tagName.toLowerCase());
+}
+
+function snapshotAccessibleName(
+  element: Element,
+  budget: SnapshotBudget,
+): { value: string; budgetExhausted: boolean } {
+  const label = element.getAttribute("aria-label")?.slice(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT);
+  if (label) return { value: label, budgetExhausted: false };
+  const { text, budgetExhausted } = boundedElementText(element, WEB_SNAPSHOT_MAX_ELEMENT_TEXT, budget);
+  return { value: text, budgetExhausted };
+}
+
+function describeSnapshotElement(
+  document: Document,
+  element: Element,
+  budget: SnapshotBudget,
+): { entry: BoundedSnapshotData["elements"][number]; budgetExhausted: boolean } {
+  const accessible = snapshotAccessibleName(element, budget);
+  const bounds = (element as HTMLElement).getBoundingClientRect();
+  const value = snapshotElementValue(element);
+  const preferredId = element.id || element.getAttribute("data-automation-id") || undefined;
+  return {
+    entry: {
+      semanticId: getWebBrowserSemanticRegistry(document).register(document, element, preferredId),
+      role: element.getAttribute("role")?.slice(0, 128) || element.tagName.toLowerCase(),
+      accessibleName: accessible.value,
+      ...(value === undefined ? {} : { value }),
+      disabled: "disabled" in element && (element as HTMLButtonElement).disabled === true,
+      bounds: { x: bounds.x, y: bounds.y, width: Math.max(0, bounds.width), height: Math.max(0, bounds.height) },
+    },
+    budgetExhausted: accessible.budgetExhausted,
+  };
+}
+
+class BoundedSnapshotCollector {
+  private readonly elements: BoundedSnapshotData["elements"] = [];
+  private readonly textParts: string[] = [];
+  private readonly budget: SnapshotBudget = { visited: 0, pending: 0 };
+  private readonly stack: SnapshotNode[] = [];
+  private textLength = 0;
+  private textTruncated = false;
+  private elementCount = 0;
+  private scanLimitReached = false;
+
+  public constructor(private readonly document: Document) {}
+
+  public collect(): BoundedSnapshotData {
+    const root = this.document.body ?? this.document.documentElement;
+    if (root && !pushSnapshotNode(this.stack, root, this.budget)) this.scanLimitReached = true;
+    while (this.stack.length > 0 && this.budget.visited < WEB_SNAPSHOT_MAX_SCAN_NODES) {
+      if (this.isComplete()) break;
+      this.visit(popSnapshotNode(this.stack, this.budget)!);
     }
-    const entry = popSnapshotNode(stack, budget)!;
-    const node = entry.node;
-    if (node.nodeType === 3) {
-      if (entry.hidden) continue;
-      const value = node.nodeValue ?? "";
-      if (!textTruncated && textLength < BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS) {
-        const retained = value.slice(0, BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS - textLength);
-        textParts.push(retained);
-        textLength += retained.length;
-        if (retained.length < value.length) textTruncated = true;
-      } else if (value.length > 0) {
-        textTruncated = true;
-      }
-      continue;
+    return this.result();
+  }
+
+  private isComplete(): boolean {
+    const textAtLimit = this.textTruncated || this.textLength >= BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS;
+    if (!textAtLimit || this.elementCount <= BROWSER_AUTOMATION_MAX_ELEMENTS) return false;
+    if (this.textLength >= BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS) this.textTruncated = true;
+    return true;
+  }
+
+  private visit(entry: SnapshotNode): void {
+    if (entry.hidden) return;
+    if (entry.node.nodeType === 3) {
+      this.appendText(entry.node.nodeValue ?? "");
+      return;
     }
-    if (node.nodeType !== 1) continue;
-    const element = node as Element;
-    if (entry.hidden || isHiddenElementSelf(element) || ["script", "style", "noscript", "template"].includes(element.tagName.toLowerCase())) continue;
-    if (isSemanticElement(element)) {
-      elementCount += 1;
-      if (elements.length < BROWSER_AUTOMATION_MAX_ELEMENTS) {
-        const bounds = (element as HTMLElement).getBoundingClientRect();
-        const accessibleName = element.getAttribute("aria-label")?.slice(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT) || boundedElementText(element, WEB_SNAPSHOT_MAX_ELEMENT_TEXT, budget);
-        if (typeof accessibleName !== "string" && accessibleName.budgetExhausted) scanLimitReached = true;
-        const preferredSemanticId = element.id || element.getAttribute("data-automation-id") || undefined;
-        elements.push({
-          semanticId: getWebBrowserSemanticRegistry(document).register(document, element, preferredSemanticId),
-          role: element.getAttribute("role")?.slice(0, 128) || element.tagName.toLowerCase(),
-          accessibleName: typeof accessibleName === "string" ? accessibleName : accessibleName.text,
-          ...(("value" in element && typeof (element as HTMLInputElement).value === "string" &&
-            !isCredentialValue(element))
-            ? { value: (element as HTMLInputElement).value.slice(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT) }
-            : {}),
-          disabled: "disabled" in element && (element as HTMLButtonElement).disabled === true,
-          bounds: { x: bounds.x, y: bounds.y, width: Math.max(0, bounds.width), height: Math.max(0, bounds.height) },
-        });
-      }
+    if (entry.node.nodeType !== 1) return;
+    const element = entry.node as Element;
+    if (isSnapshotIgnoredElement(element)) return;
+    if (isSemanticElement(element)) this.recordElement(element);
+    this.enqueueChildren(entry.node.childNodes);
+  }
+
+  private appendText(value: string): void {
+    if (!this.textTruncated && this.textLength < BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS) {
+      const retained = value.slice(0, BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS - this.textLength);
+      this.textParts.push(retained);
+      this.textLength += retained.length;
+      if (retained.length < value.length) this.textTruncated = true;
+      return;
     }
-    const children = node.childNodes;
-    const childLimit = Math.min(children.length, Math.max(0, WEB_SNAPSHOT_MAX_SCAN_NODES - budget.visited - budget.pending));
-    if (childLimit < children.length) scanLimitReached = true;
-    for (let index = childLimit - 1; index >= 0; index -= 1) {
-      if (!pushSnapshotNode(stack, children[index]!, budget)) {
-        scanLimitReached = true;
-        break;
+    if (value.length > 0) this.textTruncated = true;
+  }
+
+  private recordElement(element: Element): void {
+    this.elementCount += 1;
+    if (this.elements.length >= BROWSER_AUTOMATION_MAX_ELEMENTS) return;
+    const snapshot = describeSnapshotElement(this.document, element, this.budget);
+    if (snapshot.budgetExhausted) this.scanLimitReached = true;
+    this.elements.push(snapshot.entry);
+  }
+
+  private enqueueChildren(children: NodeListOf<ChildNode>): void {
+    const limit = Math.min(children.length, Math.max(0, WEB_SNAPSHOT_MAX_SCAN_NODES - this.budget.visited - this.budget.pending));
+    if (limit < children.length) this.scanLimitReached = true;
+    for (let index = limit - 1; index >= 0; index -= 1) {
+      if (!pushSnapshotNode(this.stack, children[index]!, this.budget)) {
+        this.scanLimitReached = true;
+        return;
       }
     }
   }
-  const visibleText = textParts.join("").trim();
-  return {
-    visibleText,
-    visibleTextTruncation: textTruncated || scanLimitReached
-      ? { truncated: true, originalCount: Math.max(BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS + 1, visibleText.length + 1), reason: textTruncated ? "character-limit" : "entry-limit" }
-      : { truncated: false },
-    elements,
-    elementsTruncation: elementCount > elements.length || scanLimitReached
-      ? { truncated: true, originalCount: Math.max(elementCount, elements.length + 1), reason: "entry-limit" }
-      : { truncated: false },
-  };
+
+  private result(): BoundedSnapshotData {
+    const visibleText = this.textParts.join("").trim();
+    const visibleTextTruncation = this.textTruncated || this.scanLimitReached
+      ? { truncated: true as const, originalCount: Math.max(BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS + 1, visibleText.length + 1), reason: this.textTruncated ? "character-limit" as const : "entry-limit" as const }
+      : { truncated: false as const };
+    const elementsTruncation = this.elementCount > this.elements.length || this.scanLimitReached
+      ? { truncated: true as const, originalCount: Math.max(this.elementCount, this.elements.length + 1), reason: "entry-limit" as const }
+      : { truncated: false as const };
+    return { visibleText, visibleTextTruncation, elements: this.elements, elementsTruncation };
+  }
+}
+
+function collectBoundedSnapshot(document: Document): BoundedSnapshotData {
+  return new BoundedSnapshotCollector(document).collect();
 }
 
 function waitForLoad(
@@ -470,6 +544,68 @@ function screenshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, 
   });
 }
 
+type WebNavigationRequest = Extract<
+  BrowserAutomationHostDispatch["request"],
+  { readonly operation: "navigate" | "open" }
+>;
+
+function statusResponse(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe): BrowserAutomationResponse {
+  const document = currentDocument(iframe);
+  const mechanical: MechanicalStatusResult = {
+    operation: "status",
+    available: true,
+    active: true,
+    tabId: dispatch.target.tabId,
+    url: document?.location?.href || iframe.src || "about:blank",
+    loading: document?.readyState !== "complete",
+    focused: true,
+    viewport: { width: iframe.clientWidth || 1, height: iframe.clientHeight || 1 },
+  };
+  return response(dispatch, mechanical);
+}
+
+function currentNavigationResponse(
+  dispatch: BrowserAutomationHostDispatch,
+  request: WebNavigationRequest,
+  iframe: WebIframe,
+): BrowserAutomationResponse {
+  const document = currentDocument(iframe);
+  if (!document) return failure(dispatch, "CROSS_ORIGIN", "Visible preview is cross-origin");
+  return response(dispatch, {
+    operation: request.operation,
+    url: document.location?.href || iframe.src || "about:blank",
+    title: (document.title || "").slice(0, 4_096),
+    controlEpoch: request.expectedControlEpoch,
+  });
+}
+
+async function navigateWebPreview(
+  dispatch: BrowserAutomationHostDispatch,
+  request: WebNavigationRequest,
+  iframe: WebIframe,
+  signal: AbortSignal,
+): Promise<BrowserAutomationResponse> {
+  const url = request.args.url;
+  if (!url) return currentNavigationResponse(dispatch, request, iframe);
+  if (!sameOrigin(url)) return failure(dispatch, "CROSS_ORIGIN", "Web Preview navigation must remain same-origin");
+  const loadResult = await waitForLoad(dispatch, iframe, signal, () => {
+    iframe.src = url;
+  });
+  if (loadResult) return { ...loadResult, requestId: request.requestId, sequence: request.sequence };
+  return currentNavigationResponse(dispatch, request, iframe);
+}
+
+function executeScreenshot(
+  dispatch: BrowserAutomationHostDispatch,
+  iframe: WebIframe,
+  signal: AbortSignal,
+): Promise<BrowserAutomationResponse> {
+  if (dispatch.request.operation === "screenshot" && dispatch.request.args.fullPage === true) {
+    return Promise.resolve(failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation does not support full-page screenshots"));
+  }
+  return screenshot(dispatch, iframe, signal);
+}
+
 /** Executes the bounded same-origin web Preview operations against its visible iframe. */
 export async function executeWebBrowserDispatch(
   dispatch: BrowserAutomationHostDispatch,
@@ -479,46 +615,19 @@ export async function executeWebBrowserDispatch(
   if (early) return early;
   const iframe = findIframe(dispatch);
   if (!iframe) return failure(dispatch, "TAB_UNAVAILABLE", "Visible web Preview target is unavailable");
-  const { request } = dispatch;
-  if (request.operation === "status") {
-    const document = currentDocument(iframe);
-    const mechanical: MechanicalStatusResult = {
-      operation: "status",
-      available: true,
-      active: true,
-      tabId: dispatch.target.tabId,
-      url: document?.location?.href || iframe.src || "about:blank",
-      loading: document?.readyState !== "complete",
-      focused: true,
-      viewport: { width: iframe.clientWidth || 1, height: iframe.clientHeight || 1 },
-    };
-    return response(dispatch, mechanical);
+  switch (dispatch.request.operation) {
+    case "status":
+      return statusResponse(dispatch, iframe);
+    case "inspect":
+      return inspect(dispatch, iframe, signal);
+    case "navigate":
+    case "open":
+      return navigateWebPreview(dispatch, dispatch.request, iframe, signal);
+    case "snapshot":
+      return snapshot(dispatch, iframe, signal);
+    case "screenshot":
+      return executeScreenshot(dispatch, iframe, signal);
+    default:
+      return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation supports status, open, navigate, snapshot, and screenshot");
   }
-  if (request.operation === "inspect") return inspect(dispatch, iframe, signal);
-  if (request.operation === "navigate" || request.operation === "open") {
-    const url = request.operation === "navigate" ? request.args.url : request.args.url;
-    if (url) {
-      if (!sameOrigin(url)) return failure(dispatch, "CROSS_ORIGIN", "Web Preview navigation must remain same-origin");
-      const loadResult = await waitForLoad(dispatch, iframe, signal, () => {
-        iframe.src = url;
-      });
-      if (loadResult) return { ...loadResult, requestId: request.requestId, sequence: request.sequence };
-    }
-    const document = currentDocument(iframe);
-    if (!document) return failure(dispatch, "CROSS_ORIGIN", "Visible preview is cross-origin");
-    return response(dispatch, {
-      operation: request.operation,
-      url: document.location?.href || iframe.src || "about:blank",
-      title: (document.title || "").slice(0, 4_096),
-      controlEpoch: request.expectedControlEpoch,
-    });
-  }
-  if (request.operation === "snapshot") return snapshot(dispatch, iframe, signal);
-  if (request.operation === "screenshot") {
-    if (request.args.fullPage === true) {
-      return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation does not support full-page screenshots");
-    }
-    return screenshot(dispatch, iframe, signal);
-  }
-  return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation supports status, open, navigate, snapshot, and screenshot");
 }

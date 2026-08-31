@@ -174,33 +174,47 @@ function parseRow(row: PtyHostCleanupRow): PtyHostCleanupRecord {
 function validateRecord(record: PtyHostCleanupRecord): PtyHostCleanupRecord {
   validateSessionId(record.sessionId);
   validateHostGeneration(record.hostGeneration);
+  validateRootPid(record.rootPid);
+  validateProcessGroupId(record.processGroupId);
+  validateContainment(record.containment);
+  validateTimestamp(record.createdAt, "creation");
+  validateTimestamp(record.updatedAt, "update");
+  return { ...record };
+}
+
+function validateRootPid(rootPid: number): void {
   if (
-    !Number.isSafeInteger(record.rootPid) ||
-    record.rootPid <= 1 ||
-    record.rootPid > 4_294_967_295
+    !Number.isSafeInteger(rootPid) ||
+    rootPid <= 1 ||
+    rootPid > 4_294_967_295
   ) {
     throw new Error("PTY cleanup ledger root PID is unsafe");
   }
+}
+
+function validateProcessGroupId(processGroupId: string): void {
   if (
-    record.processGroupId.length < 1 ||
-    record.processGroupId.length > MAX_PROCESS_GROUP_ID_LENGTH ||
-    /[\u0000-\u001f\u007f]/.test(record.processGroupId)
+    processGroupId.length < 1 ||
+    processGroupId.length > MAX_PROCESS_GROUP_ID_LENGTH ||
+    /[\u0000-\u001f\u007f]/.test(processGroupId)
   ) {
     throw new Error("PTY cleanup ledger process group identity is invalid");
   }
+}
+
+function validateContainment(containment: PtyHostCleanupRecord["containment"]): void {
   if (
-    record.containment !== "job-object" &&
-    record.containment !== "process-group"
+    containment !== "job-object" &&
+    containment !== "process-group"
   ) {
     throw new Error("PTY cleanup ledger containment is invalid");
   }
-  if (record.createdAt !== undefined && !isIsoTimestamp(record.createdAt)) {
-    throw new Error("PTY cleanup ledger creation time is invalid");
+}
+
+function validateTimestamp(value: string | undefined, kind: "creation" | "update"): void {
+  if (value !== undefined && !isIsoTimestamp(value)) {
+    throw new Error(`PTY cleanup ledger ${kind} time is invalid`);
   }
-  if (record.updatedAt !== undefined && !isIsoTimestamp(record.updatedAt)) {
-    throw new Error("PTY cleanup ledger update time is invalid");
-  }
-  return { ...record };
 }
 
 function validateSessionId(sessionId: string): void {

@@ -13,17 +13,17 @@
  * Set SKIP_ELECTRON_REBUILD=1 to force skip.
  */
 
-import { execSync, execFileSync } from "child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { createRequire } from "module";
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "url";
-import { tmpdir } from "os";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeOS from "node:os";
 import { ensureElectronForPrebuild } from "./electron-postinstall.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const rootDir = resolve(__dirname, "..");
-const desktopDir = resolve(rootDir, "apps", "desktop");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const rootDir = NodePath.resolve(__dirname, "..");
+const desktopDir = NodePath.resolve(rootDir, "apps", "desktop");
 
 // Allow explicit skip (useful for CI, worktrees, server-only dev).
 // This skips Electron download and verification for environments without it.
@@ -34,23 +34,23 @@ if (process.env.SKIP_ELECTRON_REBUILD === "1") {
 }
 
 // Resolve where better-sqlite3 actually lives (follows bun's .bun/ hoisting)
-const serverRequire = createRequire(
-  resolve(rootDir, "apps", "server", "src", "index.ts"),
+const serverRequire = NodeModule.createRequire(
+  NodePath.resolve(rootDir, "apps", "server", "src", "index.ts"),
 );
-const betterSqliteDir = dirname(
+const betterSqliteDir = NodePath.dirname(
   serverRequire.resolve("better-sqlite3/package.json"),
 );
 const bsqlVersion = JSON.parse(
-  readFileSync(resolve(betterSqliteDir, "package.json"), "utf-8"),
+  NodeFS.readFileSync(NodePath.resolve(betterSqliteDir, "package.json"), "utf-8"),
 ).version;
-const electronBinary = resolve(
+const electronBinary = NodePath.resolve(
   betterSqliteDir,
   "build",
   "Release",
   "better_sqlite3.electron.node",
 );
 // Marker file to track which ABI the current prebuild was built for
-const abiMarker = resolve(betterSqliteDir, "build", "Release", ".electron-abi");
+const abiMarker = NodePath.resolve(betterSqliteDir, "build", "Release", ".electron-abi");
 
 /**
  * Query the actual NODE_MODULE_VERSION from the installed Electron binary.
@@ -58,7 +58,7 @@ const abiMarker = resolve(betterSqliteDir, "build", "Release", ".electron-abi");
  */
 function getElectronABI(electronBin) {
   try {
-    const abi = execFileSync(
+    const abi = NodeChildProcess.execFileSync(
       electronBin,
       ["-e", "process.stdout.write(process.versions.modules);process.exit(0)"],
       {
@@ -95,8 +95,8 @@ if (electronABI) {
   // Both the ABI marker AND the actual binary must exist -- upgrading from an
   // older postinstall may leave a stale marker without the .electron.node file.
   let electronAlreadyOk = false;
-  if (existsSync(abiMarker) && existsSync(electronBinary)) {
-    const currentABI = readFileSync(abiMarker, "utf-8").trim();
+  if (NodeFS.existsSync(abiMarker) && NodeFS.existsSync(electronBinary)) {
+    const currentABI = NodeFS.readFileSync(abiMarker, "utf-8").trim();
     if (currentABI === electronABI) {
       electronAlreadyOk = true;
       console.log(
@@ -113,11 +113,11 @@ if (electronABI) {
 
     // Download and extract to OS temp dir first (bun's .bun/@version paths
     // contain special characters that break Git Bash's tar on Windows).
-    const tmpDir = mkdtempSync(resolve(tmpdir(), "mcode-postinstall-"));
-    const tmpTarPath = resolve(tmpDir, tarName).replace(/\\/g, "/");
+    const tmpDir = NodeFS.mkdtempSync(NodePath.resolve(NodeOS.tmpdir(), "mcode-postinstall-"));
+    const tmpTarPath = NodePath.resolve(tmpDir, tarName).replace(/\\/g, "/");
 
     try {
-      execSync(`curl -fsSL -o "${tmpTarPath}" "${url}"`, {
+      NodeChildProcess.execSync(`curl -fsSL -o "${tmpTarPath}" "${url}"`, {
         stdio: "inherit",
         timeout: 60_000,
       });
@@ -125,46 +125,46 @@ if (electronABI) {
       // Pre-create extraction target so tar doesn't need to create nested dirs.
       // Windows tar (bsdtar/GNU tar via MSYS2) can intermittently fail to
       // auto-create directories inside C:\Windows\Temp during bun install hooks.
-      mkdirSync(resolve(tmpDir, "build", "Release"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.resolve(tmpDir, "build", "Release"), { recursive: true });
 
       // Extract using tar. Avoid --force-local (unsupported by Windows' bsdtar)
       // and avoid absolute paths with drive letters (the colon in "C:" is
       // misinterpreted as a remote host prefix by some tar implementations).
       // Using cwd + relative filename sidesteps both issues.
-      execSync(`tar -xzf "${tarName}"`, {
+      NodeChildProcess.execSync(`tar -xzf "${tarName}"`, {
         stdio: "inherit",
         cwd: tmpDir,
       });
 
       // Copy the extracted binary to better-sqlite3's build directory
-      const extractedBinary = resolve(
+      const extractedBinary = NodePath.resolve(
         tmpDir,
         "build",
         "Release",
         "better_sqlite3.node",
       );
-      mkdirSync(dirname(electronBinary), { recursive: true });
+      NodeFS.mkdirSync(NodePath.dirname(electronBinary), { recursive: true });
 
       // Install the Electron prebuild under its explicit ABI-specific name.
-      copyFileSync(extractedBinary, electronBinary);
+      NodeFS.copyFileSync(extractedBinary, electronBinary);
 
       // Write marker so we skip on next install
-      mkdirSync(dirname(abiMarker), { recursive: true });
-      writeFileSync(abiMarker, electronABI);
+      NodeFS.mkdirSync(NodePath.dirname(abiMarker), { recursive: true });
+      NodeFS.writeFileSync(abiMarker, electronABI);
     } finally {
-      rmSync(tmpDir, { recursive: true, force: true });
+      NodeFS.rmSync(tmpDir, { recursive: true, force: true });
     }
   }
 }
 
 if (electronABI) {
-  if (!existsSync(electronBinary)) {
+  if (!NodeFS.existsSync(electronBinary)) {
     throw new Error(`Electron better-sqlite3 binding missing after install: ${electronBinary}`);
   }
-  if (!existsSync(abiMarker)) {
+  if (!NodeFS.existsSync(abiMarker)) {
     throw new Error(`Electron better-sqlite3 ABI marker missing after install: ${abiMarker}`);
   }
-  const installedABI = readFileSync(abiMarker, "utf-8").trim();
+  const installedABI = NodeFS.readFileSync(abiMarker, "utf-8").trim();
   if (!/^\d+$/.test(installedABI) || installedABI !== electronABI) {
     throw new Error(
       `Electron better-sqlite3 ABI marker mismatch: expected ${electronABI}, found ${installedABI || "missing"}`,

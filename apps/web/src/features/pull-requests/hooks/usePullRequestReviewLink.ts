@@ -22,10 +22,6 @@ export function usePullRequestReviewLink(
   } | null>(null);
 
   useEffect(() => {
-    setLoaded(null);
-  }, [threadId]);
-
-  useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     void Promise.resolve()

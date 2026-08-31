@@ -202,14 +202,28 @@ export class GoalLifecycleService {
       return { goal: current, authoritative: false, source: "claude-cache", reason: "busy" };
     }
     const result = await native.runNativeGoalCommand(sessionId, "/goal off");
+    const nativeResult = this.nativeClearResult(result, current);
+    if (nativeResult) return nativeResult;
+    const after = await this.lookup(provider, sessionId, "claude-cache");
+    return { goal: isGoalOpen(after.goal) ? after.goal : current, authoritative: false, source: "claude-cache", reason: "missing" };
+  }
+
+  private nativeClearResult(
+    result: Awaited<ReturnType<NativeGoalProvider["runNativeGoalCommand"]>>,
+    current: GoalState | null,
+  ): GoalLookupResult | undefined {
     if (result?.kind === "cleared" || result?.kind === "empty") {
       return { goal: null, authoritative: true, source: "claude-native-command" };
     }
     if (result?.kind === "unavailable") {
-      return { goal: current, authoritative: false, source: "claude-cache", reason: current ? "missing" : "not-materialized" };
+      return {
+        goal: current,
+        authoritative: false,
+        source: "claude-cache",
+        reason: current ? "missing" : "not-materialized",
+      };
     }
-    const after = await this.lookup(provider, sessionId, "claude-cache");
-    return { goal: isGoalOpen(after.goal) ? after.goal : current, authoritative: false, source: "claude-cache", reason: "missing" };
+    return undefined;
   }
 
   private async clearProvider(

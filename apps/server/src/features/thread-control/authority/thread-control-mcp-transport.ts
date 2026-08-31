@@ -65,61 +65,7 @@ export function createInternalThreadControlMcpSession(
     if (!authority) throw new InternalThreadControlMcpAuthorizationError();
     const leaseSignal = options.authority.signal(request.bearerCredential);
     const signal = combineAbortSignals([leaseSignal, request.signal]);
-
-    switch (request.toolName) {
-      case "workspace_search": {
-        const input = WorkspaceSearchInputSchema().parse(request.arguments);
-        return WorkspaceSearchResultSchema().parse(options.service.workspaceSearch(authority, input));
-      }
-      case "worktree_list": {
-        const input = WorktreeListInputSchema().parse(request.arguments);
-        return WorktreeListResultSchema().parse(await options.service.worktreeList(authority, input));
-      }
-      case "thread_create_batch": {
-        const input = ThreadCreateBatchInputSchema().parse(request.arguments);
-        return ThreadCreateBatchResultSchema().parse(
-          await options.service.threadCreateBatch(authority, input),
-        );
-      }
-      case "thread_target_list": {
-        ThreadTargetListInputSchema().parse(request.arguments);
-        return ThreadTargetListResultSchema().parse(await options.service.threadTargetList(authority));
-      }
-      case "thread_search": {
-        const input = ThreadSearchInputSchema().parse(request.arguments);
-        return ThreadSearchResultSchema().parse(options.service.threadSearch(authority, input));
-      }
-      case "thread_get": {
-        const input = ThreadGetInputSchema().parse(request.arguments);
-        return ThreadGetResultSchema().parse(options.service.threadGet(authority, input));
-      }
-      case "thread_send": {
-        const input = ThreadSendInputSchema().parse(request.arguments);
-        return ThreadSendResultSchema().parse(await options.service.threadSend(authority, input));
-      }
-      case "thread_stop": {
-        const input = ThreadStopInputSchema().parse(request.arguments);
-        return ThreadStopResultSchema().parse(await options.service.threadStop(authority, input));
-      }
-      case "thread_wait": {
-        const input = ThreadWaitInputSchema().parse(request.arguments);
-        return ThreadWaitResultSchema().parse(await options.service.threadWait(authority, input, signal));
-      }
-      case "mcode_browser_guide": {
-        if (!isEmptyArguments(request.arguments)) {
-          throw new Error("mcode_browser_guide accepts no arguments");
-        }
-        return getMcodeBrowserGuide();
-      }
-      case "thread_control_guide": {
-        if (!isEmptyArguments(request.arguments)) {
-          throw new Error("thread_control_guide accepts no arguments");
-        }
-        return getThreadControlGuide();
-      }
-      default:
-        throw new InternalThreadControlMcpAuthorizationError();
-    }
+    return dispatchInternalTool(options.service, authority, request.toolName, request.arguments, signal);
   };
 
   return {
@@ -239,6 +185,73 @@ export function createInternalThreadControlMcpSession(
         signal: extra.signal,
       })));
       return server;
+    },
+  };
+}
+
+type InternalToolHandler = (arguments_: unknown) => Promise<Record<string, unknown>>;
+
+function dispatchInternalTool(
+  service: ThreadControlService,
+  authority: NonNullable<ReturnType<InternalThreadControlMcpAuthority["authorize"]>>,
+  toolName: string,
+  arguments_: unknown,
+  signal: AbortSignal | undefined,
+): Promise<Record<string, unknown>> {
+  const handler = createToolHandlers(service, authority, signal)[toolName];
+  if (!handler) throw new InternalThreadControlMcpAuthorizationError();
+  return handler(arguments_);
+}
+
+function createToolHandlers(
+  service: ThreadControlService,
+  authority: NonNullable<ReturnType<InternalThreadControlMcpAuthority["authorize"]>>,
+  signal: AbortSignal | undefined,
+): Record<string, InternalToolHandler> {
+  return {
+    workspace_search: async (arguments_) => {
+      const input = WorkspaceSearchInputSchema().parse(arguments_);
+      return WorkspaceSearchResultSchema().parse(service.workspaceSearch(authority, input));
+    },
+    worktree_list: async (arguments_) => {
+      const input = WorktreeListInputSchema().parse(arguments_);
+      return WorktreeListResultSchema().parse(await service.worktreeList(authority, input));
+    },
+    thread_create_batch: async (arguments_) => {
+      const input = ThreadCreateBatchInputSchema().parse(arguments_);
+      return ThreadCreateBatchResultSchema().parse(await service.threadCreateBatch(authority, input));
+    },
+    thread_target_list: async (arguments_) => {
+      ThreadTargetListInputSchema().parse(arguments_);
+      return ThreadTargetListResultSchema().parse(await service.threadTargetList(authority));
+    },
+    thread_search: async (arguments_) => {
+      const input = ThreadSearchInputSchema().parse(arguments_);
+      return ThreadSearchResultSchema().parse(service.threadSearch(authority, input));
+    },
+    thread_get: async (arguments_) => {
+      const input = ThreadGetInputSchema().parse(arguments_);
+      return ThreadGetResultSchema().parse(service.threadGet(authority, input));
+    },
+    thread_send: async (arguments_) => {
+      const input = ThreadSendInputSchema().parse(arguments_);
+      return ThreadSendResultSchema().parse(await service.threadSend(authority, input));
+    },
+    thread_stop: async (arguments_) => {
+      const input = ThreadStopInputSchema().parse(arguments_);
+      return ThreadStopResultSchema().parse(await service.threadStop(authority, input));
+    },
+    thread_wait: async (arguments_) => {
+      const input = ThreadWaitInputSchema().parse(arguments_);
+      return ThreadWaitResultSchema().parse(await service.threadWait(authority, input, signal));
+    },
+    mcode_browser_guide: async (arguments_) => {
+      if (!isEmptyArguments(arguments_)) throw new Error("mcode_browser_guide accepts no arguments");
+      return getMcodeBrowserGuide();
+    },
+    thread_control_guide: async (arguments_) => {
+      if (!isEmptyArguments(arguments_)) throw new Error("thread_control_guide accepts no arguments");
+      return getThreadControlGuide();
     },
   };
 }

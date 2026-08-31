@@ -1,8 +1,8 @@
 import "reflect-metadata";
-import { EventEmitter } from "events";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeEvents from "node:events";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SkillInfo } from "@mcode/contracts";
 import { CodexCatalogService } from "../codex-catalog-service.js";
@@ -13,7 +13,7 @@ import type {
   CodexCatalogSkillsResult,
 } from "@mcode/providers";
 
-class ControlledCatalogClient extends EventEmitter {
+class ControlledCatalogClient extends NodeEvents.EventEmitter {
   isAlive = true;
   readonly start = vi.fn(async () => undefined);
   readonly kill = vi.fn(async () => {
@@ -104,6 +104,7 @@ class ControlledCatalogClient extends EventEmitter {
 }
 
 describe("CodexCatalogService", () => {
+  const TEST_HOST_RUNTIME = { platform: "linux", architecture: "x64", nodeAbi: "127" } as const;
   const services: CodexCatalogService[] = [];
   const temporaryDirectories: string[] = [];
 
@@ -125,6 +126,7 @@ describe("CodexCatalogService", () => {
       { getEnv: () => environment } as never,
       { create } as never,
       customPromptService as never,
+      TEST_HOST_RUNTIME,
     );
     services.push(service);
     return service;
@@ -133,18 +135,18 @@ describe("CodexCatalogService", () => {
   afterEach(async () => {
     await Promise.all(services.splice(0).map((service) => service.shutdown()));
     await Promise.all(temporaryDirectories.splice(0).map(
-      (directory) => rm(directory, { recursive: true, force: true }),
+      (directory) => NodeFSPromises.rm(directory, { recursive: true, force: true }),
     ));
     vi.useRealTimers();
   });
 
   it("keeps standalone suggestions as the baseline when configuration names collide", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-codex-catalog-agents-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-codex-catalog-agents-"));
     temporaryDirectories.push(root);
-    const agentDirectory = join(root, "agents");
-    await mkdir(agentDirectory, { recursive: true });
-    await writeFile(
-      join(agentDirectory, "review.toml"),
+    const agentDirectory = NodePath.join(root, "agents");
+    await NodeFSPromises.mkdir(agentDirectory, { recursive: true });
+    await NodeFSPromises.writeFile(
+      NodePath.join(agentDirectory, "review.toml"),
       'name = "review"\ndescription = "Standalone review"\n',
     );
     const client = new ControlledCatalogClient();
@@ -159,12 +161,12 @@ describe("CodexCatalogService", () => {
   });
 
   it("keeps standalone suggestions when the app-server catalog is unavailable on first load", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-codex-catalog-offline-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-codex-catalog-offline-"));
     temporaryDirectories.push(root);
-    const agentDirectory = join(root, "agents");
-    await mkdir(agentDirectory, { recursive: true });
-    await writeFile(
-      join(agentDirectory, "offline-review.toml"),
+    const agentDirectory = NodePath.join(root, "agents");
+    await NodeFSPromises.mkdir(agentDirectory, { recursive: true });
+    await NodeFSPromises.writeFile(
+      NodePath.join(agentDirectory, "offline-review.toml"),
       'name = "offline-review"\ndescription = "Standalone review"\n',
     );
     const client = new ControlledCatalogClient();
@@ -220,12 +222,12 @@ describe("CodexCatalogService", () => {
   });
 
   it("retains configured agents when config/read fails after a successful refresh", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-codex-catalog-config-retention-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-codex-catalog-config-retention-"));
     temporaryDirectories.push(root);
-    const agentDirectory = join(root, "agents");
-    await mkdir(agentDirectory, { recursive: true });
-    await writeFile(
-      join(agentDirectory, "review.toml"),
+    const agentDirectory = NodePath.join(root, "agents");
+    await NodeFSPromises.mkdir(agentDirectory, { recursive: true });
+    await NodeFSPromises.writeFile(
+      NodePath.join(agentDirectory, "review.toml"),
       'name = "review"\ndescription = "Standalone review"\n',
     );
     const client = new ControlledCatalogClient();

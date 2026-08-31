@@ -116,28 +116,71 @@ const EXPECTED_FAILURE_CLASSES = new Set<BrowserAutomationFailureClass>([
   "pre-effect-rejection",
 ]);
 
+const FAILURE_CLASSIFICATIONS = new Map<BrowserAutomationErrorCode, {
+  failureClass: BrowserAutomationFailureClass;
+  expected: boolean;
+}>([
+  ["HUMAN_INTERRUPTED", { failureClass: "user-takeover", expected: true }],
+  ["OPERATION_CANCELLED", { failureClass: "application-error", expected: true }],
+  ["UNSUPPORTED_OPERATION", { failureClass: "capability-rejection", expected: true }],
+  ["FORBIDDEN", { failureClass: "capability-rejection", expected: true }],
+  ["UNAUTHORIZED", { failureClass: "capability-rejection", expected: true }],
+  ["CROSS_ORIGIN", { failureClass: "cross-origin-rejection", expected: true }],
+  ["STALE_TARGET_GENERATION", { failureClass: "stale-observation-recovery", expected: true }],
+  ["STALE_CONTROL_EPOCH", { failureClass: "stale-observation-recovery", expected: true }],
+  ["CAPABILITY_CHANGED", { failureClass: "stale-observation-recovery", expected: true }],
+  ["NAVIGATION_FAILED", { failureClass: "application-error", expected: true }],
+  ["TARGET_NOT_FOUND", { failureClass: "application-error", expected: true }],
+  ["RECORDING_NOT_ACTIVE", { failureClass: "application-error", expected: true }],
+  ["TAB_UNAVAILABLE", { failureClass: "pre-effect-rejection", expected: true }],
+  ["BROWSER_BUSY", { failureClass: "pre-effect-rejection", expected: true }],
+  ["IDEMPOTENCY_CONFLICT", { failureClass: "pre-effect-rejection", expected: true }],
+  ["HOST_UNAVAILABLE", { failureClass: "lost-transport", expected: false }],
+  ["TIMEOUT", { failureClass: "lost-transport", expected: false }],
+  ["DEADLINE_EXCEEDED", { failureClass: "lost-transport", expected: false }],
+  ["INVALID_REQUEST", { failureClass: "capability-mismatch", expected: false }],
+]);
+
+const OPTIONAL_TELEMETRY_EVENT_FIELDS = [
+  "runtime",
+  "capabilityRevision",
+  "connectionGeneration",
+  "targetGeneration",
+  "durationMs",
+  "outcome",
+  "errorCode",
+  "failureClass",
+  "expectedFailure",
+  "effect",
+  "recovery",
+  "takeover",
+  "settlement",
+] as const;
+
+const OPTIONAL_FAILURE_BUNDLE_FIELDS = [
+  "runtime",
+  "capabilityRevision",
+  "connectionGeneration",
+  "targetGeneration",
+  "errorCode",
+  "effect",
+  "recovery",
+] as const;
+
 function sanitizeTelemetryEvent(event: BrowserAutomationTelemetryEvent): BrowserAutomationTelemetryEvent {
-  return {
+  const sanitized: BrowserAutomationTelemetryEvent = {
     timestampMs: event.timestampMs,
     correlationId: event.correlationId,
     stage: event.stage,
     provider: event.provider,
     operation: event.operation,
     contractVersion: event.contractVersion,
-    ...(event.runtime ? { runtime: event.runtime } : {}),
-    ...(event.capabilityRevision !== undefined ? { capabilityRevision: event.capabilityRevision } : {}),
-    ...(event.connectionGeneration !== undefined ? { connectionGeneration: event.connectionGeneration } : {}),
-    ...(event.targetGeneration !== undefined ? { targetGeneration: event.targetGeneration } : {}),
-    ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
-    ...(event.outcome ? { outcome: event.outcome } : {}),
-    ...(event.errorCode ? { errorCode: event.errorCode } : {}),
-    ...(event.failureClass ? { failureClass: event.failureClass } : {}),
-    ...(event.expectedFailure !== undefined ? { expectedFailure: event.expectedFailure } : {}),
-    ...(event.effect ? { effect: event.effect } : {}),
-    ...(event.recovery ? { recovery: event.recovery } : {}),
-    ...(event.takeover !== undefined ? { takeover: event.takeover } : {}),
-    ...(event.settlement ? { settlement: event.settlement } : {}),
   };
+  for (const field of OPTIONAL_TELEMETRY_EVENT_FIELDS) {
+    const value = event[field];
+    if (value !== undefined) (sanitized as unknown as Record<string, unknown>)[field] = value;
+  }
+  return sanitized;
 }
 
 /** Classifies one typed Browser failure without inspecting its message or page data. */
@@ -146,39 +189,9 @@ export function classifyBrowserAutomationFailure(
   effect: BrowserAutomationTelemetryEvent["effect"],
 ): { failureClass: BrowserAutomationFailureClass; expected: boolean } {
   if (effect === "unknown") return { failureClass: "unknown-outcome", expected: false };
-  switch (code) {
-    case "HUMAN_INTERRUPTED":
-      return { failureClass: "user-takeover", expected: true };
-    case "OPERATION_CANCELLED":
-      return { failureClass: "application-error", expected: true };
-    case "UNSUPPORTED_OPERATION":
-    case "FORBIDDEN":
-    case "UNAUTHORIZED":
-      return { failureClass: "capability-rejection", expected: true };
-    case "CROSS_ORIGIN":
-      return { failureClass: "cross-origin-rejection", expected: true };
-    case "STALE_TARGET_GENERATION":
-    case "STALE_CONTROL_EPOCH":
-    case "CAPABILITY_CHANGED":
-      return { failureClass: "stale-observation-recovery", expected: true };
-    case "NAVIGATION_FAILED":
-    case "TARGET_NOT_FOUND":
-    case "RECORDING_NOT_ACTIVE":
-      return { failureClass: "application-error", expected: true };
-    case "TAB_UNAVAILABLE":
-    case "BROWSER_BUSY":
-    case "IDEMPOTENCY_CONFLICT":
-      return { failureClass: "pre-effect-rejection", expected: true };
-    case "HOST_UNAVAILABLE":
-    case "TIMEOUT":
-    case "DEADLINE_EXCEEDED":
-      return { failureClass: "lost-transport", expected: false };
-    case "INVALID_REQUEST":
-      return { failureClass: "capability-mismatch", expected: false };
-    case "INTERNAL_ERROR":
-    default:
-      return { failureClass: "internal-exception", expected: false };
-  }
+  return code === undefined
+    ? { failureClass: "internal-exception", expected: false }
+    : FAILURE_CLASSIFICATIONS.get(code) ?? { failureClass: "internal-exception", expected: false };
 }
 
 /** Builds the terminal, content-free telemetry fields for one Browser response. */
@@ -273,45 +286,63 @@ export class BrowserAutomationTelemetry {
       // Observability must not change Browser request outcomes.
     }
     if (retained.stage !== "settlement") return;
+    this.recordSettlement(retained);
+  }
+
+  private recordSettlement(retained: BrowserAutomationTelemetryEvent): void {
     this.observedRequests++;
     if (retained.outcome === "completed") {
-      if (retained.failureClass) this.falseSuccesses++;
-      this.successfulRequests++;
+      this.recordSuccessfulSettlement(retained);
       return;
     }
     if (!retained.failureClass) return;
+    this.recordFailedSettlement(retained);
+  }
+
+  private recordSuccessfulSettlement(retained: BrowserAutomationTelemetryEvent): void {
+    if (retained.failureClass) this.falseSuccesses++;
+    this.successfulRequests++;
+  }
+
+  private recordFailedSettlement(retained: BrowserAutomationTelemetryEvent): void {
+    const failureClass = retained.failureClass!;
     this.classifiedFailures.set(
-      retained.failureClass,
-      (this.classifiedFailures.get(retained.failureClass) ?? 0) + 1,
+      failureClass,
+      (this.classifiedFailures.get(failureClass) ?? 0) + 1,
     );
-    if (retained.expectedFailure ?? EXPECTED_FAILURE_CLASSES.has(retained.failureClass)) this.expectedFailures++;
+    if (retained.expectedFailure ?? EXPECTED_FAILURE_CLASSES.has(failureClass)) this.expectedFailures++;
     else this.unexpectedFailures++;
     if (retained.takeover && retained.effect !== undefined && retained.effect !== "none") this.postTakeoverEffects++;
+    this.recordFailureRiskCounters(retained, failureClass);
+    this.appendFailureBundle(retained, failureClass);
+  }
+
+  private recordFailureRiskCounters(retained: BrowserAutomationTelemetryEvent, failureClass: BrowserAutomationFailureClass): void {
     if (retained.settlement === "unknown") {
       this.unknownOutcomes++;
       this.ambiguousOwnership++;
     }
-    if (retained.failureClass === "stale-observation-recovery" && retained.effect !== undefined && retained.effect !== "none") {
+    if (failureClass === "stale-observation-recovery" && retained.effect !== undefined && retained.effect !== "none") {
       this.staleMutations++;
     }
+  }
+
+  private appendFailureBundle(retained: BrowserAutomationTelemetryEvent, failureClass: BrowserAutomationFailureClass): void {
     const bundle: BrowserAutomationFailureBundle = {
       correlationId: retained.correlationId,
       provider: retained.provider,
-      ...(retained.runtime ? { runtime: retained.runtime } : {}),
       operation: retained.operation,
       contractVersion: retained.contractVersion,
-      ...(retained.capabilityRevision !== undefined ? { capabilityRevision: retained.capabilityRevision } : {}),
-      ...(retained.connectionGeneration !== undefined ? { connectionGeneration: retained.connectionGeneration } : {}),
-      ...(retained.targetGeneration !== undefined ? { targetGeneration: retained.targetGeneration } : {}),
       durationMs: retained.durationMs ?? 0,
-      ...(retained.errorCode ? { errorCode: retained.errorCode } : {}),
-      failureClass: retained.failureClass,
-      expected: retained.expectedFailure ?? EXPECTED_FAILURE_CLASSES.has(retained.failureClass),
-      ...(retained.effect ? { effect: retained.effect } : {}),
-      ...(retained.recovery ? { recovery: retained.recovery } : {}),
+      failureClass,
+      expected: retained.expectedFailure ?? EXPECTED_FAILURE_CLASSES.has(failureClass),
       takeover: retained.takeover ?? false,
       settlement: retained.settlement ?? "complete",
     };
+    for (const field of OPTIONAL_FAILURE_BUNDLE_FIELDS) {
+      const value = retained[field];
+      if (value !== undefined) (bundle as unknown as Record<string, unknown>)[field] = value;
+    }
     if (this.failures.length >= this.maxFailureBundles) this.failures.shift();
     this.failures.push(Object.freeze(bundle));
   }

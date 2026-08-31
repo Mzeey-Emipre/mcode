@@ -38,6 +38,43 @@ export interface SelectedConversationWindow {
   evictedNewer: boolean;
 }
 
+interface ConversationWindowBounds {
+  start: number;
+  end: number;
+  bytes: number;
+  count: number;
+}
+
+function initialWindowBounds(messages: readonly Message[], sizes: readonly number[], options: { anchorMessageId?: string; preference: "older" | "newer" }): ConversationWindowBounds {
+  const anchorIndex = options.anchorMessageId ? messages.findIndex((message) => message.id === options.anchorMessageId) : -1;
+  const start = anchorIndex >= 0 ? anchorIndex : options.preference === "older" ? 0 : messages.length - 1;
+  return { start, end: start, bytes: sizes[start] ?? 0, count: 1 };
+}
+
+function addWindowMessage(bounds: ConversationWindowBounds, sizes: readonly number[], index: number, side: "older" | "newer", maxBytes: number, maxMessages: number): boolean {
+  if (index < 0 || index >= sizes.length || bounds.count >= maxMessages) return false;
+  const nextBytes = bounds.bytes + (sizes[index] ?? 0);
+  if (nextBytes > maxBytes) return false;
+  bounds.bytes = nextBytes;
+  bounds.count += 1;
+  if (side === "older") bounds.start = index;
+  else bounds.end = index;
+  return true;
+}
+
+function fillWindowSide(bounds: ConversationWindowBounds, sizes: readonly number[], side: "older" | "newer", maxBytes: number, maxMessages: number): void {
+  const nextIndex = () => side === "older" ? bounds.start - 1 : bounds.end + 1;
+  while (addWindowMessage(bounds, sizes, nextIndex(), side, maxBytes, maxMessages)) {
+    // A contiguous window cannot skip an over-budget row.
+  }
+}
+
+function windowFillOrder(messages: readonly Message[], options: { anchorMessageId?: string; preference: "older" | "newer" }): readonly ("older" | "newer")[] {
+  const hasAnchor = options.anchorMessageId !== undefined && messages.some((message) => message.id === options.anchorMessageId);
+  if (!hasAnchor) return options.preference === "older" ? ["newer"] : ["older"];
+  return options.preference === "older" ? ["older", "newer"] : ["newer", "older"];
+}
+
 /** Keep narrative batches for the most valuable resident messages within a byte budget. */
 export function selectConversationNarrative<T>(
   narrativeByMessage: Record<string, T | undefined>,
@@ -86,48 +123,14 @@ export function selectConversationWindow(
     return { messages: [], evictedOlder: false, evictedNewer: false };
   }
   const sizes = messages.map(measureConversationValue);
-  const anchorIndex = options.anchorMessageId
-    ? messages.findIndex((message) => message.id === options.anchorMessageId)
-    : -1;
-  let start = anchorIndex >= 0
-    ? anchorIndex
-    : options.preference === "older" ? 0 : messages.length - 1;
-  let end = start;
-  let bytes = sizes[start] ?? 0;
-  let count = 1;
-
-  const tryInclude = (index: number, side: "older" | "newer"): boolean => {
-    if (index < 0 || index >= messages.length || count >= options.maxMessages) return false;
-    const nextBytes = bytes + (sizes[index] ?? 0);
-    if (nextBytes > options.maxBytes) return false;
-    bytes = nextBytes;
-    count += 1;
-    if (side === "older") start = index;
-    else end = index;
-    return true;
-  };
-
-  if (anchorIndex < 0) {
-    if (options.preference === "older") {
-      while (tryInclude(end + 1, "newer")) { /* The next failed row ends the contiguous window. */ }
-    } else {
-      while (tryInclude(start - 1, "older")) { /* The next failed row ends the contiguous window. */ }
-    }
-  } else {
-    const firstSide = options.preference;
-    const secondSide = firstSide === "older" ? "newer" : "older";
-    const fillSide = (side: "older" | "newer") => {
-      while (tryInclude(side === "older" ? start - 1 : end + 1, side)) {
-        /* A contiguous window cannot skip a row that exceeds the remaining budget. */
-      }
-    };
-    fillSide(firstSide);
-    fillSide(secondSide);
+  const bounds = initialWindowBounds(messages, sizes, options);
+  for (const side of windowFillOrder(messages, options)) {
+    fillWindowSide(bounds, sizes, side, options.maxBytes, options.maxMessages);
   }
 
   return {
-    messages: messages.slice(start, end + 1),
-    evictedOlder: start > 0,
-    evictedNewer: end < messages.length - 1,
+    messages: messages.slice(bounds.start, bounds.end + 1),
+    evictedOlder: bounds.start > 0,
+    evictedNewer: bounds.end < messages.length - 1,
   };
 }

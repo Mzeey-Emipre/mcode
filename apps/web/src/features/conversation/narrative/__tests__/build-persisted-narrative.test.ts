@@ -56,6 +56,24 @@ function makeHook(over: Partial<HookExecutionRecord> = {}): HookExecutionRecord 
   };
 }
 
+type PersistedNarrativeItem = ReturnType<typeof buildPersistedNarrativeItems>[number];
+
+function persistedItem(items: readonly PersistedNarrativeItem[], type: PersistedNarrativeItem["type"]): PersistedNarrativeItem | undefined {
+  return items.find((item) => item.type === type);
+}
+
+function thoughtSegment(item: PersistedNarrativeItem | undefined) {
+  return item?.type === "thought" ? item.segment : null;
+}
+
+function toolGroupCall(item: PersistedNarrativeItem | undefined) {
+  return item?.type === "tool-group" ? item.group.calls[0] : null;
+}
+
+function hookExecution(item: PersistedNarrativeItem | undefined) {
+  return item?.type === "hook" ? item.hook : null;
+}
+
 describe("buildPersistedNarrativeItems", () => {
   it("hydrates persisted Agent identity separately from its task summary", () => {
     const call = recordToToolCall(makeTool({
@@ -641,22 +659,11 @@ describe("buildPersistedNarrativeItems", () => {
       hooks: [hook],
     });
 
-    const firstStableThought = first.find(
-      (item) => item.type === "thought" && item.segment.text === "stable",
-    );
-    const secondStableThought = second.find(
-      (item) => item.type === "thought" && item.segment.text === "stable",
-    );
-    const firstTool = first.find((item) => item.type === "tool-group");
-    const secondTool = second.find((item) => item.type === "tool-group");
-    const firstHook = first.find((item) => item.type === "hook");
-    const secondHook = second.find((item) => item.type === "hook");
+    const firstStableThought = first.find((item) => item.type === "thought" && item.segment.text === "stable");
+    const secondStableThought = second.find((item) => item.type === "thought" && item.segment.text === "stable");
 
-    expect(firstStableThought?.type === "thought" ? firstStableThought.segment : null)
-      .toBe(secondStableThought?.type === "thought" ? secondStableThought.segment : null);
-    expect(firstTool?.type === "tool-group" ? firstTool.group.calls[0] : null)
-      .toBe(secondTool?.type === "tool-group" ? secondTool.group.calls[0] : null);
-    expect(firstHook?.type === "hook" ? firstHook.hook : null)
-      .toBe(secondHook?.type === "hook" ? secondHook.hook : null);
+    expect(thoughtSegment(firstStableThought)).toBe(thoughtSegment(secondStableThought));
+    expect(toolGroupCall(persistedItem(first, "tool-group"))).toBe(toolGroupCall(persistedItem(second, "tool-group")));
+    expect(hookExecution(persistedItem(first, "hook"))).toBe(hookExecution(persistedItem(second, "hook")));
   });
 });

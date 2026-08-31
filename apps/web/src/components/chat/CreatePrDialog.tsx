@@ -99,6 +99,51 @@ function BaseBranchSelect({ branches, value, onChange, disabled }: BaseBranchSel
 
 /** Possible states for the PR creation flow. */
 type DialogState = "loading" | "ready" | "submitting" | "error";
+type DescriptionMode = "write" | "preview";
+
+interface PrDialogForm {
+  state: DialogState;
+  setState: (state: DialogState) => void;
+  error: string | null;
+  setError: (error: string | null) => void;
+  isRegenerating: boolean;
+  setIsRegenerating: (isRegenerating: boolean) => void;
+  title: string;
+  setTitle: (title: string) => void;
+  body: string;
+  setBody: (body: string) => void;
+  isDraft: boolean;
+  setIsDraft: (isDraft: boolean) => void;
+  descMode: DescriptionMode;
+  setDescMode: (descMode: DescriptionMode) => void;
+}
+
+interface BaseBranchSelection {
+  baseBranches: GitBranchType[];
+  baseBranch: string;
+  setBaseBranch: (branch: string) => void;
+  hasValidBase: boolean;
+}
+
+interface PrDialogHeaderProps {
+  branch: string;
+  baseBranch: string;
+  isDraft: boolean;
+}
+
+interface PrDialogSidebarProps {
+  form: PrDialogForm;
+  baseBranchSelection: BaseBranchSelection;
+  isDisabled: boolean;
+  onSubmit: () => void;
+  onCancel: () => void;
+}
+
+interface PrDescriptionPanelProps {
+  form: PrDialogForm;
+  isDisabled: boolean;
+  onRegenerate: () => void;
+}
 
 /** Props for the CreatePrDialog component. */
 export interface CreatePrDialogProps {
@@ -114,6 +159,120 @@ export interface CreatePrDialogProps {
   branch: string;
   /** Preferred base branch selected before this dialog opens. */
   preferredBaseBranch?: string | null;
+}
+
+function usePrDialogForm(): PrDialogForm {
+  const [state, setState] = useState<DialogState>("ready");
+  const [error, setError] = useState<string | null>(null);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [isDraft, setIsDraft] = useState(false);
+  const [descMode, setDescMode] = useState<DescriptionMode>("write");
+
+  return {
+    state,
+    setState,
+    error,
+    setError,
+    isRegenerating,
+    setIsRegenerating,
+    title,
+    setTitle,
+    body,
+    setBody,
+    isDraft,
+    setIsDraft,
+    descMode,
+    setDescMode,
+  };
+}
+
+function getBaseBranches(branches: GitBranchType[], branch: string): GitBranchType[] {
+  const seen = new Set<string>();
+  const baseBranches: GitBranchType[] = [];
+
+  for (const candidate of branches) {
+    if (candidate.type === "worktree") continue;
+
+    const name = candidate.type === "remote" ? candidate.name.replace(/^[^/]+\//, "") : candidate.name;
+    if (name === branch || seen.has(name)) continue;
+
+    seen.add(name);
+    baseBranches.push({ ...candidate, name });
+  }
+
+  return baseBranches;
+}
+
+function getDefaultBaseBranch(baseBranches: GitBranchType[], preferredBaseBranch?: string | null): string {
+  return (
+    baseBranches.find((candidate) => candidate.name === preferredBaseBranch) ??
+    baseBranches.find((candidate) => candidate.name === "main") ??
+    baseBranches.find((candidate) => candidate.name === "master") ??
+    baseBranches[0]
+  )?.name ?? "";
+}
+
+function useBaseBranchSelection(
+  open: boolean,
+  branches: GitBranchType[],
+  threadId: string,
+  branch: string,
+  preferredBaseBranch?: string | null,
+): BaseBranchSelection {
+  const baseBranches = useMemo(() => getBaseBranches(branches, branch), [branches, branch]);
+  const defaultBaseBranch = getDefaultBaseBranch(baseBranches, preferredBaseBranch);
+  const [baseBranch, setBaseBranch] = useState(defaultBaseBranch);
+  const baseInitializationKey = `${threadId}:${branch}:${preferredBaseBranch ?? ""}`;
+  const initializedBaseKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      initializedBaseKeyRef.current = null;
+      return;
+    }
+    if (!defaultBaseBranch) return;
+
+    if (initializedBaseKeyRef.current !== baseInitializationKey) {
+      initializedBaseKeyRef.current = baseInitializationKey;
+      // oxlint-disable-next-line react/set-state-in-effect -- Opening a distinct PR session snapshots its default base branch while preserving the user's later selection.
+      setBaseBranch(defaultBaseBranch);
+      return;
+    }
+    if (!baseBranches.some((candidate) => candidate.name === baseBranch)) {
+      // oxlint-disable-next-line react/set-state-in-effect -- A refreshed branch list can invalidate the selected branch, so the dialog must restore its session default.
+      setBaseBranch(defaultBaseBranch);
+    }
+  }, [baseBranches, baseBranch, baseInitializationKey, defaultBaseBranch, open]);
+
+  return {
+    baseBranches,
+    baseBranch,
+    setBaseBranch,
+    hasValidBase: baseBranches.some((candidate) => candidate.name === baseBranch),
+  };
+}
+
+function isDialogDisabled(
+  state: DialogState,
+  branchesLoading: boolean,
+  hasValidBase: boolean,
+  isRegenerating: boolean,
+): boolean {
+  return state === "loading" || state === "submitting" || branchesLoading || !hasValidBase || isRegenerating;
+}
+
+function shouldAutoGenerateDraft(
+  open: boolean,
+  hasValidBase: boolean,
+  branchesLoading: boolean,
+  title: string,
+  body: string,
+  isRegenerating: boolean,
+  wasAutoGenerated: boolean,
+): boolean {
+  return open && hasValidBase && !branchesLoading && !title.trim() && !body.trim() && !isRegenerating && !wasAutoGenerated;
 }
 
 /**
@@ -133,70 +292,25 @@ export function CreatePrDialog({
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
   const loadBranches = useWorkspaceStore((s) => s.loadBranches);
 
-  const [state, setState] = useState<DialogState>("ready");
-  const [error, setError] = useState<string | null>(null);
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [isDraft, setIsDraft] = useState(false);
-  const [descMode, setDescMode] = useState<"write" | "preview">("write");
-
-  // Include local + remote branches as base branch candidates.
-  // Remote branches have their "remotename/" prefix stripped so the value sent
-  // to GitHub is a plain branch name (e.g. "main", not "origin/main").
-  // Duplicates (same clean name from both local and remote) are deduplicated.
-  const baseBranches = useMemo(() => {
-    const seen = new Set<string>();
-    const result: GitBranchType[] = [];
-    for (const b of branches) {
-      if (b.type === "worktree") continue;
-      const name = b.type === "remote" ? b.name.replace(/^[^/]+\//, "") : b.name;
-      if (name === branch || seen.has(name)) continue;
-      seen.add(name);
-      result.push({ ...b, name });
-    }
-    return result;
-  }, [branches, branch]);
-
-  const defaultBase =
-    (preferredBaseBranch ? baseBranches.find((b) => b.name === preferredBaseBranch) : undefined) ??
-    baseBranches.find((b) => b.name === "main") ??
-    baseBranches.find((b) => b.name === "master") ??
-    baseBranches[0];
-
-  // Default to empty string when branches haven't loaded yet — avoids synthesizing
-  // a "main" fallback that may not exist in the repo.
-  const [baseBranch, setBaseBranch] = useState<string>(
-    defaultBase?.name ?? "",
+  const form = usePrDialogForm();
+  const {
+    state: formState,
+    setTitle,
+    setBody,
+    setIsDraft,
+    setError,
+    setDescMode,
+    setState,
+  } = form;
+  const baseBranchSelection = useBaseBranchSelection(
+    open,
+    branches,
+    threadId,
+    branch,
+    preferredBaseBranch,
   );
-  const baseInitializationKey = `${threadId}:${branch}:${preferredBaseBranch ?? ""}`;
-  const initializedBaseKeyRef = useRef<string | null>(null);
   const autoGeneratedSessionKeyRef = useRef<string | null>(null);
-
-  // Keep baseBranch in sync when branches load.
-  // On first load: initialize to the saved base, then repo default (main/master/first).
-  // On subsequent loads: reset to default if the current value is no longer available.
-  useEffect(() => {
-    if (!open) {
-      initializedBaseKeyRef.current = null;
-      return;
-    }
-    if (baseBranches.length === 0) return;
-    const defaultBranch = (
-      (preferredBaseBranch ? baseBranches.find((b) => b.name === preferredBaseBranch) : undefined) ??
-      baseBranches.find((b) => b.name === "main") ??
-      baseBranches.find((b) => b.name === "master") ??
-      baseBranches[0]
-    ).name;
-    if (initializedBaseKeyRef.current !== baseInitializationKey) {
-      initializedBaseKeyRef.current = baseInitializationKey;
-      setBaseBranch(defaultBranch);
-      return;
-    }
-    if (!baseBranches.some((b) => b.name === baseBranch)) {
-      setBaseBranch(defaultBranch);
-    }
-  }, [baseBranches, baseBranch, baseInitializationKey, open, preferredBaseBranch]);
+  const baseInitializationKey = `${threadId}:${branch}:${preferredBaseBranch ?? ""}`;
 
   // Load branches when the dialog opens.
   useEffect(() => {
@@ -208,7 +322,7 @@ export function CreatePrDialog({
   // Reset ephemeral fields when the dialog closes — but not during an in-flight
   // submission, since the close could be a forced unmount while createPr() is pending.
   useEffect(() => {
-    if (!open && state !== "submitting") {
+    if (!open && formState !== "submitting") {
       setTitle("");
       setBody("");
       setIsDraft(false);
@@ -217,7 +331,7 @@ export function CreatePrDialog({
       setState("ready");
       autoGeneratedSessionKeyRef.current = null;
     }
-  }, [open, state]);
+  }, [formState, open, setBody, setDescMode, setError, setIsDraft, setState, setTitle]);
 
   // Keep a stable ref to onOpenChange so useCallback closures don't go stale.
   const onOpenChangeRef = useRef(onOpenChange);
@@ -225,81 +339,85 @@ export function CreatePrDialog({
 
   /** Intercept close requests — block them while a submission or draft generation is in flight. */
   const handleOpenChange = useCallback((nextOpen: boolean) => {
-    if (!nextOpen && (state === "submitting" || isRegenerating)) return;
+    if (!nextOpen && (form.state === "submitting" || form.isRegenerating)) return;
     onOpenChangeRef.current(nextOpen);
-  }, [state, isRegenerating]);
-
-  // True when there is at least one valid base branch and the currently selected
-  // value is in that list. Used to gate Generate and Create PR actions.
-  const hasValidBase = baseBranches.length > 0 && baseBranches.some((b) => b.name === baseBranch);
+  }, [form.isRegenerating, form.state]);
 
   const handleSubmit = useCallback(async () => {
-    if (!hasValidBase) return;
-    setState("submitting");
-    setError(null);
+    if (!baseBranchSelection.hasValidBase) return;
+    form.setState("submitting");
+    form.setError(null);
     try {
       const result = await getTransport().createPr(
         workspaceId,
         threadId,
-        title,
-        body,
-        baseBranch,
-        isDraft,
+        form.title,
+        form.body,
+        baseBranchSelection.baseBranch,
+        form.isDraft,
       );
       useWorkspaceStore.getState().recordPrCreated(threadId, result.number, result.url);
       // Transition to ready before closing so the reset effect can clear the form.
-      setState("ready");
+      form.setState("ready");
       onOpenChange(false);
       useToastStore.getState().show("info", "Pull request created", `PR #${result.number} opened on GitHub`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "PR creation failed";
-      setError(message);
-      setState("ready");
+      form.setError(message);
+      form.setState("ready");
     }
-  }, [workspaceId, threadId, title, body, baseBranch, isDraft, onOpenChange, hasValidBase]);
+  }, [workspaceId, threadId, onOpenChange, baseBranchSelection, form]);
 
   /** Re-run AI draft generation with the current base branch, keeping existing content visible. */
   const handleRegenerate = useCallback(async () => {
-    if (!hasValidBase) return;
-    setIsRegenerating(true);
-    setError(null);
+    if (!baseBranchSelection.hasValidBase) return;
+    form.setIsRegenerating(true);
+    form.setError(null);
     try {
-      const draft = await getTransport().generatePrDraft(workspaceId, threadId, baseBranch);
-      setTitle(draft.title);
-      setBody(draft.body);
+      const draft = await getTransport().generatePrDraft(workspaceId, threadId, baseBranchSelection.baseBranch);
+      form.setTitle(draft.title);
+      form.setBody(draft.body);
     } catch (err) {
-      setError(`Draft generation failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      form.setError(`Draft generation failed: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
-      setIsRegenerating(false);
+      form.setIsRegenerating(false);
     }
-  }, [workspaceId, threadId, baseBranch, hasValidBase]);
+  }, [workspaceId, threadId, baseBranchSelection, form]);
 
   const autoGenerateSessionKey = `${threadId}:${branch}:${baseInitializationKey}`;
 
   // Generate an initial draft once per open when the form is still empty.
   useEffect(() => {
-    if (!open) return;
-    if (!hasValidBase || branchesLoading || title.trim() || body.trim() || isRegenerating) return;
-    if (autoGeneratedSessionKeyRef.current === autoGenerateSessionKey) return;
+    const wasAutoGenerated = autoGeneratedSessionKeyRef.current === autoGenerateSessionKey;
+    if (!shouldAutoGenerateDraft(
+      open,
+      baseBranchSelection.hasValidBase,
+      branchesLoading,
+      form.title,
+      form.body,
+      form.isRegenerating,
+      wasAutoGenerated,
+    )) return;
+
     autoGeneratedSessionKeyRef.current = autoGenerateSessionKey;
     void handleRegenerate();
   }, [
     open,
-    hasValidBase,
+    baseBranchSelection.hasValidBase,
     branchesLoading,
-    title,
-    body,
-    isRegenerating,
+    form.title,
+    form.body,
+    form.isRegenerating,
     autoGenerateSessionKey,
     handleRegenerate,
   ]);
 
-  const isDisabled =
-    state === "loading" ||
-    state === "submitting" ||
-    branchesLoading ||
-    !hasValidBase ||
-    isRegenerating;
+  const isDisabled = isDialogDisabled(
+    form.state,
+    branchesLoading,
+    baseBranchSelection.hasValidBase,
+    form.isRegenerating,
+  );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -307,191 +425,260 @@ export function CreatePrDialog({
         className="sm:max-w-4xl w-[min(90vw,900px)] gap-0 overflow-hidden p-0"
         showCloseButton={!isDisabled}
       >
-        {/* Header */}
-        <div className="flex items-center gap-3 pl-5 pr-12 py-4 border-b border-border/50">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40">
-            <GitPullRequest className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <DialogTitle className="text-sm font-medium leading-none">
-              Create pull request
-            </DialogTitle>
-            <DialogDescription className="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
-              <span className="min-w-0 max-w-[min(200px,40vw)] truncate font-mono text-foreground/80">
-                {branch}
-              </span>
-              <span className="shrink-0 text-muted-foreground/50" aria-hidden="true">→</span>
-              <span className="min-w-0 max-w-[min(200px,40vw)] truncate font-mono text-muted-foreground">
-                {baseBranch}
-              </span>
-            </DialogDescription>
-          </div>
-          {isDraft && (
-            <span className="text-xs text-muted-foreground bg-muted/60 border border-border/50 rounded px-2 py-0.5 shrink-0">
-              Draft
-            </span>
-          )}
-        </div>
+        <PrDialogHeader
+          branch={branch}
+          baseBranch={baseBranchSelection.baseBranch}
+          isDraft={form.isDraft}
+        />
 
-        {/* Two-column body */}
         <div className="flex min-h-[320px] max-h-[min(480px,70vh)] max-sm:max-h-[min(640px,85vh)] max-sm:flex-col">
-          {/* Left sidebar: metadata + actions */}
-          <div className="flex min-h-0 w-64 shrink-0 flex-col gap-4 border-r border-border/50 p-5 max-sm:w-full max-sm:border-r-0 max-sm:border-b max-sm:border-border/50">
-            {/* Title */}
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="pr-title" className="text-xs text-muted-foreground">
-                Title
-              </label>
-              <Input
-                id="pr-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="PR title"
-                disabled={isDisabled}
-              />
-            </div>
+          <PrDialogSidebar
+            form={form}
+            baseBranchSelection={baseBranchSelection}
+            isDisabled={isDisabled}
+            onSubmit={handleSubmit}
+            onCancel={() => onOpenChange(false)}
+          />
 
-            {/* Base branch */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs text-muted-foreground flex items-center gap-1">
-                <GitBranch className="size-3" aria-hidden="true" />
-                Base branch
-              </label>
-              <BaseBranchSelect
-                branches={baseBranches}
-                value={baseBranch}
-                onChange={setBaseBranch}
-                disabled={isDisabled}
-              />
-            </div>
-
-            {/* Draft toggle */}
-            <div className="flex items-center justify-between">
-              <label
-                htmlFor="pr-is-draft"
-                className="text-xs text-muted-foreground select-none cursor-pointer"
-              >
-                Draft PR
-              </label>
-              <Switch
-                id="pr-is-draft"
-                checked={isDraft}
-                onCheckedChange={setIsDraft}
-                disabled={isDisabled}
-              />
-            </div>
-
-            {/* Spacer */}
-            <div className="flex-1" />
-
-            {/* Error banner */}
-            {error && (
-              <div
-                role="alert"
-                className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2"
-              >
-                {error}
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex flex-col gap-2">
-              <Button
-                onClick={handleSubmit}
-                disabled={isDisabled || !title.trim()}
-                className="w-full gap-1.5"
-              >
-                {state === "submitting" && (
-                  <Spinner size={14} className="text-current" />
-                )}
-                Create PR
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => onOpenChange(false)}
-                disabled={isDisabled}
-                className="w-full"
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-
-          {/* Right: description */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-5">
-            {isRegenerating && !body ? (
-              <div
-                role="status"
-                aria-live="polite"
-                className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
-              >
-                <Spinner size={16} className="text-muted-foreground" />
-                Generating PR draft…
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between">
-                  <label htmlFor="pr-body" className="text-xs text-muted-foreground">
-                    Description
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleRegenerate}
-                      disabled={isDisabled}
-                      className="h-6 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      {isRegenerating ? (
-                        <Spinner size={12} className="text-current" />
-                      ) : (
-                        <RefreshCw className="size-3" aria-hidden="true" />
-                      )}
-                      {title || body ? "Regenerate" : "Generate"}
-                    </Button>
-                    <SegControl
-                      options={[
-                        { value: "write", label: "Write" },
-                        { value: "preview", label: "Preview" },
-                      ]}
-                      value={descMode}
-                      onChange={(v) => setDescMode(v as "write" | "preview")}
-                    />
-                  </div>
-                </div>
-                {descMode === "write" ? (
-                  <textarea
-                    id="pr-body"
-                    value={body}
-                    onChange={(e) => setBody(e.target.value)}
-                    disabled={isDisabled}
-                    placeholder="PR description"
-                    className={cn(
-                      "flex-1 min-h-0 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm shadow-xs transition-colors",
-                      "font-mono resize-none overflow-y-auto",
-                      "placeholder:text-muted-foreground",
-                      "focus-visible:border-ring focus-visible:outline-none",
-                      "disabled:cursor-not-allowed disabled:opacity-50",
-                    )}
-                  />
-                ) : (
-                  <div
-                    className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-input bg-background px-3 py-2.5 text-sm"
-                  >
-                    {body.trim() ? (
-                    <Suspense fallback={<span className="text-muted-foreground text-sm">Loading preview…</span>}>
-                      <PreviewMarkdown content={body} />
-                    </Suspense>
-                    ) : (
-                      <span className="text-muted-foreground italic">Nothing to preview.</span>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          <PrDescriptionPanel
+            form={form}
+            isDisabled={isDisabled}
+            onRegenerate={handleRegenerate}
+          />
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PrDialogHeader({ branch, baseBranch, isDraft }: PrDialogHeaderProps) {
+  return (
+    <div className="flex items-center gap-3 border-b border-border/50 py-4 pl-5 pr-12">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40">
+        <GitPullRequest className="size-3.5 text-muted-foreground" aria-hidden="true" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <DialogTitle className="text-sm font-medium leading-none">Create pull request</DialogTitle>
+        <DialogDescription className="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
+          <span className="min-w-0 max-w-[min(200px,40vw)] truncate font-mono text-foreground/80">
+            {branch}
+          </span>
+          <span className="shrink-0 text-muted-foreground/50" aria-hidden="true">→</span>
+          <span className="min-w-0 max-w-[min(200px,40vw)] truncate font-mono text-muted-foreground">
+            {baseBranch}
+          </span>
+        </DialogDescription>
+      </div>
+      {isDraft && (
+        <span className="shrink-0 rounded border border-border/50 bg-muted/60 px-2 py-0.5 text-xs text-muted-foreground">
+          Draft
+        </span>
+      )}
+    </div>
+  );
+}
+
+function PrDialogSidebar({
+  form,
+  baseBranchSelection,
+  isDisabled,
+  onSubmit,
+  onCancel,
+}: PrDialogSidebarProps) {
+  return (
+    <div className="flex min-h-0 w-64 shrink-0 flex-col gap-4 border-r border-border/50 p-5 max-sm:w-full max-sm:border-r-0 max-sm:border-b max-sm:border-border/50">
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="pr-title" className="text-xs text-muted-foreground">
+          Title
+        </label>
+        <Input
+          id="pr-title"
+          value={form.title}
+          onChange={(event) => form.setTitle(event.target.value)}
+          placeholder="PR title"
+          disabled={isDisabled}
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          <GitBranch className="size-3" aria-hidden="true" />
+          Base branch
+        </label>
+        <BaseBranchSelect
+          branches={baseBranchSelection.baseBranches}
+          value={baseBranchSelection.baseBranch}
+          onChange={baseBranchSelection.setBaseBranch}
+          disabled={isDisabled}
+        />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <label
+          htmlFor="pr-is-draft"
+          className="cursor-pointer select-none text-xs text-muted-foreground"
+        >
+          Draft PR
+        </label>
+        <Switch
+          id="pr-is-draft"
+          checked={form.isDraft}
+          onCheckedChange={form.setIsDraft}
+          disabled={isDisabled}
+        />
+      </div>
+
+      <div className="flex-1" />
+
+      {form.error && (
+        <div
+          role="alert"
+          className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+        >
+          {form.error}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-2">
+        <Button
+          onClick={onSubmit}
+          disabled={isDisabled || !form.title.trim()}
+          className="w-full gap-1.5"
+        >
+          {form.state === "submitting" && <Spinner size={14} className="text-current" />}
+          Create PR
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={onCancel}
+          disabled={isDisabled}
+          className="w-full"
+        >
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PrDescriptionPanel({ form, isDisabled, onRegenerate }: PrDescriptionPanelProps) {
+  if (form.isRegenerating && !form.body) {
+    return <PrDraftLoadingState />;
+  }
+
+  return (
+    <PrDescriptionEditor
+      form={form}
+      isDisabled={isDisabled}
+      onRegenerate={onRegenerate}
+    />
+  );
+}
+
+function PrDraftLoadingState() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
+    >
+      <Spinner size={16} className="text-muted-foreground" />
+      Generating PR draft…
+    </div>
+  );
+}
+
+function PrDescriptionEditor({ form, isDisabled, onRegenerate }: PrDescriptionPanelProps) {
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-5">
+      <div className="flex items-center justify-between">
+        <label htmlFor="pr-body" className="text-xs text-muted-foreground">
+          Description
+        </label>
+        <div className="flex items-center gap-2">
+          <PrDraftGenerationButton
+            isRegenerating={form.isRegenerating}
+            hasDraftContent={Boolean(form.title || form.body)}
+            disabled={isDisabled}
+            onRegenerate={onRegenerate}
+          />
+          <SegControl
+            options={[
+              { value: "write", label: "Write" },
+              { value: "preview", label: "Preview" },
+            ]}
+            value={form.descMode}
+            onChange={(mode) => form.setDescMode(mode as DescriptionMode)}
+          />
+        </div>
+      </div>
+      <PrDescriptionField form={form} isDisabled={isDisabled} />
+    </div>
+  );
+}
+
+function PrDraftGenerationButton({
+  isRegenerating,
+  hasDraftContent,
+  disabled,
+  onRegenerate,
+}: {
+  isRegenerating: boolean;
+  hasDraftContent: boolean;
+  disabled: boolean;
+  onRegenerate: () => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onRegenerate}
+      disabled={disabled}
+      className="h-6 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+    >
+      {isRegenerating ? (
+        <Spinner size={12} className="text-current" />
+      ) : (
+        <RefreshCw className="size-3" aria-hidden="true" />
+      )}
+      {hasDraftContent ? "Regenerate" : "Generate"}
+    </Button>
+  );
+}
+
+function PrDescriptionField({ form, isDisabled }: Pick<PrDescriptionPanelProps, "form" | "isDisabled">) {
+  if (form.descMode === "write") {
+    return (
+      <textarea
+        id="pr-body"
+        value={form.body}
+        onChange={(event) => form.setBody(event.target.value)}
+        disabled={isDisabled}
+        placeholder="PR description"
+        className={cn(
+          "flex-1 min-h-0 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm shadow-xs transition-colors",
+          "font-mono resize-none overflow-y-auto",
+          "placeholder:text-muted-foreground",
+          "focus-visible:border-ring focus-visible:outline-none",
+          "disabled:cursor-not-allowed disabled:opacity-50",
+        )}
+      />
+    );
+  }
+
+  return <PrMarkdownPreview body={form.body} />;
+}
+
+function PrMarkdownPreview({ body }: { body: string }) {
+  return (
+    <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-input bg-background px-3 py-2.5 text-sm">
+      {body.trim() ? (
+        <Suspense fallback={<span className="text-sm text-muted-foreground">Loading preview…</span>}>
+          <PreviewMarkdown content={body} />
+        </Suspense>
+      ) : (
+        <span className="italic text-muted-foreground">Nothing to preview.</span>
+      )}
+    </div>
   );
 }

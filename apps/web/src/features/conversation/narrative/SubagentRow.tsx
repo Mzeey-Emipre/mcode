@@ -30,6 +30,15 @@ interface VisibleSubagentParticipant {
   lifecycle: SubagentLifecycle;
 }
 
+interface SubagentParticipantView {
+  identity: string;
+  identityKey: string;
+  hasCanonicalChild: boolean;
+  hasExplicitIdentity: boolean;
+  status: string;
+  unavailableMessage: string;
+}
+
 interface SubagentParticipantProps extends VisibleSubagentParticipant {
   unavailableDetailId: string | undefined;
   onSubagentSelect: SubagentRowProps["onSubagentSelect"];
@@ -106,6 +115,36 @@ function participantTranscriptUnavailableMessage(participant: ToolCall): string 
   );
 }
 
+function participantIdentity(participant: ToolCall): string {
+  return participant.subagentPresentation?.displayName ?? "Subagent";
+}
+
+function participantIdentityKey(participant: ToolCall): string {
+  return participant.subagentPresentation?.identityKey ?? participant.id;
+}
+
+function participantHasCanonicalChild(participant: ToolCall): boolean {
+  return participant.subagentPresentation?.detail?.kind === "canonical-child";
+}
+
+function participantStatus(participant: ToolCall, lifecycle: SubagentLifecycle): string {
+  return lifecycle === "finished" ? terminalStatus(participant) : "Active";
+}
+
+function projectSubagentParticipant(
+  participant: ToolCall,
+  lifecycle: SubagentLifecycle,
+): SubagentParticipantView {
+  return {
+    identity: participantIdentity(participant),
+    identityKey: participantIdentityKey(participant),
+    hasCanonicalChild: participantHasCanonicalChild(participant),
+    hasExplicitIdentity: participant.subagentPresentation?.hasExplicitIdentity ?? false,
+    status: participantStatus(participant, lifecycle),
+    unavailableMessage: participantTranscriptUnavailableMessage(participant),
+  };
+}
+
 function handleSubagentSelection(
   participant: ToolCall,
   lifecycle: SubagentLifecycle,
@@ -124,6 +163,24 @@ function handleSubagentSelection(
   );
 }
 
+function SubagentTranscriptNotice({
+  participantId,
+  unavailableDetailId,
+  message,
+}: {
+  participantId: string;
+  unavailableDetailId: string | undefined;
+  message: string;
+}) {
+  if (unavailableDetailId !== participantId || !message) return null;
+
+  return (
+    <span data-testid="subagent-transcript-unavailable" role="status" className="text-xs text-muted-foreground">
+      {message}
+    </span>
+  );
+}
+
 function SubagentParticipant({
   participant,
   lifecycle,
@@ -131,13 +188,7 @@ function SubagentParticipant({
   onSubagentSelect,
   onUnavailableDetail,
 }: SubagentParticipantProps) {
-  const presentation = participant.subagentPresentation;
-  const identity = presentation?.displayName ?? "Subagent";
-  const identityKey = presentation?.identityKey ?? participant.id;
-  const detail = presentation?.detail;
-  const hasCanonicalChild = detail?.kind === "canonical-child";
-  const status = lifecycle === "finished" ? terminalStatus(participant) : "Active";
-  const unavailableMessage = participantTranscriptUnavailableMessage(participant);
+  const view = projectSubagentParticipant(participant, lifecycle);
 
   return (
     <span className="flex min-w-0 shrink items-center gap-1">
@@ -148,34 +199,34 @@ function SubagentParticipant({
         onClick={() => handleSubagentSelection(
           participant,
           lifecycle,
-          hasCanonicalChild,
-          identityKey,
+          view.hasCanonicalChild,
+          view.identityKey,
           onSubagentSelect,
           onUnavailableDetail,
         )}
         className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
-        aria-label={`${hasCanonicalChild ? "Open" : "Show"} ${identity} subagent details`}
+        aria-label={`${view.hasCanonicalChild ? "Open" : "Show"} ${view.identity} subagent details`}
         aria-describedby={`subagent-status-${participant.id}`}
       >
         <SubagentIdentityGlyph
-          identity={identity}
-          hasExplicitIdentity={presentation?.hasExplicitIdentity ?? false}
-          paletteSeed={identityKey}
+          identity={view.identity}
+          hasExplicitIdentity={view.hasExplicitIdentity}
+          paletteSeed={view.identityKey}
           className="size-4"
           size={12}
         />
         <span className="min-w-0 truncate text-xs font-medium text-foreground/85">
-          {identity}
+          {view.identity}
         </span>
       </Button>
       <span id={`subagent-status-${participant.id}`} role="status" className="sr-only">
-        {status}
+        {view.status}
       </span>
-      {unavailableDetailId === participant.id && unavailableMessage && (
-        <span data-testid="subagent-transcript-unavailable" role="status" className="text-xs text-muted-foreground">
-          {unavailableMessage}
-        </span>
-      )}
+      <SubagentTranscriptNotice
+        participantId={participant.id}
+        unavailableDetailId={unavailableDetailId}
+        message={view.unavailableMessage}
+      />
       <span className="shrink-0 text-xs text-muted-foreground">
         {lifecycleLabel(lifecycle)}
       </span>

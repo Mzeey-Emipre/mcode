@@ -5,9 +5,9 @@
  * prepended here so each turn receives it alongside workspace-local discovery.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { AttachmentMeta } from "@mcode/contracts";
 import { isVirtualBrowserContextAttachment } from "@mcode/contracts";
 
@@ -17,10 +17,10 @@ import { isVirtualBrowserContextAttachment } from "@mcode/contracts";
  * @returns File contents or `undefined` when missing or unreadable.
  */
 export function readCursorUserInstructions(): string | undefined {
-  const path = join(homedir(), ".cursor", "AGENTS.md");
-  if (!existsSync(path)) return undefined;
+  const path = NodePath.join(NodeOS.homedir(), ".cursor", "AGENTS.md");
+  if (!NodeFS.existsSync(path)) return undefined;
   try {
-    const text = readFileSync(path, "utf-8").trim();
+    const text = NodeFS.readFileSync(path, "utf-8").trim();
     return text.length > 0 ? text : undefined;
   } catch {
     return undefined;

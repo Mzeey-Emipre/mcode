@@ -1,8 +1,8 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import type { PtyProcessScope } from "./pty-host-runtime.js";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 const PROCESS_TABLE_TIMEOUT_MS = 1_000;
 const PROCESS_TABLE_MAX_BYTES = 1_048_576;
 const GRACEFUL_CLOSE_TIMEOUT_MS = 3_000;

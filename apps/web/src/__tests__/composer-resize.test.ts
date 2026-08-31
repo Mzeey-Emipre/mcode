@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import * as NodeFS from "node:fs";
 
-const EDITOR_SRC = readFileSync(
+const EDITOR_SRC = NodeFS.readFileSync(
   new URL("../components/chat/lexical/ComposerEditor.tsx", import.meta.url),
   "utf-8",
 );

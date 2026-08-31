@@ -6,8 +6,8 @@
  * and emitting events for server-initiated messages.
  */
 
-import { EventEmitter } from "events";
-import type { Writable, Readable } from "stream";
+import * as NodeEvents from "node:events";
+import type * as NodeStream from "node:stream";
 import { logger } from "@mcode/shared";
 
 /** Default timeout in milliseconds for RPC requests. */
@@ -28,9 +28,9 @@ interface PendingRequest {
  * - `notification` - a JSON-RPC notification pushed by the server (no `id`)
  * - `serverRequest` - a server-initiated JSON-RPC request (has both `id` and `method`)
  */
-export class CodexRpcClient extends EventEmitter {
-  private readonly stdin: Writable;
-  private readonly stdout: Readable;
+export class CodexRpcClient extends NodeEvents.EventEmitter {
+  private readonly stdin: NodeStream.Writable;
+  private readonly stdout: NodeStream.Readable;
   private readonly pending = new Map<number, PendingRequest>();
   private nextId = 1;
   private disposed = false;
@@ -48,7 +48,7 @@ export class CodexRpcClient extends EventEmitter {
    * @param stdin - Writable stream connected to the codex app-server process stdin.
    * @param stdout - Readable stream connected to the codex app-server process stdout.
    */
-  constructor(stdin: Writable, stdout: Readable) {
+  constructor(stdin: NodeStream.Writable, stdout: NodeStream.Readable) {
     super();
     this.stdin = stdin;
     this.stdout = stdout;
@@ -193,39 +193,14 @@ export class CodexRpcClient extends EventEmitter {
 
   /** Parses and dispatches a single NDJSON line received from stdout. */
   private processLine(line: string): void {
-    const trimmed = line.trim();
-    if (trimmed === "") return;
-
-    let msg: Record<string, unknown>;
-    try {
-      msg = JSON.parse(trimmed);
-    } catch {
-      logger.warn("CodexRpcClient: malformed JSON line", { line: trimmed });
-      return;
-    }
+    const msg = this.parseMessage(line);
+    if (!msg) return;
 
     const hasId = typeof msg["id"] === "number";
     const hasMethod = typeof msg["method"] === "string";
 
     if (hasId && !hasMethod) {
-      // Response to one of our requests
-      const id = msg["id"] as number;
-      const entry = this.pending.get(id);
-      if (!entry) {
-        logger.warn("CodexRpcClient: received response for unknown id", { id });
-        return;
-      }
-      clearTimeout(entry.timer);
-      this.pending.delete(id);
-
-      const error = msg["error"] as { message?: string; code?: number | string } | undefined;
-      if (error) {
-        const err = new Error(error.message ?? "RPC error") as Error & { code?: number | string };
-        if (error.code !== undefined) err.code = error.code;
-        entry.reject(err);
-      } else {
-        entry.resolve(msg["result"]);
-      }
+      this.resolvePendingResponse(msg, msg["id"] as number);
       return;
     }
 
@@ -242,6 +217,35 @@ export class CodexRpcClient extends EventEmitter {
     }
 
     logger.warn("CodexRpcClient: unrecognized message", { msg });
+  }
+
+  private parseMessage(line: string): Record<string, unknown> | undefined {
+    const trimmed = line.trim();
+    if (trimmed === "") return undefined;
+    try {
+      return JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      logger.warn("CodexRpcClient: malformed JSON line", { line: trimmed });
+      return undefined;
+    }
+  }
+
+  private resolvePendingResponse(msg: Record<string, unknown>, id: number): void {
+    const entry = this.pending.get(id);
+    if (!entry) {
+      logger.warn("CodexRpcClient: received response for unknown id", { id });
+      return;
+    }
+    clearTimeout(entry.timer);
+    this.pending.delete(id);
+    const error = msg["error"] as { message?: string; code?: number | string } | undefined;
+    if (!error) {
+      entry.resolve(msg["result"]);
+      return;
+    }
+    const rpcError = new Error(error.message ?? "RPC error") as Error & { code?: number | string };
+    if (error.code !== undefined) rpcError.code = error.code;
+    entry.reject(rpcError);
   }
 
   /** Rejects all pending requests with the given error and clears the map. */

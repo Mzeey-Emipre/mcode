@@ -66,56 +66,88 @@ function eventType(event: unknown): string {
   return typeof event.type === "string" ? event.type : "unknown";
 }
 
+interface ContentMeasureState {
+  bytes: number;
+  visited: number;
+  truncated: boolean;
+}
+
+interface PendingContentValue {
+  value: unknown;
+  key?: string;
+  depth: number;
+}
+
+function canMeasureContentValue(current: PendingContentValue, state: ContentMeasureState): boolean {
+  state.visited += 1;
+  if (
+    state.visited > CANONICAL_DIAGNOSTIC_TRAVERSAL_MAX_NODES
+    || current.depth > CANONICAL_DIAGNOSTIC_TRAVERSAL_MAX_DEPTH
+  ) {
+    state.truncated = true;
+    return false;
+  }
+  return true;
+}
+
+function measureStringContent(current: PendingContentValue, state: ContentMeasureState): void {
+  if (typeof current.value !== "string" || !current.key || !CONTENT_KEYS.has(current.key)) return;
+  const nextBytes = state.bytes + Buffer.byteLength(current.value, "utf8");
+  if (nextBytes > CANONICAL_DIAGNOSTIC_CONTENT_BYTES_MAX) state.truncated = true;
+  state.bytes = Math.min(CANONICAL_DIAGNOSTIC_CONTENT_BYTES_MAX, nextBytes);
+}
+
+function appendArrayContent(
+  value: unknown[],
+  current: PendingContentValue,
+  state: ContentMeasureState,
+  pending: PendingContentValue[],
+): void {
+  const remaining = CANONICAL_DIAGNOSTIC_TRAVERSAL_MAX_NODES - state.visited - pending.length;
+  const limit = Math.max(0, Math.min(value.length, remaining));
+  for (let index = 0; index < limit; index += 1) {
+    pending.push({ value: value[index], key: current.key, depth: current.depth + 1 });
+  }
+  if (limit < value.length) state.truncated = true;
+}
+
+function appendObjectContent(
+  value: Record<string, unknown>,
+  current: PendingContentValue,
+  state: ContentMeasureState,
+  pending: PendingContentValue[],
+): void {
+  let added = 0;
+  const remaining = CANONICAL_DIAGNOSTIC_TRAVERSAL_MAX_NODES - state.visited - pending.length;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    if (added >= remaining) {
+      state.truncated = true;
+      break;
+    }
+    pending.push({ value: value[key], key, depth: current.depth + 1 });
+    added += 1;
+  }
+}
+
 function measureContent(value: unknown): { bytes: number; truncated: boolean } {
-  const pending: Array<{ value: unknown; key?: string; depth: number }> = [
-    { value, depth: 0 },
-  ];
-  let bytes = 0;
-  let visited = 0;
-  let truncated = false;
+  const pending: PendingContentValue[] = [{ value, depth: 0 }];
+  const state: ContentMeasureState = { bytes: 0, visited: 0, truncated: false };
   while (pending.length > 0) {
     const current = pending.pop()!;
-    visited += 1;
-    if (visited > CANONICAL_DIAGNOSTIC_TRAVERSAL_MAX_NODES
-      || current.depth > CANONICAL_DIAGNOSTIC_TRAVERSAL_MAX_DEPTH) {
-      truncated = true;
-      continue;
-    }
+    if (!canMeasureContentValue(current, state)) continue;
     if (typeof current.value === "string") {
-      if (current.key && CONTENT_KEYS.has(current.key)) {
-        const nextBytes = bytes + Buffer.byteLength(current.value, "utf8");
-        if (nextBytes > CANONICAL_DIAGNOSTIC_CONTENT_BYTES_MAX) truncated = true;
-        bytes = Math.min(CANONICAL_DIAGNOSTIC_CONTENT_BYTES_MAX, nextBytes);
-      }
+      measureStringContent(current, state);
       continue;
     }
     if (Array.isArray(current.value)) {
-      const remaining = CANONICAL_DIAGNOSTIC_TRAVERSAL_MAX_NODES - visited - pending.length;
-      const limit = Math.max(0, Math.min(current.value.length, remaining));
-      for (let index = 0; index < limit; index += 1) {
-        pending.push({ value: current.value[index], key: current.key, depth: current.depth + 1 });
-      }
-      if (limit < current.value.length) truncated = true;
+      appendArrayContent(current.value, current, state, pending);
       continue;
     }
     if (!current.value || typeof current.value !== "object") continue;
-    let added = 0;
-    const remaining = CANONICAL_DIAGNOSTIC_TRAVERSAL_MAX_NODES - visited - pending.length;
-    for (const key in current.value) {
-      if (!Object.prototype.hasOwnProperty.call(current.value, key)) continue;
-      if (added >= remaining) {
-        truncated = true;
-        break;
-      }
-      pending.push({
-        value: (current.value as Record<string, unknown>)[key],
-        key,
-        depth: current.depth + 1,
-      });
-      added += 1;
-    }
+    appendObjectContent(current.value as Record<string, unknown>, current, state, pending);
   }
-  return { bytes, truncated };
+  return { bytes: state.bytes, truncated: state.truncated };
 }
 
 function serializeRawEvent(event: unknown): { event: unknown; bytes: number } | null {

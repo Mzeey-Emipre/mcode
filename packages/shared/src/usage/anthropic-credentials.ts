@@ -1,7 +1,7 @@
-import * as childProcess from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 /**
  * OAuth token plus its expiry timestamp (epoch ms) as written by Claude Code.
@@ -33,10 +33,10 @@ interface CredentialsFile {
  *            reader treats both the same — JSON parse simply fails on a
  *            ciphertext blob and the caller gets null.
  *
- * @param platform - Override the detected platform. Intended for testing only.
+ * @param platform - The host platform that stores the credentials.
  */
 export async function readAnthropicOauthToken(
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<AnthropicOauthToken | null> {
   try {
     const raw = await readRawCredentials(platform);
@@ -63,7 +63,7 @@ async function readRawCredentials(platform: NodeJS.Platform): Promise<string | n
       // Use a manual promise so the mock can intercept childProcess.execFile at call time.
       // promisify captures the function reference at wrap time; direct lookup does not.
       const stdout = await new Promise<string>((resolve, reject) => {
-        childProcess.execFile(
+        NodeChildProcess.execFile(
           "security",
           ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
           (err, out) => {
@@ -83,7 +83,7 @@ async function readRawCredentials(platform: NodeJS.Platform): Promise<string | n
   // 0700 on .claude/; Windows: NTFS ACLs scoped to the user profile).
   if (platform === "linux" || platform === "win32") {
     try {
-      return await readFile(join(homedir(), ".claude", ".credentials.json"), "utf8");
+      return await NodeFSPromises.readFile(NodePath.join(NodeOS.homedir(), ".claude", ".credentials.json"), "utf8");
     } catch {
       return null;
     }

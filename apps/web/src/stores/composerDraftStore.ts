@@ -58,38 +58,54 @@ interface ComposerDraftState {
   clearPendingPrefill: () => void;
 }
 
+function draftHasNoSendableContent(draft: ComposerDraft): boolean {
+  return draft.input.trim() === ""
+    && draft.attachments.length === 0
+    && (draft.selectedTextComments?.length ?? 0) === 0;
+}
+
+function revokeAttachmentPreviewUrls(attachments: readonly PendingAttachment[]): void {
+  for (const attachment of attachments) {
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  }
+}
+
+function removeDraft(
+  drafts: Record<string, ComposerDraft>,
+  threadId: string,
+): Record<string, ComposerDraft> {
+  const nextDrafts = { ...drafts };
+  delete nextDrafts[threadId];
+  return nextDrafts;
+}
+
+function revokeReplacedAttachmentPreviewUrls(
+  existing: ComposerDraft | undefined,
+  draft: ComposerDraft,
+): void {
+  if (!existing) return;
+  const retainedUrls = new Set(draft.attachments.map((attachment) => attachment.previewUrl));
+  revokeAttachmentPreviewUrls(existing.attachments.filter(
+    (attachment) => attachment.previewUrl && !retainedUrls.has(attachment.previewUrl),
+  ));
+}
+
 /** Zustand store for per-thread composer draft persistence. */
 export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
   drafts: {},
   pendingPrefill: null,
 
   saveDraft: (threadId, draft) => {
-    const isEmpty =
-      draft.input.trim() === ""
-      && draft.attachments.length === 0
-      && (draft.selectedTextComments?.length ?? 0) === 0;
-    if (isEmpty) {
+    const existing = get().drafts[threadId];
+    if (draftHasNoSendableContent(draft)) {
       // Don't store empty drafts; clean up if one existed
-      const existing = get().drafts[threadId];
       if (!existing) return;
-      for (const att of existing.attachments) {
-        if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-      }
-      const rest = { ...get().drafts };
-      delete rest[threadId];
-      set({ drafts: rest });
+      revokeAttachmentPreviewUrls(existing.attachments);
+      set({ drafts: removeDraft(get().drafts, threadId) });
       return;
     }
     // Revoke blob URLs from the previous draft that are not reused in the new one
-    const existing = get().drafts[threadId];
-    if (existing) {
-      const newUrls = new Set(draft.attachments.map((a) => a.previewUrl));
-      for (const att of existing.attachments) {
-        if (att.previewUrl && !newUrls.has(att.previewUrl)) {
-          URL.revokeObjectURL(att.previewUrl);
-        }
-      }
-    }
+    revokeReplacedAttachmentPreviewUrls(existing, draft);
     set({ drafts: { ...get().drafts, [threadId]: draft } });
   },
 
@@ -100,12 +116,8 @@ export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
   clearDraft: (threadId) => {
     const draft = get().drafts[threadId];
     if (!draft) return;
-    for (const att of draft.attachments) {
-      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-    }
-    const rest = { ...get().drafts };
-    delete rest[threadId];
-    set({ drafts: rest });
+    revokeAttachmentPreviewUrls(draft.attachments);
+    set({ drafts: removeDraft(get().drafts, threadId) });
   },
 
   setPendingPrefill: (text) => set({ pendingPrefill: text }),

@@ -119,4 +119,43 @@ describe("ModelSelector", () => {
     const claudeBtn = document.querySelector("[data-testid='model-group-claude']");
     expect(claudeBtn).toHaveAttribute("data-disabled", "false");
   });
+
+  it("returns the provider that owns a selected model", async () => {
+    useProviderAvailabilityStore.setState({
+      providers: [
+        {
+          id: "claude",
+          enabled: true,
+          hasAdapter: true,
+          beta: false,
+          comingSoon: false,
+          cli: { status: "found", resolvedPath: "/a", configuredPath: "" },
+        },
+        {
+          id: "codex",
+          enabled: true,
+          hasAdapter: true,
+          beta: false,
+          comingSoon: false,
+          cli: { status: "found", resolvedPath: "/b", configuredPath: "" },
+        },
+      ] as never,
+    });
+    const onSelect = vi.fn();
+
+    render(
+      <ModelSelector
+        selectedModelId="claude-sonnet-4-6"
+        selectedProviderId="claude"
+        onSelect={onSelect}
+        locked={false}
+      />,
+    );
+
+    await userEvent.click(screen.getAllByRole("button")[0]);
+    await userEvent.click(screen.getByTestId("model-group-codex"));
+    await userEvent.click(await screen.findByRole("button", { name: "Select GPT-5.6 Sol" }));
+
+    expect(onSelect).toHaveBeenCalledWith("gpt-5.6-sol", "codex");
+  });
 });

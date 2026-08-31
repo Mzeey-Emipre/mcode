@@ -3,7 +3,6 @@ import { Minus, Plus, RotateCcw, XIcon } from "lucide-react";
 import {
   memo,
   useCallback,
-  useEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -53,7 +52,11 @@ function clampScale(value: number): number {
  * Displays a Mermaid SVG on a focused canvas with pointer panning, wheel zoom,
  * explicit zoom controls, and a one-click reset.
  */
-export const MermaidPreviewDialog = memo(function MermaidPreviewDialog({
+export const MermaidPreviewDialog = memo(function MermaidPreviewDialog(props: MermaidPreviewDialogProps) {
+  return <MermaidPreviewDialogCanvas key={props.open ? props.svg : "closed"} {...props} />;
+});
+
+function MermaidPreviewDialogCanvas({
   open,
   onOpenChange,
   svg,
@@ -64,10 +67,6 @@ export const MermaidPreviewDialog = memo(function MermaidPreviewDialog({
   const resetView = useCallback(() => {
     setViewport({ scale: 1, x: 0, y: 0 });
   }, []);
-
-  useEffect(() => {
-    if (open) resetView();
-  }, [open, svg, resetView]);
 
   const changeScale = useCallback((delta: number) => {
     setViewport((current) => ({
@@ -220,6 +219,6 @@ export const MermaidPreviewDialog = memo(function MermaidPreviewDialog({
       </DialogPortal>
     </Dialog>
   );
-});
+}
 
 MermaidPreviewDialog.displayName = "MermaidPreviewDialog";

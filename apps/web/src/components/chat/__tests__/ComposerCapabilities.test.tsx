@@ -42,6 +42,19 @@ function renderAddMenu({
 }
 
 describe("composer capabilities", () => {
+  it("shows the add control label in the Mcode tooltip on hover", async () => {
+    const user = userEvent.setup();
+    renderAddMenu();
+
+    await user.hover(screen.getByRole("button", { name: "Add to composer" }));
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="tooltip-content"]')).toHaveTextContent(
+        "Add to composer",
+      );
+    });
+  });
+
   it.each([
     ["Plan", "plan"],
     ["Goal", "goal"],

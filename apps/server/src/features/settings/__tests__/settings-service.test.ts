@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock fs before importing SettingsService so the constructor's existsSync / watch
 // calls don't hit the real filesystem.
-vi.mock("fs", () => ({
+vi.mock("node:fs", () => ({
   readFileSync: vi.fn(() => { throw new Error("ENOENT"); }),
   writeFileSync: vi.fn(),
   renameSync: vi.fn(),
@@ -25,8 +25,8 @@ vi.mock("../../../application/transport/push.js", () => ({
 
 import { SettingsService } from "../settings-service.js";
 import { broadcast } from "../../../application/transport/push.js";
-import { copyFileSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { getDefaultSettings } from "@mcode/contracts";
 
 const legacySettings = (
@@ -45,7 +45,7 @@ describe("SettingsService agent runtime defaults", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+    vi.mocked(NodeFS.readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
   });
 
   afterEach(() => {
@@ -84,7 +84,7 @@ describe("SettingsService agent runtime defaults", () => {
     existingSettings.model.defaults.provider = "claude";
     existingSettings.model.defaults.id = "claude-opus-4-8";
     existingSettings.model.defaults.fallbackId = "claude-sonnet-4-6";
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify(existingSettings));
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(JSON.stringify(existingSettings));
 
     const settings = new SettingsService().get();
 
@@ -97,7 +97,7 @@ describe("SettingsService agent runtime defaults", () => {
 describe("SettingsService in-process change listener", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+    vi.mocked(NodeFS.readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
   });
 
   it("on('change', cb) fires cb with the validated settings when update() is called", () => {
@@ -130,14 +130,14 @@ describe("SettingsService in-process change listener", () => {
 describe("SettingsService rendering-engine migration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(renameSync).mockImplementation(() => undefined);
-    vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+    vi.mocked(NodeFS.renameSync).mockImplementation(() => undefined);
+    vi.mocked(NodeFS.readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
   });
 
   it.each(["webContentsView", "webview", "unknown-host"])(
     "removes legacy engine %s, validates the remainder, and persists it atomically",
     (engine) => {
-      vi.mocked(readFileSync).mockReturnValue(legacySettings(
+      vi.mocked(NodeFS.readFileSync).mockReturnValue(legacySettings(
         engine,
         { memorySaver: { maxWarm: 5 }, unknownPreviewSetting: true },
         { unknownTopLevelSetting: true },
@@ -148,18 +148,18 @@ describe("SettingsService rendering-engine migration", () => {
       expect(settings.appearance.theme).toBe("dark");
       expect(settings.preview.memorySaver.maxWarm).toBe(5);
       expect(settings.preview).not.toHaveProperty("rendering");
-      expect(writeFileSync).toHaveBeenCalledOnce();
-      expect(renameSync).toHaveBeenCalledWith(
-        join("/fake/mcode", "settings.json.tmp"),
-        join("/fake/mcode", "settings.json"),
+      expect(NodeFS.writeFileSync).toHaveBeenCalledOnce();
+      expect(NodeFS.renameSync).toHaveBeenCalledWith(
+        NodePath.join("/fake/mcode", "settings.json.tmp"),
+        NodePath.join("/fake/mcode", "settings.json"),
       );
-      expect(writeFileSync).toHaveBeenCalledWith(
-        join("/fake/mcode", "settings.json.tmp"),
+      expect(NodeFS.writeFileSync).toHaveBeenCalledWith(
+        NodePath.join("/fake/mcode", "settings.json.tmp"),
         expect.not.stringContaining("rendering"),
         "utf-8",
       );
       const persisted = JSON.parse(
-        vi.mocked(writeFileSync).mock.calls[0]![1] as string,
+        vi.mocked(NodeFS.writeFileSync).mock.calls[0]![1] as string,
       ) as Record<string, unknown>;
       expect(persisted).not.toHaveProperty("unknownTopLevelSetting");
       expect(persisted).not.toHaveProperty("preview.unknownPreviewSetting");
@@ -167,33 +167,33 @@ describe("SettingsService rendering-engine migration", () => {
   );
 
   it("removes an empty preview parent from the migrated document", () => {
-    vi.mocked(readFileSync).mockReturnValue(legacySettings("webContentsView"));
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(legacySettings("webContentsView"));
 
     new SettingsService().get();
 
     const persisted = JSON.parse(
-      vi.mocked(writeFileSync).mock.calls[0]![1] as string,
+      vi.mocked(NodeFS.writeFileSync).mock.calls[0]![1] as string,
     ) as Record<string, unknown>;
     expect(persisted).not.toHaveProperty("preview.rendering");
   });
 
   it("does not persist a migration when the remaining settings fail validation", () => {
-    vi.mocked(readFileSync).mockReturnValue(legacySettings("webview", {
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(legacySettings("webview", {
       memorySaver: { maxWarm: 0 },
     }));
 
     const settings = new SettingsService().get();
 
     expect(settings.preview.memorySaver.maxWarm).toBe(3);
-    expect(writeFileSync).not.toHaveBeenCalled();
-    expect(renameSync).not.toHaveBeenCalled();
+    expect(NodeFS.writeFileSync).not.toHaveBeenCalled();
+    expect(NodeFS.renameSync).not.toHaveBeenCalled();
   });
 
   it("retains validated settings when atomic migration persistence fails", () => {
-    vi.mocked(readFileSync).mockReturnValue(legacySettings("webview", {
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(legacySettings("webview", {
       memorySaver: { maxWarm: 5 },
     }));
-    vi.mocked(renameSync).mockImplementation(() => { throw new Error("EACCES"); });
+    vi.mocked(NodeFS.renameSync).mockImplementation(() => { throw new Error("EACCES"); });
     const service = new SettingsService();
 
     const settings = service.get();
@@ -201,9 +201,9 @@ describe("SettingsService rendering-engine migration", () => {
     expect(settings.appearance.theme).toBe("dark");
     expect(settings.preview.memorySaver.maxWarm).toBe(5);
     expect(settings.preview).not.toHaveProperty("rendering");
-    expect(unlinkSync).toHaveBeenCalledWith(join("/fake/mcode", "settings.json.tmp"));
+    expect(NodeFS.unlinkSync).toHaveBeenCalledWith(NodePath.join("/fake/mcode", "settings.json.tmp"));
     expect(service.get()).toBe(settings);
-    expect(readFileSync).toHaveBeenCalledOnce();
+    expect(NodeFS.readFileSync).toHaveBeenCalledOnce();
     expect(service.getTerminalMigrationStatus()).toEqual({
       status: "blocked",
       reason: "migration-write-failed",
@@ -212,38 +212,38 @@ describe("SettingsService rendering-engine migration", () => {
   });
 
   it("does not rewrite current settings or repeat a completed migration", () => {
-    vi.mocked(readFileSync).mockReturnValueOnce(legacySettings("webview"));
+    vi.mocked(NodeFS.readFileSync).mockReturnValueOnce(legacySettings("webview"));
     const service = new SettingsService();
 
     service.get();
     service.get();
 
-    expect(readFileSync).toHaveBeenCalledOnce();
-    expect(writeFileSync).toHaveBeenCalledOnce();
-    expect(renameSync).toHaveBeenCalledOnce();
+    expect(NodeFS.readFileSync).toHaveBeenCalledOnce();
+    expect(NodeFS.writeFileSync).toHaveBeenCalledOnce();
+    expect(NodeFS.renameSync).toHaveBeenCalledOnce();
 
     vi.clearAllMocks();
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(JSON.stringify({
       ...getDefaultSettings(),
       appearance: { theme: "dark" },
     }));
     new SettingsService().get();
 
-    expect(writeFileSync).not.toHaveBeenCalled();
-    expect(renameSync).not.toHaveBeenCalled();
-    expect(unlinkSync).not.toHaveBeenCalled();
+    expect(NodeFS.writeFileSync).not.toHaveBeenCalled();
+    expect(NodeFS.renameSync).not.toHaveBeenCalled();
+    expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
   });
 });
 
 describe("SettingsService Terminal settings persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(renameSync).mockImplementation(() => undefined);
-    vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+    vi.mocked(NodeFS.renameSync).mockImplementation(() => undefined);
+    vi.mocked(NodeFS.readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
   });
 
   it("backs up and atomically persists the exact Terminal 0.0.1 migration once", () => {
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(JSON.stringify({
       appearance: { theme: "dark" },
       terminal: { scrollback: 0, confirmOnKill: "panel" },
     }));
@@ -257,16 +257,16 @@ describe("SettingsService Terminal settings persistence", () => {
       scrollback: 5_000,
       confirmOnKill: "withChildProcesses",
     });
-    expect(copyFileSync).toHaveBeenCalledOnce();
-    expect(copyFileSync).toHaveBeenCalledWith(
-      join("/fake/mcode", "settings.json"),
-      join("/fake/mcode", "settings.json.pre-terminal-0.0.1.bak"),
+    expect(NodeFS.copyFileSync).toHaveBeenCalledOnce();
+    expect(NodeFS.copyFileSync).toHaveBeenCalledWith(
+      NodePath.join("/fake/mcode", "settings.json"),
+      NodePath.join("/fake/mcode", "settings.json.pre-terminal-0.0.1.bak"),
     );
-    expect(writeFileSync).toHaveBeenCalledOnce();
+    expect(NodeFS.writeFileSync).toHaveBeenCalledOnce();
   });
 
   it("blocks writes for a future document until explicit reset repairs it", () => {
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(JSON.stringify({
       meta: { schemaVersion: "0.1.0" },
       terminal: {},
     }));
@@ -277,13 +277,13 @@ describe("SettingsService Terminal settings persistence", () => {
       reason: "future-version",
     });
     expect(() => service.update({ appearance: { theme: "dark" } })).toThrow(/blocked/i);
-    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(NodeFS.writeFileSync).not.toHaveBeenCalled();
 
     service.resetTerminalPreferences();
 
     expect(service.getTerminalMigrationStatus()).toEqual({ status: "current" });
     expect(service.get().terminal.profiles).toEqual([]);
-    expect(writeFileSync).toHaveBeenCalledOnce();
+    expect(NodeFS.writeFileSync).toHaveBeenCalledOnce();
   });
 
   it("preserves valid custom profiles when reset repairs a missing default reference", () => {
@@ -294,7 +294,7 @@ describe("SettingsService Terminal settings persistence", () => {
       executable: "tool",
       arguments: ["--login"],
     };
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(JSON.stringify({
       ...defaults,
       terminal: {
         ...defaults.terminal,

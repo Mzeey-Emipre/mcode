@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CODEX_CUSTOM_PROMPT_MAX_DIRECTORY_ENTRIES,
@@ -16,28 +16,28 @@ import {
 const temporaryDirectories: string[] = [];
 
 async function createTemporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "mcode-codex-prompts-"));
+  const directory = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-codex-prompts-"));
   temporaryDirectories.push(directory);
   return directory;
 }
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => (
-    rm(directory, { recursive: true, force: true })
+    NodeFSPromises.rm(directory, { recursive: true, force: true })
   )));
 });
 
 describe("CodexCustomPromptService", () => {
   it("discovers only direct Markdown prompts under the effective CODEX_HOME", async () => {
     const codexHome = await createTemporaryDirectory();
-    const promptDirectory = join(codexHome, "prompts");
-    await mkdir(join(promptDirectory, "nested"), { recursive: true });
-    await writeFile(
-      join(promptDirectory, "release.md"),
+    const promptDirectory = NodePath.join(codexHome, "prompts");
+    await NodeFSPromises.mkdir(NodePath.join(promptDirectory, "nested"), { recursive: true });
+    await NodeFSPromises.writeFile(
+      NodePath.join(promptDirectory, "release.md"),
       "---\ndescription: Prepare a release\n---\nRelease $ARGUMENTS.",
     );
-    await writeFile(join(promptDirectory, "ignored.txt"), "Ignored");
-    await writeFile(join(promptDirectory, "nested", "project.md"), "Nested");
+    await NodeFSPromises.writeFile(NodePath.join(promptDirectory, "ignored.txt"), "Ignored");
+    await NodeFSPromises.writeFile(NodePath.join(promptDirectory, "nested", "project.md"), "Nested");
 
     const service = new CodexCustomPromptService({
       getEnv: () => ({ CODEX_HOME: codexHome, USERPROFILE: "C:\\wrong-home" }),
@@ -53,7 +53,7 @@ describe("CodexCustomPromptService", () => {
       kind: "command",
       source: "user",
       providers: ["codex"],
-      path: join(promptDirectory, "release.md"),
+      path: NodePath.join(promptDirectory, "release.md"),
     }]);
     expect(result.diagnostics).toEqual([]);
     expect(service.currentPrompts()).toEqual(result.prompts);
@@ -61,11 +61,11 @@ describe("CodexCustomPromptService", () => {
 
   it("bounds direct prompt file count and reports the first excessive file", async () => {
     const codexHome = await createTemporaryDirectory();
-    const promptDirectory = join(codexHome, "prompts");
-    await mkdir(promptDirectory, { recursive: true });
+    const promptDirectory = NodePath.join(codexHome, "prompts");
+    await NodeFSPromises.mkdir(promptDirectory, { recursive: true });
     await Promise.all([
-      writeFile(join(promptDirectory, "one.md"), "One"),
-      writeFile(join(promptDirectory, "two.md"), "Two"),
+      NodeFSPromises.writeFile(NodePath.join(promptDirectory, "one.md"), "One"),
+      NodeFSPromises.writeFile(NodePath.join(promptDirectory, "two.md"), "Two"),
     ]);
 
     const result = await discoverCodexCustomPrompts(codexHome, {
@@ -140,10 +140,10 @@ describe("CodexCustomPromptService", () => {
 
   it("rejects an oversized prompt while retaining a valid sibling", async () => {
     const codexHome = await createTemporaryDirectory();
-    const promptDirectory = join(codexHome, "prompts");
-    await mkdir(promptDirectory, { recursive: true });
-    await writeFile(join(promptDirectory, "valid.md"), "Valid");
-    await writeFile(join(promptDirectory, "oversized.md"), "x".repeat(9));
+    const promptDirectory = NodePath.join(codexHome, "prompts");
+    await NodeFSPromises.mkdir(promptDirectory, { recursive: true });
+    await NodeFSPromises.writeFile(NodePath.join(promptDirectory, "valid.md"), "Valid");
+    await NodeFSPromises.writeFile(NodePath.join(promptDirectory, "oversized.md"), "x".repeat(9));
 
     const result = await discoverCodexCustomPrompts(codexHome, {
       maxFiles: CODEX_CUSTOM_PROMPT_MAX_FILES,
@@ -187,10 +187,10 @@ describe("CodexCustomPromptService", () => {
 
   it("rejects invalid UTF-8 without hiding valid prompts", async () => {
     const codexHome = await createTemporaryDirectory();
-    const promptDirectory = join(codexHome, "prompts");
-    await mkdir(promptDirectory, { recursive: true });
-    await writeFile(join(promptDirectory, "valid.md"), "Valid");
-    await writeFile(join(promptDirectory, "invalid.md"), Buffer.from([0xc3, 0x28]));
+    const promptDirectory = NodePath.join(codexHome, "prompts");
+    await NodeFSPromises.mkdir(promptDirectory, { recursive: true });
+    await NodeFSPromises.writeFile(NodePath.join(promptDirectory, "valid.md"), "Valid");
+    await NodeFSPromises.writeFile(NodePath.join(promptDirectory, "invalid.md"), Buffer.from([0xc3, 0x28]));
 
     const result = await discoverCodexCustomPrompts(codexHome);
 
@@ -203,18 +203,18 @@ describe("CodexCustomPromptService", () => {
 
   it("refreshes changed prompt metadata and removes deleted prompts by stable name", async () => {
     const codexHome = await createTemporaryDirectory();
-    const promptDirectory = join(codexHome, "prompts");
-    const promptPath = join(promptDirectory, "release.md");
-    await mkdir(promptDirectory, { recursive: true });
-    await writeFile(promptPath, "---\ndescription: First release prompt\n---\nFirst body");
+    const promptDirectory = NodePath.join(codexHome, "prompts");
+    const promptPath = NodePath.join(promptDirectory, "release.md");
+    await NodeFSPromises.mkdir(promptDirectory, { recursive: true });
+    await NodeFSPromises.writeFile(promptPath, "---\ndescription: First release prompt\n---\nFirst body");
     const service = new CodexCustomPromptService({
       getEnv: () => ({ CODEX_HOME: codexHome }),
     } as never);
 
     const first = await service.refresh();
-    await writeFile(promptPath, "---\ndescription: Updated release prompt\n---\nUpdated body");
+    await NodeFSPromises.writeFile(promptPath, "---\ndescription: Updated release prompt\n---\nUpdated body");
     const updated = await service.refresh();
-    await rm(promptPath);
+    await NodeFSPromises.rm(promptPath);
     const removed = await service.refresh();
 
     expect(first.prompts[0]).toMatchObject({

@@ -118,101 +118,106 @@ export class LegacyConversationMigration {
     hooks: LegacyConversationMigrationFailureHooks = {},
   ): LegacyConversationMigrationBatchResult {
     const row = this.nextUnclassifiedMessage();
-    if (!row) {
-      this.markComplete();
-      return this.currentResult(0, true);
-    }
+    if (!row) return this.completeMigration();
 
     const existing = this.findExistingCanonicalItem(row.id);
-    if (existing) {
-      const transaction = this.db.transaction(() => {
-        this.recordProvenance(row.id, "migrated", existing.thread_id, existing.turn_id, existing.id, null);
-        this.incrementCheckpoint(1, 0);
-        hooks.beforeCheckpoint?.();
-      });
-      transaction();
-      hooks.afterCheckpoint?.();
-      return this.currentResult(1, false);
-    }
+    if (existing) return this.recordExistingMessage(row.id, existing, hooks);
 
     const candidatePair = this.findProvablePair(row);
-    if (!candidatePair) {
-      const transaction = this.db.transaction(() => {
-        this.recordProvenance(
-          row.id,
-          "ambiguous",
-          null,
-          null,
-          null,
-          "The message is not part of an adjacent user and assistant pair.",
-        );
-        this.incrementCheckpoint(0, 1);
-        hooks.beforeCheckpoint?.();
-      });
-      transaction();
-      hooks.afterCheckpoint?.();
-      return this.currentResult(1, false);
-    }
+    if (!candidatePair) return this.recordAmbiguousMessages(
+      [row.id],
+      "The message is not part of an adjacent user and assistant pair.",
+      hooks,
+    );
 
-    if (row.lineage_provable !== 1) {
-      const reason = `The legacy thread lineage is orphaned, cyclic, or exceeds depth ${LEGACY_CONVERSATION_MIGRATION_MAX_LINEAGE_DEPTH}.`;
-      const transaction = this.db.transaction(() => {
-        for (const message of [candidatePair.user, candidatePair.assistant]) {
-          this.recordProvenance(message.id, "ambiguous", null, null, null, reason);
-        }
-        this.incrementCheckpoint(0, 2);
-        hooks.beforeCheckpoint?.();
-      });
-      transaction();
-      hooks.afterCheckpoint?.();
-      return this.currentResult(2, false);
-    }
-
-    if (
-      candidatePair.user.source_bytes + candidatePair.assistant.source_bytes
-      > LEGACY_CONVERSATION_MIGRATION_MAX_BYTES
-    ) {
-      const reason = `The legacy turn exceeds ${LEGACY_CONVERSATION_MIGRATION_MAX_BYTES} bytes.`;
-      const transaction = this.db.transaction(() => {
-        for (const message of [candidatePair.user, candidatePair.assistant]) {
-          this.recordProvenance(message.id, "ambiguous", null, null, null, reason);
-        }
-        this.incrementCheckpoint(0, 2);
-        hooks.beforeCheckpoint?.();
-      });
-      transaction();
-      hooks.afterCheckpoint?.();
-      return this.currentResult(2, false);
-    }
+    const invalidReason = this.invalidPairReason(row, candidatePair);
+    if (invalidReason) return this.recordAmbiguousPair(candidatePair, invalidReason, hooks);
 
     const pair = {
       user: this.loadMessage(candidatePair.user.id),
       assistant: this.loadMessage(candidatePair.assistant.id),
     };
-    let prepared: ReturnType<LegacyConversationMigration["preparePair"]>;
-    try {
-      prepared = this.preparePair(pair);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      const transaction = this.db.transaction(() => {
-        for (const message of [pair.user, pair.assistant]) {
-          this.recordProvenance(message.id, "ambiguous", null, null, null, reason);
-        }
-        this.incrementCheckpoint(0, 2);
-        hooks.beforeCheckpoint?.();
-      });
-      transaction();
-      hooks.afterCheckpoint?.();
-      return this.currentResult(2, false);
-    }
+    const prepared = this.preparePairResult(pair);
+    if ("reason" in prepared) return this.recordAmbiguousPair(candidatePair, prepared.reason, hooks);
+    return this.persistPreparedPair(prepared.value, hooks);
+  }
 
-    const transaction = this.db.transaction(() => {
-      this.persistPair(prepared);
-      hooks.beforeCheckpoint?.();
+  private completeMigration(): LegacyConversationMigrationBatchResult {
+    this.markComplete();
+    return this.currentResult(0, true);
+  }
+
+  private recordExistingMessage(
+    messageId: string,
+    existing: { id: string; thread_id: string; turn_id: string },
+    hooks: LegacyConversationMigrationFailureHooks,
+  ): LegacyConversationMigrationBatchResult {
+    this.checkpoint(hooks, () => {
+      this.recordProvenance(messageId, "migrated", existing.thread_id, existing.turn_id, existing.id, null);
+      this.incrementCheckpoint(1, 0);
     });
-    transaction();
-    hooks.afterCheckpoint?.();
+    return this.currentResult(1, false);
+  }
+
+  private invalidPairReason(
+    row: LegacyMessageCandidate,
+    pair: { user: LegacyMessageCandidate; assistant: LegacyMessageCandidate },
+  ): string | undefined {
+    if (row.lineage_provable !== 1) {
+      return `The legacy thread lineage is orphaned, cyclic, or exceeds depth ${LEGACY_CONVERSATION_MIGRATION_MAX_LINEAGE_DEPTH}.`;
+    }
+    if (pair.user.source_bytes + pair.assistant.source_bytes > LEGACY_CONVERSATION_MIGRATION_MAX_BYTES) {
+      return `The legacy turn exceeds ${LEGACY_CONVERSATION_MIGRATION_MAX_BYTES} bytes.`;
+    }
+    return undefined;
+  }
+
+  private recordAmbiguousPair(
+    pair: { user: LegacyMessageCandidate; assistant: LegacyMessageCandidate },
+    reason: string,
+    hooks: LegacyConversationMigrationFailureHooks,
+  ): LegacyConversationMigrationBatchResult {
+    return this.recordAmbiguousMessages([pair.user.id, pair.assistant.id], reason, hooks);
+  }
+
+  private recordAmbiguousMessages(
+    messageIds: readonly string[],
+    reason: string,
+    hooks: LegacyConversationMigrationFailureHooks,
+  ): LegacyConversationMigrationBatchResult {
+    this.checkpoint(hooks, () => {
+      for (const messageId of messageIds) {
+        this.recordProvenance(messageId, "ambiguous", null, null, null, reason);
+      }
+      this.incrementCheckpoint(0, messageIds.length);
+    });
+    return this.currentResult(messageIds.length, false);
+  }
+
+  private preparePairResult(pair: MigrationPair):
+    | { value: ReturnType<LegacyConversationMigration["preparePair"]> }
+    | { reason: string } {
+    try {
+      return { value: this.preparePair(pair) };
+    } catch (error) {
+      return { reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private persistPreparedPair(
+    prepared: ReturnType<LegacyConversationMigration["preparePair"]>,
+    hooks: LegacyConversationMigrationFailureHooks,
+  ): LegacyConversationMigrationBatchResult {
+    this.checkpoint(hooks, () => this.persistPair(prepared));
     return this.currentResult(2, false);
+  }
+
+  private checkpoint(hooks: LegacyConversationMigrationFailureHooks, write: () => void): void {
+    this.db.transaction(() => {
+      write();
+      hooks.beforeCheckpoint?.();
+    })();
+    hooks.afterCheckpoint?.();
   }
 
   /** Continue from durable provenance checkpoints until no parent message remains. */

@@ -1,5 +1,6 @@
 import { inject, injectable } from "tsyringe";
 import type { TerminalBackendCapabilities } from "@mcode/contracts";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   TerminalBackend,
   PreparedTerminalCommandApprovalMismatchError,
@@ -12,6 +13,7 @@ import { TerminalService } from "./terminal-service.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { TerminalProfileService } from "../../profiles/terminal-profile-service.js";
 import { noninteractiveLaunch } from "../../commands/terminal-command-service.js";
+import { terminalPlatform } from "../../terminal-platform.js";
 
 const LEGACY_CAPABILITIES = Object.freeze({
   contractVersion: 0,
@@ -27,6 +29,7 @@ export class LegacyTerminalBackend extends TerminalBackend {
     private readonly terminalService: TerminalService,
     @inject("ThreadRepo") private readonly threads: ThreadRepo,
     @inject(TerminalProfileService) private readonly profiles: TerminalProfileService,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
   ) {
     super();
   }
@@ -124,7 +127,7 @@ export class LegacyTerminalBackend extends TerminalBackend {
     const checkoutPath = this.terminalService.resolveWorkingDirectory(input.threadId);
     if (!matchesExpectedPreparedLaunch(launch, input.expectedLaunch)) {
       throw new PreparedTerminalCommandApprovalMismatchError({
-        platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+        platform: terminalPlatform(this.hostRuntime.platform),
         script: input.script,
         checkoutPath,
         terminal: { executable: launch.executable, arguments: [...launch.arguments] },
@@ -138,7 +141,7 @@ export class LegacyTerminalBackend extends TerminalBackend {
     return {
       terminalSessionId: session.terminalSessionId,
       snapshot: {
-        platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+        platform: terminalPlatform(this.hostRuntime.platform),
         script: input.script,
         checkoutPath: session.checkoutPath,
         terminal: { executable: session.executable, arguments: session.arguments },

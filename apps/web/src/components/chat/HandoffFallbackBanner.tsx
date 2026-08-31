@@ -13,6 +13,7 @@
 import { useState, useEffect } from "react";
 import { AlertCircle, RotateCcw, FileText, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -89,28 +90,28 @@ function stripFrontmatter(md: string): string {
 /** The content rendered inside the handoff doc viewer dialog. */
 function HandoffDocViewer({ threadId }: { threadId: string }) {
   const [state, setState] = useState<
-    | { phase: "loading" }
-    | { phase: "ready"; markdown: string; meta: NonNullable<Awaited<ReturnType<ReturnType<typeof getTransport>["readLatestHandoff"]>>>["meta"] }
-    | { phase: "error"; message: string }
-  >({ phase: "loading" });
+    | { threadId: string; phase: "loading" }
+    | { threadId: string; phase: "ready"; markdown: string; meta: NonNullable<Awaited<ReturnType<ReturnType<typeof getTransport>["readLatestHandoff"]>>>["meta"] }
+    | { threadId: string; phase: "error"; message: string }
+  >({ threadId, phase: "loading" });
 
   // Fetch on mount. The dialog mounts only when open=true.
   useEffect(() => {
     let cancelled = false;
-    setState({ phase: "loading" });
     getTransport()
       .readLatestHandoff(threadId)
       .then((result) => {
         if (cancelled) return;
         if (!result) {
-          setState({ phase: "error", message: "No handoff document found for this thread." });
+          setState({ threadId, phase: "error", message: "No handoff document found for this thread." });
         } else {
-          setState({ phase: "ready", markdown: result.markdown, meta: result.meta });
+          setState({ threadId, phase: "ready", markdown: result.markdown, meta: result.meta });
         }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setState({
+          threadId,
           phase: "error",
           message: err instanceof Error ? err.message : "Failed to load handoff document.",
         });
@@ -118,14 +119,16 @@ function HandoffDocViewer({ threadId }: { threadId: string }) {
     return () => { cancelled = true; };
   }, [threadId]);
 
-  if (state.phase === "loading") {
+  const viewState = state.threadId === threadId ? state : { threadId, phase: "loading" as const };
+
+  if (viewState.phase === "loading") {
     return <p className="text-muted-foreground text-sm py-4">Loading...</p>;
   }
-  if (state.phase === "error") {
-    return <p className="text-destructive text-sm py-4">{state.message}</p>;
+  if (viewState.phase === "error") {
+    return <p className="text-destructive text-sm py-4">{viewState.message}</p>;
   }
 
-  const { meta } = state;
+  const { meta } = viewState;
   return (
     <div className="flex flex-col gap-3 overflow-hidden">
       {/* Metadata strip: key fields at a glance without wading into the doc body */}
@@ -138,7 +141,7 @@ function HandoffDocViewer({ threadId }: { threadId: string }) {
         <div><span className="font-mono">when:</span> {new Date(meta.generatedAt).toLocaleString()}</div>
       </div>
       <div className="overflow-y-auto max-h-[65vh]">
-        <MarkdownContent content={stripFrontmatter(state.markdown)} />
+        <MarkdownContent content={stripFrontmatter(viewState.markdown)} />
       </div>
     </div>
   );
@@ -183,16 +186,24 @@ export function HandoffFallbackBanner({ threadId }: Props) {
             <FileText className="h-3 w-3" />
             View doc
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled
-            title="Coming soon"
-            className="gap-1 h-7"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Regenerate
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="inline-flex">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled
+                    className="gap-1 h-7"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Regenerate
+                  </Button>
+                </span>
+              }
+            />
+            <TooltipContent>Coming soon</TooltipContent>
+          </Tooltip>
           <Button
             size="icon"
             variant="ghost"

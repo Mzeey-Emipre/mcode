@@ -9,7 +9,6 @@ vi.mock("electron", () => ({ app: windowActionsTest.app }));
 import {
   DESKTOP_WINDOW_ACTIONS,
   performDesktopWindowAction,
-  type DesktopWindowAction,
 } from "../window-actions.js";
 
 function createWindow() {

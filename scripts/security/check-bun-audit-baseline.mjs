@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeChildProcess from "node:child_process";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const BASELINE_PATH = resolve(ROOT, "docs", "security", "bun-audit-baseline.json");
+const ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..", "..");
+const BASELINE_PATH = NodePath.resolve(ROOT, "docs", "security", "bun-audit-baseline.json");
 const WRITE_MODE = process.argv.includes("--write");
 
 function extractJsonObject(text) {
@@ -15,40 +15,42 @@ function extractJsonObject(text) {
     throw new Error("bun audit did not print JSON");
   }
 
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
+  const state = { depth: 0, inString: false, escaped: false };
 
   for (let i = start; i < text.length; i += 1) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (ch === "\"") {
-      inString = true;
-    } else if (ch === "{") {
-      depth += 1;
-    } else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return JSON.parse(text.slice(start, i + 1));
-      }
+    if (scanJsonCharacter(state, text[i])) {
+      return JSON.parse(text.slice(start, i + 1));
     }
   }
 
   throw new Error("bun audit JSON was incomplete");
 }
 
+function scanJsonCharacter(state, character) {
+  if (state.inString) return scanStringCharacter(state, character);
+  if (character === "\"") {
+    state.inString = true;
+  } else if (character === "{") {
+    state.depth += 1;
+  } else if (character === "}") {
+    state.depth -= 1;
+  }
+  return state.depth === 0;
+}
+
+function scanStringCharacter(state, character) {
+  if (state.escaped) {
+    state.escaped = false;
+  } else if (character === "\\") {
+    state.escaped = true;
+  } else if (character === "\"") {
+    state.inString = false;
+  }
+  return false;
+}
+
 function runAudit() {
-  const result = spawnSync("bun", ["audit", "--json"], {
+  const result = NodeChildProcess.spawnSync("bun", ["audit", "--json"], {
     cwd: ROOT,
     encoding: "utf8",
     env: {
@@ -95,8 +97,8 @@ function severitySummary(advisories) {
 const advisories = flattenAudit(runAudit());
 
 if (WRITE_MODE) {
-  mkdirSync(dirname(BASELINE_PATH), { recursive: true });
-  writeFileSync(
+  NodeFS.mkdirSync(NodePath.dirname(BASELINE_PATH), { recursive: true });
+  NodeFS.writeFileSync(
     BASELINE_PATH,
     `${JSON.stringify(
       {
@@ -117,7 +119,7 @@ if (WRITE_MODE) {
   process.exit(0);
 }
 
-const baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
+const baseline = JSON.parse(NodeFS.readFileSync(BASELINE_PATH, "utf8"));
 if (baseline.schemaVersion !== 1 || !Array.isArray(baseline.advisories)) {
   throw new Error(`Invalid audit baseline: ${BASELINE_PATH}`);
 }

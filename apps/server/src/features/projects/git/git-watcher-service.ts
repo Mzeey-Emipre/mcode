@@ -5,8 +5,8 @@
  */
 
 import { injectable, inject, delay } from "tsyringe";
-import { watch, existsSync, type FSWatcher } from "fs";
-import { join, dirname, basename } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { logger } from "@mcode/shared";
 import { broadcast } from "../../../application/transport/push.js";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
@@ -20,7 +20,7 @@ const DEBOUNCE_MS = 200;
 /** Internal state for a single active workspace watcher. */
 interface WatcherEntry {
   /** The fs.watch FSWatcher instance. */
-  watcher: FSWatcher;
+  watcher: NodeFS.FSWatcher;
   /** Pending debounce timer handle, or null when idle. */
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -71,10 +71,10 @@ export class GitWatcherService {
     // worktree and an absolute path for linked worktrees.
     const resolvedGitDir = gitDir.startsWith("/") || /^[A-Za-z]:[\\/]/.test(gitDir)
       ? gitDir
-      : join(workspacePath, gitDir);
+      : NodePath.join(workspacePath, gitDir);
 
-    const headFile = join(resolvedGitDir, "HEAD");
-    if (!existsSync(headFile)) {
+    const headFile = NodePath.join(resolvedGitDir, "HEAD");
+    if (!NodeFS.existsSync(headFile)) {
       logger.warn("GitWatcherService: HEAD file not found, skipping watcher", {
         headFile,
       });
@@ -101,12 +101,12 @@ export class GitWatcherService {
     // Watch the parent directory rather than the HEAD file inode directly.
     // Git may atomically replace HEAD via rename(), which would create a new
     // inode and silently drop a file-level watcher on some platforms.
-    const headDir = dirname(headFile);
-    const headName = basename(headFile);
+    const headDir = NodePath.dirname(headFile);
+    const headName = NodePath.basename(headFile);
 
-    let fsWatcher: FSWatcher;
+    let fsWatcher: NodeFS.FSWatcher;
     try {
-      fsWatcher = watch(headDir, (_, filename) => {
+      fsWatcher = NodeFS.watch(headDir, (_, filename) => {
         // Ignore events for other files in the .git directory
         if ((filename ?? headName) !== headName) return;
 
@@ -164,12 +164,12 @@ export class GitWatcherService {
     const headFile = await this.resolveHeadFile(worktreePath);
     if (!headFile) return;
 
-    const headDir = dirname(headFile);
-    const headName = basename(headFile);
+    const headDir = NodePath.dirname(headFile);
+    const headName = NodePath.basename(headFile);
 
-    let fsWatcher: FSWatcher;
+    let fsWatcher: NodeFS.FSWatcher;
     try {
-      fsWatcher = watch(headDir, (_, filename) => {
+      fsWatcher = NodeFS.watch(headDir, (_, filename) => {
         if ((filename ?? headName) !== headName) return;
 
         const entry = this.threadWatchers.get(threadId);

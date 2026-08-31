@@ -300,7 +300,7 @@ function withoutTerminalInstances(state: RightPanelState): RightPanelState {
   // the removed tab, then the nearest surviving item on its left.
   const nextActive =
     instances.slice(activeTerminalIndex + 1).find((instance) => instance.type !== "terminal") ??
-    [...instances.slice(0, activeTerminalIndex)]
+    instances.slice(0, activeTerminalIndex)
       .reverse()
       .find((instance) => instance.type !== "terminal") ??
     null;

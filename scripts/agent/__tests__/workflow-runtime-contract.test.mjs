@@ -1,12 +1,21 @@
-/** Tests that repository workflows use Bun with a packaging-only Node exception. */
-import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { test } from "node:test";
+/** Tests that repository workflows use Bun by default with narrowly allowlisted Node exceptions. */
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeTest from "node:test";
 
-const workflowDirectory = join(process.cwd(), ".github", "workflows");
+const workflowDirectory = NodePath.join(process.cwd(), ".github", "workflows");
 const packagingWorkflowAllowlist = new Set([
   "desktop-package-target.yml",
+]);
+const nodeSetupWorkflowJobs = new Map([
+  ["ci.yml", new Map([
+    ["test", {
+      nodeVersion: "22",
+      nodeGypStep: "Configure node-gyp headers",
+      testCommand: "bun run test",
+    }],
+  ])],
 ]);
 const bunCheckoutJobs = new Map();
 const directNodeCommandPattern = /(?:^|(?:&&|\|\||;)\s*)node(?:\.exe)?(?=\s|$)/m;
@@ -45,7 +54,42 @@ function extractRunCommands(source) {
   return commands.join("\n");
 }
 
-test("direct Node detection only matches shell command tokens", () => {
+function verifyAllowedNodeSetupJobs(source, workflowFile) {
+  const nodeSetupJobs = nodeSetupWorkflowJobs.get(workflowFile);
+  if (!nodeSetupJobs) return false;
+
+  NodeAssertStrict.default.equal((source.match(/actions\/setup-node@/gi) ?? []).length, nodeSetupJobs.size, workflowFile);
+  for (const [jobName, expected] of nodeSetupJobs) {
+    const jobSource = extractWorkflowJob(source, jobName);
+    NodeAssertStrict.default.ok(jobSource, `${workflowFile}: ${jobName} job missing`);
+    const checkoutIndex = jobSource.indexOf("actions/checkout@v4");
+    const setupNodeIndex = jobSource.indexOf("actions/setup-node@");
+    const nodeGypIndex = jobSource.indexOf(expected.nodeGypStep);
+    const testCommandIndex = jobSource.indexOf(expected.testCommand);
+    NodeAssertStrict.default.equal(
+      (jobSource.match(/actions\/setup-node@/gi) ?? []).length,
+      1,
+      `${workflowFile}: ${jobName}`,
+    );
+    NodeAssertStrict.default.match(
+      jobSource,
+      new RegExp(`node-version:\\s*["']?${expected.nodeVersion}["']?(?:\\s|$)`, "i"),
+      `${workflowFile}: ${jobName}`,
+    );
+    NodeAssertStrict.default.ok(checkoutIndex >= 0, `${workflowFile}: ${jobName} must checkout repository`);
+    NodeAssertStrict.default.ok(setupNodeIndex >= 0, `${workflowFile}: ${jobName} must setup Node`);
+    NodeAssertStrict.default.ok(nodeGypIndex >= 0, `${workflowFile}: ${jobName} must configure node-gyp headers`);
+    NodeAssertStrict.default.ok(testCommandIndex >= 0, `${workflowFile}: ${jobName} must run tests`);
+    NodeAssertStrict.default.ok(
+      checkoutIndex < setupNodeIndex && setupNodeIndex < nodeGypIndex && nodeGypIndex < testCommandIndex,
+      `${workflowFile}: ${jobName} must setup Node before node-gyp and tests`,
+    );
+  }
+
+  return true;
+}
+
+NodeTest.test("direct Node detection only matches shell command tokens", () => {
   for (const fixture of [
     "run: node --version",
     "run: node ./script.mjs",
@@ -53,7 +97,7 @@ test("direct Node detection only matches shell command tokens", () => {
     "run: |\n  echo ready\n  node --version",
     "run: bun run lint && node ./script.mjs",
   ]) {
-    assert.match(extractRunCommands(fixture), directNodeCommandPattern, fixture);
+    NodeAssertStrict.default.match(extractRunCommands(fixture), directNodeCommandPattern, fixture);
   }
   for (const fixture of [
     "name: node --version",
@@ -62,75 +106,75 @@ test("direct Node detection only matches shell command tokens", () => {
     "run: echo node ./script.mjs",
     "run: ./node-script.mjs",
   ]) {
-    assert.doesNotMatch(extractRunCommands(fixture), directNodeCommandPattern, fixture);
+    NodeAssertStrict.default.doesNotMatch(extractRunCommands(fixture), directNodeCommandPattern, fixture);
   }
 });
 
-test("direct Bun stdin detection rejects unsupported heredocs", () => {
+NodeTest.test("direct Bun stdin detection rejects unsupported heredocs", () => {
   for (const fixture of [
     "run: bun <<'NODE'",
     "run: |\n  bun <<-NODE\n  console.log('unsupported')",
     "run: bun.exe <<NODE",
   ]) {
-    assert.match(extractRunCommands(fixture), directBunStdinPattern, fixture);
+    NodeAssertStrict.default.match(extractRunCommands(fixture), directBunStdinPattern, fixture);
   }
   for (const fixture of [
     "run: bun -e \"$(cat <<'NODE'\nconsole.log('supported')\nNODE\n)\"",
     "run: bun run script.mjs",
   ]) {
-    assert.doesNotMatch(extractRunCommands(fixture), directBunStdinPattern, fixture);
+    NodeAssertStrict.default.doesNotMatch(extractRunCommands(fixture), directBunStdinPattern, fixture);
   }
 });
 
-test("workflows use Bun runtime and repository commands", () => {
-  const workflowFiles = readdirSync(workflowDirectory)
+NodeTest.test("workflows use Bun runtime and repository commands", () => {
+  const workflowFiles = NodeFS.readdirSync(workflowDirectory)
     .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
     .sort();
 
-  assert.ok(workflowFiles.length > 0);
+  NodeAssertStrict.default.ok(workflowFiles.length > 0);
   const packageConsumers = workflowFiles.filter((file) =>
-    readFileSync(join(workflowDirectory, file), "utf8").includes("ci-package.mjs"),
+    NodeFS.readFileSync(NodePath.join(workflowDirectory, file), "utf8").includes("ci-package.mjs"),
   );
-  assert.deepEqual(packageConsumers, [...packagingWorkflowAllowlist].sort());
+  NodeAssertStrict.default.deepEqual(packageConsumers, [...packagingWorkflowAllowlist].sort());
 
   for (const file of workflowFiles) {
-    const source = readFileSync(join(workflowDirectory, file), "utf8");
-    assert.doesNotMatch(source, /\.node-version/i, file);
-    assert.match(source, /oven-sh\/setup-bun@v2/, file);
-    assert.doesNotMatch(extractRunCommands(source), directBunStdinPattern, file);
+    const source = NodeFS.readFileSync(NodePath.join(workflowDirectory, file), "utf8");
+    NodeAssertStrict.default.doesNotMatch(source, /\.node-version/i, file);
+    NodeAssertStrict.default.match(source, /oven-sh\/setup-bun@v2/, file);
+    NodeAssertStrict.default.doesNotMatch(extractRunCommands(source), directBunStdinPattern, file);
 
     const bunCheckoutJob = bunCheckoutJobs.get(file);
     if (bunCheckoutJob) {
       const jobSource = extractWorkflowJob(source, bunCheckoutJob);
-      assert.ok(jobSource, `${file}: ${bunCheckoutJob} job missing`);
+      NodeAssertStrict.default.ok(jobSource, `${file}: ${bunCheckoutJob} job missing`);
       const checkoutIndex = jobSource.indexOf("actions/checkout@v4");
       const setupBunIndex = jobSource.indexOf("oven-sh/setup-bun@v2");
-      assert.ok(checkoutIndex >= 0, `${file}: ${bunCheckoutJob} must checkout repository`);
-      assert.ok(setupBunIndex >= 0, `${file}: ${bunCheckoutJob} must setup Bun`);
-      assert.ok(
+      NodeAssertStrict.default.ok(checkoutIndex >= 0, `${file}: ${bunCheckoutJob} must checkout repository`);
+      NodeAssertStrict.default.ok(setupBunIndex >= 0, `${file}: ${bunCheckoutJob} must setup Bun`);
+      NodeAssertStrict.default.ok(
         checkoutIndex < setupBunIndex,
         `${file}: ${bunCheckoutJob} checkout must precede setup-bun`,
       );
     }
 
     if (packagingWorkflowAllowlist.has(file)) {
-      assert.equal((source.match(/actions\/setup-node@/gi) ?? []).length, 1, file);
-      assert.match(source, /actions\/setup-node@v\d+/i, file);
-      assert.match(source, /node-version:\s*["']?24\.18\.0["']?(?:\s|$)/i, file);
-      assert.doesNotMatch(source, /package-manager-cache\s*:/i, file);
-      assert.match(
+      NodeAssertStrict.default.equal((source.match(/actions\/setup-node@/gi) ?? []).length, 1, file);
+      NodeAssertStrict.default.match(source, /actions\/setup-node@v\d+/i, file);
+      NodeAssertStrict.default.match(source, /node-version:\s*["']?24\.18\.0["']?(?:\s|$)/i, file);
+      NodeAssertStrict.default.doesNotMatch(source, /package-manager-cache\s*:/i, file);
+      NodeAssertStrict.default.match(
         extractRunCommands(source),
         /bun[^\r\n]*desktop-packaging\/target-package\/ci-package\.mjs/i,
         file,
       );
-      assert.ok(
+      NodeAssertStrict.default.ok(
         source.indexOf("actions/setup-node@") < source.indexOf("ci-package.mjs"),
         `${file}: Node setup must precede ci-package`,
       );
-    } else {
-      assert.doesNotMatch(source, /actions\/setup-node@/i, file);
-      assert.doesNotMatch(source, /\bnode-version\s*:/i, file);
-      assert.doesNotMatch(extractRunCommands(source), directNodeCommandPattern, file);
+    } else if (!verifyAllowedNodeSetupJobs(source, file)) {
+      NodeAssertStrict.default.doesNotMatch(source, /actions\/setup-node@/i, file);
+      NodeAssertStrict.default.doesNotMatch(source, /\bnode-version\s*:/i, file);
+      NodeAssertStrict.default.doesNotMatch(extractRunCommands(source), directNodeCommandPattern, file);
     }
   }
 });

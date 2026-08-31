@@ -1,9 +1,9 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EventEmitter } from "events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeEvents from "node:events";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   AgentEventType,
   createAgentModelState,
@@ -33,7 +33,6 @@ import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProvide
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
-import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { broadcast } from "../../../../application/transport/push.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -45,7 +44,6 @@ import type { ToolCallRecordRepo } from "../../tools/persistence/tool-call-recor
 import type { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
-import type { TaskRepo } from "../persistence/task-repo.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
@@ -164,7 +162,7 @@ function buildService(
   providers?: IAgentProvider[],
 ): {
   service: AgentService;
-  providerEmitter: EventEmitter;
+  providerEmitter: NodeEvents.EventEmitter;
   attachmentService: AttachmentService;
   messageRepo: MessageRepo;
   planQuestionAnswersRepo: { markAnswered: ReturnType<typeof vi.fn> };
@@ -174,7 +172,7 @@ function buildService(
   toolCallRecordRepo: { bulkCreate: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
-  const providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+  const providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
     id: "claude" as ProviderId,
   }));
   // sendTurn() is called on the resolved provider
@@ -282,10 +280,6 @@ function buildService(
     onPressureChange: vi.fn(),
   } as unknown as MemoryPressureService;
 
-  const taskRepo = {
-    get: vi.fn(() => []),
-    upsert: vi.fn(),
-  } as unknown as TaskRepo;
 
   const settingsService = {
     get: vi.fn(() => ({
@@ -365,7 +359,7 @@ describe("AgentService turn cleanup", () => {
   });
 
   it("retains provider subscriptions through the provider ingress", () => {
-    const legacyProvider = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+    const legacyProvider = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
       id: "claude" as ProviderId,
     })) as unknown as IAgentProvider;
     const { service } = buildService(
@@ -377,7 +371,7 @@ describe("AgentService turn cleanup", () => {
     startAgentServiceIngressForTest(service, publish);
     startAgentServiceIngressForTest(service, publish);
 
-    expect((legacyProvider as unknown as EventEmitter).listenerCount("event")).toBe(1);
+    expect((legacyProvider as unknown as NodeEvents.EventEmitter).listenerCount("event")).toBe(1);
 
     const providerEvent = {
       type: AgentEventType.ProviderUnavailable,
@@ -385,7 +379,7 @@ describe("AgentService turn cleanup", () => {
       providerId: "claude",
       reason: "disabled",
     } satisfies AgentEvent;
-    (legacyProvider as unknown as EventEmitter).emit("event", providerEvent);
+    (legacyProvider as unknown as NodeEvents.EventEmitter).emit("event", providerEvent);
 
     expect(publish).toHaveBeenCalledTimes(1);
     expect(publish).toHaveBeenLastCalledWith(providerEvent);
@@ -738,7 +732,7 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    const provider = providerEmitter as EventEmitter & { stopSession: ReturnType<typeof vi.fn> };
+    const provider = providerEmitter as NodeEvents.EventEmitter & { stopSession: ReturnType<typeof vi.fn> };
     provider.stopSession.mockRejectedValueOnce(new Error("stop unavailable"));
 
     await expect(service.stopSession(THREAD_ID)).rejects.toThrow("stop unavailable");
@@ -774,7 +768,7 @@ describe("AgentService turn cleanup", () => {
     const result = await service.stopSession(THREAD_ID);
     expect(result.status).toBe("cancelled");
     expect(result.dispatchState).toBe("not-dispatched");
-    expect((providerEmitter as EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
+    expect((providerEmitter as NodeEvents.EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
       .not.toHaveBeenCalled();
 
     const replacement = service.sendMessage({
@@ -790,7 +784,7 @@ describe("AgentService turn cleanup", () => {
 
     releaseSetup();
     await send;
-    expect((providerEmitter as EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
+    expect((providerEmitter as NodeEvents.EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
       .toHaveBeenCalledTimes(1);
   });
 
@@ -813,7 +807,7 @@ describe("AgentService turn cleanup", () => {
     expect(service.runtimeSnapshots()).toEqual([
       expect.objectContaining({ threadId: THREAD_ID, phase: "errored" }),
     ]);
-    expect((providerEmitter as EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
+    expect((providerEmitter as NodeEvents.EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
       .not.toHaveBeenCalled();
   });
 
@@ -828,7 +822,7 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    const provider = providerEmitter as EventEmitter & {
+    const provider = providerEmitter as NodeEvents.EventEmitter & {
       stopSession: ReturnType<typeof vi.fn>;
     };
     let releaseStop!: () => void;
@@ -856,7 +850,7 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    const provider = providerEmitter as EventEmitter & {
+    const provider = providerEmitter as NodeEvents.EventEmitter & {
       stopSession: ReturnType<typeof vi.fn>;
     };
     provider.stopSession.mockRejectedValueOnce(new Error("stop unavailable"));
@@ -888,7 +882,7 @@ describe("AgentService turn cleanup", () => {
     const executionId = runtime?.turnExecutionId;
     expect(executionId).toBeTruthy();
     if (!executionId) throw new Error("turn execution identity missing");
-    const provider = providerEmitter as EventEmitter & {
+    const provider = providerEmitter as NodeEvents.EventEmitter & {
       stopSession: ReturnType<typeof vi.fn>;
     };
     let releaseStop!: () => void;
@@ -1057,7 +1051,7 @@ describe("AgentService turn cleanup", () => {
   it("aborts an auto-resumed turn when a pending mutation reservation owns the thread", async () => {
     const mutationReservations = new ThreadControlMutationReservationService();
     const { service, providerEmitter } = buildService(process.cwd(), mutationReservations);
-    const provider = providerEmitter as EventEmitter & { stopSession: ReturnType<typeof vi.fn> };
+    const provider = providerEmitter as NodeEvents.EventEmitter & { stopSession: ReturnType<typeof vi.fn> };
     startAgentServiceIngressForTest(service, );
 
     expect(mutationReservations.rehydrate(THREAD_ID, "pending-approval")).toBe(true);
@@ -1079,9 +1073,9 @@ describe("AgentService turn cleanup", () => {
   });
 
   it("initializes file tracking for provider-originated auto-resumed turns", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-auto-resume-tracker-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-auto-resume-tracker-"));
     try {
-      await writeFile(join(root, "tracked.txt"), "before\n");
+      await NodeFSPromises.writeFile(NodePath.join(root, "tracked.txt"), "before\n");
       const {
         service,
         providerEmitter,
@@ -1112,7 +1106,7 @@ describe("AgentService turn cleanup", () => {
       await vi.waitFor(() => expect(observeToolUse).toHaveBeenCalledOnce());
       await observeToolUse.mock.results[0]!.value;
 
-      await writeFile(join(root, "tracked.txt"), "after\n");
+      await NodeFSPromises.writeFile(NodePath.join(root, "tracked.txt"), "after\n");
       providerEmitter.emit("event", {
         type: AgentEventType.ToolResult,
         threadId: THREAD_ID,
@@ -1147,15 +1141,15 @@ describe("AgentService turn cleanup", () => {
         },
       });
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 
   it("keeps overlapping auto-resumed generations isolated until prior persistence finishes", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-auto-resume-overlap-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-auto-resume-overlap-"));
     try {
-      await writeFile(join(root, "first.txt"), "before first\n");
-      await writeFile(join(root, "second.txt"), "before second\n");
+      await NodeFSPromises.writeFile(NodePath.join(root, "first.txt"), "before first\n");
+      await NodeFSPromises.writeFile(NodePath.join(root, "second.txt"), "before second\n");
       const {
         service,
         providerEmitter,
@@ -1198,7 +1192,7 @@ describe("AgentService turn cleanup", () => {
       } satisfies AgentEvent);
       await vi.waitFor(() => expect(observeToolUse).toHaveBeenCalledTimes(1));
       await observeToolUse.mock.results[0]!.value;
-      await writeFile(join(root, "first.txt"), "after first\n");
+      await NodeFSPromises.writeFile(NodePath.join(root, "first.txt"), "after first\n");
       providerEmitter.emit("event", {
         type: AgentEventType.ToolResult,
         threadId: THREAD_ID,
@@ -1234,7 +1228,7 @@ describe("AgentService turn cleanup", () => {
         toolName: "Edit",
         toolInput: { file_path: "second.txt" },
       } satisfies AgentEvent);
-      await writeFile(join(root, "second.txt"), "after second\n");
+      await NodeFSPromises.writeFile(NodePath.join(root, "second.txt"), "after second\n");
       providerEmitter.emit("event", {
         type: AgentEventType.Message,
         threadId: THREAD_ID,
@@ -1285,7 +1279,7 @@ describe("AgentService turn cleanup", () => {
         }),
       ]);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 
@@ -1364,7 +1358,7 @@ describe("AgentService Ended finalization", () => {
   let threadRepo: RealThreadRepo;
   let workspaceRepo: RealWorkspaceRepo;
   let messageRepo: RealMessageRepo;
-  let providerEmitter: EventEmitter & {
+  let providerEmitter: NodeEvents.EventEmitter & {
     sendTurn: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
     interruptChildTurn: ReturnType<typeof vi.fn>;
@@ -1384,7 +1378,7 @@ describe("AgentService Ended finalization", () => {
     const toolCallRecordRepo = new RealToolCallRecordRepo(db);
     const thoughtSegmentRepo = new RealThoughtSegmentRepo(db);
     const hookExecutionRepo = new RealHookExecutionRepo(db);
-    providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+    providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
       id: "codex" as ProviderId,
       descriptor: {
         capabilities: [{ name: "child-cancellation", support: "supported" }],

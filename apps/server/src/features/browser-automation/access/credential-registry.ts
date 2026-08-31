@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BROWSER_AUTOMATION_OPERATIONS,
   type BrowserAutomationPublicOperation,
@@ -61,7 +61,7 @@ export interface BrowserAutomationCredentialRegistryOptions {
 }
 
 function digestToken(token: string): Buffer {
-  return createHash("sha256").update(token, "utf8").digest();
+  return NodeCrypto.createHash("sha256").update(token, "utf8").digest();
 }
 
 function validateScope(scope: BrowserAutomationCredentialScope): void {
@@ -96,6 +96,18 @@ function validateScope(scope: BrowserAutomationCredentialScope): void {
   }
 }
 
+function validateRegistryLimits(idleTtlMs: number, absoluteTtlMs: number, maxCredentials: number): void {
+  if (!Number.isInteger(idleTtlMs) || idleTtlMs < 1 || idleTtlMs > 24 * 60 * 60_000) {
+    throw new Error("Browser automation credential idle TTL is invalid");
+  }
+  if (!Number.isInteger(absoluteTtlMs) || absoluteTtlMs < idleTtlMs || absoluteTtlMs > 24 * 60 * 60_000) {
+    throw new Error("Browser automation credential absolute TTL is invalid");
+  }
+  if (!Number.isInteger(maxCredentials) || maxCredentials < 1 || maxCredentials > 4_096) {
+    throw new Error("Browser automation credential capacity is invalid");
+  }
+}
+
 /** Issues, validates, touches, and revokes bounded browser automation credentials. */
 export class BrowserAutomationCredentialRegistry {
   private readonly credentials = new Map<string, StoredCredential>();
@@ -110,23 +122,7 @@ export class BrowserAutomationCredentialRegistry {
     this.absoluteTtlMs = options.absoluteTtlMs ?? DEFAULT_ABSOLUTE_TTL_MS;
     this.maxCredentials = options.maxCredentials ?? DEFAULT_MAX_CREDENTIALS;
     this.now = options.now ?? Date.now;
-    if (
-      !Number.isInteger(this.idleTtlMs) ||
-      this.idleTtlMs < 1 ||
-      this.idleTtlMs > 24 * 60 * 60_000
-    ) {
-      throw new Error("Browser automation credential idle TTL is invalid");
-    }
-    if (
-      !Number.isInteger(this.absoluteTtlMs) ||
-      this.absoluteTtlMs < this.idleTtlMs ||
-      this.absoluteTtlMs > 24 * 60 * 60_000
-    ) {
-      throw new Error("Browser automation credential absolute TTL is invalid");
-    }
-    if (!Number.isInteger(this.maxCredentials) || this.maxCredentials < 1 || this.maxCredentials > 4_096) {
-      throw new Error("Browser automation credential capacity is invalid");
-    }
+    validateRegistryLimits(this.idleTtlMs, this.absoluteTtlMs, this.maxCredentials);
   }
 
   /** Issues an opaque credential while retaining only its SHA-256 digest. */
@@ -136,8 +132,8 @@ export class BrowserAutomationCredentialRegistry {
     this.sweepExpired(now);
     while (this.credentials.size >= this.maxCredentials) this.evictLeastRecentlyUsed();
 
-    const credentialId = randomBytes(16).toString("hex");
-    const token = randomBytes(32).toString("base64url");
+    const credentialId = NodeCrypto.randomBytes(16).toString("hex");
+    const token = NodeCrypto.randomBytes(32).toString("base64url");
     const claims: BrowserAutomationCredentialClaims = {
       ...scope,
       allowedOperations: [...scope.allowedOperations],
@@ -163,7 +159,7 @@ export class BrowserAutomationCredentialRegistry {
     const candidate = digestToken(token);
     let matched: StoredCredential | null = null;
     for (const stored of this.credentials.values()) {
-      if (timingSafeEqual(stored.digest, candidate)) {
+      if (NodeCrypto.timingSafeEqual(stored.digest, candidate)) {
         matched = stored;
       }
     }

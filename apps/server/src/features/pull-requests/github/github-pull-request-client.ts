@@ -1,4 +1,4 @@
-import { execFile, type ExecFileException } from "child_process";
+import * as NodeChildProcess from "node:child_process";
 import { z } from "zod";
 import {
   PULL_REQUEST_CURSOR_COMPONENT_MAX_LENGTH,
@@ -866,7 +866,7 @@ class ExecFileGithubCommandRunner implements GithubPullRequestCommandRunner {
     },
   ): Promise<GithubPullRequestCommandResult> {
     return new Promise((resolve, reject) => {
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         [...args],
         {
@@ -1096,29 +1096,21 @@ function parseScopes(headers: string): string[] {
 
 function classifyErrorMessage(message: string): PullRequestErrorCode {
   const normalized = message.toLowerCase();
-  if (normalized.includes("not logged") || normalized.includes("authentication") || normalized.includes("http 401")) {
-    return "unauthenticated";
-  }
-  if (normalized.includes("rate limit") || normalized.includes("secondary rate")) {
-    return "rate_limited";
-  }
-  if (
-    normalized.includes("forbidden") ||
-    normalized.includes("http 403") ||
-    normalized.includes("resource not accessible")
-  ) {
-    return "forbidden";
-  }
-  if (
-    normalized.includes("invalid cursor") ||
-    normalized.includes("cursor is invalid") ||
-    normalized.includes("cursor specified in an after argument") ||
-    normalized.includes("invalid value for cursor")
-  ) {
-    return "stale_cursor";
-  }
+  const classification = githubErrorClassifications.find((entry) =>
+    entry.fragments.some((fragment) => normalized.includes(fragment)));
+  if (classification) return classification.code;
   return "remote_unavailable";
 }
+
+const githubErrorClassifications: ReadonlyArray<{
+  code: PullRequestErrorCode;
+  fragments: readonly string[];
+}> = [
+  { code: "unauthenticated", fragments: ["not logged", "authentication", "http 401"] },
+  { code: "rate_limited", fragments: ["rate limit", "secondary rate"] },
+  { code: "forbidden", fragments: ["forbidden", "http 403", "resource not accessible"] },
+  { code: "stale_cursor", fragments: ["invalid cursor", "cursor is invalid", "cursor specified in an after argument", "invalid value for cursor"] },
+];
 
 function safeErrorMessage(code: PullRequestErrorCode): string {
   switch (code) {
@@ -1138,13 +1130,24 @@ function safeErrorMessage(code: PullRequestErrorCode): string {
 }
 
 function normalizeCommandError(error: unknown, signal: AbortSignal): GithubPullRequestClientError {
-  const commandError = error as ExecFileException & { stderr?: string };
-  if (signal.aborted || commandError?.code === "ABORT_ERR" || commandError?.name === "AbortError") {
+  const commandError = error as NodeChildProcess.ExecFileException & { stderr?: string };
+  if (isAbortedCommand(signal, commandError)) {
     return new GithubPullRequestClientError("cancelled", safeErrorMessage("cancelled"));
   }
-  const diagnostic = `${commandError?.message ?? ""}\n${commandError?.stderr ?? ""}`.slice(0, 8_192);
+  const diagnostic = commandErrorDiagnostic(commandError);
   const code = commandError?.code === 4 ? "unauthenticated" : classifyErrorMessage(diagnostic);
   return new GithubPullRequestClientError(code, safeErrorMessage(code));
+}
+
+function isAbortedCommand(
+  signal: AbortSignal,
+  error: NodeChildProcess.ExecFileException & { stderr?: string },
+): boolean {
+  return signal.aborted || error?.code === "ABORT_ERR" || error?.name === "AbortError";
+}
+
+function commandErrorDiagnostic(error: NodeChildProcess.ExecFileException & { stderr?: string }): string {
+  return `${error?.message ?? ""}\n${error?.stderr ?? ""}`.slice(0, 8_192);
 }
 
 function bucketRelationships(
@@ -1331,6 +1334,27 @@ interface GithubCodeEvidencePlan {
   includesNewBlob: boolean;
 }
 
+interface GithubPatchEvidence {
+  snapshot: { baseOid: string; headOid: string };
+  oldBlob: z.infer<typeof githubBlobEvidenceSchema> | null;
+  newBlob: z.infer<typeof githubBlobEvidenceSchema> | null;
+  attributeFiles: GithubGeneratedAttributeFile[];
+  attributeEvidenceComplete: boolean;
+}
+
+function assertGithubPatchPosition(position: number): void {
+  if (position < 0 || position >= PULL_REQUEST_FILE_MAX_COUNT) {
+    throw new GithubPullRequestClientError("invalid_input", "The changed-file locator is invalid.");
+  }
+}
+
+function matchesGithubPatchSnapshot(
+  snapshot: { baseOid: string; headOid: string },
+  request: PullRequestRemotePatchRequest,
+): boolean {
+  return snapshot.baseOid === request.baseOid && snapshot.headOid === request.headOid;
+}
+
 function buildGithubCodeEvidencePlan(
   request: PullRequestRemotePatchRequest,
   file: NonNullable<ReturnType<typeof normalizeGithubPullRequestFile>>,
@@ -1397,6 +1421,89 @@ function parseCodeEvidenceRepository(
   return data.repositoryNode as Record<string, unknown>;
 }
 
+function githubPatchEvidenceBlobs(
+  repository: Record<string, unknown>,
+  plan: GithubCodeEvidencePlan,
+): Pick<GithubPatchEvidence, "oldBlob" | "newBlob"> {
+  return {
+    oldBlob: plan.includesOldBlob ? githubPatchEvidenceBlob(repository.oldBlob) : null,
+    newBlob: plan.includesNewBlob ? githubPatchEvidenceBlob(repository.newBlob) : null,
+  };
+}
+
+function githubPatchEvidenceBlob(value: unknown): z.infer<typeof githubBlobEvidenceSchema> | null {
+  if (value === null || value === undefined) return null;
+  const parsed = githubBlobEvidenceSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function githubPatchAttributeEvidence(
+  repository: Record<string, unknown>,
+  plan: GithubCodeEvidencePlan,
+): { files: GithubGeneratedAttributeFile[]; complete: boolean } {
+  const files: GithubGeneratedAttributeFile[] = [];
+  let complete = plan.attributeEvidenceComplete;
+  for (const [index, directory] of plan.attributeDirectories.entries()) {
+    const raw = repository[`attribute${index}`];
+    if (raw === null || raw === undefined) continue;
+    const blob = githubPatchEvidenceBlob(raw);
+    if (!blob) {
+      complete = false;
+      continue;
+    }
+    if (blob.text !== null && blob.isBinary !== true && blob.byteSize <= MAX_GIT_ATTRIBUTE_BYTES) {
+      files.push({ directory, text: blob.text });
+    } else {
+      complete = false;
+    }
+  }
+  return { files, complete };
+}
+
+function normalizeGithubPatchEvidence(
+  metadata: { file: NonNullable<ReturnType<typeof normalizeGithubPullRequestFile>>; patch: string | null },
+  evidence: GithubPatchEvidence,
+) {
+  return normalizeGithubPullRequestPatch({
+    patch: metadata.patch,
+    oldText: githubPatchOldText(metadata.file, evidence),
+    newText: githubPatchNewText(metadata.file, evidence),
+    binary: githubPatchIsBinary(evidence),
+    generated: githubPatchIsGenerated(metadata.file.path, evidence),
+    blobTooLarge: githubPatchBlobTooLarge(evidence),
+  });
+}
+
+function githubPatchOldText(
+  file: NonNullable<ReturnType<typeof normalizeGithubPullRequestFile>>,
+  evidence: GithubPatchEvidence,
+): string | null {
+  return file.changeType === "added" ? "" : evidence.oldBlob?.text ?? null;
+}
+
+function githubPatchNewText(
+  file: NonNullable<ReturnType<typeof normalizeGithubPullRequestFile>>,
+  evidence: GithubPatchEvidence,
+): string | null {
+  return file.changeType === "deleted" ? "" : evidence.newBlob?.text ?? null;
+}
+
+function githubPatchIsBinary(evidence: GithubPatchEvidence): boolean {
+  return evidence.oldBlob?.isBinary === true || evidence.newBlob?.isBinary === true;
+}
+
+function githubPatchIsGenerated(
+  path: string,
+  evidence: GithubPatchEvidence,
+): boolean {
+  return evidence.attributeEvidenceComplete && isGithubGeneratedPath(path, evidence.attributeFiles);
+}
+
+function githubPatchBlobTooLarge(evidence: GithubPatchEvidence): boolean {
+  return (evidence.oldBlob?.byteSize ?? 0) > PULL_REQUEST_PATCH_MAX_BYTES
+    || (evidence.newBlob?.byteSize ?? 0) > PULL_REQUEST_PATCH_MAX_BYTES;
+}
+
 function mergeBoundedData(
   current: PullRequestRemoteCommentsPage["boundedData"],
   next: PullRequestRemoteCommentsPage["boundedData"],
@@ -1407,42 +1514,163 @@ function mergeBoundedData(
   return current ?? next;
 }
 
+interface GithubCommentPageLimits {
+  includeIssue: boolean;
+  includeThreads: boolean;
+  issue: number;
+  threads: number;
+}
+
+function githubCommentPageLimits(request: PullRequestRemoteCommentsRequest): GithubCommentPageLimits {
+  const includeIssue = request.cursors.issueComments !== null;
+  const includeThreads = request.cursors.reviewThreads !== null;
+  const activeCount = Number(includeIssue) + Number(includeThreads);
+  const baseLimit = Math.max(1, Math.floor(request.limit / Math.max(1, activeCount)));
+  const remainder = request.limit - baseLimit * activeCount;
+  return {
+    includeIssue,
+    includeThreads,
+    issue: includeIssue ? baseLimit + (remainder > 0 ? 1 : 0) : 1,
+    threads: includeThreads ? baseLimit + (remainder > 1 ? 1 : 0) : 1,
+  };
+}
+
+function parseGithubCommentsPage(
+  input: unknown,
+  limits: GithubCommentPageLimits,
+): z.infer<typeof githubCommentsPageSchema> {
+  const parsed = githubCommentsPageSchema.safeParse(input);
+  if (!parsed.success || (limits.includeIssue && !parsed.data.issueComments) || (limits.includeThreads && !parsed.data.reviewThreads)) {
+    throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned invalid pull request comments.");
+  }
+  return parsed.data;
+}
+
+function normalizeGithubCommentPageItems(
+  page: z.infer<typeof githubCommentsPageSchema>,
+  headOid: string,
+): { items: PullRequestRemoteCommentsPage["items"]; boundedData: PullRequestRemoteCommentsPage["boundedData"] } {
+  let boundedData: PullRequestRemoteCommentsPage["boundedData"] = null;
+  const items: PullRequestRemoteCommentsPage["items"] = [];
+  for (const raw of page.issueComments?.nodes ?? []) {
+    const normalized = normalizeGithubIssueComment(raw);
+    if (normalized) items.push(normalized);
+    else boundedData = mergeBoundedData(boundedData, { reason: "record_limit" });
+    boundedData = mergeBoundedData(boundedData, conversationBoundedData(raw));
+  }
+  for (const raw of page.reviewThreads?.nodes ?? []) {
+    const normalized = normalizeGithubReviewThread(raw, headOid);
+    if (normalized) items.push(normalized);
+    else boundedData = mergeBoundedData(boundedData, { reason: "record_limit" });
+    boundedData = mergeBoundedData(boundedData, conversationBoundedData(raw));
+  }
+  return { items: sortGithubCommentItems(items), boundedData };
+}
+
+function sortGithubCommentItems(
+  items: PullRequestRemoteCommentsPage["items"],
+): PullRequestRemoteCommentsPage["items"] {
+  return items.sort((left, right) => {
+    const occurredAt = Date.parse(conversationOccurredAt(left)) - Date.parse(conversationOccurredAt(right));
+    return occurredAt !== 0 ? occurredAt : left.providerNodeId.localeCompare(right.providerNodeId);
+  });
+}
+
+function githubCommentPageCursors(
+  page: z.infer<typeof githubCommentsPageSchema>,
+  limits: GithubCommentPageLimits,
+): PullRequestRemoteCommentsPage["cursors"] {
+  return {
+    issueComments: limits.includeIssue && page.issueComments?.pageInfo.hasNextPage
+      ? page.issueComments.pageInfo.endCursor
+      : null,
+    reviewThreads: limits.includeThreads && page.reviewThreads?.pageInfo.hasNextPage
+      ? page.reviewThreads.pageInfo.endCursor
+      : null,
+  };
+}
+
+function normalizeGithubTimelinePageItems(
+  page: z.infer<typeof githubTimelinePageSchema>,
+  headOid: string,
+): { items: PullRequestRemoteTimelinePage["items"]; boundedData: PullRequestRemoteTimelinePage["boundedData"] } {
+  const items = page.timelineItems.nodes.flatMap((node) => {
+    const item = normalizeGithubTimelineNode(node, headOid);
+    if (!item) return [];
+    const validated = PullRequestTimelineItemSchema().safeParse(item);
+    return validated.success ? [validated.data] : [];
+  });
+  let boundedData: PullRequestRemoteTimelinePage["boundedData"] =
+    items.length < page.timelineItems.nodes.length ? { reason: "record_limit" } : null;
+  for (const node of page.timelineItems.nodes) {
+    boundedData = mergeBoundedData(boundedData, timelineBoundedData(node));
+  }
+  return { items, boundedData };
+}
+
+function appendGithubTimelineSyntheticItems(
+  page: z.infer<typeof githubTimelinePageSchema>,
+  request: PullRequestRemoteTimelineRequest,
+  normalized: { items: PullRequestRemoteTimelinePage["items"]; boundedData: PullRequestRemoteTimelinePage["boundedData"] },
+): { items: PullRequestRemoteTimelinePage["items"]; boundedData: PullRequestRemoteTimelinePage["boundedData"] } {
+  const result = { ...normalized, items: [...normalized.items] };
+  if (request.lane !== "newer" && !page.timelineItems.pageInfo.hasPreviousPage) {
+    appendGithubOpenedTimelineItem(page, request.limit, result);
+  }
+  if (request.lane !== "older") appendGithubChecksTimelineItem(page, request.limit, result);
+  return result;
+}
+
+function appendGithubOpenedTimelineItem(
+  page: z.infer<typeof githubTimelinePageSchema>,
+  limit: number,
+  result: { items: PullRequestRemoteTimelinePage["items"]; boundedData: PullRequestRemoteTimelinePage["boundedData"] },
+): void {
+  const opened = PullRequestTimelineItemSchema().safeParse({
+    kind: "opened", providerNodeId: page.id, occurredAt: page.createdAt,
+    actor: normalizeGithubActor(page.author), url: normalizeGithubHttpUrl(page.url),
+  });
+  if (!opened.success) return;
+  if (result.items.length < limit) result.items.push(opened.data);
+  else result.boundedData = { reason: "record_limit" };
+}
+
+function appendGithubChecksTimelineItem(
+  page: z.infer<typeof githubTimelinePageSchema>,
+  limit: number,
+  result: { items: PullRequestRemoteTimelinePage["items"]; boundedData: PullRequestRemoteTimelinePage["boundedData"] },
+): void {
+  const latestCommit = page.commits.nodes.at(0)?.commit;
+  if (!latestCommit) return;
+  const checks = normalizeGithubSyntheticChecks({
+    pullRequestUrl: page.url, headOid: latestCommit.oid, committedDate: latestCommit.committedDate,
+    rollupState: latestCommit.statusCheckRollup?.state ?? null,
+    totalCount: latestCommit.statusCheckRollup?.contexts.totalCount ?? 0,
+  });
+  if (!checks) return;
+  if (result.items.length < limit) result.items.push(checks);
+  else result.boundedData = { reason: "record_limit" };
+}
+
 function conversationOccurredAt(item: PullRequestRemoteCommentsPage["items"][number]): string {
   return item.createdAt;
 }
 
 function mutationFailureKind(message: string): GithubPullRequestMutationFailureKind {
   const normalized = message.toLowerCase();
-  if (normalized.includes("rate limit") || normalized.includes("secondary rate")) {
-    return "rate_limited";
-  }
-  if (
-    normalized.includes("expectedheadoid")
-    || normalized.includes("expected head")
-    || normalized.includes("head oid")
-    || normalized.includes("head branch was modified")
-  ) {
-    return "head_changed";
-  }
-  if (
-    normalized.includes("not mergeable")
-    || normalized.includes("merge conflict")
-    || normalized.includes("protected branch")
-    || normalized.includes("merge is blocked")
-    || normalized.includes("merge queue")
-  ) {
-    return "merge_blocked";
-  }
-  if (
-    normalized.includes("forbidden")
-    || normalized.includes("not authorized")
-    || normalized.includes("resource not accessible")
-    || normalized.includes("permission")
-  ) {
-    return "permission";
-  }
-  return "other";
+  return githubMutationFailureClassifications.find((entry) =>
+    entry.fragments.some((fragment) => normalized.includes(fragment)))?.kind ?? "other";
 }
+
+const githubMutationFailureClassifications: ReadonlyArray<{
+  kind: GithubPullRequestMutationFailureKind;
+  fragments: readonly string[];
+}> = [
+  { kind: "rate_limited", fragments: ["rate limit", "secondary rate"] },
+  { kind: "head_changed", fragments: ["expectedheadoid", "expected head", "head oid", "head branch was modified"] },
+  { kind: "merge_blocked", fragments: ["not mergeable", "merge conflict", "protected branch", "merge is blocked", "merge queue"] },
+  { kind: "permission", fragments: ["forbidden", "not authorized", "resource not accessible", "permission"] },
+];
 
 function mutationErrorCode(
   message: string,
@@ -1462,6 +1690,121 @@ function safeMutationErrorMessage(
   if (kind === "merge_blocked") return "GitHub blocked the pull request merge.";
   if (kind === "permission") return "GitHub denied the pull request action.";
   return safeErrorMessage(code);
+}
+
+function githubMutationPreflightResult(
+  input: unknown,
+  request: PullRequestRemoteMutationPreflightRequest,
+): PullRequestRemoteMutationPreflight {
+  const parsed = githubMutationPreflightSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned invalid pull request mutation state.");
+  }
+  assertGithubMutationViewer(parsed.data.viewer.id, request);
+  const repository = githubMutationPreflightRepository(parsed.data.repositoryNode, request);
+  return githubMutationPreflightContract(parsed.data.viewer.id, repository, parsed.data.replyNodes);
+}
+
+function assertGithubMutationViewer(
+  viewerNodeId: string,
+  request: PullRequestRemoteMutationPreflightRequest,
+): void {
+  if (viewerNodeId !== request.viewer.actor.providerNodeId) {
+    throw new GithubPullRequestClientError("forbidden", "The authenticated GitHub viewer changed before the pull request action.");
+  }
+}
+
+type GithubMutationRepository = NonNullable<z.infer<typeof githubMutationPreflightSchema>["repositoryNode"]>;
+type GithubMutationPullRequest = NonNullable<GithubMutationRepository["pullRequest"]>;
+type GithubMutationRepositoryWithPullRequest = GithubMutationRepository & {
+  pullRequest: GithubMutationPullRequest;
+};
+
+function githubMutationPreflightRepository(
+  repository: z.infer<typeof githubMutationPreflightSchema>["repositoryNode"],
+  request: PullRequestRemoteMutationPreflightRequest,
+): GithubMutationRepositoryWithPullRequest {
+  const pullRequest = repository?.pullRequest;
+  if (!repository || !pullRequest) {
+    throw new GithubPullRequestClientError("not_found", "The pull request was not found.");
+  }
+  if (!githubMutationPreflightIdentityMatches(repository, request)) {
+    throw new GithubPullRequestClientError("not_found", "The pull request identity no longer matches GitHub.");
+  }
+  return { ...repository, pullRequest };
+}
+
+function githubMutationPreflightIdentityMatches(
+  repository: GithubMutationRepository,
+  request: PullRequestRemoteMutationPreflightRequest,
+): boolean {
+  return repository.id === request.identity.repositoryNodeId
+    && repository.name.toLocaleLowerCase() === request.identity.repository.toLocaleLowerCase()
+    && repository.owner.login.toLocaleLowerCase() === request.identity.owner.toLocaleLowerCase()
+    && repository.pullRequest?.number === request.identity.number;
+}
+
+function githubMutationPreflightContract(
+  viewerNodeId: string,
+  repository: GithubMutationRepositoryWithPullRequest,
+  replyNodes: z.infer<typeof githubMutationPreflightSchema>["replyNodes"],
+): PullRequestRemoteMutationPreflight {
+  const pullRequest = repository.pullRequest;
+  return {
+    viewerNodeId,
+    snapshot: PullRequestMutationExpectedSchema().parse({
+      providerNodeId: pullRequest.id,
+      state: normalizeGithubPullRequestState(pullRequest.state),
+      readiness: pullRequest.isDraft ? "draft" : "ready",
+      baseOid: pullRequest.baseRefOid,
+      headOid: pullRequest.headRefOid,
+    }),
+    locked: pullRequest.locked,
+    viewerPermission: githubMutationViewerPermission(repository.viewerPermission),
+    allowedMergeMethods: githubMutationMergeMethods(repository),
+    viewerCanUpdate: pullRequest.viewerCanUpdate,
+    viewerCanClose: pullRequest.viewerCanClose,
+    viewerCanMergeAsAdmin: pullRequest.viewerCanMergeAsAdmin,
+    viewerDidAuthor: pullRequest.viewerDidAuthor,
+    mergeability: githubMutationMergeability(pullRequest.mergeable),
+    mergeStateStatus: pullRequest.mergeStateStatus.toLowerCase(),
+    replyThreads: githubMutationReplyThreads(replyNodes),
+  };
+}
+
+function githubMutationViewerPermission(
+  permission: GithubMutationRepository["viewerPermission"],
+): PullRequestRemoteMutationPreflight["viewerPermission"] {
+  return permission === null ? null : permission.toLowerCase() as PullRequestRemoteMutationPreflight["viewerPermission"];
+}
+
+function githubMutationMergeMethods(
+  repository: GithubMutationRepositoryWithPullRequest,
+): PullRequestMergeMethod[] {
+  const methods: PullRequestMergeMethod[] = [];
+  if (repository.mergeCommitAllowed) methods.push("merge");
+  if (repository.squashMergeAllowed) methods.push("squash");
+  if (repository.rebaseMergeAllowed) methods.push("rebase");
+  return methods;
+}
+
+function githubMutationMergeability(
+  mergeable: GithubMutationPullRequest["mergeable"],
+): PullRequestRemoteMutationPreflight["mergeability"] {
+  if (mergeable === "MERGEABLE") return "mergeable";
+  return mergeable === "CONFLICTING" ? "conflicting" : "unknown";
+}
+
+function githubMutationReplyThreads(
+  replyNodes: z.infer<typeof githubMutationPreflightSchema>["replyNodes"],
+): PullRequestRemoteMutationPreflight["replyThreads"] {
+  return replyNodes.flatMap((node) => {
+    const thread = githubMutationReplyThreadSchema.safeParse(node);
+    return thread.success
+      ? [{ providerNodeId: thread.data.id, pullRequestProviderNodeId: thread.data.pullRequest.id,
+        isOutdated: thread.data.isOutdated, viewerCanReply: thread.data.viewerCanReply }]
+      : [];
+  });
 }
 
 function normalizeSubmittedReviewState(
@@ -1887,76 +2230,34 @@ implements PullRequestRemoteClient, PullRequestRemoteMutationClient {
   async listComments(
     request: PullRequestRemoteCommentsRequest,
   ): Promise<PullRequestRemoteCommentsPage> {
-    const includeIssue = request.cursors.issueComments !== null;
-    const includeThreads = request.cursors.reviewThreads !== null;
-    const activeCount = Number(includeIssue) + Number(includeThreads);
-    const baseLimit = Math.max(1, Math.floor(request.limit / Math.max(1, activeCount)));
-    let remainder = request.limit - baseLimit * activeCount;
-    const issueLimit = includeIssue ? baseLimit + (remainder-- > 0 ? 1 : 0) : 1;
-    const threadLimit = includeThreads ? baseLimit + (remainder-- > 0 ? 1 : 0) : 1;
+    const limits = githubCommentPageLimits(request);
     const data = await this.runGraphql(
       GITHUB_COMMENTS_QUERY,
       {
         ...detailVariables(request),
-        issueLimit,
+        issueLimit: limits.issue,
         issueCursor: request.cursors.issueComments ?? null,
-        includeIssue,
-        threadLimit,
+        includeIssue: limits.includeIssue,
+        threadLimit: limits.threads,
         threadCursor: request.cursors.reviewThreads ?? null,
-        includeThreads,
+        includeThreads: limits.includeThreads,
       },
       request.signal,
     );
     const rawPullRequest = pullRequestRepository(data, request);
-    const parsed = githubCommentsPageSchema.safeParse(rawPullRequest);
-    if (!parsed.success || (includeIssue && !parsed.data.issueComments) || (includeThreads && !parsed.data.reviewThreads)) {
-      throw new GithubPullRequestClientError(
-        "remote_unavailable",
-        "GitHub returned invalid pull request comments.",
-      );
-    }
-    assertPullRequestNumber(parsed.data.number, request.identity.number);
-
-    let boundedData: PullRequestRemoteCommentsPage["boundedData"] = null;
-    const items: PullRequestRemoteCommentsPage["items"] = [];
-    for (const raw of parsed.data.issueComments?.nodes ?? []) {
-      const normalized = normalizeGithubIssueComment(raw);
-      if (normalized) items.push(normalized);
-      else boundedData = mergeBoundedData(boundedData, { reason: "record_limit" });
-      boundedData = mergeBoundedData(boundedData, conversationBoundedData(raw));
-    }
-    for (const raw of parsed.data.reviewThreads?.nodes ?? []) {
-      const normalized = normalizeGithubReviewThread(raw, parsed.data.headRefOid);
-      if (normalized) items.push(normalized);
-      else boundedData = mergeBoundedData(boundedData, { reason: "record_limit" });
-      boundedData = mergeBoundedData(boundedData, conversationBoundedData(raw));
-    }
-    const sorted = items
-      .sort((left, right) => {
-        const occurredAt =
-          Date.parse(conversationOccurredAt(left)) -
-          Date.parse(conversationOccurredAt(right));
-        return occurredAt !== 0
-          ? occurredAt
-          : left.providerNodeId.localeCompare(right.providerNodeId);
-      });
-    const retained = sorted.slice(0, request.limit);
-    if (retained.length < sorted.length) boundedData = { reason: "record_limit" };
-    const issuePage = parsed.data.issueComments;
-    const threadPage = parsed.data.reviewThreads;
+    const page = parseGithubCommentsPage(rawPullRequest, limits);
+    assertPullRequestNumber(page.number, request.identity.number);
+    const normalized = normalizeGithubCommentPageItems(page, page.headRefOid);
+    const retained = normalized.items.slice(0, request.limit);
+    const boundedData = retained.length < normalized.items.length
+      ? { reason: "record_limit" } as const
+      : normalized.boundedData;
     return {
       items: retained,
-      cursors: {
-        issueComments: includeIssue
-          ? issuePage?.pageInfo.hasNextPage ? issuePage.pageInfo.endCursor : null
-          : null,
-        reviewThreads: includeThreads
-          ? threadPage?.pageInfo.hasNextPage ? threadPage.pageInfo.endCursor : null
-          : null,
-      },
-      hasNextPage: Boolean(issuePage?.pageInfo.hasNextPage || threadPage?.pageInfo.hasNextPage),
-      snapshotMarker: `${parsed.data.headRefOid}\0${parsed.data.updatedAt}`,
-      headMarker: parsed.data.headRefOid,
+      cursors: githubCommentPageCursors(page, limits),
+      hasNextPage: Boolean(page.issueComments?.pageInfo.hasNextPage || page.reviewThreads?.pageInfo.hasNextPage),
+      snapshotMarker: `${page.headRefOid}\0${page.updatedAt}`,
+      headMarker: page.headRefOid,
       boundedData,
     };
   }
@@ -2012,23 +2313,31 @@ implements PullRequestRemoteClient, PullRequestRemoteMutationClient {
 
   /** Load one validated immutable-head patch and bounded blob evidence. */
   async getPatch(request: PullRequestRemotePatchRequest): Promise<PullRequestRemotePatchResult> {
-    if (request.position < 0 || request.position >= PULL_REQUEST_FILE_MAX_COUNT) {
-      throw new GithubPullRequestClientError("invalid_input", "The changed-file locator is invalid.");
-    }
+    assertGithubPatchPosition(request.position);
     const initialSnapshot = await this.readCodeSnapshot(request);
-    if (
-      initialSnapshot.baseOid !== request.baseOid
-      || initialSnapshot.headOid !== request.headOid
-    ) {
+    if (!matchesGithubPatchSnapshot(initialSnapshot, request)) {
       return { kind: "snapshot_changed", ...initialSnapshot };
     }
+    const metadata = await this.readGithubPatchMetadata(request);
+    const evidence = await this.readGithubPatchEvidence(request, metadata.file, metadata.patch === null);
+    if (!matchesGithubPatchSnapshot(evidence.snapshot, request)) {
+      return { kind: "snapshot_changed", ...evidence.snapshot };
+    }
+    const normalized = normalizeGithubPatchEvidence(metadata, evidence);
+    return {
+      kind: "patch",
+      file: metadata.file,
+      baseOid: request.baseOid,
+      headOid: request.headOid,
+      ...normalized,
+    };
+  }
+
+  private async readGithubPatchMetadata(
+    request: PullRequestRemotePatchRequest,
+  ): Promise<{ file: NonNullable<ReturnType<typeof normalizeGithubPullRequestFile>>; patch: string | null }> {
     const input = await this.runJsonApi(
-      githubFilesArgs(
-        request.identity,
-        request.position + 1,
-        1,
-        GITHUB_FILE_PATCH_PROJECTION,
-      ),
+      githubFilesArgs(request.identity, request.position + 1, 1, GITHUB_FILE_PATCH_PROJECTION),
       request.signal,
     );
     const page = githubProjectedFilesSchema.safeParse(input);
@@ -2036,81 +2345,31 @@ implements PullRequestRemoteClient, PullRequestRemoteMutationClient {
       ? githubProjectedPatchFileSchema.safeParse(page.data[0])
       : null;
     if (!rawFile?.success) {
-      throw new GithubPullRequestClientError(
-        "remote_unavailable",
-        "GitHub returned invalid changed-file patch metadata.",
-      );
+      throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned invalid changed-file patch metadata.");
     }
     const file = normalizeGithubPullRequestFile(rawFile.data, request.position);
     if (!file || pullRequestRemoteFileFingerprint(file) !== request.fingerprint) {
-      throw new GithubPullRequestClientError(
-        "conflict",
-        "The changed-file locator no longer matches the pull request snapshot.",
-      );
+      throw new GithubPullRequestClientError("conflict", "The changed-file locator no longer matches the pull request snapshot.");
     }
+    return { file, patch: rawFile.data.patch };
+  }
 
-    const evidencePlan = buildGithubCodeEvidencePlan(request, file, rawFile.data.patch === null);
-    const evidenceData = await this.runGraphql(
-      evidencePlan.query,
-      evidencePlan.variables,
-      request.signal,
-    );
-    const repository = parseCodeEvidenceRepository(evidenceData, request);
-    const evidenceSnapshot = parseCodeSnapshot(evidenceData, request);
-    if (
-      evidenceSnapshot.baseOid !== request.baseOid
-      || evidenceSnapshot.headOid !== request.headOid
-    ) {
-      return { kind: "snapshot_changed", ...evidenceSnapshot };
-    }
-
-    const parseBlob = (name: string) => {
-      const value = repository[name];
-      if (value === null || value === undefined) return null;
-      const parsed = githubBlobEvidenceSchema.safeParse(value);
-      return parsed.success ? parsed.data : null;
-    };
-    const oldBlob = evidencePlan.includesOldBlob ? parseBlob("oldBlob") : null;
-    const newBlob = evidencePlan.includesNewBlob ? parseBlob("newBlob") : null;
-    const attributeFiles: GithubGeneratedAttributeFile[] = [];
-    let attributeEvidenceComplete = evidencePlan.attributeEvidenceComplete;
-    for (const [index, directory] of evidencePlan.attributeDirectories.entries()) {
-      const rawAttribute = repository[`attribute${index}`];
-      if (rawAttribute === null || rawAttribute === undefined) continue;
-      const parsedAttribute = githubBlobEvidenceSchema.safeParse(rawAttribute);
-      if (!parsedAttribute.success) {
-        attributeEvidenceComplete = false;
-        continue;
-      }
-      const blob = parsedAttribute.data;
-      if (
-        blob.text !== null
-        && blob.isBinary !== true
-        && blob.byteSize <= MAX_GIT_ATTRIBUTE_BYTES
-      ) {
-        attributeFiles.push({ directory, text: blob.text });
-      } else {
-        attributeEvidenceComplete = false;
-      }
-    }
-    const normalized = normalizeGithubPullRequestPatch({
-      patch: rawFile.data.patch,
-      oldText: file.changeType === "added" ? "" : oldBlob?.text ?? null,
-      newText: file.changeType === "deleted" ? "" : newBlob?.text ?? null,
-      binary: oldBlob?.isBinary === true || newBlob?.isBinary === true,
-      generated: attributeEvidenceComplete
-        && isGithubGeneratedPath(file.path, attributeFiles),
-      blobTooLarge: Boolean(
-        (oldBlob && oldBlob.byteSize > PULL_REQUEST_PATCH_MAX_BYTES)
-        || (newBlob && newBlob.byteSize > PULL_REQUEST_PATCH_MAX_BYTES),
-      ),
-    });
+  private async readGithubPatchEvidence(
+    request: PullRequestRemotePatchRequest,
+    file: NonNullable<ReturnType<typeof normalizeGithubPullRequestFile>>,
+    includeBlobText: boolean,
+  ): Promise<GithubPatchEvidence> {
+    const plan = buildGithubCodeEvidencePlan(request, file, includeBlobText);
+    const data = await this.runGraphql(plan.query, plan.variables, request.signal);
+    const repository = parseCodeEvidenceRepository(data, request);
+    const blobs = githubPatchEvidenceBlobs(repository, plan);
+    const attributes = githubPatchAttributeEvidence(repository, plan);
     return {
-      kind: "patch",
-      file,
-      baseOid: request.baseOid,
-      headOid: request.headOid,
-      ...normalized,
+      snapshot: parseCodeSnapshot(data, request),
+      oldBlob: blobs.oldBlob,
+      newBlob: blobs.newBlob,
+      attributeFiles: attributes.files,
+      attributeEvidenceComplete: attributes.complete,
     };
   }
 
@@ -2118,86 +2377,36 @@ implements PullRequestRemoteClient, PullRequestRemoteMutationClient {
   async listTimeline(
     request: PullRequestRemoteTimelineRequest,
   ): Promise<PullRequestRemoteTimelinePage> {
+    const page = await this.readGithubTimelinePage(request);
+    const normalized = normalizeGithubTimelinePageItems(page, page.headRefOid);
+    const augmented = appendGithubTimelineSyntheticItems(page, request, normalized);
+    return {
+      items: sortGithubTimelineItems(augmented.items),
+      startCursor: page.timelineItems.pageInfo.startCursor ?? request.cursor ?? null,
+      endCursor: page.timelineItems.pageInfo.endCursor ?? request.cursor ?? null,
+      hasPreviousPage: page.timelineItems.pageInfo.hasPreviousPage,
+      hasNextPage: page.timelineItems.pageInfo.hasNextPage,
+      snapshotMarker: `${page.headRefOid}\0${page.updatedAt}`,
+      headMarker: page.headRefOid,
+      boundedData: augmented.boundedData,
+    };
+  }
+
+  private async readGithubTimelinePage(
+    request: PullRequestRemoteTimelineRequest,
+  ): Promise<z.infer<typeof githubTimelinePageSchema>> {
     const reserve = request.lane === "initial" ? 2 : 1;
-    const providerLimit = Math.max(1, request.limit - reserve);
-    const query = request.lane === "newer"
-      ? GITHUB_TIMELINE_FORWARD_QUERY
-      : GITHUB_TIMELINE_BACKWARD_QUERY;
     const data = await this.runGraphql(
-      query,
-      {
-        ...detailVariables(request),
-        limit: providerLimit,
-        cursor: request.cursor ?? null,
-      },
+      request.lane === "newer" ? GITHUB_TIMELINE_FORWARD_QUERY : GITHUB_TIMELINE_BACKWARD_QUERY,
+      { ...detailVariables(request), limit: Math.max(1, request.limit - reserve), cursor: request.cursor ?? null },
       request.signal,
     );
-    const rawPullRequest = pullRequestRepository(data, request);
-    const parsed = githubTimelinePageSchema.safeParse(rawPullRequest);
+    const parsed = githubTimelinePageSchema.safeParse(pullRequestRepository(data, request));
     if (!parsed.success) {
-      throw new GithubPullRequestClientError(
-        "remote_unavailable",
-        "GitHub returned invalid pull request Timeline data.",
-      );
+      throw new GithubPullRequestClientError("remote_unavailable", "GitHub returned invalid pull request Timeline data.");
     }
     assertPullRequestNumber(parsed.data.number, request.identity.number);
-    const page = parsed.data.timelineItems;
-    const normalized = page.nodes.flatMap((node) => {
-      const item = normalizeGithubTimelineNode(node, parsed.data.headRefOid);
-      if (!item) return [];
-      const validated = PullRequestTimelineItemSchema().safeParse(item);
-      return validated.success ? [validated.data] : [];
-    });
-    let boundedData: PullRequestRemoteTimelinePage["boundedData"] =
-      normalized.length < page.nodes.length ? { reason: "record_limit" } : null;
-    for (const node of page.nodes) {
-      boundedData = mergeBoundedData(boundedData, timelineBoundedData(node));
-    }
-
-    if (request.lane !== "newer" && !page.pageInfo.hasPreviousPage) {
-      const opened = PullRequestTimelineItemSchema().safeParse({
-        kind: "opened",
-        providerNodeId: parsed.data.id,
-        occurredAt: parsed.data.createdAt,
-        actor: normalizeGithubActor(parsed.data.author),
-        url: normalizeGithubHttpUrl(parsed.data.url),
-      });
-      if (opened.success && normalized.length < request.limit) {
-        normalized.push(opened.data);
-      } else if (opened.success) {
-        boundedData = { reason: "record_limit" };
-      }
-    }
-
-    if (request.lane !== "older") {
-      const latestCommit = parsed.data.commits.nodes.at(0)?.commit;
-      if (latestCommit) {
-        const checks = normalizeGithubSyntheticChecks({
-          pullRequestUrl: parsed.data.url,
-          headOid: latestCommit.oid,
-          committedDate: latestCommit.committedDate,
-          rollupState: latestCommit.statusCheckRollup?.state ?? null,
-          totalCount: latestCommit.statusCheckRollup?.contexts.totalCount ?? 0,
-        });
-        if (checks && normalized.length < request.limit) {
-          normalized.push(checks);
-        } else if (checks) {
-          boundedData = { reason: "record_limit" };
-        }
-      }
-    }
-
-    const items = sortGithubTimelineItems(normalized);
-    return {
-      items,
-      startCursor: page.pageInfo.startCursor ?? request.cursor ?? null,
-      endCursor: page.pageInfo.endCursor ?? request.cursor ?? null,
-      hasPreviousPage: page.pageInfo.hasPreviousPage,
-      hasNextPage: page.pageInfo.hasNextPage,
-      snapshotMarker: `${parsed.data.headRefOid}\0${parsed.data.updatedAt}`,
-      headMarker: parsed.data.headRefOid,
-      boundedData,
-    };
+    return parsed.data;
   }
 
   /** Revalidate the active viewer, pull request snapshot, permissions, and reply threads. */
@@ -2213,78 +2422,7 @@ implements PullRequestRemoteClient, PullRequestRemoteMutationClient {
       },
       request.signal,
     );
-    const parsed = githubMutationPreflightSchema.safeParse(data);
-    if (!parsed.success) {
-      throw new GithubPullRequestClientError(
-        "remote_unavailable",
-        "GitHub returned invalid pull request mutation state.",
-      );
-    }
-    if (parsed.data.viewer.id !== request.viewer.actor.providerNodeId) {
-      throw new GithubPullRequestClientError(
-        "forbidden",
-        "The authenticated GitHub viewer changed before the pull request action.",
-      );
-    }
-    const repository = parsed.data.repositoryNode;
-    if (!repository || !repository.pullRequest) {
-      throw new GithubPullRequestClientError("not_found", "The pull request was not found.");
-    }
-    if (
-      repository.id !== request.identity.repositoryNodeId
-      || repository.name.toLocaleLowerCase() !== request.identity.repository.toLocaleLowerCase()
-      || repository.owner.login.toLocaleLowerCase() !== request.identity.owner.toLocaleLowerCase()
-      || repository.pullRequest.number !== request.identity.number
-    ) {
-      throw new GithubPullRequestClientError(
-        "not_found",
-        "The pull request identity no longer matches GitHub.",
-      );
-    }
-    const pullRequest = repository.pullRequest;
-    const snapshot = PullRequestMutationExpectedSchema().parse({
-      providerNodeId: pullRequest.id,
-      state: normalizeGithubPullRequestState(pullRequest.state),
-      readiness: pullRequest.isDraft ? "draft" : "ready",
-      baseOid: pullRequest.baseRefOid,
-      headOid: pullRequest.headRefOid,
-    });
-    const allowedMergeMethods: PullRequestMergeMethod[] = [];
-    if (repository.mergeCommitAllowed) allowedMergeMethods.push("merge");
-    if (repository.squashMergeAllowed) allowedMergeMethods.push("squash");
-    if (repository.rebaseMergeAllowed) allowedMergeMethods.push("rebase");
-    const replyThreads = parsed.data.replyNodes.flatMap((node) => {
-      const thread = githubMutationReplyThreadSchema.safeParse(node);
-      return thread.success
-        ? [{
-            providerNodeId: thread.data.id,
-            pullRequestProviderNodeId: thread.data.pullRequest.id,
-            isOutdated: thread.data.isOutdated,
-            viewerCanReply: thread.data.viewerCanReply,
-          }]
-        : [];
-    });
-    return {
-      viewerNodeId: parsed.data.viewer.id,
-      snapshot,
-      locked: pullRequest.locked,
-      viewerPermission: repository.viewerPermission === null
-        ? null
-        : repository.viewerPermission.toLowerCase() as
-          PullRequestRemoteMutationPreflight["viewerPermission"],
-      allowedMergeMethods,
-      viewerCanUpdate: pullRequest.viewerCanUpdate,
-      viewerCanClose: pullRequest.viewerCanClose,
-      viewerCanMergeAsAdmin: pullRequest.viewerCanMergeAsAdmin,
-      viewerDidAuthor: pullRequest.viewerDidAuthor,
-      mergeability: pullRequest.mergeable === "MERGEABLE"
-        ? "mergeable"
-        : pullRequest.mergeable === "CONFLICTING"
-          ? "conflicting"
-          : "unknown",
-      mergeStateStatus: pullRequest.mergeStateStatus.toLowerCase(),
-      replyThreads,
-    };
+    return githubMutationPreflightResult(data, request);
   }
 
   /** Post one issue comment with all prose carried through stdin variables. */

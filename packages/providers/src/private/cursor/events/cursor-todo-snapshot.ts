@@ -11,7 +11,7 @@
  * one source of truth.
  */
 
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 
@@ -211,7 +211,7 @@ export function cursorUpdateTodosExtNotificationToAgentEvents(
   const toolCallId =
     typeof notification.toolCallId === "string" && notification.toolCallId.length > 0
       ? notification.toolCallId
-      : `cursor-todos-${randomUUID()}`;
+      : `cursor-todos-${NodeCrypto.randomUUID()}`;
 
   const merge = notification.merge === true;
   const asRecords = rawTodos.filter(
@@ -253,7 +253,7 @@ export function buildTodoWriteEvents(
   todos: NormalizedCursorTodo[],
   threadId: string,
 ): AgentEvent[] {
-  const toolCallId = `cursor-todos-${randomUUID()}`;
+  const toolCallId = `cursor-todos-${NodeCrypto.randomUUID()}`;
   return [
     {
       type: AgentEventType.ToolUse,

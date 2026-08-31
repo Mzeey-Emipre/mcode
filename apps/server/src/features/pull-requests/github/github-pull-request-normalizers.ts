@@ -148,6 +148,18 @@ export function normalizeGithubRequestedRelationships(
   return relationships;
 }
 
+function normalizeGithubPullRequestAuthor(
+  author: GithubPullRequestNode["author"],
+): PullRequestSummary["author"] {
+  if (!author) return null;
+  return {
+    providerNodeId: author.id,
+    login: author.login.slice(0, 100),
+    avatarUrl: author.avatarUrl ?? null,
+    profileUrl: author.url ?? null,
+  };
+}
+
 /** Normalize one GitHub GraphQL node into the bounded provider-neutral inbox row. */
 export function normalizeGithubPullRequest(
   node: GithubPullRequestNode,
@@ -172,14 +184,7 @@ export function normalizeGithubPullRequest(
     },
     url: node.url,
     title,
-    author: node.author
-      ? {
-          providerNodeId: node.author.id,
-          login: node.author.login.slice(0, 100),
-          avatarUrl: node.author.avatarUrl ?? null,
-          profileUrl: node.author.url ?? null,
-        }
-      : null,
+    author: normalizeGithubPullRequestAuthor(node.author),
     state: normalizeGithubPullRequestState(node.state),
     readiness: node.isDraft ? "draft" : "ready",
     head: {

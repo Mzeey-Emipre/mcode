@@ -5,7 +5,7 @@
  */
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { join } from "path";
+import * as NodePath from "node:path";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { CleanupJobRepo } from "../persistence/cleanup-job-repo.js";
@@ -30,6 +30,8 @@ import { killDescendantsByName } from "../../../../runtime/process/containment/p
 import { getMcodeDir } from "@mcode/shared";
 import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 // Avoid real wmic/taskkill on Windows: unbounded wall time and Vitest's default
 // 5s test timeout (integration tests must not depend on the host process tree).
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
@@ -37,12 +39,12 @@ vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
 }));
 
 // Stub filesystem checks for synthetic test paths.
-vi.mock("fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("fs")>();
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
   return { ...actual, existsSync: vi.fn().mockReturnValue(true) };
 });
 
-const WT_BASE = join(getMcodeDir(), "worktrees", "integration-test");
+const WT_BASE = NodePath.join(getMcodeDir(), "worktrees", "integration-test");
 
 describe("Cleanup integration", () => {
   let db: Database.Database;
@@ -77,7 +79,7 @@ describe("Cleanup integration", () => {
     } as unknown as TerminalService;
 
     mockGitWorktrees = {
-      createWorktree: vi.fn().mockReturnValue({ path: join(WT_BASE, "test-wt") }),
+      createWorktree: vi.fn().mockReturnValue({ path: NodePath.join(WT_BASE, "test-wt") }),
       removeWorktree: vi.fn().mockResolvedValue(true),
       isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
     } as unknown as GitWorktreeService;
@@ -124,7 +126,7 @@ describe("Cleanup integration", () => {
       mockTerminalService,
       mockGitWorktrees,
       mockWorktreeSafety,
-      new RepositoryGitMutationLock(),
+      new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
@@ -132,6 +134,7 @@ describe("Cleanup integration", () => {
         beginThreadDeletion: () => () => undefined,
         cancelSetupForThread: vi.fn().mockResolvedValue(undefined),
       } as unknown as WorkspaceEnvironmentService,
+      TEST_HOST_RUNTIME,
       undefined,
       undefined,
     );
@@ -155,7 +158,7 @@ describe("Cleanup integration", () => {
     // Setup: create workspace and a managed worktree thread
     const ws = workspaceRepo.create("integration-test", "/test-repo");
     const now = new Date().toISOString();
-    const wtPath = join(WT_BASE, "feat-wt");
+    const wtPath = NodePath.join(WT_BASE, "feat-wt");
     db.prepare(
       `INSERT INTO threads
         (id, workspace_id, title, branch, mode, status, worktree_path, worktree_managed, created_at, updated_at)
@@ -186,7 +189,7 @@ describe("Cleanup integration", () => {
     // Step 2: Worker processes the job
     await worker.poll();
 
-    expect(vi.mocked(killDescendantsByName)).toHaveBeenCalledWith(process.pid, "claude.exe");
+    expect(vi.mocked(killDescendantsByName)).toHaveBeenCalledWith(process.pid, "claude.exe", "win32");
 
     // Verify: subprocess signalled, terminals killed, worktree removed
     expect(mockClaudeProvider.waitForSessionExit).toHaveBeenCalledWith(
@@ -217,7 +220,7 @@ describe("Cleanup integration", () => {
       `INSERT INTO threads
         (id, workspace_id, title, branch, mode, status, worktree_path, worktree_managed, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'worktree', 'active', ?, 1, ?, ?)`,
-    ).run("thread-perf", ws.id, "Perf Thread", "mcode/perf", join(WT_BASE, "perf-wt"), now, now);
+    ).run("thread-perf", ws.id, "Perf Thread", "mcode/perf", NodePath.join(WT_BASE, "perf-wt"), now, now);
 
     const start = performance.now();
     const result = await threadService.delete("thread-perf", true);
@@ -239,12 +242,12 @@ describe("Cleanup integration", () => {
       `INSERT INTO threads
         (id, workspace_id, title, branch, mode, status, worktree_path, worktree_managed, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'worktree', 'deleted', ?, 1, ?, ?)`,
-    ).run("thread-retry", ws.id, "Retry Thread", "mcode/retry", join(WT_BASE, "retry-wt"), now, now);
+    ).run("thread-retry", ws.id, "Retry Thread", "mcode/retry", NodePath.join(WT_BASE, "retry-wt"), now, now);
 
     cleanupJobRepo.insert({
       thread_id: "thread-retry",
       workspace_path: "/test-repo-3",
-      worktree_path: join(WT_BASE, "retry-wt"),
+      worktree_path: NodePath.join(WT_BASE, "retry-wt"),
       branch: "mcode/retry",
     });
 
@@ -280,7 +283,7 @@ describe("Cleanup integration", () => {
       `INSERT INTO threads
         (id, workspace_id, title, branch, mode, status, worktree_path, worktree_managed, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'worktree', 'active', ?, 1, ?, ?)`,
-    ).run("thread-dup", ws.id, "Dup Thread", "mcode/dup", join(WT_BASE, "dup-wt"), now, now);
+    ).run("thread-dup", ws.id, "Dup Thread", "mcode/dup", NodePath.join(WT_BASE, "dup-wt"), now, now);
 
     // Delete twice - should not throw or create duplicate jobs
     await threadService.delete("thread-dup", true);
@@ -296,7 +299,7 @@ describe("Cleanup integration", () => {
     const job = cleanupJobRepo.insert({
       thread_id: "thread-stale",
       workspace_path: "/old-repo",
-      worktree_path: join(WT_BASE, "stale-wt"),
+      worktree_path: NodePath.join(WT_BASE, "stale-wt"),
       branch: null,
     });
     cleanupJobRepo.recordFailure(job.id, "previous failure");

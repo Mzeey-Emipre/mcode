@@ -7,6 +7,13 @@ import {
   selectConversationRevisionGuard,
 } from "./conversation-residency-certification";
 
+const NODE_RUNNER_RUNTIME = {
+  platform: "linux",
+  architecture: "x64",
+  nodeVersion: "v22.0.0",
+  electronVersion: "35.7.5",
+};
+
 describe("conversation residency certification", () => {
   it("uses stable representative message identities and content sizes", () => {
     const messages = createRepresentativeConversation("thread-a", 100);
@@ -32,8 +39,14 @@ describe("conversation residency certification", () => {
   });
 
   it("rejects an unbounded sample count", () => {
-    expect(() => runConversationResidencyCertification(2)).toThrow(
+    expect(() => runConversationResidencyCertification(NODE_RUNNER_RUNTIME, 2)).toThrow(
       "samples must be an integer from 3 through 50",
+    );
+  });
+
+  it("reports runtime facts supplied by the Node runner", () => {
+    expect(runConversationResidencyCertification(NODE_RUNNER_RUNTIME, 3).runtime).toEqual(
+      NODE_RUNNER_RUNTIME,
     );
   });
 });

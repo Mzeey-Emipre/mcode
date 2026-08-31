@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 import {
   copilotSdkPlatformPackageName,
   downloadTargetPackage,
@@ -15,19 +15,19 @@ import {
   resolveCopilotTargetPackagePlan,
 } from "../desktop-packaging/target-package/target-package.mjs";
 
-const repoRoot = path.resolve(import.meta.dirname, "../../../..");
-const serverRoot = path.join(repoRoot, "apps/server");
+const repoRoot = NodePath.resolve(import.meta.dirname, "../../../..");
+const serverRoot = NodePath.join(repoRoot, "apps/server");
 
 describe("SDK install layout resolution", () => {
   it("maps flat node_modules entries to their nearest install root", () => {
-    const entry = path.join(
+    const entry = NodePath.join(
       repoRoot,
       "node_modules",
       "@anthropic-ai",
       "claude-agent-sdk",
       "sdk.mjs",
     );
-    const installRoot = path.join(repoRoot, "node_modules");
+    const installRoot = NodePath.join(repoRoot, "node_modules");
 
     expect(resolveInstallRoot(entry)).toBe(installRoot);
     expect(
@@ -36,12 +36,12 @@ describe("SDK install layout resolution", () => {
         "@anthropic-ai/claude-agent-sdk-darwin-x64",
       ),
     ).toBe(
-      path.join(installRoot, "@anthropic-ai", "claude-agent-sdk-darwin-x64"),
+      NodePath.join(installRoot, "@anthropic-ai", "claude-agent-sdk-darwin-x64"),
     );
   });
 
   it("maps isolated entries to their package graph node_modules", () => {
-    const entry = path.join(
+    const entry = NodePath.join(
       repoRoot,
       "node_modules",
       ".bun",
@@ -51,7 +51,7 @@ describe("SDK install layout resolution", () => {
       "claude-agent-sdk",
       "sdk.mjs",
     );
-    const installRoot = path.join(
+    const installRoot = NodePath.join(
       repoRoot,
       "node_modules",
       ".bun",
@@ -66,7 +66,7 @@ describe("SDK install layout resolution", () => {
         "@anthropic-ai/claude-agent-sdk-darwin-x64",
       ),
     ).toBe(
-      path.join(installRoot, "@anthropic-ai", "claude-agent-sdk-darwin-x64"),
+      NodePath.join(installRoot, "@anthropic-ai", "claude-agent-sdk-darwin-x64"),
     );
   });
 });
@@ -103,16 +103,16 @@ describe("Copilot SDK target package preparation", () => {
   });
 
   it("derives the target package version from installed Copilot metadata", () => {
-    const testSource = readFileSync(import.meta.filename, "utf8");
+    const testSource = NodeFS.readFileSync(import.meta.filename, "utf8");
     expect(testSource).not.toMatch(/@github\+copilot@\d+\.\d+\.\d+/);
     const plan = resolveCopilotTargetPackagePlan(serverRoot, "darwin", "x64");
-    const sdkEntry = createRequire(
-      path.join(serverRoot, "package.json"),
+    const sdkEntry = NodeModule.createRequire(
+      NodePath.join(serverRoot, "package.json"),
     ).resolve("@github/copilot-sdk");
     const installed = JSON.parse(
-      readFileSync(
-        path.resolve(
-          path.dirname(sdkEntry),
+      NodeFS.readFileSync(
+        NodePath.resolve(
+          NodePath.dirname(sdkEntry),
           "..",
           "..",
           "..",
@@ -128,7 +128,7 @@ describe("Copilot SDK target package preparation", () => {
     );
     expect(plan.version).toBe(installed.version);
     expect(plan.destination).toBe(
-      path.join(resolveInstallRoot(sdkEntry), "@github", "copilot-darwin-x64"),
+      NodePath.join(resolveInstallRoot(sdkEntry), "@github", "copilot-darwin-x64"),
     );
   });
 });
@@ -154,7 +154,7 @@ describe("target package download safety", () => {
   });
 
   it("rejects tarball bytes whose SHA-512 differs from bun.lock", () => {
-    const expected = `sha512-${createHash("sha512").update("good").digest("base64")}`;
+    const expected = `sha512-${NodeCrypto.createHash("sha512").update("good").digest("base64")}`;
 
     expect(() => verifyPackageIntegrity(Buffer.from("bad"), expected)).toThrow(
       "integrity mismatch",
@@ -167,7 +167,7 @@ describe("target package download safety", () => {
   it("rejects dot-segment package names and versions before fetching", async () => {
     const base = {
       version: "1.0.0",
-      destination: path.join(
+      destination: NodePath.join(
         repoRoot,
         "node_modules/.bun/node_modules/@github/test",
       ),
@@ -190,8 +190,8 @@ describe("target package download safety", () => {
       downloadAndExtractPackage({
         packageName: "@github/test",
         version: "1.0.0",
-        destination: path.join(repoRoot, "outside-store"),
-        installRoot: path.join(repoRoot, "node_modules/.bun"),
+        destination: NodePath.join(repoRoot, "outside-store"),
+        installRoot: NodePath.join(repoRoot, "node_modules/.bun"),
       }),
     ).rejects.toThrow("Destination escapes install root");
   });
@@ -199,8 +199,8 @@ describe("target package download safety", () => {
 
 describe("desktop packaging workflow wiring", () => {
   it("keeps target preparation in one reusable workflow", () => {
-    const reusable = readFileSync(
-      path.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
+    const reusable = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
       "utf8",
     );
     expect(reusable).toContain(
@@ -213,15 +213,15 @@ describe("desktop packaging workflow wiring", () => {
       ".github/workflows/build-release.yml",
       ".github/workflows/desktop-package-dry-run.yml",
     ]) {
-      const source = readFileSync(path.join(repoRoot, workflow), "utf8");
+      const source = NodeFS.readFileSync(NodePath.join(repoRoot, workflow), "utf8");
       expect(source).toContain(
         "./.github/workflows/desktop-package-target.yml",
       );
       expect(source).not.toContain("ensure-sdk-platform-packages.mjs");
       expect(source).not.toContain("ci-package.mjs");
     }
-    const nightly = readFileSync(
-      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+    const nightly = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
     expect(nightly).toContain("./.github/workflows/desktop-package-target.yml");
@@ -230,16 +230,16 @@ describe("desktop packaging workflow wiring", () => {
   });
 
   it("keeps aggregate evidence on both Stable and Nightly", () => {
-    const nightly = readFileSync(
-      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+    const nightly = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
-    const stable = readFileSync(
-      path.join(repoRoot, ".github/workflows/build-release.yml"),
+    const stable = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/build-release.yml"),
       "utf8",
     );
-    const releasePlease = readFileSync(
-      path.join(repoRoot, "release-please-config.json"),
+    const releasePlease = NodeFS.readFileSync(
+      NodePath.join(repoRoot, "release-please-config.json"),
       "utf8",
     );
     expect(nightly).toContain("terminal-release-evidence.mjs aggregate");
@@ -256,16 +256,16 @@ describe("desktop packaging workflow wiring", () => {
   });
 
   it("keeps Nightly unsigned while Stable requires production signing", () => {
-    const nightly = readFileSync(
-      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+    const nightly = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
-    const stable = readFileSync(
-      path.join(repoRoot, ".github/workflows/build-release.yml"),
+    const stable = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/build-release.yml"),
       "utf8",
     );
-    const afterPack = readFileSync(
-      path.join(
+    const afterPack = NodeFS.readFileSync(
+      NodePath.join(
         repoRoot,
         "apps/desktop/scripts/desktop-packaging/target-package/after-pack.mjs",
       ),
@@ -280,8 +280,8 @@ describe("desktop packaging workflow wiring", () => {
   });
 
   it("avoids empty Bash arrays when packaging unsigned macOS targets", () => {
-    const reusable = readFileSync(
-      path.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
+    const reusable = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
       "utf8",
     );
 

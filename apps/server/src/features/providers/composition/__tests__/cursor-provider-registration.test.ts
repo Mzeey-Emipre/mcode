@@ -12,6 +12,7 @@ function createHostPorts() {
   const threadControlBootstrap = vi.fn(async () => null);
   const submitEvents = vi.fn(async () => undefined);
   const host: ProviderHostPorts = {
+    runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
     environment: { snapshot: environmentSnapshot },
     processes: { attach: processAttach, terminateTree },
     browser: {

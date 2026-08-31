@@ -287,7 +287,8 @@ export const CreateThreadSchema = lazySchema(() =>
   }),
 );
 
-const buildSendMessageSchema = () => z.object({
+/** Schema for sending a message to an existing thread. */
+export const SendMessageSchema = lazySchema(() => z.object({
     threadId: z.string(),
     content: z.string(),
     /** Client identity for the optimistic user row, when the sender has one. */
@@ -299,11 +300,11 @@ const buildSendMessageSchema = () => z.object({
     displayContent: z.string().optional(),
     model: z.string().optional(),
     permissionMode: PermissionModeSchema.optional(),
-    attachments: z.array(AttachmentMetaSchema).max(MAX_ATTACHMENTS).optional(),
+    attachments: z.array(AttachmentMetaSchema()).max(MAX_ATTACHMENTS).optional(),
     /** Structured Preview Annotation bundle, counted separately from normal attachments. */
     previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
-    mentions: MessageMentionsSchema.optional(),
+    mentions: MessageMentionsSchema().optional(),
     /** One selected-text comment sent with the current composer draft. */
     selectedTextComments: SelectedTextCommentsSchema().optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
@@ -339,17 +340,10 @@ const buildSendMessageSchema = () => z.object({
     planAction: PlanActionSchema().optional(),
     /** Objective installed as a provider goal immediately before this turn dispatches. */
     goalObjective: GoalObjectiveSchema().optional(),
-});
+}));
 
 /** Validated command for sending a message to an existing thread. */
-export type SendMessageInput = z.infer<ReturnType<typeof buildSendMessageSchema>>;
-
-type SendMessageZodSchema = ReturnType<typeof buildSendMessageSchema>;
-
-/** Schema for sending a message to an existing thread. */
-export const SendMessageSchema: () => SendMessageZodSchema = lazySchema(
-  buildSendMessageSchema,
-);
+export type SendMessageInput = z.infer<ReturnType<typeof SendMessageSchema>>;
 
 /** Schema for creating a thread and sending a message in one call. */
 export const CreateAndSendSchema = lazySchema(() =>
@@ -364,11 +358,11 @@ export const CreateAndSendSchema = lazySchema(() =>
     worktreeBranchMode: z.enum(["branchless", "named"]).optional(),
     existingWorktreePath: z.string().optional(),
     existingWorktreeBaseBranch: GitBranchNameSchema.optional(),
-    attachments: z.array(AttachmentMetaSchema).max(MAX_ATTACHMENTS).optional(),
+    attachments: z.array(AttachmentMetaSchema()).max(MAX_ATTACHMENTS).optional(),
     /** Structured Preview Annotation bundle, counted separately from normal attachments. */
     previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
-    mentions: MessageMentionsSchema.optional(),
+    mentions: MessageMentionsSchema().optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
     provider: ProviderIdSchema.optional(),
     /** When "plan", the server wraps the message with the plan-mode question prompt. */
@@ -408,7 +402,7 @@ export type CreateAndSendInput = z.infer<ReturnType<typeof CreateAndSendSchema>>
 export const CreateAndSendResultSchema = lazySchema(() =>
   ThreadSchema().extend({
     /** Authoritative runtime identity captured after the first turn starts. */
-    runtimeSnapshot: TurnRuntimeSnapshotSchema,
+    runtimeSnapshot: TurnRuntimeSnapshotSchema(),
     warnings: z.array(z.string()).optional(),
   }),
 );
@@ -473,18 +467,22 @@ const terminalV1SessionMethods = (): Record<TerminalV1WsMethodName, { params: z.
 
 type ThreadCleanupWsMethodName = "thread.cleanupBlockedCount" | "thread.retryCleanup";
 
+const ThreadCleanupBlockedCountParamsSchema = z.object({}).strict();
+const ThreadCleanupBlockedCountResultSchema = z.object({ count: z.number().int().nonnegative() }).strict();
+const ThreadRetryCleanupParamsSchema = z.object({ threadId: z.string() }).strict();
+
 const threadCleanupLifecycleMethods = (): Record<
   ThreadCleanupWsMethodName,
   { params: z.ZodTypeAny; result: z.ZodTypeAny }
 > => ({
   /** Return the number of completed retention candidates currently blocked. */
   "thread.cleanupBlockedCount": {
-    params: z.object({}).strict(),
-    result: z.object({ count: z.number().int().nonnegative() }).strict(),
+    params: ThreadCleanupBlockedCountParamsSchema,
+    result: ThreadCleanupBlockedCountResultSchema,
   },
   /** Requeue one blocked completed thread for retention cleanup. */
   "thread.retryCleanup": {
-    params: z.object({ threadId: z.string() }).strict(),
+    params: ThreadRetryCleanupParamsSchema,
     result: ThreadSchema(),
   },
 });
@@ -587,7 +585,8 @@ const workspaceEnvironmentActionMethods = (): Record<
 
 type WsMethodDefinition = { params: z.ZodTypeAny; result: z.ZodTypeAny };
 
-const buildWsMethods = () => ({
+/** All WebSocket methods with runtime-validating parameter and result schemas. */
+export const WS_METHODS = lazySchema(() => ({
   /** Registers this WebSocket as a visible-browser automation host. */
   "browserAutomation.host.register": {
     params: z.object({ registration: BrowserAutomationHostRegistrationSchema() }).strict(),
@@ -855,7 +854,7 @@ const buildWsMethods = () => ({
   },
   "git.listBranches": {
     params: z.object({ workspaceId: z.string() }),
-    result: z.array(GitBranchSchema),
+    result: z.array(GitBranchSchema()),
   },
   "git.currentBranch": {
     params: z.object({ workspaceId: z.string() }),
@@ -875,14 +874,14 @@ const buildWsMethods = () => ({
   },
   "git.listWorktrees": {
     params: z.object({ workspaceId: z.string() }),
-    result: z.array(WorktreeSchema),
+    result: z.array(WorktreeSchema()),
   },
   "git.getRemoteUrl": {
     params: z.object({
       workspaceId: z.string(),
       threadId: z.string().optional(),
     }),
-    result: GitRemoteUrlSchema,
+    result: GitRemoteUrlSchema(),
   },
   "git.fetchBranch": {
     params: z.object({
@@ -902,7 +901,7 @@ const buildWsMethods = () => ({
       includeStats: z.boolean().optional(),
       threadId: z.string().optional(),
     }),
-    result: z.array(GitCommitSchema),
+    result: z.array(GitCommitSchema()),
   },
   "git.commitDiff": {
     params: z.object({
@@ -967,7 +966,7 @@ const buildWsMethods = () => ({
       workspaceId: z.string(),
       threadId: z.string().optional(),
     }),
-    result: BranchComparisonSchema,
+    result: BranchComparisonSchema(),
   },
   /**
    * Return total additions and deletions for a Review-panel git view.
@@ -1048,7 +1047,7 @@ const buildWsMethods = () => ({
   },
   "agent.stop": {
     params: z.object({ threadId: z.string() }),
-    result: AgentStopResultSchema,
+    result: AgentStopResultSchema(),
   },
   "agent.activeCount": {
     params: z.object({}),
@@ -1056,7 +1055,7 @@ const buildWsMethods = () => ({
   },
   "agent.listRunning": {
     params: z.object({}),
-    result: z.array(TurnRuntimeSnapshotSchema),
+    result: z.array(TurnRuntimeSnapshotSchema()),
   },
   "push.subscribeThread": {
     params: z.object({ threadId: z.string() }),
@@ -1290,11 +1289,11 @@ const buildWsMethods = () => ({
   },
   "toolCallRecord.list": {
     params: z.object({ messageId: z.string() }),
-    result: z.array(ToolCallRecordSchema),
+    result: z.array(ToolCallRecordSchema()),
   },
   "toolCallRecord.listByParent": {
     params: z.object({ parentToolCallId: z.string() }),
-    result: z.array(ToolCallRecordSchema),
+    result: z.array(ToolCallRecordSchema()),
   },
   /**
    * Single-source hydration for a thread's persisted narrative: returns one
@@ -1311,9 +1310,9 @@ const buildWsMethods = () => ({
   "narrative.list": {
     params: z.object({ messageId: z.string() }),
     result: z.object({
-      tools: z.array(ToolCallRecordSchema),
-      thoughts: z.array(ThoughtSegmentRecordSchema),
-      hooks: z.array(HookExecutionRecordSchema),
+      tools: z.array(ToolCallRecordSchema()),
+      thoughts: z.array(ThoughtSegmentRecordSchema()),
+      hooks: z.array(HookExecutionRecordSchema()),
     }),
   },
   "thread.getTasks": {
@@ -1349,7 +1348,7 @@ const buildWsMethods = () => ({
   },
   "snapshot.listByThread": {
     params: z.object({ threadId: z.string() }),
-    result: z.array(TurnSnapshotSchema),
+    result: z.array(TurnSnapshotSchema()),
   },
   "snapshot.getCumulativeDiff": {
     params: z.object({
@@ -1382,7 +1381,7 @@ const buildWsMethods = () => ({
           "fileName must not contain path separators or null bytes",
         ),
     }),
-    result: AttachmentMetaSchema,
+    result: AttachmentMetaSchema(),
   },
   "settings.get": {
     params: z.object({}),
@@ -1507,12 +1506,7 @@ const buildWsMethods = () => ({
       text: z.string(),
     }),
   },
-}) satisfies Record<string, WsMethodDefinition>;
-
-type WsMethods = ReturnType<typeof buildWsMethods>;
-
-/** All WebSocket methods with runtime-validating parameter and result schemas. */
-export const WS_METHODS: () => WsMethods = lazySchema(buildWsMethods);
+}) satisfies Record<string, WsMethodDefinition>);
 
 /** Union of all RPC method names. */
 export type WsMethodName = keyof ReturnType<typeof WS_METHODS>;

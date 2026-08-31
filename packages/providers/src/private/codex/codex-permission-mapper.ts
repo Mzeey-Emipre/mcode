@@ -27,6 +27,26 @@ export const CODEX_APPROVAL_METHODS = [
 /** Record type for the params field the codex app-server hands us on a serverRequest. */
 export type CodexApprovalParams = Record<string, unknown>;
 
+const COMMAND_APPROVAL_BY_DECISION: Record<PermissionDecision, string> = {
+  allow: "accept",
+  "allow-session": "acceptForSession",
+  deny: "decline",
+  cancelled: "cancel",
+};
+const LEGACY_APPROVAL_BY_DECISION: Record<PermissionDecision, string> = {
+  allow: "approved",
+  "allow-session": "approved_for_session",
+  deny: "denied",
+  cancelled: "abort",
+};
+const SESSION_PERMISSION_DECISIONS = new Set<PermissionDecision>(["allow-session"]);
+const GRANTED_PERMISSION_DECISIONS = new Set<PermissionDecision>(["allow", "allow-session"]);
+const COMMAND_APPROVAL_METHODS = new Set([
+  "item/commandExecution/requestApproval",
+  "item/fileChange/requestApproval",
+]);
+const LEGACY_APPROVAL_METHODS = new Set(["applyPatchApproval", "execCommandApproval"]);
+
 /**
  * Translate a PermissionDecision into the response payload the codex app-server
  * expects for a given approval method.
@@ -42,44 +62,24 @@ export function mapDecisionToCodexResponse(
   decision: PermissionDecision,
   params: CodexApprovalParams,
 ): unknown {
-  if (
-    method === "item/commandExecution/requestApproval"
-    || method === "item/fileChange/requestApproval"
-  ) {
-    switch (decision) {
-      case "allow": return { decision: "accept" };
-      case "allow-session": return { decision: "acceptForSession" };
-      case "deny": return { decision: "decline" };
-      case "cancelled": return { decision: "cancel" };
-    }
-  }
-
+  if (COMMAND_APPROVAL_METHODS.has(method)) return { decision: COMMAND_APPROVAL_BY_DECISION[decision] };
   if (method === "item/permissions/requestApproval") {
-    const echoed = (params.permissions as unknown) ?? {};
-    switch (decision) {
-      case "allow": return { permissions: echoed, scope: "turn" };
-      case "allow-session": return { permissions: echoed, scope: "session" };
-      case "deny": return { permissions: {}, scope: "turn" };
-      case "cancelled": return { permissions: {}, scope: "turn" };
-    }
+    return permissionApprovalResponse(decision, params);
   }
-
-  if (method === "applyPatchApproval" || method === "execCommandApproval") {
-    switch (decision) {
-      case "allow": return { decision: "approved" };
-      case "allow-session": return { decision: "approved_for_session" };
-      case "deny": return { decision: "denied" };
-      case "cancelled": return { decision: "abort" };
-    }
-  }
-
-  // Unknown method: pick the safer default shape based on whether the name
-  // looks permissions-like, and warn so schema drift shows up in logs.
+  if (LEGACY_APPROVAL_METHODS.has(method)) return { decision: LEGACY_APPROVAL_BY_DECISION[decision] };
   logger.warn("Codex approval: unknown method, falling back to safe-deny default", { method });
-  if (method.toLowerCase().includes("permissions")) {
-    return { permissions: {}, scope: "turn" };
-  }
+  if (method.toLowerCase().includes("permissions")) return { permissions: {}, scope: "turn" };
   return { decision: "decline" };
+}
+
+function permissionApprovalResponse(
+  decision: PermissionDecision,
+  params: CodexApprovalParams,
+): { permissions: unknown; scope: "turn" | "session" } {
+  return {
+    permissions: GRANTED_PERMISSION_DECISIONS.has(decision) ? params.permissions ?? {} : {},
+    scope: SESSION_PERMISSION_DECISIONS.has(decision) ? "session" : "turn",
+  };
 }
 
 /**

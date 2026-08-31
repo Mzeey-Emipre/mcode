@@ -1,6 +1,6 @@
-import { existsSync, statSync } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { isAbsolute } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 import {
   AgentEventType,
   previewAnnotationSnapshotAttachments,
@@ -181,8 +181,9 @@ export class TurnAdmissionDispatchCoordinator {
     private readonly settings: Pick<SettingsService, "get">,
     private readonly plans: PlanTurnService,
     private readonly goals: GoalLifecycleService,
-    private readonly environment?: WorkspaceEnvironmentService,
-    private readonly files?: FileService,
+    private readonly environment: WorkspaceEnvironmentService | undefined,
+    private readonly files: FileService | undefined,
+    private readonly platform: NodeJS.Platform,
   ) {}
 
   /** Admit one command and return an immutable package for the runtime owner. */
@@ -349,7 +350,7 @@ export class TurnAdmissionDispatchCoordinator {
     const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/$/, "");
     const known = normalize(left);
     const input = normalize(right);
-    return process.platform === "win32" ? known.toLowerCase() === input.toLowerCase() : known === input;
+    return this.platform === "win32" ? known.toLowerCase() === input.toLowerCase() : known === input;
   }
 
   private async prepare(command: SendMessageCommand): Promise<{ kind: "ready"; value: PreparedCommand } | { kind: "handled" } | { kind: "queued" }> {
@@ -398,7 +399,7 @@ export class TurnAdmissionDispatchCoordinator {
     const cwd = this.resolveWorkingDirectory(prepared);
     runtime.activate(lease);
     const attachmentData = await this.persistAttachments(prepared);
-    const sourceTurnId = prepared.command.sourceTurnId ?? randomUUID();
+    const sourceTurnId = prepared.command.sourceTurnId ?? NodeCrypto.randomUUID();
     this.startParentTurn(prepared, lease, sourceTurnId, attachmentData);
     this.publishCommittedEffects(prepared, sourceTurnId);
     const wirePayload = this.buildWirePayload(prepared);
@@ -574,7 +575,7 @@ export class TurnAdmissionDispatchCoordinator {
     mentions: readonly MessageMention[],
     attachments: PersistedAttachmentData,
   ) {
-    const messageId = command.messageId ?? randomUUID();
+    const messageId = command.messageId ?? NodeCrypto.randomUUID();
     return {
       threadId: thread.id,
       messageId,
@@ -649,7 +650,7 @@ export class TurnAdmissionDispatchCoordinator {
 
   private resolveWorkingDirectory(prepared: PreparedCommand): string {
     const cwd = this.worktrees.resolveWorkingDir(prepared.workspace.path, prepared.thread.mode, prepared.thread.worktree_path);
-    if (!isAbsolute(cwd) || !existsSync(cwd) || !statSync(cwd).isDirectory()) {
+    if (!NodePath.isAbsolute(cwd) || !NodeFS.existsSync(cwd) || !NodeFS.statSync(cwd).isDirectory()) {
       throw new Error(`cwd is not a valid absolute directory: ${cwd}`);
     }
     return cwd;
@@ -927,13 +928,41 @@ export class TurnAdmissionDispatchCoordinator {
 
   private providerDefaults(prepared: PreparedCommand, settings: ReturnType<SettingsService["get"]>) {
     const command = prepared.command;
-    const contextWindow = command.contextWindow
+    return {
+      contextWindow: this.contextWindowDefault(command, prepared, settings),
+      thinking: this.thinkingDefault(command, prepared, settings),
+      fastMode: this.fastModeDefault(command, prepared, settings),
+      copilotAgent: command.copilotAgent ?? prepared.thread.copilot_agent ?? undefined,
+    };
+  }
+
+  private contextWindowDefault(
+    command: SendMessageCommand,
+    prepared: PreparedCommand,
+    settings: ReturnType<SettingsService["get"]>,
+  ): ContextWindowMode {
+    return command.contextWindow
       ?? (prepared.thread.context_window_mode as ContextWindowMode | null)
       ?? settings.model.defaults.contextWindow;
-    const thinking = command.thinking ?? (prepared.thread.thinking ?? settings.model.defaults.thinking);
-    const fastMode = command.codexFastMode ?? prepared.thread.codex_fast_mode ?? settings.provider?.codex?.fastMode ?? false;
-    const copilotAgent = command.copilotAgent ?? prepared.thread.copilot_agent ?? undefined;
-    return { contextWindow, thinking, fastMode, copilotAgent };
+  }
+
+  private thinkingDefault(
+    command: SendMessageCommand,
+    prepared: PreparedCommand,
+    settings: ReturnType<SettingsService["get"]>,
+  ): boolean {
+    return command.thinking ?? prepared.thread.thinking ?? settings.model.defaults.thinking;
+  }
+
+  private fastModeDefault(
+    command: SendMessageCommand,
+    prepared: PreparedCommand,
+    settings: ReturnType<SettingsService["get"]>,
+  ): boolean {
+    return command.codexFastMode
+      ?? prepared.thread.codex_fast_mode
+      ?? settings.provider?.codex?.fastMode
+      ?? false;
   }
 
   private providerSpecificOptions(

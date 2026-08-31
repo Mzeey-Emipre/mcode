@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { join } from "path";
-import { existsSync } from "fs";
+import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../persistence/cleanup-job-repo.js";
@@ -24,8 +24,8 @@ vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
 }));
 
 // Stub filesystem checks - paths in tests are synthetic; we test logic not fs state.
-vi.mock("fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("fs")>();
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
     existsSync: vi.fn().mockReturnValue(true),
@@ -34,11 +34,12 @@ vi.mock("fs", async (importOriginal) => {
 });
 
 // Synthetic worktree base that satisfies the production mcode-dir path guard.
-const WT_BASE = join(getMcodeDir(), "worktrees", "test-repo");
+const WT_BASE = NodePath.join(getMcodeDir(), "worktrees", "test-repo");
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
 /** Build a synthetic worktree path under the mcode base dir. */
 function wt(name: string): string {
-  return join(WT_BASE, name);
+  return NodePath.join(WT_BASE, name);
 }
 
 describe("CleanupWorker", () => {
@@ -57,7 +58,7 @@ describe("CleanupWorker", () => {
   let worker: CleanupWorker;
 
   beforeEach(() => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
     db = openMemoryDatabase();
     cleanupJobRepo = new CleanupJobRepo(db);
     threadRepo = new ThreadRepo(db);
@@ -118,6 +119,7 @@ describe("CleanupWorker", () => {
       mockAttachmentService,
       mockHandoffStorage,
       mockWorkspaceEnvironmentService,
+      TEST_HOST_RUNTIME,
       mutationReservations,
       { get: vi.fn(() => ({ thread: { completion: { unsafeWorktreePolicy } } })) } as unknown as SettingsService,
     );
@@ -388,7 +390,7 @@ describe("CleanupWorker", () => {
     it("deletes thread data without removing an external worktree", async () => {
       const workspace = workspaceRepo.create("Unmanaged", "/unmanaged-repo");
       const completedAt = "2026-08-01T00:00:00.000Z";
-      const worktreePath = join(getMcodeDir(), "worktrees-sibling", "unmanaged");
+      const worktreePath = NodePath.join(getMcodeDir(), "worktrees-sibling", "unmanaged");
       db.prepare(
         `INSERT INTO threads
           (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
@@ -622,7 +624,7 @@ describe("CleanupWorker", () => {
         completedAt,
         completedAt,
       );
-      vi.mocked(existsSync).mockImplementation(
+      vi.mocked(NodeFS.existsSync).mockImplementation(
         (path) => !String(path).includes("missing-worktree"),
       );
 
@@ -712,6 +714,7 @@ describe("CleanupWorker", () => {
       expect(killDescendantsByName).toHaveBeenCalledWith(
         process.pid,
         expect.stringMatching(/claude/i),
+        "win32",
       );
     });
 

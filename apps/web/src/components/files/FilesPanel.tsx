@@ -27,6 +27,22 @@ export interface FilesPanelProps {
   onWidthChange?: (width: number, source: ResizablePanelWidthSource) => void;
 }
 
+function FilesPanelHeader({ title, count, onClose }: Pick<FilesPanelProps, "title" | "count" | "onClose">) {
+  return <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/35 px-3">
+    <span className="text-xs font-medium text-foreground/90">{title}</span>
+    <Badge variant="ghost" size="sm" className="px-1 font-mono font-normal tabular-nums text-muted-foreground">{count}</Badge>
+    {onClose ? <Button type="button" variant="ghost" size="icon-xs" className="ml-auto rounded-md text-muted-foreground" aria-label={`Hide ${title.toLowerCase()}`} onClick={onClose}><X size={13} aria-hidden /></Button> : null}
+  </header>;
+}
+
+function resolveResizableWidth(width: number | undefined, defaultWidth: number): number {
+  return width ?? defaultWidth;
+}
+
+function noopWidthChange(): void {
+  return undefined;
+}
+
 /** Renders a dockable file navigator with optional shared right-panel resizing. */
 export function FilesPanel({
   title,
@@ -49,7 +65,7 @@ export function FilesPanel({
 
   return (
     <ResizableRightPanel
-      width={width ?? defaultWidth}
+      width={resolveResizableWidth(width, defaultWidth)}
       minWidth={minWidth}
       maxWidth={maxWidth}
       getMaxWidth={getMaxWidth}
@@ -57,7 +73,7 @@ export function FilesPanel({
       wideWidth={wideWidth}
       separatorLabel={`Resize ${ariaLabel}`}
       resizeEnabled={resizable}
-      onWidthChange={onWidthChange ?? (() => undefined)}
+      onWidthChange={onWidthChange ?? noopWidthChange}
       className={cn("flex min-h-0 shrink-0", className)}
     >
       <aside
@@ -65,30 +81,7 @@ export function FilesPanel({
         aria-label={`${ariaLabel} navigator`}
         className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-border/55 bg-page"
       >
-        <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/35 px-3">
-          <span className="text-xs font-medium text-foreground/90">
-            {title}
-          </span>
-          <Badge
-            variant="ghost"
-            size="sm"
-            className="px-1 font-mono font-normal tabular-nums text-muted-foreground"
-          >
-            {count}
-          </Badge>
-          {onClose ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="ml-auto rounded-md text-muted-foreground"
-              aria-label={`Hide ${title.toLowerCase()}`}
-              onClick={onClose}
-            >
-              <X size={13} aria-hidden />
-            </Button>
-          ) : null}
-        </header>
+        <FilesPanelHeader title={title} count={count} onClose={onClose} />
         {controls}
         {children}
       </aside>

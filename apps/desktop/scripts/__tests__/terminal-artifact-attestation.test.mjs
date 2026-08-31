@@ -1,16 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  truncateSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   attestPackagedTerminalArtifacts,
   parseLoadProbeProcessResult,
@@ -18,8 +9,8 @@ import {
 } from "../desktop-packaging/package-validation/terminal-artifact-attestation.mjs";
 
 function writeFile(filePath, value) {
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileSync(filePath, value);
+  NodeFS.mkdirSync(NodePath.dirname(filePath), { recursive: true });
+  NodeFS.writeFileSync(filePath, value);
 }
 
 function peBinary(machine) {
@@ -73,7 +64,7 @@ describe("attestPackagedTerminalArtifacts", () => {
   });
 
   it("does not treat a post-readiness shutdown status as a startup failure", () => {
-    const source = readFileSync(
+    const source = NodeFS.readFileSync(
       new URL("../desktop-packaging/package-validation/terminal-artifact-attestation.mjs", import.meta.url),
       "utf8",
     );
@@ -91,46 +82,46 @@ describe("attestPackagedTerminalArtifacts", () => {
   let koffiBinding;
 
   beforeEach(() => {
-    resourcesRoot = mkdtempSync(path.join(tmpdir(), "mcode-terminal-package-"));
-    nodePtyRoot = path.join(
+    resourcesRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-terminal-package-"));
+    nodePtyRoot = NodePath.join(
       resourcesRoot,
       "app.asar.unpacked/node_modules/node-pty",
     );
-    koffiRoot = path.join(
+    koffiRoot = NodePath.join(
       resourcesRoot,
       "app.asar.unpacked/node_modules/koffi",
     );
-    runtimePath = path.join(resourcesRoot, "bin/mcode-server.exe");
-    nodePtyBinding = path.join(nodePtyRoot, "build/Release/conpty.node");
-    koffiBinding = path.join(koffiRoot, "build/koffi/win32_x64/koffi.node");
+    runtimePath = NodePath.join(resourcesRoot, "bin/mcode-server.exe");
+    nodePtyBinding = NodePath.join(nodePtyRoot, "build/Release/conpty.node");
+    koffiBinding = NodePath.join(koffiRoot, "build/koffi/win32_x64/koffi.node");
 
     writeFile(runtimePath, "runtime");
     writeFile(
-      path.join(resourcesRoot, "app.asar.unpacked/dist/server/pty-host.cjs"),
+      NodePath.join(resourcesRoot, "app.asar.unpacked/dist/server/pty-host.cjs"),
       "require('node-pty'); require('koffi');",
     );
     writeFile(
-      path.join(nodePtyRoot, "package.json"),
+      NodePath.join(nodePtyRoot, "package.json"),
       '{"name":"node-pty","version":"1.0.0"}',
     );
     writeFile(
-      path.join(koffiRoot, "package.json"),
+      NodePath.join(koffiRoot, "package.json"),
       '{"name":"koffi","version":"2.16.1"}',
     );
     writeFile(nodePtyBinding, peBinary(0x8664));
     writeFile(koffiBinding, peBinary(0x8664));
     writeFile(
-      path.join(nodePtyRoot, "build/Release/conpty/conpty.dll"),
+      NodePath.join(nodePtyRoot, "build/Release/conpty/conpty.dll"),
       peBinary(0x8664),
     );
     writeFile(
-      path.join(nodePtyRoot, "build/Release/conpty/OpenConsole.exe"),
+      NodePath.join(nodePtyRoot, "build/Release/conpty/OpenConsole.exe"),
       peBinary(0x8664),
     );
   });
 
   afterEach(() => {
-    rmSync(resourcesRoot, { recursive: true, force: true });
+    NodeFS.rmSync(resourcesRoot, { recursive: true, force: true });
   });
 
   it("attests the packaged host and exact native modules loaded by the target runtime", () => {
@@ -187,7 +178,7 @@ describe("attestPackagedTerminalArtifacts", () => {
 
   it("rejects duplicate or foreign native artifacts left in the target package", () => {
     writeFile(
-      path.join(nodePtyRoot, "prebuilds/win32-arm64/conpty.node"),
+      NodePath.join(nodePtyRoot, "prebuilds/win32-arm64/conpty.node"),
       peBinary(0xaa64),
     );
 
@@ -214,11 +205,11 @@ describe("attestPackagedTerminalArtifacts", () => {
   });
 
   it("retains only the target native runtime before attestation", () => {
-    const foreignBinding = path.join(
+    const foreignBinding = NodePath.join(
       nodePtyRoot,
       "prebuilds/win32-arm64/conpty.node",
     );
-    const foreignKoffi = path.join(
+    const foreignKoffi = NodePath.join(
       koffiRoot,
       "build/koffi/darwin_x64/koffi.node",
     );
@@ -231,18 +222,18 @@ describe("attestPackagedTerminalArtifacts", () => {
       targetArch: "x64",
     });
 
-    expect(existsSync(nodePtyBinding)).toBe(true);
-    expect(existsSync(koffiBinding)).toBe(true);
-    expect(existsSync(foreignBinding)).toBe(false);
-    expect(existsSync(foreignKoffi)).toBe(false);
+    expect(NodeFS.existsSync(nodePtyBinding)).toBe(true);
+    expect(NodeFS.existsSync(koffiBinding)).toBe(true);
+    expect(NodeFS.existsSync(foreignBinding)).toBe(false);
+    expect(NodeFS.existsSync(foreignKoffi)).toBe(false);
   });
 
   it("attests a Linux package without the macOS-only spawn helper", () => {
-    const linuxNodePtyBinding = path.join(
+    const linuxNodePtyBinding = NodePath.join(
       nodePtyRoot,
       "build/Release/pty.node",
     );
-    const linuxKoffiBinding = path.join(
+    const linuxKoffiBinding = NodePath.join(
       koffiRoot,
       "build/koffi/linux_x64/koffi.node",
     );
@@ -282,15 +273,15 @@ describe("attestPackagedTerminalArtifacts", () => {
   });
 
   it("gives a Rosetta artifact probe the shared packaged-runtime startup budget", () => {
-    const darwinNodePtyBinding = path.join(
+    const darwinNodePtyBinding = NodePath.join(
       nodePtyRoot,
       "build/Release/pty.node",
     );
-    const darwinSpawnHelper = path.join(
+    const darwinSpawnHelper = NodePath.join(
       nodePtyRoot,
       "build/Release/spawn-helper",
     );
-    const darwinKoffiBinding = path.join(
+    const darwinKoffiBinding = NodePath.join(
       koffiRoot,
       "build/koffi/darwin_x64/koffi.node",
     );
@@ -333,18 +324,18 @@ describe("attestPackagedTerminalArtifacts", () => {
   });
 
   it("retains a valid target prebuild when a stale rebuilt binding is foreign", () => {
-    const targetPrebuild = path.join(
+    const targetPrebuild = NodePath.join(
       nodePtyRoot,
       "prebuilds/win32-x64/conpty.node",
     );
     writeFile(nodePtyBinding, peBinary(0xaa64));
     writeFile(targetPrebuild, peBinary(0x8664));
     writeFile(
-      path.join(nodePtyRoot, "prebuilds/win32-x64/conpty/conpty.dll"),
+      NodePath.join(nodePtyRoot, "prebuilds/win32-x64/conpty/conpty.dll"),
       peBinary(0x8664),
     );
     writeFile(
-      path.join(nodePtyRoot, "prebuilds/win32-x64/conpty/OpenConsole.exe"),
+      NodePath.join(nodePtyRoot, "prebuilds/win32-x64/conpty/OpenConsole.exe"),
       peBinary(0x8664),
     );
 
@@ -354,14 +345,14 @@ describe("attestPackagedTerminalArtifacts", () => {
       targetArch: "x64",
     });
 
-    expect(existsSync(nodePtyBinding)).toBe(false);
-    expect(existsSync(targetPrebuild)).toBe(true);
+    expect(NodeFS.existsSync(nodePtyBinding)).toBe(false);
+    expect(NodeFS.existsSync(targetPrebuild)).toBe(true);
   });
 
   it("removes node-gyp tool links before enforcing the package inventory", () => {
-    const toolLink = path.join(nodePtyRoot, "build/node_gyp_bins/python3");
-    mkdirSync(path.dirname(toolLink), { recursive: true });
-    symlinkSync(runtimePath, toolLink, "file");
+    const toolLink = NodePath.join(nodePtyRoot, "build/node_gyp_bins/python3");
+    NodeFS.mkdirSync(NodePath.dirname(toolLink), { recursive: true });
+    NodeFS.symlinkSync(runtimePath, toolLink, "file");
 
     retainTargetTerminalNativeArtifacts({
       resourcesRoot,
@@ -369,7 +360,7 @@ describe("attestPackagedTerminalArtifacts", () => {
       targetArch: "x64",
     });
 
-    expect(existsSync(path.dirname(toolLink))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.dirname(toolLink))).toBe(false);
   });
 
   it("rejects a native module for a foreign architecture", () => {
@@ -398,8 +389,8 @@ describe("attestPackagedTerminalArtifacts", () => {
   });
 
   it("rejects a package when the PTY host bundle is missing", () => {
-    rmSync(
-      path.join(resourcesRoot, "app.asar.unpacked/dist/server/pty-host.cjs"),
+    NodeFS.rmSync(
+      NodePath.join(resourcesRoot, "app.asar.unpacked/dist/server/pty-host.cjs"),
     );
 
     expect(() =>
@@ -441,7 +432,7 @@ describe("attestPackagedTerminalArtifacts", () => {
 
   it("rejects an unbounded package file before reading or compressing it", () => {
     writeFile(
-      path.join(nodePtyRoot, "oversized.bin"),
+      NodePath.join(nodePtyRoot, "oversized.bin"),
       Buffer.alloc(16 * 1024 * 1024 + 1),
     );
 
@@ -456,9 +447,9 @@ describe("attestPackagedTerminalArtifacts", () => {
 
   it("rejects an unbounded total package size", () => {
     for (let index = 0; index < 9; index += 1) {
-      const filePath = path.join(nodePtyRoot, `large-${index}.bin`);
+      const filePath = NodePath.join(nodePtyRoot, `large-${index}.bin`);
       writeFile(filePath, "");
-      truncateSync(filePath, 15 * 1024 * 1024);
+      NodeFS.truncateSync(filePath, 15 * 1024 * 1024);
     }
 
     expect(() =>
@@ -471,9 +462,9 @@ describe("attestPackagedTerminalArtifacts", () => {
   });
 
   it("rejects unbounded package directory fan-out", () => {
-    const fanOutRoot = path.join(nodePtyRoot, "fan-out");
+    const fanOutRoot = NodePath.join(nodePtyRoot, "fan-out");
     for (let index = 0; index < 513; index += 1) {
-      mkdirSync(path.join(fanOutRoot, String(index)), { recursive: true });
+      NodeFS.mkdirSync(NodePath.join(fanOutRoot, String(index)), { recursive: true });
     }
 
     expect(() =>

@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ATTACHMENT_IMAGE_AND_FALLBACK_MAX_BYTES,
@@ -9,7 +9,6 @@ import {
 import {
   CLIPBOARD_FILE_NAME_MAX_LENGTH,
   CLIPBOARD_MIME_TYPE_MAX_LENGTH,
-  createClipboardHandlers,
   registerClipboardHandlers,
   type ClipboardImage,
 } from "../handlers.js";
@@ -18,13 +17,13 @@ import { createTempAttachmentStore } from "../../staging/temp-store.js";
 const temporaryDirectories: string[] = [];
 
 async function createTemporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "mcode-clipboard-handlers-"));
+  const directory = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-clipboard-handlers-"));
   temporaryDirectories.push(directory);
   return directory;
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => NodeFSPromises.rm(directory, { recursive: true, force: true })));
 });
 
 function createDependencies(root: string, image: ClipboardImage) {
@@ -57,7 +56,7 @@ describe("clipboard attachment handlers", () => {
 
     expect(result).toBeNull();
     expect(image.toJPEG).not.toHaveBeenCalled();
-    await expect(readdir(join(root, "mcode-attachments"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(NodeFSPromises.readdir(NodePath.join(root, "mcode-attachments"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("converts non-empty images at JPEG quality 85 and returns exact metadata and bytes", async () => {
@@ -85,7 +84,7 @@ describe("clipboard attachment handlers", () => {
       mimeType: "image/jpeg",
       sizeBytes: 3,
     });
-    expect(await readFile(result.sourcePath)).toEqual(Buffer.from([9, 8, 7]));
+    expect(await NodeFSPromises.readFile(result.sourcePath)).toEqual(Buffer.from([9, 8, 7]));
   });
 
   it("stages valid file bytes while keeping the supplied filename as metadata only", async () => {
@@ -110,9 +109,9 @@ describe("clipboard attachment handlers", () => {
       mimeType: "text/plain",
       sizeBytes: 3,
     });
-    expect(basename(result.sourcePath)).toMatch(/^[0-9a-f-]{36}\.txt$/);
+    expect(NodePath.basename(result.sourcePath)).toMatch(/^[0-9a-f-]{36}\.txt$/);
     expect(result.sourcePath).not.toContain("notes");
-    expect(await readFile(result.sourcePath)).toEqual(Buffer.from(payload));
+    expect(await NodeFSPromises.readFile(result.sourcePath)).toEqual(Buffer.from(payload));
   });
 
   it.each([
@@ -130,7 +129,7 @@ describe("clipboard attachment handlers", () => {
     });
 
     await expect(handlers.get("save-clipboard-file")?.({}, buffer, mimeType, fileName)).rejects.toThrow();
-    await expect(readdir(join(root, "mcode-attachments"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(NodeFSPromises.readdir(NodePath.join(root, "mcode-attachments"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects an oversized file before creating temporary storage", async () => {
@@ -149,6 +148,6 @@ describe("clipboard attachment handlers", () => {
         "payload.bin",
       ),
     ).rejects.toThrow(`${ATTACHMENT_IMAGE_AND_FALLBACK_MAX_BYTES} byte limit`);
-    await expect(readdir(join(root, "mcode-attachments"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(NodeFSPromises.readdir(NodePath.join(root, "mcode-attachments"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

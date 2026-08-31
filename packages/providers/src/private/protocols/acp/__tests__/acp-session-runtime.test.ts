@@ -1,14 +1,14 @@
-import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
+import * as NodeEvents from "node:events";
+import type * as NodeChildProcess from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import type { Client, ClientSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
 import { AcpSessionRuntime, SessionRecoveryFailedError } from "../acp-session-runtime.js";
 
 function fakeChild() {
-  return Object.assign(new EventEmitter(), {
+  return Object.assign(new NodeEvents.EventEmitter(), {
     kill: vi.fn(() => true),
     pid: 1234,
-  }) as unknown as ChildProcess;
+  }) as unknown as NodeChildProcess.ChildProcess;
 }
 
 function fakeProcesses() {

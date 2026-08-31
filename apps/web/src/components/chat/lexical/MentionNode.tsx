@@ -128,19 +128,7 @@ export class MentionNode extends DecoratorNode<JSX.Element> {
   }
 
   static importJSON(serializedNode: SerializedMentionNode): MentionNode {
-    const path = serializedNode.path ?? serializedNode.filePath ?? serializedNode.label ?? "";
-    return $createTypedMentionNode({
-      id: serializedNode.id ?? createMentionId(),
-      kind: serializedNode.kind ?? "file",
-      label: serializedNode.label ?? path,
-      path,
-      ...((serializedNode.kind === "agent" || serializedNode.kind === "plugin") && serializedNode.name
-        ? {
-            name: serializedNode.name,
-            ...(serializedNode.kind === "agent" ? { provider: serializedNode.provider } : {}),
-          }
-        : {}),
-    } as MentionNodeData);
+    return $createTypedMentionNode(getMentionData(serializedNode));
   }
 
   // -- Decoration -----------------------------------------------------------
@@ -148,6 +136,26 @@ export class MentionNode extends DecoratorNode<JSX.Element> {
   decorate(_editor: LexicalEditor, _config: EditorConfig): JSX.Element {
     return <MentionChip mention={this.__mention} />;
   }
+}
+
+function getSerializedMentionPath(serializedNode: SerializedMentionNode): string {
+  return serializedNode.path ?? serializedNode.filePath ?? serializedNode.label ?? "";
+}
+
+function getSerializedMentionDetails(serializedNode: SerializedMentionNode): Partial<MentionNodeData> {
+  if (!serializedNode.name || (serializedNode.kind !== "agent" && serializedNode.kind !== "plugin")) return {};
+  return serializedNode.kind === "agent" ? { name: serializedNode.name, provider: serializedNode.provider } : { name: serializedNode.name };
+}
+
+function getMentionData(serializedNode: SerializedMentionNode): MentionNodeData {
+  const path = getSerializedMentionPath(serializedNode);
+  return {
+    id: serializedNode.id ?? createMentionId(),
+    kind: serializedNode.kind ?? "file",
+    label: serializedNode.label ?? path,
+    path,
+    ...getSerializedMentionDetails(serializedNode),
+  } as MentionNodeData;
 }
 
 // ---------------------------------------------------------------------------

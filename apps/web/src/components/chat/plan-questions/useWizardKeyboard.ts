@@ -8,6 +8,37 @@ export type WizardKeyAction =
   | { type: "deselect" }
   | { type: "cancel" };
 
+function isTextInput(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  return element?.tagName === "TEXTAREA" ||
+    element?.tagName === "INPUT" ||
+    element?.isContentEditable === true;
+}
+
+function resolveUniversalKeyAction(key: string, altKey: boolean, hasSelection: boolean): WizardKeyAction | null {
+  if (altKey && key === "ArrowLeft") return { type: "previous" };
+  if (key === "Escape") return hasSelection ? { type: "deselect" } : { type: "cancel" };
+  return null;
+}
+
+function resolveNumberKeyAction(key: string, optionCount: number): WizardKeyAction | null {
+  if (!/^[1-5]$/.test(key)) return null;
+  const number = Number(key);
+  if (number > optionCount) return null;
+  return { type: "selectOption", index: number - 1 };
+}
+
+function resolveArrowKeyAction(key: string, optionCount: number, selectedIndex: number): WizardKeyAction | null {
+  const isForward = key === "ArrowDown" || key === "ArrowRight";
+  const isBackward = key === "ArrowUp" || key === "ArrowLeft";
+  if (!isForward && !isBackward) return null;
+  if (selectedIndex < 0) return { type: "selectOption", index: 0 };
+  const nextIndex = isForward
+    ? (selectedIndex + 1) % optionCount
+    : (selectedIndex - 1 + optionCount) % optionCount;
+  return { type: "selectOption", index: nextIndex };
+}
+
 /**
  * Pure function: given a keyboard event and wizard state, returns
  * the action to take or null if the key is not handled.
@@ -18,67 +49,13 @@ export function resolveWizardKeyAction(
   selectedIndex: number,
   hasSelection: boolean,
 ): WizardKeyAction | null {
-  const target = e.target as HTMLElement | null;
-  const tag = target?.tagName;
-  const isTextInput =
-    tag === "TEXTAREA" ||
-    tag === "INPUT" ||
-    target?.isContentEditable === true;
-
-  // Alt+ArrowLeft: always goes to previous (even in text inputs) — Alt is
-  // not a typing modifier, so this never conflicts with typing.
-  if (e.altKey && e.key === "ArrowLeft") {
-    return { type: "previous" };
-  }
-
-  // Escape: deselect if selected, cancel if not. Honored everywhere because
-  // escape is universally non-typing — pressing it in the "Other" textarea
-  // should still cancel the wizard.
-  if (e.key === "Escape") {
-    return hasSelection ? { type: "deselect" } : { type: "cancel" };
-  }
-
-  // Everything below — including Enter — is suppressed when a text input
-  // is focused. Letting Enter through caused users typing multi-line text
-  // in the "Other" tile's textarea to advance the wizard instead of
-  // inserting a newline.
-  if (isTextInput) return null;
-
-  // Enter: advance to next question or submit.
-  if (e.key === "Enter") {
-    return { type: "advance" };
-  }
-
-  // Backspace: go to previous question
-  if (e.key === "Backspace") {
-    return { type: "previous" };
-  }
-
-  // Number keys 1-5: select option by 1-indexed number
-  const num = parseInt(e.key, 10);
-  if (num >= 1 && num <= 5) {
-    const idx = num - 1;
-    return idx < optionCount ? { type: "selectOption", index: idx } : null;
-  }
-
-  // Arrow keys: cycle through options with wrapping
-  if (
-    e.key === "ArrowDown" ||
-    e.key === "ArrowRight" ||
-    e.key === "ArrowUp" ||
-    e.key === "ArrowLeft"
-  ) {
-    const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
-    if (selectedIndex < 0) {
-      return { type: "selectOption", index: 0 };
-    }
-    const next = forward
-      ? (selectedIndex + 1) % optionCount
-      : (selectedIndex - 1 + optionCount) % optionCount;
-    return { type: "selectOption", index: next };
-  }
-
-  return null;
+  const universalAction = resolveUniversalKeyAction(e.key, e.altKey, hasSelection);
+  if (universalAction) return universalAction;
+  if (isTextInput(e.target)) return null;
+  if (e.key === "Enter") return { type: "advance" };
+  if (e.key === "Backspace") return { type: "previous" };
+  return resolveNumberKeyAction(e.key, optionCount)
+    ?? resolveArrowKeyAction(e.key, optionCount, selectedIndex);
 }
 
 interface UseWizardKeyboardOptions {

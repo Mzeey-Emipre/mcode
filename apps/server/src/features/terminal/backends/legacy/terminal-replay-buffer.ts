@@ -221,15 +221,7 @@ export class TerminalReplayBuffer {
   checkpointAt(seq: number, data: string): boolean {
     const bytes = new TextEncoder().encode(data).length;
     const active = this.buffer.slice(this.head);
-    const firstLaterSeq = active.find((chunk) => chunk.seq > seq)?.seq;
-    const contiguousWithRetainedOutput =
-      firstLaterSeq === undefined ? seq === this.latestSeq : firstLaterSeq === seq + 1;
-    if (
-      seq < (this.checkpoint?.seq ?? -1) ||
-      seq > this.latestSeq ||
-      bytes > this.capBytes ||
-      !contiguousWithRetainedOutput
-    ) {
+    if (!this.canInstallCheckpoint(seq, bytes, active)) {
       return false;
     }
 
@@ -240,6 +232,22 @@ export class TerminalReplayBuffer {
     }
     this.enforceCap();
     return this.checkpoint !== null;
+  }
+
+  private canInstallCheckpoint(
+    seq: number,
+    bytes: number,
+    active: readonly ReplayChunk[],
+  ): boolean {
+    const firstLaterSeq = active.find((chunk) => chunk.seq > seq)?.seq;
+    const contiguousWithRetainedOutput =
+      firstLaterSeq === undefined ? seq === this.latestSeq : firstLaterSeq === seq + 1;
+    return (
+      seq >= (this.checkpoint?.seq ?? -1) &&
+      seq <= this.latestSeq &&
+      bytes <= this.capBytes &&
+      contiguousWithRetainedOutput
+    );
   }
 
   /** Selects a parser-safe cold restore without returning a discontinuous tail. */

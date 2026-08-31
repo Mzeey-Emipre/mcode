@@ -2,8 +2,8 @@
  * Seeds the agent runtime database with the fixture workspace used by local automation.
  */
 
-import { basename } from "path";
-import { existsSync } from "fs";
+import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
 import { logger } from "@mcode/shared";
 import type { WorkspaceRepo } from "../../features/projects/persistence/workspace-repo.js";
 
@@ -35,7 +35,7 @@ export function seedAgentRuntimeWorkspace(
   if (!fixtureRepo) {
     throw new Error("MCODE_AGENT_FIXTURE_REPO is required when MCODE_AGENT_RUNTIME=1");
   }
-  if (!existsSync(fixtureRepo)) {
+  if (!NodeFS.existsSync(fixtureRepo)) {
     throw new Error(`MCODE_AGENT_FIXTURE_REPO does not exist: ${fixtureRepo}`);
   }
 
@@ -51,7 +51,7 @@ export function seedAgentRuntimeWorkspace(
   }
 
   const workspace = deps.workspaceRepo.create(
-    basename(fixtureRepo) || "fixture-repo",
+    NodePath.basename(fixtureRepo) || "fixture-repo",
     fixtureRepo,
     true,
   );

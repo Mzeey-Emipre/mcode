@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   TERMINAL_V1_METHODS,
   TerminalLaunchSnapshotSchema,
@@ -103,7 +103,7 @@ export class TerminalSessionPolicyError extends Error {
     super(POLICY_MESSAGES[code]);
     this.name = "TerminalSessionPolicyError";
     this.retry = "NEW_SESSION";
-    this.correlationId = `corr-${randomUUID()}`;
+    this.correlationId = `corr-${NodeCrypto.randomUUID()}`;
   }
 }
 
@@ -129,7 +129,7 @@ export class TerminalSessionService {
   private lastLiveSettingsKey = "";
 
   constructor(private readonly deps: TerminalSessionServiceDependencies) {
-    this.createSessionId = deps.createSessionId ?? randomUUID;
+    this.createSessionId = deps.createSessionId ?? NodeCrypto.randomUUID;
     this.applyLiveSettings(deps.settings.get());
     this.unsubscribeSettings = deps.settings.on("change", (settings) => this.applyLiveSettings(settings));
   }

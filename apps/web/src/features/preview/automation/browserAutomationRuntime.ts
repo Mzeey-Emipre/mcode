@@ -8,6 +8,11 @@ export function isBrowserAutomationWebRuntimeEnabled(
 /** Observable preview states exposed by the pure web Browser surface. */
 export type WebPreviewState = "disabled" | "unavailable" | "same-origin" | "cross-origin";
 
+function isSafeWebPreviewUrl(parsed: URL): boolean {
+  return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    !parsed.username && !parsed.password;
+}
+
 /** Classifies a preview URL without granting cross-origin DOM access. */
 export function resolveWebPreviewState(
   url: string | null | undefined,
@@ -18,8 +23,7 @@ export function resolveWebPreviewState(
   if (!url?.trim()) return "unavailable";
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "unavailable";
-    if (parsed.username || parsed.password) return "unavailable";
+    if (!isSafeWebPreviewUrl(parsed)) return "unavailable";
     return parsed.origin === origin ? "same-origin" : "cross-origin";
   } catch {
     return "unavailable";
@@ -32,8 +36,7 @@ export function normalizeWebPreviewUrl(value: string): string | null {
   if (!trimmed || trimmed.length > 2_048) return null;
   try {
     const parsed = new URL(trimmed);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    if (parsed.username || parsed.password) return null;
+    if (!isSafeWebPreviewUrl(parsed)) return null;
     return parsed.href;
   } catch {
     return null;

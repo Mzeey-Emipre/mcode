@@ -1,7 +1,8 @@
 /**
  * Regression tests for long shell-command layout in narrative tool rows.
  */
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect } from "vitest";
 import { ActiveToolRow } from "../ActiveToolRow";
 import { ToolSummaryLine } from "../ToolSummaryLine";
@@ -50,7 +51,7 @@ describe("resolveToolName", () => {
 });
 
 describe("narrative tool row layout classes", () => {
-  it("ActiveToolRow renders shell commands as expandable terminal cards", () => {
+  it("ActiveToolRow renders shell commands as expandable terminal cards", async () => {
     const { container } = render(
       <div className={COLUMN_CLASS}>
         <ActiveToolRow toolCall={makeBashCall()} />
@@ -58,8 +59,18 @@ describe("narrative tool row layout classes", () => {
     );
 
     const button = screen.getByRole("button", { name: /Running command/ });
+    const commandPreview = container.querySelector<HTMLElement>("[data-slot='tooltip-trigger']");
+    const user = userEvent.setup();
+    if (!commandPreview) throw new Error("Expected command tooltip trigger");
+
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByTitle(LONG_SHELL_COMMAND)).toHaveClass("truncate");
+    expect(commandPreview).toHaveClass("truncate");
+    await user.hover(commandPreview);
+    await waitFor(() => {
+      const tooltip = document.querySelector<HTMLElement>("[data-slot='tooltip-content']");
+      expect(tooltip).toBeVisible();
+      expect(tooltip).toHaveTextContent(LONG_SHELL_COMMAND);
+    });
 
     fireEvent.click(button);
 
@@ -70,7 +81,7 @@ describe("narrative tool row layout classes", () => {
     expect(command?.className).toContain("overflow-wrap");
   });
 
-  it("ToolSummaryLine keeps shell calls nested and reveals a shell transcript", () => {
+  it("ToolSummaryLine keeps shell calls nested and reveals a shell transcript", async () => {
     const group: ToolGroup = {
       calls: [
         makeBashCall({
@@ -99,9 +110,18 @@ describe("narrative tool row layout classes", () => {
 
     fireEvent.click(child);
 
-    const detail = screen.getByTitle(LONG_SHELL_COMMAND);
+    const detail = container.querySelector<HTMLElement>("[data-slot='tooltip-trigger']");
+    const user = userEvent.setup();
+    if (!detail) throw new Error("Expected command tooltip trigger");
+
     expect(detail.className).toContain("truncate");
     expect(detail.closest("li")?.className).toContain("min-w-0");
+    await user.hover(detail);
+    await waitFor(() => {
+      const tooltip = document.querySelector<HTMLElement>("[data-slot='tooltip-content']");
+      expect(tooltip).toBeVisible();
+      expect(tooltip).toHaveTextContent(LONG_SHELL_COMMAND);
+    });
     expect(screen.getByRole("region", { name: "Shell output" })).toBeTruthy();
     expect(screen.getByText("Shell")).toBeTruthy();
     expect(container.querySelector("code")?.textContent).toBe(LONG_SHELL_COMMAND);

@@ -2,7 +2,7 @@ import {
   BROWSER_V2_CORE_OPERATIONS,
   type BrowserAutomationPublicOperation,
 } from "@mcode/contracts";
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BrowserAutomationCredentialRegistry,
   type BrowserAutomationCredentialScope,
@@ -90,6 +90,16 @@ function browserV2AllowedOperations(
   return [...BROWSER_V2_CORE_OPERATIONS, "evaluate"];
 }
 
+function isLoopbackMcpUrl(url: URL): boolean {
+  return url.protocol === "http:"
+    && new Set(["127.0.0.1", "localhost", "[::1]"]).has(url.hostname)
+    && url.pathname === "/mcp"
+    && !url.username
+    && !url.password
+    && !url.search
+    && !url.hash;
+}
+
 function validateConfiguration(configuration: BrowserAutomationSessionLeaseConfiguration): void {
   let url: URL;
   try {
@@ -97,23 +107,28 @@ function validateConfiguration(configuration: BrowserAutomationSessionLeaseConfi
   } catch {
     throw new Error("Browser automation MCP URL is invalid");
   }
-  const loopbackHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
-  if (
-    url.protocol !== "http:" ||
-    !loopbackHosts.has(url.hostname) ||
-    url.pathname !== "/mcp" ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash
-  ) {
+  if (!isLoopbackMcpUrl(url)) {
     throw new Error("Browser automation MCP URL must be an uncredentialed loopback /mcp endpoint");
   }
-  if (
-    configuration.worktreeIdentity.length < 1 ||
-    configuration.worktreeIdentity.length > 256
-  ) {
+  if (configuration.worktreeIdentity.length < 1 || configuration.worktreeIdentity.length > 256) {
     throw new Error("Browser automation worktree identity is invalid");
+  }
+}
+
+function leaseOptions(
+  optionsOrCredentials: BrowserAutomationSessionLeaseOptions | BrowserAutomationCredentialRegistry,
+): BrowserAutomationSessionLeaseOptions {
+  return optionsOrCredentials instanceof BrowserAutomationCredentialRegistry
+    ? { credentials: optionsOrCredentials }
+    : optionsOrCredentials;
+}
+
+function validateLeaseLimits(pendingTtlMs: number, maxPending: number): void {
+  if (!Number.isInteger(pendingTtlMs) || pendingTtlMs < 1 || pendingTtlMs > 24 * 60 * 60_000) {
+    throw new Error("Browser automation session lease pending TTL is invalid");
+  }
+  if (!Number.isInteger(maxPending) || maxPending < 1 || maxPending > 4_096) {
+    throw new Error("Browser automation session lease pending capacity is invalid");
   }
 }
 
@@ -141,19 +156,12 @@ export class BrowserAutomationSessionLease {
   private readonly now: () => number;
 
   constructor(optionsOrCredentials: BrowserAutomationSessionLeaseOptions | BrowserAutomationCredentialRegistry = {}) {
-    const options = optionsOrCredentials instanceof BrowserAutomationCredentialRegistry
-      ? { credentials: optionsOrCredentials }
-      : optionsOrCredentials;
+    const options = leaseOptions(optionsOrCredentials);
     this.credentials = options.credentials ?? new BrowserAutomationCredentialRegistry();
     this.pendingTtlMs = options.pendingTtlMs ?? DEFAULT_PENDING_TTL_MS;
     this.maxPending = options.maxPending ?? DEFAULT_MAX_PENDING;
     this.now = options.now ?? Date.now;
-    if (!Number.isInteger(this.pendingTtlMs) || this.pendingTtlMs < 1 || this.pendingTtlMs > 24 * 60 * 60_000) {
-      throw new Error("Browser automation session lease pending TTL is invalid");
-    }
-    if (!Number.isInteger(this.maxPending) || this.maxPending < 1 || this.maxPending > 4_096) {
-      throw new Error("Browser automation session lease pending capacity is invalid");
-    }
+    validateLeaseLimits(this.pendingTtlMs, this.maxPending);
     this.credentials.onRemoved((claims) => this.releaseCredential(claims.credentialId));
     if (options.mcpUrl !== undefined || options.worktreeIdentity !== undefined) {
       if (!options.mcpUrl || !options.worktreeIdentity) {
@@ -196,7 +204,7 @@ export class BrowserAutomationSessionLease {
     this.cleanupPending();
     if (this.pending.size >= this.maxPending) this.evictOldestPending();
     const scope = normalizeRequest(request);
-    const leaseId = randomUUID();
+    const leaseId = NodeCrypto.randomUUID();
     const sessionKey = this.sessionKey(scope.providerId, scope.mcodeSessionId);
     const expiresAt = this.now() + this.pendingTtlMs;
     this.pending.set(leaseId, { scope, sessionKey, expiresAt });
@@ -289,7 +297,8 @@ export class BrowserAutomationSessionLease {
 
   /** Revokes all active credentials and drops pending work during shutdown. */
   shutdown(): void {
-    for (const lease of [...this.active.values()]) this.credentials.revoke(lease.credentialId);
+    const activeLeases = Array.from(this.active.values());
+    for (const lease of activeLeases) this.credentials.revoke(lease.credentialId);
     this.active.clear();
     this.sessionToLease.clear();
     this.pending.clear();

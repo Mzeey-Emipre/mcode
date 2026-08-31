@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { lstat, readFile, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import type { FileEffect, TurnFileEffectSummary } from "@mcode/contracts";
 import { MAX_TURN_FILE_EFFECTS } from "@mcode/contracts";
 import { normalizeFilesystemPath } from "../../../shared/filesystem/path-identity.js";
@@ -109,11 +109,12 @@ export class TurnFileTracker {
   constructor(
     private readonly readBaseline: TurnBaselineReader,
     private readonly onUpdate: FileEffectUpdateListener,
+    private readonly platform: NodeJS.Platform,
   ) {}
 
   /** Start a fresh tracker scope for an agent turn. */
   beginTurn(threadId: string, cwd: string, baselineRef: string | null): number {
-    const canonicalRoot = normalizeFilesystemPath(realpathSync.native(cwd));
+    const canonicalRoot = normalizeFilesystemPath(NodeFS.realpathSync.native(cwd), this.platform);
     const generation = this.nextGeneration++;
     const generations = this.turns.get(threadId) ?? new Map<number, TurnState>();
     generations.set(generation, {
@@ -144,23 +145,7 @@ export class TurnFileTracker {
 
   /** Attach a Git baseline that completed after the turn tracker was initialized. */
   setBaselineRef(threadId: string, generation: number, baselineRef: string): Promise<void> {
-    return this.enqueue(threadId, async (turn) => {
-      if (turn.baselineRef !== null) return;
-      turn.baselineRef = baselineRef;
-      for (const tracked of turn.tracked.values()) {
-        if (!tracked.providerConfirmed || tracked.scope !== "workspace") continue;
-        const baseline = await this.readGitBaseline(turn, tracked.displayPath);
-        if (baseline && (baseline.known || !tracked.baseline.known)) tracked.baseline = baseline;
-        if (tracked.oldPath && tracked.oldResolvedPath) {
-          const oldBaseline = await this.readGitBaseline(turn, tracked.oldPath);
-          if (oldBaseline) tracked.oldBaseline = oldBaseline;
-          tracked.oldCurrent = await readBoundedState(tracked.oldResolvedPath);
-        }
-        tracked.current = await readBoundedState(tracked.path);
-        tracked.effectCandidate = buildEffect(tracked);
-      }
-      this.publishSummary(turn, threadId);
-    }, generation);
+    return this.enqueue(threadId, (turn) => this.applyBaselineRef(turn, threadId, baselineRef), generation);
   }
 
   /** Capture baselines for explicit file mutations named by a provider ToolUse event. */
@@ -177,17 +162,7 @@ export class TurnFileTracker {
     const turn = this.getTurn(threadId, generation);
     if (!turn) return Promise.resolve();
     const boundedCandidates = dedupeMutationCandidates(candidates).slice(0, MAX_TURN_FILE_EFFECTS);
-    const syncBudget: SyncObservationBudget = {
-      remainingPaths: MAX_SYNC_OBSERVATION_PATHS,
-      remainingBytes: MAX_SYNC_OBSERVATION_BYTES,
-    };
-    const observations = boundedCandidates.map((candidate) => {
-      const requiredPaths = candidate.operationHint === "rename" && candidate.oldPath ? 2 : 1;
-      return candidate.beforeText !== undefined
-        || syncBudget.remainingPaths < requiredPaths
-        ? undefined
-        : observeCandidateSynchronously(turn.canonicalRoot, candidate, syncBudget);
-    });
+    const observations = this.synchronousObservations(turn, boundedCandidates);
     this.generationByToolCall.set(toolGenerationKey(threadId, toolCallId), generation);
     return this.enqueue(threadId, async (queuedTurn) => {
       for (const [index, candidate] of boundedCandidates.entries()) {
@@ -239,18 +214,8 @@ export class TurnFileTracker {
     const generations = this.turns.get(threadId);
     generations?.delete(target);
     if (generations?.size === 0) this.turns.delete(threadId);
-    if (this.currentGeneration.get(threadId) === target) {
-      const latest = generations && generations.size > 0
-        ? [...generations.keys()].at(-1)
-        : undefined;
-      if (latest === undefined) this.currentGeneration.delete(threadId);
-      else this.currentGeneration.set(threadId, latest);
-    }
-    for (const [key, origin] of this.generationByToolCall) {
-      if (origin === target && key.startsWith(`${threadId}\0`)) {
-        this.generationByToolCall.delete(key);
-      }
-    }
+    this.updateCurrentGeneration(threadId, target, generations);
+    this.clearToolCallGenerations(threadId, target);
   }
 
   private enqueue(
@@ -270,6 +235,66 @@ export class TurnFileTracker {
     return target === undefined ? undefined : this.turns.get(threadId)?.get(target);
   }
 
+  private async applyBaselineRef(turn: TurnState, threadId: string, baselineRef: string): Promise<void> {
+    if (turn.baselineRef !== null) return;
+    turn.baselineRef = baselineRef;
+    for (const tracked of turn.tracked.values()) {
+      await this.refreshProviderConfirmedBaseline(turn, tracked);
+    }
+    this.publishSummary(turn, threadId);
+  }
+
+  private async refreshProviderConfirmedBaseline(turn: TurnState, tracked: TrackedPath): Promise<void> {
+    if (!tracked.providerConfirmed || tracked.scope !== "workspace") return;
+    const baseline = await this.readGitBaseline(turn, tracked.displayPath);
+    if (baseline && (baseline.known || !tracked.baseline.known)) tracked.baseline = baseline;
+    if (tracked.oldPath && tracked.oldResolvedPath) {
+      const oldBaseline = await this.readGitBaseline(turn, tracked.oldPath);
+      if (oldBaseline) tracked.oldBaseline = oldBaseline;
+      tracked.oldCurrent = await readBoundedState(tracked.oldResolvedPath);
+    }
+    tracked.current = await readBoundedState(tracked.path);
+    tracked.effectCandidate = buildEffect(tracked);
+  }
+
+  private synchronousObservations(
+    turn: TurnState,
+    candidates: readonly MutationCandidate[],
+  ): Array<CandidateObservation | undefined> {
+    const budget: SyncObservationBudget = {
+      remainingPaths: MAX_SYNC_OBSERVATION_PATHS,
+      remainingBytes: MAX_SYNC_OBSERVATION_BYTES,
+    };
+    return candidates.map((candidate) => this.synchronousObservation(turn.canonicalRoot, candidate, budget));
+  }
+
+  private synchronousObservation(
+    canonicalRoot: string,
+    candidate: MutationCandidate,
+    budget: SyncObservationBudget,
+  ): CandidateObservation | undefined {
+    const requiredPaths = candidate.operationHint === "rename" && candidate.oldPath ? 2 : 1;
+    if (candidate.beforeText !== undefined || budget.remainingPaths < requiredPaths) return undefined;
+    return observeCandidateSynchronously(canonicalRoot, candidate, budget, this.platform);
+  }
+
+  private updateCurrentGeneration(
+    threadId: string,
+    target: number,
+    generations: Map<number, TurnState> | undefined,
+  ): void {
+    if (this.currentGeneration.get(threadId) !== target) return;
+    const latest = generations && generations.size > 0 ? [...generations.keys()].at(-1) : undefined;
+    if (latest === undefined) this.currentGeneration.delete(threadId);
+    else this.currentGeneration.set(threadId, latest);
+  }
+
+  private clearToolCallGenerations(threadId: string, target: number): void {
+    for (const [key, origin] of this.generationByToolCall) {
+      if (origin === target && key.startsWith(`${threadId}\0`)) this.generationByToolCall.delete(key);
+    }
+  }
+
   private async captureCandidate(
     turn: TurnState,
     toolCallId: string,
@@ -277,62 +302,80 @@ export class TurnFileTracker {
     observation?: CandidateObservation,
   ): Promise<void> {
     if (turn.tracked.size >= MAX_TURN_FILE_EFFECTS) return;
+    const paths = await this.candidatePaths(turn, candidate, observation);
+    if (!paths) return;
+    const existing = turn.tracked.get(paths.resolvedPath.path);
+    if (existing) return this.updateTrackedCandidate(turn, existing, toolCallId, candidate, observation, paths.validOldPath);
+    await this.trackCandidate(turn, toolCallId, candidate, observation, paths.resolvedPath, paths.validOldPath);
+  }
+
+  private async candidatePaths(
+    turn: TurnState,
+    candidate: MutationCandidate,
+    observation: CandidateObservation | undefined,
+  ): Promise<{
+    resolvedPath: Pick<TrackedPath, "path" | "displayPath" | "scope">;
+    validOldPath: Pick<TrackedPath, "path" | "displayPath" | "scope"> | null;
+  } | null> {
     const resolvedPath = observation
       ? observation.resolvedPath
-      : await resolveCandidatePath(turn.canonicalRoot, candidate.path);
-    if (!resolvedPath) return;
-    const resolvedOldPath = candidate.operationHint === "rename" && candidate.oldPath
-      ? observation
-        ? observation.resolvedOldPath
-        : await resolveCandidatePath(turn.canonicalRoot, candidate.oldPath)
-      : null;
-    const validOldPath = resolvedOldPath?.path !== resolvedPath.path ? resolvedOldPath : null;
-    const existing = turn.tracked.get(resolvedPath.path);
-    if (existing) {
-      existing.toolCallIds.add(toolCallId);
-      existing.providerConfirmed ||= candidate.providerConfirmed === true;
-      existing.effectCandidate = undefined;
-      if (existing.operationHint !== "rename" || candidate.operationHint === "rename") {
-        existing.operationHint = candidate.operationHint;
-      }
-      if (validOldPath) {
-        const oldBaseline = candidate.beforeText !== undefined
-          ? stateFromEvidenceText(candidate.beforeText)
-          : observation?.oldBaseline
-            ? candidate.providerConfirmed === true
-              ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove", observation.oldBaseline)
-              : observation.oldBaseline
-            : candidate.providerConfirmed === true
-              ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove")
-              : await readBoundedState(validOldPath.path);
-        existing.oldPath = validOldPath.displayPath;
-        existing.oldResolvedPath = validOldPath.path;
-        existing.oldBaseline = oldBaseline;
-        existing.oldCurrent = oldBaseline;
-      }
-      return;
-    }
+      : await resolveCandidatePath(turn.canonicalRoot, candidate.path, this.platform);
+    if (!resolvedPath) return null;
+    const resolvedOldPath = await this.oldCandidatePath(turn, candidate, observation);
+    return {
+      resolvedPath,
+      validOldPath: resolvedOldPath?.path === resolvedPath.path ? null : resolvedOldPath,
+    };
+  }
 
-    const baseline = candidate.beforeText !== undefined && !validOldPath
-      ? stateFromEvidenceText(candidate.beforeText)
-      : candidate.providerConfirmed === true
-        ? await this.readProviderConfirmedBaseline(
-            turn,
-            resolvedPath,
-            candidate.operationHint,
-            observation?.baseline ?? undefined,
-          )
-        : observation?.baseline ?? await readBoundedState(resolvedPath.path);
+  private async oldCandidatePath(
+    turn: TurnState,
+    candidate: MutationCandidate,
+    observation: CandidateObservation | undefined,
+  ): Promise<Pick<TrackedPath, "path" | "displayPath" | "scope"> | null> {
+    if (candidate.operationHint !== "rename" || !candidate.oldPath) return null;
+    return observation
+      ? observation.resolvedOldPath
+      : resolveCandidatePath(turn.canonicalRoot, candidate.oldPath, this.platform);
+  }
+
+  private async updateTrackedCandidate(
+    turn: TurnState,
+    existing: TrackedPath,
+    toolCallId: string,
+    candidate: MutationCandidate,
+    observation: CandidateObservation | undefined,
+    validOldPath: Pick<TrackedPath, "path" | "displayPath" | "scope"> | null,
+  ): Promise<void> {
+    existing.toolCallIds.add(toolCallId);
+    existing.providerConfirmed ||= candidate.providerConfirmed === true;
+    existing.effectCandidate = undefined;
+    if (existing.operationHint !== "rename" || candidate.operationHint === "rename") {
+      existing.operationHint = candidate.operationHint;
+    }
+    if (!validOldPath) return;
+    const oldBaseline = await this.candidateBaseline(
+      turn, validOldPath, "remove", candidate, observation?.oldBaseline, true,
+    );
+    existing.oldPath = validOldPath.displayPath;
+    existing.oldResolvedPath = validOldPath.path;
+    existing.oldBaseline = oldBaseline;
+    existing.oldCurrent = oldBaseline;
+  }
+
+  private async trackCandidate(
+    turn: TurnState,
+    toolCallId: string,
+    candidate: MutationCandidate,
+    observation: CandidateObservation | undefined,
+    resolvedPath: Pick<TrackedPath, "path" | "displayPath" | "scope">,
+    validOldPath: Pick<TrackedPath, "path" | "displayPath" | "scope"> | null,
+  ): Promise<void> {
+    const baseline = await this.candidateBaseline(
+      turn, resolvedPath, candidate.operationHint, candidate, observation?.baseline, !validOldPath,
+    );
     const oldBaseline = validOldPath
-      ? candidate.beforeText !== undefined
-        ? stateFromEvidenceText(candidate.beforeText)
-          : observation?.oldBaseline
-            ? candidate.providerConfirmed === true
-              ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove", observation.oldBaseline)
-              : observation.oldBaseline
-            : candidate.providerConfirmed === true
-              ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove")
-              : await readBoundedState(validOldPath.path)
+      ? await this.candidateBaseline(turn, validOldPath, "remove", candidate, observation?.oldBaseline, true)
       : undefined;
     turn.tracked.set(resolvedPath.path, {
       ...resolvedPath,
@@ -348,6 +391,21 @@ export class TurnFileTracker {
       providerConfirmed: candidate.providerConfirmed === true,
       toolCallIds: new Set([toolCallId]),
     });
+  }
+
+  private async candidateBaseline(
+    turn: TurnState,
+    resolvedPath: Pick<TrackedPath, "path" | "displayPath" | "scope">,
+    operationHint: OperationHint,
+    candidate: MutationCandidate,
+    observedBaseline: FileState | null | undefined,
+    acceptsEvidence: boolean,
+  ): Promise<FileState> {
+    if (acceptsEvidence && candidate.beforeText !== undefined) return stateFromEvidenceText(candidate.beforeText);
+    if (candidate.providerConfirmed === true) {
+      return this.readProviderConfirmedBaseline(turn, resolvedPath, operationHint, observedBaseline ?? undefined);
+    }
+    return observedBaseline ?? readBoundedState(resolvedPath.path);
   }
 
   private async readProviderConfirmedBaseline(
@@ -420,60 +478,32 @@ function extractMutationCandidates(
   toolName: string,
   input: Record<string, unknown>,
 ): MutationCandidate[] {
+  const mcodeCandidates = extractMcodeMutationCandidates(input);
+  if (mcodeCandidates) return mcodeCandidates;
+  const fileChangeCandidates = extractFileChangeCandidates(toolName, input);
+  if (fileChangeCandidates) return fileChangeCandidates;
+  return extractExplicitToolMutationCandidate(toolName, input);
+}
+
+function extractMcodeMutationCandidates(input: Record<string, unknown>): MutationCandidate[] | undefined {
+  if (!Array.isArray(input._mcodeFileMutations)) return undefined;
+  return collectMutationCandidates(input._mcodeFileMutations, mcodeMutationCandidate);
+}
+
+function extractFileChangeCandidates(
+  toolName: string,
+  input: Record<string, unknown>,
+): MutationCandidate[] | undefined {
   const normalized = toolName.toLowerCase();
-  if (Array.isArray(input._mcodeFileMutations)) {
-    const candidates: MutationCandidate[] = [];
-    const seenPaths = new Set<string>();
-    for (const value of input._mcodeFileMutations) {
-      if (candidates.length >= MAX_TURN_FILE_EFFECTS) break;
-      if (!value || typeof value !== "object") continue;
-      const mutation = value as Record<string, unknown>;
-      if (typeof mutation.path !== "string") continue;
-      const oldPath = pickString(mutation, ["oldPath", "old_path", "sourcePath", "source_path", "from"]);
-      const identity = `${mutation.path}\0${oldPath ?? ""}`;
-      if (seenPaths.has(identity)) continue;
-      seenPaths.add(identity);
-      const beforeText = boundedEvidenceText(
-        mutation.fullFileContent === true && typeof mutation.beforeText === "string"
-          ? mutation.beforeText
-          : undefined,
-      );
-      const afterText = boundedEvidenceText(
-        mutation.fullFileContent === true && typeof mutation.afterText === "string"
-          ? mutation.afterText
-          : undefined,
-      );
-      candidates.push({
-        path: mutation.path,
-        operationHint: normalizeOperation(mutation.kind ?? mutation.operation),
-        ...(oldPath ? { oldPath } : {}),
-        ...(beforeText !== undefined ? { beforeText } : {}),
-        ...(afterText !== undefined ? { afterText } : {}),
-      });
-    }
-    return candidates;
-  }
-  if (normalized === "file_change" && Array.isArray(input.changes)) {
-    const candidates: MutationCandidate[] = [];
-    const seenPaths = new Set<string>();
-    for (const value of input.changes) {
-      if (candidates.length >= MAX_TURN_FILE_EFFECTS) break;
-      if (!value || typeof value !== "object") continue;
-      const change = value as Record<string, unknown>;
-      if (typeof change.path !== "string") continue;
-      const oldPath = pickString(change, ["oldPath", "old_path", "sourcePath", "source_path", "from"]);
-      const identity = `${change.path}\0${oldPath ?? ""}`;
-      if (seenPaths.has(identity)) continue;
-      seenPaths.add(identity);
-      candidates.push({
-        path: change.path,
-        operationHint: normalizeOperation(change.kind ?? change.operation),
-        providerConfirmed: true,
-        ...(oldPath ? { oldPath } : {}),
-      });
-    }
-    return candidates;
-  }
+  if (normalized !== "file_change" || !Array.isArray(input.changes)) return undefined;
+  return collectMutationCandidates(input.changes, fileChangeMutationCandidate);
+}
+
+function extractExplicitToolMutationCandidate(
+  toolName: string,
+  input: Record<string, unknown>,
+): MutationCandidate[] {
+  const normalized = toolName.toLowerCase();
   if (!isExplicitFileTool(normalized)) return [];
   const path = pickString(input, normalized === "rename" || normalized === "move"
     ? [
@@ -490,6 +520,63 @@ function extractMutationCandidates(
     operationHint: normalizeOperation(input.operation ?? input.kind ?? toolName),
     ...(oldPath ? { oldPath } : {}),
   }];
+}
+
+function collectMutationCandidates(
+  values: readonly unknown[],
+  candidateFor: (value: unknown) => MutationCandidate | null,
+): MutationCandidate[] {
+  const candidates: MutationCandidate[] = [];
+  const seenPaths = new Set<string>();
+  for (const value of values) {
+    if (candidates.length >= MAX_TURN_FILE_EFFECTS) break;
+    const candidate = candidateFor(value);
+    if (!candidate) continue;
+    const identity = `${candidate.path}\0${candidate.oldPath ?? ""}`;
+    if (seenPaths.has(identity)) continue;
+    seenPaths.add(identity);
+    candidates.push(candidate);
+  }
+  return candidates;
+}
+
+function mcodeMutationCandidate(value: unknown): MutationCandidate | null {
+  const mutation = mutationRecord(value);
+  if (!mutation) return null;
+  const beforeText = fullFileEvidenceText(mutation, "beforeText");
+  const afterText = fullFileEvidenceText(mutation, "afterText");
+  const oldPath = pickString(mutation, ["oldPath", "old_path", "sourcePath", "source_path", "from"]);
+  return {
+    path: mutation.path as string,
+    operationHint: normalizeOperation(mutation.kind ?? mutation.operation),
+    ...(oldPath ? { oldPath } : {}),
+    ...(beforeText !== undefined ? { beforeText } : {}),
+    ...(afterText !== undefined ? { afterText } : {}),
+  };
+}
+
+function fileChangeMutationCandidate(value: unknown): MutationCandidate | null {
+  const change = mutationRecord(value);
+  if (!change) return null;
+  const oldPath = pickString(change, ["oldPath", "old_path", "sourcePath", "source_path", "from"]);
+  return {
+    path: change.path as string,
+    operationHint: normalizeOperation(change.kind ?? change.operation),
+    providerConfirmed: true,
+    ...(oldPath ? { oldPath } : {}),
+  };
+}
+
+function mutationRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  return typeof record.path === "string" ? record : null;
+}
+
+function fullFileEvidenceText(record: Record<string, unknown>, key: "beforeText" | "afterText"): string | undefined {
+  return record.fullFileContent === true && typeof record[key] === "string"
+    ? boundedEvidenceText(record[key])
+    : undefined;
 }
 
 function isExplicitFileTool(name: string): boolean {
@@ -533,11 +620,10 @@ function observeCandidateSynchronously(
   canonicalRoot: string,
   candidate: MutationCandidate,
   budget: SyncObservationBudget,
+  platform: NodeJS.Platform,
 ): CandidateObservation {
-  const resolvedPath = observePathSynchronously(canonicalRoot, candidate.path, budget);
-  const resolvedOldPath = candidate.operationHint === "rename" && candidate.oldPath
-    ? observePathSynchronously(canonicalRoot, candidate.oldPath, budget)
-    : null;
+  const resolvedPath = observePathSynchronously(canonicalRoot, candidate.path, budget, platform);
+  const resolvedOldPath = observeRenameSourceSynchronously(canonicalRoot, candidate, budget, platform);
   return {
     resolvedPath: resolvedPath?.path ?? null,
     resolvedOldPath: resolvedOldPath?.path ?? null,
@@ -546,30 +632,42 @@ function observeCandidateSynchronously(
   };
 }
 
+function observeRenameSourceSynchronously(
+  canonicalRoot: string,
+  candidate: MutationCandidate,
+  budget: SyncObservationBudget,
+  platform: NodeJS.Platform,
+): ReturnType<typeof observePathSynchronously> {
+  if (candidate.operationHint !== "rename" || !candidate.oldPath) return null;
+  return observePathSynchronously(canonicalRoot, candidate.oldPath, budget, platform);
+}
+
 function observePathSynchronously(
   canonicalRoot: string,
   candidatePath: string,
   budget: SyncObservationBudget,
+  platform: NodeJS.Platform,
 ): {
   path: Pick<TrackedPath, "path" | "displayPath" | "scope">;
   baseline: FileState;
 } | null {
   if (budget.remainingPaths === 0) return null;
   budget.remainingPaths -= 1;
-  const path = resolveCandidatePathSynchronously(canonicalRoot, candidatePath);
+  const path = resolveCandidatePathSynchronously(canonicalRoot, candidatePath, platform);
   return path ? { path, baseline: readBoundedStateSynchronously(path.path, budget) } : null;
 }
 
 function resolveCandidatePathSynchronously(
   canonicalRoot: string,
   candidatePath: string,
+  platform: NodeJS.Platform,
 ): Pick<TrackedPath, "path" | "displayPath" | "scope"> | null {
   if (candidatePath.length === 0 || candidatePath.length > 4096 || candidatePath.includes("\0")) return null;
-  const absolute = resolve(canonicalRoot, candidatePath);
-  const canonical = canonicalizePotentialPathSynchronously(absolute);
+  const absolute = NodePath.resolve(canonicalRoot, candidatePath);
+  const canonical = canonicalizePotentialPathSynchronously(absolute, platform);
   if (!canonical) return null;
-  const relativePath = relative(canonicalRoot, canonical);
-  const scope = relativePath === "" || (!relativePath.startsWith(`..${sep}`) && relativePath !== ".." && !isAbsolute(relativePath))
+  const relativePath = NodePath.relative(canonicalRoot, canonical);
+  const scope = relativePath === "" || (!relativePath.startsWith(`..${NodePath.sep}`) && relativePath !== ".." && !NodePath.isAbsolute(relativePath))
     ? "workspace"
     : "external";
   return {
@@ -579,17 +677,20 @@ function resolveCandidatePathSynchronously(
   };
 }
 
-function canonicalizePotentialPathSynchronously(absolutePath: string): string | null {
+function canonicalizePotentialPathSynchronously(
+  absolutePath: string,
+  platform: NodeJS.Platform,
+): string | null {
   let cursor = absolutePath;
   const missing: string[] = [];
   for (let depth = 0; depth < 64; depth += 1) {
     try {
-      const existing = realpathSync.native(cursor);
-      return normalizeFilesystemPath(resolve(existing, ...missing));
+      const existing = NodeFS.realpathSync.native(cursor);
+      return normalizeFilesystemPath(NodePath.resolve(existing, ...missing), platform);
     } catch {
-      const parent = dirname(cursor);
+      const parent = NodePath.dirname(cursor);
       if (parent === cursor) return null;
-      missing.unshift(basename(cursor));
+      missing.unshift(NodePath.basename(cursor));
       cursor = parent;
     }
   }
@@ -599,13 +700,14 @@ function canonicalizePotentialPathSynchronously(absolutePath: string): string | 
 async function resolveCandidatePath(
   canonicalRoot: string,
   candidatePath: string,
+  platform: NodeJS.Platform,
 ): Promise<Pick<TrackedPath, "path" | "displayPath" | "scope"> | null> {
   if (candidatePath.length === 0 || candidatePath.length > 4096 || candidatePath.includes("\0")) return null;
-  const absolute = resolve(canonicalRoot, candidatePath);
-  const canonical = await canonicalizePotentialPath(absolute);
+  const absolute = NodePath.resolve(canonicalRoot, candidatePath);
+  const canonical = await canonicalizePotentialPath(absolute, platform);
   if (!canonical) return null;
-  const relativePath = relative(canonicalRoot, canonical);
-  const scope = relativePath === "" || (!relativePath.startsWith(`..${sep}`) && relativePath !== ".." && !isAbsolute(relativePath))
+  const relativePath = NodePath.relative(canonicalRoot, canonical);
+  const scope = relativePath === "" || (!relativePath.startsWith(`..${NodePath.sep}`) && relativePath !== ".." && !NodePath.isAbsolute(relativePath))
     ? "workspace"
     : "external";
   return {
@@ -615,17 +717,20 @@ async function resolveCandidatePath(
   };
 }
 
-async function canonicalizePotentialPath(absolutePath: string): Promise<string | null> {
+async function canonicalizePotentialPath(
+  absolutePath: string,
+  platform: NodeJS.Platform,
+): Promise<string | null> {
   let cursor = absolutePath;
   const missing: string[] = [];
   for (let depth = 0; depth < 64; depth += 1) {
     try {
-      const existing = await realpath(cursor);
-      return normalizeFilesystemPath(resolve(existing, ...missing));
+      const existing = await NodeFSPromises.realpath(cursor);
+      return normalizeFilesystemPath(NodePath.resolve(existing, ...missing), platform);
     } catch {
-      const parent = dirname(cursor);
+      const parent = NodePath.dirname(cursor);
       if (parent === cursor) return null;
-      missing.unshift(basename(cursor));
+      missing.unshift(NodePath.basename(cursor));
       cursor = parent;
     }
   }
@@ -634,16 +739,16 @@ async function canonicalizePotentialPath(absolutePath: string): Promise<string |
 
 async function readBoundedState(path: string): Promise<FileState> {
   try {
-    const stat = await lstat(path);
+    const stat = await NodeFSPromises.lstat(path);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
       return unknownExistingState();
     }
-    const bytes = await readFile(path);
+    const bytes = await NodeFSPromises.readFile(path);
     const binary = bytes.includes(0);
     return {
       known: true,
       exists: true,
-      hash: createHash("sha256").update(bytes).digest("hex"),
+      hash: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
       text: binary ? null : bytes.toString("utf8"),
       binary,
     };
@@ -657,17 +762,17 @@ async function readBoundedState(path: string): Promise<FileState> {
 
 function readBoundedStateSynchronously(path: string, budget: SyncObservationBudget): FileState {
   try {
-    const stat = lstatSync(path);
+    const stat = NodeFS.lstatSync(path);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES || stat.size > budget.remainingBytes) {
       return unknownExistingState();
     }
     budget.remainingBytes -= stat.size;
-    const bytes = readFileSync(path);
+    const bytes = NodeFS.readFileSync(path);
     const binary = bytes.includes(0);
     return {
       known: true,
       exists: true,
-      hash: createHash("sha256").update(bytes).digest("hex"),
+      hash: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
       text: binary ? null : bytes.toString("utf8"),
       binary,
     };
@@ -684,7 +789,7 @@ function stateFromEvidenceText(text: string): FileState {
   return {
     known: true,
     exists: true,
-    hash: createHash("sha256").update(bytes).digest("hex"),
+    hash: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
     text,
     binary: false,
   };
@@ -710,95 +815,108 @@ interface EffectCandidate {
 
 function buildEffect(tracked: TrackedPath): EffectCandidate | null {
   const after = tracked.current;
-  const isValidatedRename = tracked.operationHint === "rename"
-    && tracked.oldPath !== undefined
-    && tracked.oldBaseline?.known === true
-    && tracked.oldCurrent?.known === true
-    && tracked.baseline.known
-    && after.known
-    && tracked.oldBaseline?.exists === true
-    && tracked.oldCurrent?.exists === false
-    && tracked.baseline.exists === false
-    && after.exists;
-  if (!tracked.baseline.known || !after.known) {
-    if (!tracked.providerConfirmed) return null;
-    const kind = tracked.operationHint === "remove" && after.known && !after.exists
-      ? "removed"
-      : tracked.operationHint === "add" && after.exists
-        ? "added"
-        : tracked.operationHint === "edit" && after.exists
-          ? "edited"
-          : null;
-    if (!kind) return null;
-    return {
-      effect: {
-        path: tracked.displayPath,
-        kind,
-        scope: tracked.scope,
-        additions: null,
-        deletions: null,
-        binary: tracked.baseline.binary || after.binary,
-        toolCallIds: [...tracked.toolCallIds].slice(0, 32),
-      },
-      beforeHash: null,
-      afterHash: after.hash,
-    };
+  const isValidatedRename = validatedRename(tracked);
+  if (!tracked.baseline.known || !after.known) return providerConfirmedEffect(tracked, after, null);
+  if (!isValidatedRename && unchangedFileState(tracked.baseline, after)) {
+    return providerConfirmedEffect(tracked, after, tracked.baseline.hash);
   }
-  if (!isValidatedRename
-    && tracked.baseline.exists === after.exists
-    && tracked.baseline.hash === after.hash) {
-    if (!tracked.providerConfirmed) return null;
-    const kind = tracked.operationHint === "remove"
-      ? "removed"
-      : tracked.operationHint === "add"
-        ? "added"
-        : tracked.operationHint === "edit"
-          ? "edited"
-          : null;
-    if (!kind) return null;
-    return {
-      effect: {
-        path: tracked.displayPath,
-        kind,
-        scope: tracked.scope,
-        additions: null,
-        deletions: null,
-        binary: tracked.baseline.binary || after.binary,
-        toolCallIds: [...tracked.toolCallIds].slice(0, 32),
-      },
-      beforeHash: tracked.baseline.hash,
-      afterHash: after.hash,
-    };
-  }
-  const kind = isValidatedRename
-    ? "renamed"
-    : !tracked.baseline.exists && after.exists
-    ? "added"
-    : tracked.baseline.exists && !after.exists
-      ? "removed"
-      : "edited";
+  const kind = observedEffectKind(tracked, after, isValidatedRename);
   const before = isValidatedRename ? tracked.oldBaseline! : tracked.baseline;
   const stats = lineStats(
     before.exists ? before.text : "",
     after.exists ? after.text : "",
   );
+  return effectCandidate(tracked, before, after, kind, stats, before.hash);
+}
+
+function validatedRename(tracked: TrackedPath): boolean {
+  if (tracked.operationHint !== "rename" || !tracked.oldPath) return false;
+  return sourceWasRemoved(tracked) && destinationWasAdded(tracked);
+}
+
+function sourceWasRemoved(tracked: TrackedPath): boolean {
+  return tracked.oldBaseline?.known === true
+    && tracked.oldCurrent?.known === true
+    && tracked.oldBaseline.exists
+    && !tracked.oldCurrent.exists;
+}
+
+function destinationWasAdded(tracked: TrackedPath): boolean {
+  return tracked.baseline.known && tracked.current.known && !tracked.baseline.exists && tracked.current.exists;
+}
+
+function unchangedFileState(before: FileState, after: FileState): boolean {
+  return before.exists === after.exists && before.hash === after.hash;
+}
+
+function providerConfirmedEffect(
+  tracked: TrackedPath,
+  after: FileState,
+  beforeHash: string | null,
+): EffectCandidate | null {
+  const kind = providerConfirmedEffectKind(tracked, after);
+  if (!kind) return null;
+  return effectCandidate(tracked, tracked.baseline, after, kind, null, beforeHash);
+}
+
+function providerConfirmedEffectKind(tracked: TrackedPath, after: FileState): FileEffect["kind"] | null {
+  if (!tracked.providerConfirmed) return null;
+  if (tracked.operationHint === "remove" && after.known && !after.exists) return "removed";
+  if (tracked.operationHint === "add" && after.exists) return "added";
+  return tracked.operationHint === "edit" && after.exists ? "edited" : null;
+}
+
+function observedEffectKind(
+  tracked: TrackedPath,
+  after: FileState,
+  isValidatedRename: boolean,
+): FileEffect["kind"] {
+  if (isValidatedRename) return "renamed";
+  if (!tracked.baseline.exists && after.exists) return "added";
+  return tracked.baseline.exists && !after.exists ? "removed" : "edited";
+}
+
+function effectCandidate(
+  tracked: TrackedPath,
+  before: FileState,
+  after: FileState,
+  kind: FileEffect["kind"],
+  stats: { additions: number; deletions: number } | null,
+  beforeHash: string | null,
+): EffectCandidate {
   return {
-    effect: {
-      path: tracked.displayPath,
-      kind,
-      scope: tracked.scope,
-      ...(kind === "renamed" && tracked.oldPath ? { oldPath: tracked.oldPath } : {}),
-      additions: stats?.additions ?? null,
-      deletions: stats?.deletions ?? null,
-      binary: before.binary || after.binary,
-      toolCallIds: [...tracked.toolCallIds].slice(0, 32),
-    },
-    beforeHash: before.hash,
+    effect: fileEffect(tracked, before, after, kind, stats),
+    beforeHash,
     afterHash: after.hash,
   };
 }
 
+function fileEffect(
+  tracked: TrackedPath,
+  before: FileState,
+  after: FileState,
+  kind: FileEffect["kind"],
+  stats: { additions: number; deletions: number } | null,
+): FileEffect {
+  return {
+    path: tracked.displayPath,
+    kind,
+    scope: tracked.scope,
+    ...(kind === "renamed" && tracked.oldPath ? { oldPath: tracked.oldPath } : {}),
+    additions: stats?.additions ?? null,
+    deletions: stats?.deletions ?? null,
+    binary: before.binary || after.binary,
+    toolCallIds: [...tracked.toolCallIds].slice(0, 32),
+  };
+}
+
 function collapseHashMatchedRenames(candidates: EffectCandidate[]): FileEffect[] {
+  const removedByHash = removedCandidatesByHash(candidates);
+  const { consumed, effects } = renamedEffects(candidates, removedByHash);
+  return [...effects, ...unconsumedEffects(candidates, consumed)];
+}
+
+function removedCandidatesByHash(candidates: readonly EffectCandidate[]): Map<string, EffectCandidate[]> {
   const removedByHash = new Map<string, EffectCandidate[]>();
   for (const candidate of candidates) {
     if (candidate.effect.kind !== "removed" || !candidate.beforeHash) continue;
@@ -806,7 +924,13 @@ function collapseHashMatchedRenames(candidates: EffectCandidate[]): FileEffect[]
     matches.push(candidate);
     removedByHash.set(candidate.beforeHash, matches);
   }
+  return removedByHash;
+}
 
+function renamedEffects(
+  candidates: readonly EffectCandidate[],
+  removedByHash: Map<string, EffectCandidate[]>,
+): { consumed: Set<EffectCandidate>; effects: FileEffect[] } {
   const consumed = new Set<EffectCandidate>();
   const effects: FileEffect[] = [];
   for (const candidate of candidates) {
@@ -828,6 +952,11 @@ function collapseHashMatchedRenames(candidates: EffectCandidate[]): FileEffect[]
       ])].slice(0, 32),
     });
   }
+  return { consumed, effects };
+}
+
+function unconsumedEffects(candidates: readonly EffectCandidate[], consumed: Set<EffectCandidate>): FileEffect[] {
+  const effects: FileEffect[] = [];
   for (const candidate of candidates) {
     if (!consumed.has(candidate)) effects.push(candidate.effect);
   }

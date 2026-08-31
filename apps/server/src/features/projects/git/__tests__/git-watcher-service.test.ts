@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FSWatcher } from "fs";
-import { EventEmitter } from "events";
+import type * as NodeFS from "node:fs";
+import * as NodeEvents from "node:events";
 
 const { watchMock, existsSyncMock, broadcastMock } = vi.hoisted(() => ({
   watchMock: vi.fn(),
@@ -28,7 +28,7 @@ import type { GitExecutor } from "../execution/index.js";
 import type { GitService } from "../git-service.js";
 import type { HandoffCheckoutService } from "../../../handoff/index.js";
 
-class MockWatcher extends EventEmitter {
+class MockWatcher extends NodeEvents.EventEmitter {
   close = vi.fn();
 }
 
@@ -46,7 +46,7 @@ describe("GitWatcherService", () => {
     broadcastMock.mockReset();
     watchMock.mockImplementation((_path: string, cb: (eventType: string, filename: string) => void) => {
       callbacks.push(cb);
-      return new MockWatcher() as unknown as FSWatcher;
+      return new MockWatcher() as unknown as NodeFS.FSWatcher;
     });
 
     const gitExecutor = {

@@ -5,7 +5,7 @@
  * surviving app restarts.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { Statement } from "better-sqlite3";
@@ -47,6 +47,42 @@ export interface RequeuedRetentionBatch {
 
 const SELECT_COLS =
   "id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, last_error, created_at";
+
+function calculateDueLimits(
+  counts: CleanupJobDueCounts,
+  boundedLimit: number,
+): CleanupJobDueCounts {
+  let retention = Math.min(counts.retention, Math.max(1, Math.floor(boundedLimit / 2)));
+  let explicit = Math.min(counts.explicit, boundedLimit - retention);
+  const spare = boundedLimit - explicit - retention;
+  if (spare > 0) {
+    const extraRetention = Math.min(spare, counts.retention - retention);
+    retention += extraRetention;
+    explicit += Math.min(spare - extraRetention, counts.explicit - explicit);
+  }
+  return { explicit, retention };
+}
+
+function interleaveDueJobs(
+  retentionJobs: CleanupJob[],
+  explicitJobs: CleanupJob[],
+  limit: number,
+): CleanupJob[] {
+  const selected: CleanupJob[] = [];
+  for (let index = 0; selected.length < limit && hasJobAt(retentionJobs, explicitJobs, index); index += 1) {
+    appendJobAt(selected, retentionJobs, index, limit);
+    appendJobAt(selected, explicitJobs, index, limit);
+  }
+  return selected;
+}
+
+function hasJobAt(retentionJobs: CleanupJob[], explicitJobs: CleanupJob[], index: number): boolean {
+  return index < retentionJobs.length || index < explicitJobs.length;
+}
+
+function appendJobAt(target: CleanupJob[], source: CleanupJob[], index: number, limit: number): void {
+  if (target.length < limit && index < source.length) target.push(source[index]);
+}
 
 /** Repository for worktree cleanup job persistence. */
 @injectable()
@@ -112,7 +148,7 @@ export class CleanupJobRepo {
     branch: string | null;
     kind?: "explicit" | "retention";
   }): CleanupJob {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const now = Date.now();
     const kind = job.kind ?? "explicit";
 
@@ -154,51 +190,31 @@ export class CleanupJobRepo {
     const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
     const counts = this.getDueCounts(nowMs);
     if (counts.explicit === 0 || counts.retention === 0) {
-      const kind = counts.retention > 0 ? "retention" : "explicit";
-      return this.stmtFindDueByKind.all(
-        nowMs,
-        MAX_CLEANUP_ATTEMPTS,
-        kind,
-        boundedLimit,
-      ) as CleanupJob[];
+      return this.findDueFromAvailableKind(nowMs, boundedLimit, counts);
     }
 
-    let retentionLimit = Math.min(counts.retention, Math.max(1, Math.floor(boundedLimit / 2)));
-    let explicitLimit = Math.min(counts.explicit, boundedLimit - retentionLimit);
-    const spareLimit = boundedLimit - explicitLimit - retentionLimit;
-    if (spareLimit > 0) {
-      const additionalRetention = Math.min(spareLimit, counts.retention - retentionLimit);
-      retentionLimit += additionalRetention;
-      explicitLimit += Math.min(
-        spareLimit - additionalRetention,
-        counts.explicit - explicitLimit,
-      );
-    }
-    const explicitJobs = this.stmtFindDueByKind.all(
-      nowMs,
-      MAX_CLEANUP_ATTEMPTS,
-      "explicit",
-      explicitLimit,
-    ) as CleanupJob[];
-    const retentionJobs = this.stmtFindDueByKind.all(
-      nowMs,
-      MAX_CLEANUP_ATTEMPTS,
-      "retention",
-      retentionLimit,
-    ) as CleanupJob[];
+    const limits = calculateDueLimits(counts, boundedLimit);
+    const explicitJobs = this.findDueByKind(nowMs, "explicit", limits.explicit);
+    const retentionJobs = this.findDueByKind(nowMs, "retention", limits.retention);
+    return interleaveDueJobs(retentionJobs, explicitJobs, boundedLimit);
+  }
 
-    const selected: CleanupJob[] = [];
-    for (
-      let index = 0;
-      selected.length < boundedLimit && (index < retentionJobs.length || index < explicitJobs.length);
-      index += 1
-    ) {
-      if (index < retentionJobs.length) selected.push(retentionJobs[index]);
-      if (selected.length < boundedLimit && index < explicitJobs.length) {
-        selected.push(explicitJobs[index]);
-      }
-    }
-    return selected;
+  private findDueFromAvailableKind(
+    nowMs: number,
+    limit: number,
+    counts: CleanupJobDueCounts,
+  ): CleanupJob[] {
+    const kind = counts.retention > 0 ? "retention" : "explicit";
+    return this.findDueByKind(nowMs, kind, limit);
+  }
+
+  private findDueByKind(nowMs: number, kind: CleanupJob["kind"], limit: number): CleanupJob[] {
+    return this.stmtFindDueByKind.all(
+      nowMs,
+      MAX_CLEANUP_ATTEMPTS,
+      kind,
+      limit,
+    ) as CleanupJob[];
   }
 
   /** Return due cleanup job counts grouped by processing kind. */
@@ -358,7 +374,7 @@ export class CleanupJobRepo {
         if (update.run(row.id).changes === 0) continue;
         deleteRetentionJob.run(row.id);
         insertRetentionJob.run(
-          randomUUID(),
+          NodeCrypto.randomUUID(),
           row.id,
           row.workspace_path,
           row.worktree_path,
@@ -423,7 +439,7 @@ export class CleanupJobRepo {
           (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
          VALUES (?, ?, ?, ?, ?, 'retention', 0, 0, ?)`,
       ).run(
-        randomUUID(),
+        NodeCrypto.randomUUID(),
         row.id,
         row.workspace_path,
         row.worktree_path,
@@ -451,7 +467,7 @@ export class CleanupJobRepo {
 
     const tx = this.db.transaction(() => {
       for (const job of jobs) {
-        const result = insert.run(randomUUID(), job.thread_id, job.workspace_path, job.worktree_path, job.branch, now);
+        const result = insert.run(NodeCrypto.randomUUID(), job.thread_id, job.workspace_path, job.worktree_path, job.branch, now);
         if (result.changes > 0) inserted++;
       }
     });

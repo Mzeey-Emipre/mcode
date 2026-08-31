@@ -54,53 +54,80 @@ export function buildConversationReplay(
   maxChars: number,
   compactSummary?: string | null,
 ): string {
-  const turns = messages.filter((m) => m.role === "user" || m.role === "assistant");
-  const nonEmptyTurns = turns.filter((m) => m.content.trim() !== "");
-  if (nonEmptyTurns.length === 0) return "";
+  const formatted = messages
+    .filter(isConversationTurn)
+    .filter(hasContent)
+    .map(formatConversationTurn);
+  return buildReplayFromFormattedTurns(formatted, maxChars, compactSummary);
+}
 
-  const formatted = nonEmptyTurns.map((m) => {
-    const label = m.role === "user" ? "User" : "Assistant";
-    return `${label}: ${m.content}`;
-  });
+function isConversationTurn(message: Message): boolean {
+  return message.role === "user" || message.role === "assistant";
+}
 
-  // Reserve space for the compact summary prefix so it doesn't blow the budget.
-  // +2 accounts for the "\n\n" separator between the prefix and the first turn.
-  const summaryReservation = compactSummary ? compactSummary.length + 2 : 0;
-  const turnBudget = maxChars - summaryReservation;
+function hasContent(message: Message): boolean {
+  return message.content.trim() !== "";
+}
 
-  // If the summary alone exceeds the budget, fall back to truncating the summary.
-  if (turnBudget <= 0) {
-    return compactSummary ? compactSummary.slice(0, maxChars) : "";
-  }
+function formatConversationTurn(message: Message): string {
+  const label = message.role === "user" ? "User" : "Assistant";
+  return `${label}: ${message.content}`;
+}
 
-  // Walk backwards from the most recent turn, accumulating within budget.
+function buildReplayFromFormattedTurns(
+  formatted: string[],
+  maxChars: number,
+  compactSummary?: string | null,
+): string {
+  if (formatted.length === 0) return "";
+  const turnBudget = maxChars - summaryReservation(compactSummary);
+  return buildReplayWithinBudget(formatted, maxChars, turnBudget, compactSummary);
+}
+
+function summaryReservation(compactSummary?: string | null): number {
+  return compactSummary ? compactSummary.length + 2 : 0;
+}
+
+function buildReplayWithinBudget(
+  formatted: string[],
+  maxChars: number,
+  turnBudget: number,
+  compactSummary?: string | null,
+): string {
+  if (turnBudget <= 0) return compactSummary ? compactSummary.slice(0, maxChars) : "";
+  return buildReplayFromRecentTurns(formatted, turnBudget, compactSummary);
+}
+
+function buildReplayFromRecentTurns(
+  formatted: string[],
+  turnBudget: number,
+  compactSummary?: string | null,
+): string {
+  const result = selectRecentTurns(formatted, turnBudget);
+  if (result.length === 0) return formatted.at(-1)!.slice(0, turnBudget);
+
+  const omittedCount = formatted.length - result.length;
+  if (omittedCount === 0) return result.join("\n\n");
+  return omittedPrefix(compactSummary, omittedCount) + result.join("\n\n");
+}
+
+function selectRecentTurns(formatted: string[], turnBudget: number): string[] {
   const result: string[] = [];
   let used = 0;
-  for (let i = formatted.length - 1; i >= 0; i--) {
-    const chunk = formatted[i];
-    const cost = chunk.length + (result.length > 0 ? 2 : 0); // +2 for "\n\n" separator
+  for (let index = formatted.length - 1; index >= 0; index--) {
+    const chunk = formatted[index];
+    const cost = chunk.length + (result.length > 0 ? 2 : 0);
     if (used + cost > turnBudget) break;
     result.unshift(chunk);
     used += cost;
   }
+  return result;
+}
 
-  if (result.length === 0) {
-    // Truncate to turnBudget (not maxChars) so prepending the summary stays within budget.
-    return formatted[formatted.length - 1].slice(0, turnBudget);
-  }
-
-  const omittedCount = nonEmptyTurns.length - result.length;
-  if (omittedCount === 0) {
-    // All turns fit — no prefix needed regardless of summary availability.
-    return result.join("\n\n");
-  }
-
-  // Turns were dropped. Use compact summary if available; fall back to omission notice.
-  const prefix = compactSummary
+function omittedPrefix(compactSummary: string | null | undefined, omittedCount: number): string {
+  return compactSummary
     ? `${compactSummary}\n\n`
     : `[${omittedCount} earlier message${omittedCount === 1 ? "" : "s"} omitted]\n\n`;
-
-  return prefix + result.join("\n\n");
 }
 
 /**

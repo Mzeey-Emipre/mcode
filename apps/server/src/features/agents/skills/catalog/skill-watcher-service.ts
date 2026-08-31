@@ -6,9 +6,9 @@
  */
 
 import { inject, injectable } from "tsyringe";
-import { watch, existsSync, type FSWatcher } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { logger } from "@mcode/shared";
 import { broadcast } from "../../../../application/transport/push.js";
 import { SkillService, copilotUserAgentsDir } from "./skill-service.js";
@@ -17,7 +17,7 @@ const DEBOUNCE_MS = 200;
 
 @injectable()
 export class SkillWatcherService {
-  private readonly watchers: FSWatcher[] = [];
+  private readonly watchers: NodeFS.FSWatcher[] = [];
   // Tracks which dirs already have a live watcher so repeated `watch(dir)`
   // calls (e.g. start() running twice across a stopAll(), or future code
   // paths that add overlapping roots) don't register duplicate FSWatchers
@@ -67,24 +67,24 @@ export class SkillWatcherService {
       return;
     }
     this.started = true;
-    const home = homedir();
-    const claudeDir = join(home, ".claude");
-    const cursorDir = join(home, ".cursor");
+    const home = NodeOS.homedir();
+    const claudeDir = NodePath.join(home, ".claude");
+    const cursorDir = NodePath.join(home, ".cursor");
 
     const parentDirs =
       overrides?.parentDirs ?? [claudeDir, cursorDir];
     const roots = overrides?.roots ?? [
       // Claude roots
-      join(claudeDir, "skills"),
-      join(claudeDir, "commands"),
-      join(claudeDir, "plugins"),
-      join(claudeDir, ".agents", "skills"),
+      NodePath.join(claudeDir, "skills"),
+      NodePath.join(claudeDir, "commands"),
+      NodePath.join(claudeDir, "plugins"),
+      NodePath.join(claudeDir, ".agents", "skills"),
       // Copilot user-level agents
       copilotUserAgentsDir(),
       // Cursor CLI roots (skills/commands/plugins mirror Claude-style layout)
-      join(cursorDir, "skills"),
-      join(cursorDir, "commands"),
-      join(cursorDir, "plugins"),
+      NodePath.join(cursorDir, "skills"),
+      NodePath.join(cursorDir, "commands"),
+      NodePath.join(cursorDir, "plugins"),
     ];
 
     this.dynamicRoots = roots;
@@ -99,7 +99,7 @@ export class SkillWatcherService {
    * direct children of the parent, which is exactly the granularity we need.
    */
   private watchParent(parentDir: string): void {
-    if (!existsSync(parentDir)) {
+    if (!NodeFS.existsSync(parentDir)) {
       logger.debug("SkillWatcherService: parent dir missing, dynamic-root detection disabled", {
         parentDir,
       });
@@ -107,7 +107,7 @@ export class SkillWatcherService {
     }
     if (this.watchedDirs.has(parentDir)) return;
     try {
-      const w = watch(parentDir, () => this.onParentChange(parentDir));
+      const w = NodeFS.watch(parentDir, () => this.onParentChange(parentDir));
       this.attachErrorHandler(w, parentDir);
       this.watchers.push(w);
       this.watchedDirs.add(parentDir);
@@ -132,7 +132,7 @@ export class SkillWatcherService {
 
   /** Begin watching one directory. No-op when the path is missing or already watched. */
   watch(dir: string): void {
-    if (!existsSync(dir)) {
+    if (!NodeFS.existsSync(dir)) {
       logger.debug("SkillWatcherService: skip missing dir", { dir });
       return;
     }
@@ -141,7 +141,7 @@ export class SkillWatcherService {
       return;
     }
     try {
-      const w = watch(dir, { recursive: true }, () => this.onChange(dir));
+      const w = NodeFS.watch(dir, { recursive: true }, () => this.onChange(dir));
       this.attachErrorHandler(w, dir);
       this.watchers.push(w);
       this.watchedDirs.add(dir);
@@ -153,7 +153,7 @@ export class SkillWatcherService {
         message: outerMessage,
       });
       try {
-        const w = watch(dir, () => this.onChange(dir));
+        const w = NodeFS.watch(dir, () => this.onChange(dir));
         this.attachErrorHandler(w, dir);
         this.watchers.push(w);
         this.watchedDirs.add(dir);
@@ -188,7 +188,7 @@ export class SkillWatcherService {
    * Wire a `error` handler so a single bad watcher cannot crash the process.
    * On error, log at debug, close the watcher, and drop it from the registry.
    */
-  private attachErrorHandler(w: FSWatcher, dir: string): void {
+  private attachErrorHandler(w: NodeFS.FSWatcher, dir: string): void {
     w.on("error", (err) => {
       logger.debug("SkillWatcherService: watcher error, dropping", {
         dir,

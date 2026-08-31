@@ -1,7 +1,8 @@
-import { Buffer } from "node:buffer";
-import { createRequire } from "node:module";
+import * as NodeBuffer from "node:buffer";
+import * as NodeModule from "node:module";
 import type { IPty } from "node-pty";
 import type { TerminalPlatform } from "@mcode/contracts";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   PTY_HOST_MAX_DATA_BYTES,
   PTY_HOST_HEARTBEAT_INTERVAL_MS,
@@ -12,7 +13,7 @@ import {
 } from "./pty-host-protocol.js";
 import { createPtyProcessScope } from "./pty-process-scope.js";
 
-const nativeRequire = createRequire(import.meta.url);
+const nativeRequire = NodeModule.createRequire(import.meta.url);
 const MAX_SESSIONS = 20;
 
 /** Containment operations owned by one PTY host session. */
@@ -28,6 +29,7 @@ export interface PtyProcessScope {
 /** Construction options for the isolated PTY host runtime. */
 export interface PtyHostProcessRuntimeOptions {
   readonly platform: TerminalPlatform;
+  readonly hostRuntime: Pick<HostRuntime, "platform" | "architecture">;
   readonly nativeAbi: string;
   readonly publish: (event: PtyHostEvent) => void;
   readonly queueBytes?: () => number;
@@ -64,16 +66,27 @@ export class PtyHostProcessRuntime {
   /** Validates and applies one server message. */
   async receive(value: unknown): Promise<void> {
     if (this.disposed) throw new Error("PTY host runtime is stopped");
-    const message =
-      this.generation === null
-        ? PtyHostServerMessageSchema().parse(value)
-        : parsePtyHostServerMessage(value, this.generation);
+    const message = this.parseServerMessage(value);
     if (this.generation === null) {
-      if (message.kind !== "handshake")
-        throw new Error("PTY host handshake is required");
-      this.acceptHandshake(message);
-      return;
+      return this.receiveHandshake(message);
     }
+    return this.handleMessage(message);
+  }
+
+  private parseServerMessage(value: unknown): PtyHostServerMessage {
+    return this.generation === null
+      ? PtyHostServerMessageSchema().parse(value)
+      : parsePtyHostServerMessage(value, this.generation);
+  }
+
+  private receiveHandshake(message: PtyHostServerMessage): void {
+    if (message.kind !== "handshake") {
+      throw new Error("PTY host handshake is required");
+    }
+    this.acceptHandshake(message);
+  }
+
+  private async handleMessage(message: PtyHostServerMessage): Promise<void> {
     switch (message.kind) {
       case "handshake":
         throw new Error("PTY host handshake is already complete");
@@ -178,7 +191,8 @@ export class PtyHostProcessRuntime {
         : {}),
     });
     pty.pause();
-    const scope = (this.options.createScope ?? createPtyProcessScope)(pty.pid);
+    const scope = (this.options.createScope ?? ((pid) =>
+      createPtyProcessScope(pid, this.options.hostRuntime)))(pty.pid);
     let resolveExit!: () => void;
     const exitPromise = new Promise<void>((resolve) => {
       resolveExit = resolve;
@@ -259,7 +273,7 @@ export class PtyHostProcessRuntime {
     if (sequence !== session.commandSeq + 1n)
       throw new Error("PTY command sequence is out of order");
     if (message.kind === "command.input") {
-      session.pty.write(Buffer.from(message.dataBase64, "base64"));
+      session.pty.write(NodeBuffer.Buffer.from(message.dataBase64, "base64"));
     } else {
       session.pty.resize(message.cols, message.rows);
     }
@@ -275,10 +289,10 @@ export class PtyHostProcessRuntime {
     });
   }
 
-  private publishOutput(sessionId: string, data: string | Buffer): void {
+  private publishOutput(sessionId: string, data: string | NodeBuffer.Buffer): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data, "utf8");
+    const bytes = NodeBuffer.Buffer.isBuffer(data) ? data : NodeBuffer.Buffer.from(data, "utf8");
     for (
       let offset = 0;
       offset < bytes.length;

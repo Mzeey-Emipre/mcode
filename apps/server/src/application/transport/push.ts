@@ -4,7 +4,7 @@
  */
 
 import type { WebSocket } from "ws";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { WS_CHANNELS, type WsChannelName, type SetThreadSubscriptionsInput, encodeTerminalDataFrame } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import { getTransportPayloadValidator } from "./payload-validation.js";
@@ -18,7 +18,7 @@ const clients = new Set<WebSocket>();
 const threadSubscriptions = new Map<WebSocket, Set<string>>();
 const threadJournals = new Map<string, { events: unknown[] }>();
 const nextSequenceByThread = new Map<string, number>();
-const eventEpoch = randomUUID();
+const eventEpoch = NodeCrypto.randomUUID();
 const SUBSCRIPTION_SCOPED_CHANNELS = new Set<WsChannelName>([
   "agent.event",
   "agent.canonical",
@@ -95,32 +95,54 @@ export function setClientThreadSubscriptions(
   if (!cursors) return { hydrationRequiredThreadIds, replayedThrough };
 
   for (const threadId of threadIds) {
-    const rawCursor = cursors[threadId];
-    if (rawCursor === undefined) continue;
-    const cursor = typeof rawCursor === "number" ? rawCursor : rawCursor.sequence;
-    if (typeof rawCursor !== "number" && rawCursor.epoch !== eventEpoch) {
-      hydrationRequiredThreadIds.push(threadId);
-      continue;
-    }
-    const journal = threadJournals.get(threadId);
-    if (!journal) {
-      if (cursor > 0) hydrationRequiredThreadIds.push(threadId);
-      continue;
-    }
-    if (journal.events.length > 0 && cursor < (journal.events[0] as { sequence: number }).sequence - 1) {
-      hydrationRequiredThreadIds.push(threadId);
-      continue;
-    }
-    const pending = journal.events.filter((event) => (event as { sequence: number }).sequence > cursor);
-    if (pending.length === 0) continue;
-    let deliveredThrough = cursor;
-    for (const event of pending) {
-      if (!sendToClient(ws, "agent.event", event)) break;
-      deliveredThrough = (event as { sequence: number }).sequence;
-    }
-    if (deliveredThrough !== cursor) replayedThrough[threadId] = deliveredThrough;
+    replayThreadSubscription(
+      ws,
+      threadId,
+      cursors[threadId],
+      hydrationRequiredThreadIds,
+      replayedThrough,
+    );
   }
   return { hydrationRequiredThreadIds, replayedThrough };
+}
+
+function replayThreadSubscription(
+  ws: WebSocket,
+  threadId: string,
+  rawCursor: NonNullable<SetThreadSubscriptionsInput["cursors"]>[string] | undefined,
+  hydrationRequiredThreadIds: string[],
+  replayedThrough: Record<string, number>,
+): void {
+  if (rawCursor === undefined) return;
+  const cursor = typeof rawCursor === "number" ? rawCursor : rawCursor.sequence;
+  const journal = threadJournals.get(threadId);
+  if (requiresThreadHydration(rawCursor, cursor, journal)) {
+    hydrationRequiredThreadIds.push(threadId);
+    return;
+  }
+  if (!journal) return;
+  const deliveredThrough = replayJournalEvents(ws, cursor, journal.events);
+  if (deliveredThrough !== cursor) replayedThrough[threadId] = deliveredThrough;
+}
+
+function requiresThreadHydration(
+  rawCursor: NonNullable<SetThreadSubscriptionsInput["cursors"]>[string],
+  cursor: number,
+  journal: { events: unknown[] } | undefined,
+): boolean {
+  if (typeof rawCursor !== "number" && rawCursor.epoch !== eventEpoch) return true;
+  if (!journal) return cursor > 0;
+  return journal.events.length > 0 && cursor < (journal.events[0] as { sequence: number }).sequence - 1;
+}
+
+function replayJournalEvents(ws: WebSocket, cursor: number, events: readonly unknown[]): number {
+  let deliveredThrough = cursor;
+  for (const event of events) {
+    if ((event as { sequence: number }).sequence <= cursor) continue;
+    if (!sendToClient(ws, "agent.event", event)) break;
+    deliveredThrough = (event as { sequence: number }).sequence;
+  }
+  return deliveredThrough;
 }
 
 /** Get the current number of connected clients. */
@@ -162,59 +184,52 @@ export function broadcast(
     return undefined;
   }
 
-  let candidate = data;
   const threadId = payloadThreadId(data);
-  if (channel === "agent.event" && threadId && data && typeof data === "object") {
-    const sequence = (nextSequenceByThread.get(threadId) ?? 0) + 1;
-    candidate = { ...(data as Record<string, unknown>), sequence, epoch: eventEpoch };
-  }
-
+  const candidate = decorateAgentEvent(channel, data, threadId);
   const validation = getTransportPayloadValidator().validatePush(channel, candidate, schema);
-  if (!validation.ok) {
-    return undefined;
-  }
-
-  if (channel === "agent.event" && threadId) {
-    const event = validation.data as { sequence: number };
-    nextSequenceByThread.delete(threadId);
-    nextSequenceByThread.set(threadId, event.sequence);
-    const existing = threadJournals.get(threadId);
-    const events = existing ? [...existing.events, validation.data] : [validation.data];
-    if (events.length > MAX_AGENT_EVENT_JOURNAL_EVENTS_PER_THREAD) {
-      events.splice(0, events.length - MAX_AGENT_EVENT_JOURNAL_EVENTS_PER_THREAD);
-    }
-    threadJournals.delete(threadId);
-    threadJournals.set(threadId, { events });
-    while (threadJournals.size > MAX_AGENT_EVENT_JOURNAL_THREADS) {
-      const oldestThreadId = threadJournals.keys().next().value as string;
-      threadJournals.delete(oldestThreadId);
-    }
-    while (nextSequenceByThread.size > MAX_AGENT_EVENT_JOURNAL_THREADS) {
-      const oldestThreadId = nextSequenceByThread.keys().next().value as string;
-      nextSequenceByThread.delete(oldestThreadId);
-    }
-  }
-
+  if (!validation.ok) return undefined;
+  retainAgentEvent(channel, threadId, validation.data);
   const payload = JSON.stringify({
     type: "push" as const,
     channel,
     data: validation.data,
   });
-  const requiresThreadSubscription = SUBSCRIPTION_SCOPED_CHANNELS.has(channel);
-
-  for (const ws of clients) {
-    if (ws.readyState === ws.OPEN) {
-      if (
-        requiresThreadSubscription &&
-        threadId &&
-        !threadSubscriptions.get(ws)?.has(threadId)
-      ) {
-        continue;
-      }
-      ws.send(payload);
-    }
-  }
+  sendBroadcastPayload(channel, threadId, payload);
   return validation.data;
+}
+
+function decorateAgentEvent(channel: WsChannelName, data: unknown, threadId: string | undefined): unknown {
+  if (channel !== "agent.event" || !threadId || !data || typeof data !== "object") return data;
+  const sequence = (nextSequenceByThread.get(threadId) ?? 0) + 1;
+  return { ...(data as Record<string, unknown>), sequence, epoch: eventEpoch };
+}
+
+function retainAgentEvent(channel: WsChannelName, threadId: string | undefined, event: unknown): void {
+  if (channel !== "agent.event" || !threadId) return;
+  nextSequenceByThread.delete(threadId);
+  nextSequenceByThread.set(threadId, (event as { sequence: number }).sequence);
+  const existing = threadJournals.get(threadId);
+  const events = existing ? [...existing.events, event] : [event];
+  events.splice(0, Math.max(0, events.length - MAX_AGENT_EVENT_JOURNAL_EVENTS_PER_THREAD));
+  threadJournals.delete(threadId);
+  threadJournals.set(threadId, { events });
+  trimJournalMap(threadJournals);
+  trimJournalMap(nextSequenceByThread);
+}
+
+function trimJournalMap(map: Map<string, unknown>): void {
+  while (map.size > MAX_AGENT_EVENT_JOURNAL_THREADS) {
+    map.delete(map.keys().next().value as string);
+  }
+}
+
+function sendBroadcastPayload(channel: WsChannelName, threadId: string | undefined, payload: string): void {
+  const requiresThreadSubscription = SUBSCRIPTION_SCOPED_CHANNELS.has(channel);
+  for (const ws of clients) {
+    if (ws.readyState !== ws.OPEN) continue;
+    if (requiresThreadSubscription && threadId && !threadSubscriptions.get(ws)?.has(threadId)) continue;
+    ws.send(payload);
+  }
 }
 
 /** Sends one validated push event to exactly one connected WebSocket client. */

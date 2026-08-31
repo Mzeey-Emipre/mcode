@@ -15,9 +15,9 @@
  * produce source-scoped diagnostics without hiding valid sibling prompts.
  */
 
-import { open, opendir } from "fs/promises";
-import { homedir } from "os";
-import { join, resolve } from "path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 import { parseDocument } from "yaml";
 import type { ProviderCatalogSourceDiagnostic, SkillInfo } from "@mcode/contracts";
@@ -74,13 +74,13 @@ const DEFAULT_DISCOVERY_OPTIONS: CodexCustomPromptDiscoveryLimits = {
 
 const NODE_FILE_SYSTEM: CodexCustomPromptFileSystem = {
   async *entries(directory) {
-    const handle = await opendir(directory);
+    const handle = await NodeFSPromises.opendir(directory);
     for await (const entry of handle) {
       yield { name: entry.name, isFile: entry.isFile() };
     }
   },
   async readFile(path, maxBytes) {
-    const handle = await open(path, "r");
+    const handle = await NodeFSPromises.open(path, "r");
     try {
       const buffer = Buffer.allocUnsafe(maxBytes + 1);
       let offset = 0;
@@ -106,7 +106,7 @@ export function resolveEffectiveCodexHome(
   environment: Readonly<Record<string, string>>,
 ): string {
   const configuredHome = environmentValue(environment, CODEX_HOME_ENVIRONMENT_VARIABLE);
-  if (configuredHome) return resolve(configuredHome);
+  if (configuredHome) return NodePath.resolve(configuredHome);
 
   const driveHome = environmentValue(environment, "HOMEDRIVE")
     && environmentValue(environment, "HOMEPATH")
@@ -115,8 +115,8 @@ export function resolveEffectiveCodexHome(
   const userHome = environmentValue(environment, "HOME")
     ?? environmentValue(environment, "USERPROFILE")
     ?? driveHome
-    ?? homedir();
-  return resolve(userHome, ".codex");
+    ?? NodeOS.homedir();
+  return NodePath.resolve(userHome, ".codex");
 }
 
 function safeSourceName(name: string): string {
@@ -148,14 +148,20 @@ function promptDescription(body: string): string {
   if (!body.startsWith("---\n") && !body.startsWith("---\r\n")) return "";
   const frontmatter = FRONTMATTER_RE.exec(body);
   if (!frontmatter) throw new Error("its YAML frontmatter is not closed");
+  return frontmatterDescription(frontmatter[1]!);
+}
 
-  const document = parseDocument(frontmatter[1], { uniqueKeys: true });
+function frontmatterDescription(frontmatter: string): string {
+  const document = parseDocument(frontmatter, { uniqueKeys: true });
   if (document.errors.length > 0) throw new Error("its YAML frontmatter is malformed");
   const metadata = document.toJS({ maxAliasCount: 10 }) as unknown;
   if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
     throw new Error("its YAML frontmatter must be a mapping");
   }
-  const description = (metadata as Record<string, unknown>).description;
+  return validatePromptDescription((metadata as Record<string, unknown>).description);
+}
+
+function validatePromptDescription(description: unknown): string {
   if (description === undefined || description === null) return "";
   if (typeof description !== "string") {
     throw new Error("its YAML description must be a string");
@@ -164,6 +170,103 @@ function promptDescription(body: string): string {
     throw new Error(`its description exceeds ${CODEX_CUSTOM_PROMPT_MAX_DESCRIPTION_CHARS} characters`);
   }
   return description.trim();
+}
+
+interface PromptDiscoveryState {
+  inspectedEntries: number;
+  inspectedFiles: number;
+  readonly prompts: SkillInfo[];
+  readonly diagnostics: ProviderCatalogSourceDiagnostic[];
+}
+
+function isPromptFile(entry: { readonly name: string; readonly isFile: boolean }): boolean {
+  return entry.isFile && entry.name.endsWith(CODEX_CUSTOM_PROMPT_FILE_SUFFIX);
+}
+
+function directoryLimitDiagnostic(entryName: string, maxDirectoryEntries: number): ProviderCatalogSourceDiagnostic {
+  const entryLabel = maxDirectoryEntries === 1 ? "y entry" : "y entries";
+  return {
+    sourceKind: "customPromptAdapter",
+    rejectedSource: safeSourceName(entryName),
+    severity: "warning",
+    code: "partial-result",
+    message: `Codex custom prompt discovery inspected at most ${maxDirectoryEntries} direct director${entryLabel}; "${safeSourceName(entryName)}" and later entries were omitted.`,
+  };
+}
+
+function fileLimitDiagnostic(entryName: string, maxFiles: number): ProviderCatalogSourceDiagnostic {
+  const suffix = maxFiles === 1 ? "" : "s";
+  return {
+    sourceKind: "customPromptAdapter",
+    rejectedSource: safeSourceName(entryName),
+    severity: "warning",
+    code: "partial-result",
+    message: `Codex custom prompt discovery inspected at most ${maxFiles} direct .md file${suffix}; "${safeSourceName(entryName)}" and later files were omitted.`,
+  };
+}
+
+async function readPromptEntry(
+  entryName: string,
+  promptDirectory: string,
+  options: CodexCustomPromptDiscoveryOptions,
+  fileSystem: CodexCustomPromptFileSystem,
+  state: PromptDiscoveryState,
+): Promise<void> {
+  const path = NodePath.join(promptDirectory, entryName);
+  try {
+    const buffer = await fileSystem.readFile(path, options.maxFileBytes);
+    if (buffer.length > options.maxFileBytes) {
+      addDiagnostic(state.diagnostics, discoveryError(entryName, `it exceeds ${options.maxFileBytes} bytes`));
+      return;
+    }
+    state.prompts.push(promptFromFile(entryName, path, decodePrompt(buffer)));
+  } catch (error) {
+    const reason = error instanceof Error && error.message.startsWith("its ")
+      ? error.message
+      : "it could not be read or parsed";
+    addDiagnostic(state.diagnostics, discoveryError(entryName, reason));
+  }
+}
+
+async function scanPromptDirectory(
+  promptDirectory: string,
+  options: CodexCustomPromptDiscoveryOptions,
+  state: PromptDiscoveryState,
+): Promise<CodexCustomPromptDiscoveryResult> {
+  const fileSystem = options.fileSystem ?? NODE_FILE_SYSTEM;
+  const maxDirectoryEntries = options.maxDirectoryEntries ?? CODEX_CUSTOM_PROMPT_MAX_DIRECTORY_ENTRIES;
+  try {
+    for await (const entry of fileSystem.entries(promptDirectory)) {
+      if (state.inspectedEntries >= maxDirectoryEntries) {
+        addDiagnostic(state.diagnostics, directoryLimitDiagnostic(entry.name, maxDirectoryEntries));
+        break;
+      }
+      state.inspectedEntries += 1;
+      if (!isPromptFile(entry)) continue;
+      if (state.inspectedFiles >= options.maxFiles) {
+        addDiagnostic(state.diagnostics, fileLimitDiagnostic(entry.name, options.maxFiles));
+        break;
+      }
+      state.inspectedFiles += 1;
+      await readPromptEntry(entry.name, promptDirectory, options, fileSystem, state);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { prompts: [], diagnostics: [], available: true };
+    }
+    return {
+      prompts: state.prompts,
+      diagnostics: [{
+        sourceKind: "customPromptAdapter",
+        rejectedSource: "prompts",
+        severity: "warning",
+        code: "source-unavailable",
+        message: "The effective Codex custom prompt directory could not be read.",
+      }],
+      available: false,
+    };
+  }
+  return { prompts: state.prompts, diagnostics: state.diagnostics, available: true };
 }
 
 function promptFromFile(fileName: string, path: string, body: string): SkillInfo {
@@ -196,12 +299,11 @@ export async function discoverCodexCustomPrompts(
   codexHome: string,
   options: CodexCustomPromptDiscoveryOptions = DEFAULT_DISCOVERY_OPTIONS,
 ): Promise<CodexCustomPromptDiscoveryResult> {
-  const diagnostics: ProviderCatalogSourceDiagnostic[] = [];
-  const prompts: SkillInfo[] = [];
-  const promptDirectory = join(codexHome, CODEX_CUSTOM_PROMPT_DIRECTORY_NAME);
+  const state: PromptDiscoveryState = { inspectedEntries: 0, inspectedFiles: 0, prompts: [], diagnostics: [] };
+  const promptDirectory = NodePath.join(codexHome, CODEX_CUSTOM_PROMPT_DIRECTORY_NAME);
   if (promptDirectory.length > PROVIDER_CATALOG_PATH_MAX_CHARS) {
     return {
-      prompts,
+      prompts: state.prompts,
       diagnostics: [{
         sourceKind: "customPromptAdapter",
         rejectedSource: "prompts",
@@ -213,74 +315,7 @@ export async function discoverCodexCustomPrompts(
     };
   }
 
-  const fileSystem = options.fileSystem ?? NODE_FILE_SYSTEM;
-  const maxDirectoryEntries = options.maxDirectoryEntries
-    ?? CODEX_CUSTOM_PROMPT_MAX_DIRECTORY_ENTRIES;
-  let inspectedEntries = 0;
-  let inspectedFiles = 0;
-  try {
-    for await (const entry of fileSystem.entries(promptDirectory)) {
-      if (inspectedEntries >= maxDirectoryEntries) {
-        addDiagnostic(diagnostics, {
-          sourceKind: "customPromptAdapter",
-          rejectedSource: safeSourceName(entry.name),
-          severity: "warning",
-          code: "partial-result",
-          message: `Codex custom prompt discovery inspected at most ${maxDirectoryEntries} direct director${maxDirectoryEntries === 1 ? "y entry" : "y entries"}; "${safeSourceName(entry.name)}" and later entries were omitted.`,
-        });
-        break;
-      }
-      inspectedEntries += 1;
-      if (!entry.isFile || !entry.name.endsWith(CODEX_CUSTOM_PROMPT_FILE_SUFFIX)) continue;
-      if (inspectedFiles >= options.maxFiles) {
-        addDiagnostic(diagnostics, {
-          sourceKind: "customPromptAdapter",
-          rejectedSource: safeSourceName(entry.name),
-          severity: "warning",
-          code: "partial-result",
-          message: `Codex custom prompt discovery inspected at most ${options.maxFiles} direct .md file${options.maxFiles === 1 ? "" : "s"}; "${safeSourceName(entry.name)}" and later files were omitted.`,
-        });
-        break;
-      }
-      inspectedFiles += 1;
-
-      const path = join(promptDirectory, entry.name);
-      try {
-        const buffer = await fileSystem.readFile(path, options.maxFileBytes);
-        if (buffer.length > options.maxFileBytes) {
-          addDiagnostic(diagnostics, discoveryError(
-            entry.name,
-            `it exceeds ${options.maxFileBytes} bytes`,
-          ));
-          continue;
-        }
-        const body = decodePrompt(buffer);
-        prompts.push(promptFromFile(entry.name, path, body));
-      } catch (error) {
-        const reason = error instanceof Error && error.message.startsWith("its ")
-          ? error.message
-          : "it could not be read or parsed";
-        addDiagnostic(diagnostics, discoveryError(entry.name, reason));
-      }
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { prompts: [], diagnostics: [], available: true };
-    }
-    return {
-      prompts,
-      diagnostics: [{
-        sourceKind: "customPromptAdapter",
-        rejectedSource: "prompts",
-        severity: "warning",
-        code: "source-unavailable",
-        message: "The effective Codex custom prompt directory could not be read.",
-      }],
-      available: false,
-    };
-  }
-
-  return { prompts, diagnostics, available: true };
+  return scanPromptDirectory(promptDirectory, options, state);
 }
 
 /** Owns the cached result of bounded, picker-triggered custom prompt refreshes. */

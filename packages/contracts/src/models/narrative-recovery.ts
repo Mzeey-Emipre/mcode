@@ -12,15 +12,15 @@ export const ParentNarrativeRecoveryItemSchema = lazySchema(() =>
   z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("toolCall"),
-      record: ToolCallRecordSchema,
+      record: ToolCallRecordSchema(),
     }),
     z.object({
       kind: z.literal("narrationSegment"),
-      record: ThoughtSegmentRecordSchema,
+      record: ThoughtSegmentRecordSchema(),
     }),
     z.object({
       kind: z.literal("hook"),
-      record: HookExecutionRecordSchema,
+      record: HookExecutionRecordSchema(),
     }),
   ]),
 );

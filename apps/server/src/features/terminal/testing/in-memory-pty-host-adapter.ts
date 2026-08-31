@@ -1,4 +1,4 @@
-import { Buffer } from "node:buffer";
+import * as NodeBuffer from "node:buffer";
 import { TerminalU64Schema, type TerminalPlatform } from "@mcode/contracts";
 import type {
   PtyHostAdapter,
@@ -115,7 +115,7 @@ export class InMemoryPtyHostAdapter implements PtyHostAdapter {
     const next = session.commandSeq + 1n;
     if (BigInt(commandSeq.data) !== next) throw new Error("PTY command sequence is out of order");
     if (command.kind === "input") {
-      this.protocol.sendToHost({ contractVersion: 1, kind: "command.input", sessionId: command.sessionId, hostGeneration: command.hostGeneration, attachmentEpoch: command.attachmentEpoch, commandSeq: command.commandSeq, dataBase64: Buffer.from(command.data).toString("base64") });
+      this.protocol.sendToHost({ contractVersion: 1, kind: "command.input", sessionId: command.sessionId, hostGeneration: command.hostGeneration, attachmentEpoch: command.attachmentEpoch, commandSeq: command.commandSeq, dataBase64: NodeBuffer.Buffer.from(command.data).toString("base64") });
     } else {
       this.protocol.sendToHost({ contractVersion: 1, kind: "command.resize", sessionId: command.sessionId, hostGeneration: command.hostGeneration, attachmentEpoch: command.attachmentEpoch, commandSeq: command.commandSeq, cols: command.data.cols, rows: command.data.rows });
     }
@@ -170,7 +170,7 @@ export class InMemoryPtyHostAdapter implements PtyHostAdapter {
   emitOutput(sessionId: string, data: Uint8Array): void {
     const session = this.requireSession(sessionId);
     session.outputSeq += 1n;
-    this.publish({ contractVersion: 1, kind: "output", sessionId, hostGeneration: this.hostGeneration, outputSeq: session.outputSeq.toString(), dataBase64: Buffer.from(data).toString("base64") });
+    this.publish({ contractVersion: 1, kind: "output", sessionId, hostGeneration: this.hostGeneration, outputSeq: session.outputSeq.toString(), dataBase64: NodeBuffer.Buffer.from(data).toString("base64") });
   }
 
   private publish(event: PtyHostEvent): void {

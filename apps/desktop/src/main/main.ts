@@ -19,10 +19,11 @@ import {
   shell,
 } from "electron";
 import { autoUpdater } from "electron-updater";
-import { existsSync } from "fs";
-import { mkdir, writeFile } from "fs/promises";
-import { isAbsolute, join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 
 import {
   registerOpenInHandlers,
@@ -64,7 +65,7 @@ import { shouldPrintVersion } from "./cli-args.js";
 // before app.whenReady() and any other path-dependent call.
 const harnessUserDataDir = process.env.MCODE_ELECTRON_USER_DATA_DIR?.trim();
 const harnessCapabilityPath = process.env.MCODE_RELIABILITY_CAPABILITY_PATH?.trim();
-if (harnessUserDataDir && harnessCapabilityPath && isAbsolute(harnessUserDataDir)) {
+if (harnessUserDataDir && harnessCapabilityPath && NodePath.isAbsolute(harnessUserDataDir)) {
   app.setPath("userData", harnessUserDataDir);
 } else if (!app.isPackaged) {
   const agentUserDataDir =
@@ -73,7 +74,7 @@ if (harnessUserDataDir && harnessCapabilityPath && isAbsolute(harnessUserDataDir
       : undefined;
   app.setPath(
     "userData",
-    agentUserDataDir || join(app.getPath("appData"), "Mcode-Dev"),
+    agentUserDataDir || NodePath.join(app.getPath("appData"), "Mcode-Dev"),
   );
 }
 
@@ -220,33 +221,31 @@ export function normalizeRendererCrashReport(
   if (payload === null || typeof payload !== "object") return null;
   try {
     const record = payload as Record<string, unknown>;
-    if (
-      Object.getPrototypeOf(record) !== Object.prototype ||
-      Object.keys(record).length !== 2 ||
-      typeof record.errorName !== "string" ||
-      typeof record.componentStack !== "string"
-    ) {
-      return null;
-    }
-    if (
-      record.componentStack.length > RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH
-    ) {
-      return null;
-    }
-    if (record.componentStack.length > RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH) {
-      return null;
-    }
-    const normalizedStack = normalizeRendererComponentStack(record.componentStack);
-    if (!normalizedStack) return null;
-    return {
-      errorName: RENDERER_CRASH_ERROR_NAMES.has(record.errorName)
-        ? record.errorName
-        : "Error",
-      ...normalizedStack,
-    };
+    if (!isRendererCrashRecord(record)) return null;
+    return createRendererCrashReport(record);
   } catch {
     return null;
   }
+}
+
+function isRendererCrashRecord(
+  record: Record<string, unknown>,
+): record is Record<"errorName" | "componentStack", string> {
+  if (Object.getPrototypeOf(record) !== Object.prototype) return false;
+  if (Object.keys(record).length !== 2) return false;
+  if (typeof record.errorName !== "string" || typeof record.componentStack !== "string") return false;
+  return record.componentStack.length <= RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH;
+}
+
+function createRendererCrashReport(
+  record: Record<"errorName" | "componentStack", string>,
+): RendererCrashReportPayload | null {
+  const normalizedStack = normalizeRendererComponentStack(record.componentStack);
+  if (!normalizedStack) return null;
+  return {
+    errorName: RENDERER_CRASH_ERROR_NAMES.has(record.errorName) ? record.errorName : "Error",
+    ...normalizedStack,
+  };
 }
 
 /** Accept an authorized, rate-limited renderer crash report and write safe fields. */
@@ -272,6 +271,7 @@ export function handleRendererCrashReport(
   });
 }
 const serverRuntime = new ServerRuntime({
+  platform: hostRuntime.platform,
   ipcMain,
   getMainWindow: () => mainWindow,
   dialog: {
@@ -327,7 +327,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  registerOpenInHandlers(ipcMain);
+  registerOpenInHandlers(ipcMain, hostRuntime.platform);
 
   registerExternalUrlHandler(resolveMcodeWorkspacePreviewUrl);
 
@@ -353,10 +353,10 @@ function registerIpcHandlers(): void {
     defaultContent: string,
   ): Promise<string> {
     const dir = getMcodeDir();
-    const filePath = join(dir, fileName);
-    if (!existsSync(filePath)) {
-      await mkdir(dir, { recursive: true });
-      await writeFile(filePath, defaultContent, "utf8");
+    const filePath = NodePath.join(dir, fileName);
+    if (!NodeFS.existsSync(filePath)) {
+      await NodeFSPromises.mkdir(dir, { recursive: true });
+      await NodeFSPromises.writeFile(filePath, defaultContent, "utf8");
     }
     const err = await shell.openPath(filePath);
     if (err) {
@@ -405,7 +405,7 @@ function registerIpcHandlers(): void {
     return supported;
   });
 
-  registerPreviewBrowserHandlers();
+  registerPreviewBrowserHandlers(hostRuntime.platform);
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +436,7 @@ app.commandLine.appendSwitch(
   "--max-old-space-size=2048 --max-semi-space-size=2",
 );
 
-if (process.platform === "win32") {
+if (hostRuntime.platform === "win32") {
   app.setAppUserModelId(APP_ID);
 }
 
@@ -455,10 +455,11 @@ app.whenReady().then(async () => {
       `[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`,
     );
     console.log(`Mcode v${app.getVersion()} starting`);
-    if (process.platform === "darwin") {
-      app.dock?.setIcon(getWindowIconPath());
+    if (hostRuntime.platform === "darwin") {
+      app.dock?.setIcon(getWindowIconPath(hostRuntime.platform));
     }
     const desktopWindow = createDesktopWindowFeature({
+      platform: hostRuntime.platform,
       isDesktopDev,
       lifecycleHooks: {
         disposePreviewForWindow,
@@ -540,7 +541,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (hostRuntime.platform !== "darwin") {
     app.quit();
   }
 });

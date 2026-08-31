@@ -36,12 +36,170 @@ interface BranchPickerProps {
  * Uses tabs (Local / Remote / PRs) to organize branches.
  * When `locked` is true, renders a read-only badge instead of a dropdown.
  */
-export function BranchPicker({
+export function BranchPicker(props: BranchPickerProps) {
+  if (props.locked) return <LockedBranchPicker {...props} />;
+  return <BranchPickerDropdown {...props} />;
+}
+
+function LockedBranchPicker({ selectedBranch, triggerClassName, iconSize = 12 }: BranchPickerProps) {
+  return (
+    <span className={cn("flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground", triggerClassName)}>
+      <GitBranch size={iconSize} className={triggerClassName ? "size-3.5" : undefined} />
+      {selectedBranch}
+    </span>
+  );
+}
+
+function useFilteredBranches(branches: GitBranchType[], pullRequests: PrDetail[] | undefined, search: string) {
+  const query = search.toLowerCase();
+  const localBranches = useMemo(
+    () => branches.filter((branch) => branch.type !== "remote" && branch.name.toLowerCase().includes(query)),
+    [branches, query],
+  );
+  const remoteBranches = useMemo(
+    () => branches.filter((branch) => branch.type === "remote" && branch.name.toLowerCase().includes(query)),
+    [branches, query],
+  );
+  const filteredPrs = useMemo(
+    () => (pullRequests ?? []).filter((pr) => matchesPullRequest(pr, query)),
+    [pullRequests, query],
+  );
+  return { localBranches, remoteBranches, filteredPrs };
+}
+
+function matchesPullRequest(pr: PrDetail, query: string): boolean {
+  if (!query) return true;
+  return [pr.title, pr.branch, String(pr.number), pr.author].some((value) => value.toLowerCase().includes(query));
+}
+
+function branchBadge(branch: GitBranchType): string | null {
+  if (branch.isCurrent) return "current";
+  return branch.type === "worktree" ? "worktree" : null;
+}
+
+interface BranchItemProps {
+  branch: GitBranchType;
+  selectedBranch: string;
+  onSelect: (branchName: string) => void;
+}
+
+function BranchItem({ branch, selectedBranch, onSelect }: BranchItemProps) {
+  const badge = branchBadge(branch);
+  return (
+    <button
+      key={`${branch.type}-${branch.name}`}
+      onClick={() => onSelect(branch.name)}
+      className={cn(
+        "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs",
+        branch.name === selectedBranch
+          ? "bg-accent text-foreground"
+          : "text-popover-foreground hover:bg-accent/50 hover:text-foreground",
+      )}
+    >
+      <span className="truncate">{branch.name}</span>
+      {badge ? <Badge variant="secondary" size="sm" className="ml-2 shrink-0">{badge}</Badge> : null}
+    </button>
+  );
+}
+
+interface PullRequestItemProps {
+  pullRequest: PrDetail;
+  selectedBranch: string;
+  fetchingBranch?: string | null;
+  onSelect: (branch: string, prNumber: number) => void;
+}
+
+function PullRequestItem({ pullRequest, selectedBranch, fetchingBranch, onSelect }: PullRequestItemProps) {
+  const isFetching = fetchingBranch === pullRequest.branch;
+  return (
+    <button
+      key={`pr-${pullRequest.number}`}
+      onClick={() => onSelect(pullRequest.branch, pullRequest.number)}
+      disabled={isFetching}
+      className={cn(
+        "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs",
+        pullRequest.branch === selectedBranch
+          ? "bg-accent text-foreground"
+          : "text-popover-foreground hover:bg-accent/50 hover:text-foreground",
+      )}
+    >
+      <div className="flex flex-col items-start gap-0.5 truncate">
+        <span className="flex items-center gap-1">
+          <GitPullRequest size={10} />
+          #{pullRequest.number} {pullRequest.title}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {pullRequest.branch} &middot; {pullRequest.author}
+        </span>
+      </div>
+      {isFetching ? <Spinner size={12} className="text-muted-foreground" /> : null}
+    </button>
+  );
+}
+
+function LoadingBranchList() {
+  return <div className="flex items-center justify-center py-4"><Spinner size={16} className="text-muted-foreground" /></div>;
+}
+
+function BranchList({ branches, emptyMessage, selectedBranch, onSelect }: {
+  branches: GitBranchType[];
+  emptyMessage: string;
+  selectedBranch: string;
+  onSelect: (branchName: string) => void;
+}) {
+  if (branches.length === 0) return <p className="px-2 py-3 text-center text-xs text-muted-foreground">{emptyMessage}</p>;
+  return <>{branches.map((branch) => <BranchItem key={`${branch.type}-${branch.name}`} branch={branch} selectedBranch={selectedBranch} onSelect={onSelect} />)}</>;
+}
+
+function PullRequestList({
+  pullRequests,
+  prsLoading,
+  selectedBranch,
+  fetchingBranch,
+  onSelect,
+}: {
+  pullRequests: PrDetail[];
+  prsLoading?: boolean;
+  selectedBranch: string;
+  fetchingBranch?: string | null;
+  onSelect: (branch: string, prNumber: number) => void;
+}) {
+  if (prsLoading) return <LoadingBranchList />;
+  if (pullRequests.length === 0) return <p className="px-2 py-3 text-center text-xs text-muted-foreground">No pull requests match</p>;
+  return <>{pullRequests.map((pullRequest) => <PullRequestItem key={`pr-${pullRequest.number}`} pullRequest={pullRequest} selectedBranch={selectedBranch} fetchingBranch={fetchingBranch} onSelect={onSelect} />)}</>;
+}
+
+function BranchTabContent({
+  activeTab,
+  localBranches,
+  remoteBranches,
+  filteredPrs,
+  prsLoading,
+  selectedBranch,
+  fetchingBranch,
+  onSelectBranch,
+  onSelectPullRequest,
+}: {
+  activeTab: TabId;
+  localBranches: GitBranchType[];
+  remoteBranches: GitBranchType[];
+  filteredPrs: PrDetail[];
+  prsLoading?: boolean;
+  selectedBranch: string;
+  fetchingBranch?: string | null;
+  onSelectBranch: (branchName: string) => void;
+  onSelectPullRequest: (branch: string, prNumber: number) => void;
+}) {
+  if (activeTab === "local") return <BranchList branches={localBranches} emptyMessage="No local branches match" selectedBranch={selectedBranch} onSelect={onSelectBranch} />;
+  if (activeTab === "remote") return <BranchList branches={remoteBranches} emptyMessage="No remote branches match" selectedBranch={selectedBranch} onSelect={onSelectBranch} />;
+  return <PullRequestList pullRequests={filteredPrs} prsLoading={prsLoading} selectedBranch={selectedBranch} fetchingBranch={fetchingBranch} onSelect={onSelectPullRequest} />;
+}
+
+function BranchPickerDropdown({
   branches,
   selectedBranch,
   onSelect,
   loading,
-  locked,
   pullRequests,
   prsLoading,
   fetchingBranch,
@@ -52,54 +210,13 @@ export function BranchPicker({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("local");
-
-  const q = search.toLowerCase();
-
-  const localBranches = useMemo(
-    () => branches.filter((b) => b.type !== "remote" && b.name.toLowerCase().includes(q)),
-    [branches, q],
-  );
-
-  const remoteBranches = useMemo(
-    () => branches.filter((b) => b.type === "remote" && b.name.toLowerCase().includes(q)),
-    [branches, q],
-  );
-
-  const filteredPrs = useMemo(
-    () =>
-      (pullRequests ?? []).filter((pr) => {
-        if (!q) return true;
-        return (
-          pr.title.toLowerCase().includes(q) ||
-          pr.branch.toLowerCase().includes(q) ||
-          String(pr.number).includes(q) ||
-          pr.author.toLowerCase().includes(q)
-        );
-      }),
-    [pullRequests, q],
-  );
-
-  const hasPrs = (pullRequests ?? []).length > 0 || prsLoading;
-
-  if (locked) {
-    return (
-      <span className={cn("flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground", triggerClassName)}>
-        <GitBranch size={iconSize} className={triggerClassName ? "size-3.5" : undefined} />
-        {selectedBranch}
-      </span>
-    );
-  }
+  const { localBranches, remoteBranches, filteredPrs } = useFilteredBranches(branches, pullRequests, search);
+  const hasPrs = Boolean(prsLoading) || pullRequests?.[0] !== undefined;
 
   const handleSelect = (name: string) => {
     useWorkspaceStore.getState().setBranchManuallySelected(true);
     onSelect(name);
     setOpen(false);
-  };
-
-  const badgeFor = (b: GitBranchType) => {
-    if (b.isCurrent) return "current";
-    if (b.type === "worktree") return "worktree";
-    return null;
   };
 
   const tabs: Array<{ id: TabId; label: string; count: number }> = [
@@ -108,62 +225,15 @@ export function BranchPicker({
     ...(hasPrs ? [{ id: "prs" as TabId, label: "PRs", count: filteredPrs.length }] : []),
   ];
 
-  const renderBranchItem = (b: GitBranchType) => {
-    const badge = badgeFor(b);
-    return (
-      <button
-        key={`${b.type}-${b.name}`}
-        onClick={() => handleSelect(b.name)}
-        className={cn(
-          "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs",
-          b.name === selectedBranch
-            ? "bg-accent text-foreground"
-            : "text-popover-foreground hover:bg-accent/50 hover:text-foreground",
-        )}
-      >
-        <span className="truncate">{b.name}</span>
-        {badge && (
-          <Badge variant="secondary" size="sm" className="ml-2 shrink-0">{badge}</Badge>
-        )}
-      </button>
-    );
-  };
-
-  const renderPrItem = (pr: PrDetail) => {
-    const isFetching = fetchingBranch === pr.branch;
-    return (
-      <button
-        key={`pr-${pr.number}`}
-        onClick={() => {
-          if (isFetching) return;
-          setOpen(false);
-          if (onFetchAndSelect) {
-            useWorkspaceStore.getState().setBranchManuallySelected(true);
-            onFetchAndSelect(pr.branch, pr.number);
-          } else {
-            handleSelect(pr.branch);
-          }
-        }}
-        disabled={isFetching}
-        className={cn(
-          "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs",
-          pr.branch === selectedBranch
-            ? "bg-accent text-foreground"
-            : "text-popover-foreground hover:bg-accent/50 hover:text-foreground",
-        )}
-      >
-        <div className="flex flex-col items-start gap-0.5 truncate">
-          <span className="flex items-center gap-1">
-            <GitPullRequest size={10} />
-            #{pr.number} {pr.title}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {pr.branch} &middot; {pr.author}
-          </span>
-        </div>
-        {isFetching && <Spinner size={12} className="text-muted-foreground" />}
-      </button>
-    );
+  const handleSelectPullRequest = (branch: string, prNumber: number) => {
+    if (fetchingBranch === branch) return;
+    setOpen(false);
+    if (!onFetchAndSelect) {
+      handleSelect(branch);
+      return;
+    }
+    useWorkspaceStore.getState().setBranchManuallySelected(true);
+    onFetchAndSelect(branch, prNumber);
   };
 
   return (
@@ -214,33 +284,7 @@ export function BranchPicker({
 
         {/* Content */}
         <div className="max-h-[250px] overflow-y-auto p-1">
-          {loading ? (
-            <div className="flex items-center justify-center py-4">
-              <Spinner size={16} className="text-muted-foreground" />
-            </div>
-          ) : activeTab === "local" ? (
-            localBranches.length === 0 ? (
-              <p className="px-2 py-3 text-center text-xs text-muted-foreground">No local branches match</p>
-            ) : (
-              localBranches.map(renderBranchItem)
-            )
-          ) : activeTab === "remote" ? (
-            remoteBranches.length === 0 ? (
-              <p className="px-2 py-3 text-center text-xs text-muted-foreground">No remote branches match</p>
-            ) : (
-              remoteBranches.map(renderBranchItem)
-            )
-          ) : activeTab === "prs" ? (
-            prsLoading ? (
-              <div className="flex items-center justify-center py-4">
-                <Spinner size={16} className="text-muted-foreground" />
-              </div>
-            ) : filteredPrs.length === 0 ? (
-              <p className="px-2 py-3 text-center text-xs text-muted-foreground">No pull requests match</p>
-            ) : (
-              filteredPrs.map(renderPrItem)
-            )
-          ) : null}
+          {loading ? <LoadingBranchList /> : <BranchTabContent activeTab={activeTab} localBranches={localBranches} remoteBranches={remoteBranches} filteredPrs={filteredPrs} prsLoading={prsLoading} selectedBranch={selectedBranch} fetchingBranch={fetchingBranch} onSelectBranch={handleSelect} onSelectPullRequest={handleSelectPullRequest} />}
         </div>
       </PopoverContent>
     </Popover>

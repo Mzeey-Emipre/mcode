@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { SkillInfo } from "@mcode/contracts";
 import {
   expandCodexPromptTemplate,
@@ -11,14 +11,14 @@ import {
 const tempDirs: string[] = [];
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "codex-prompt-"));
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "codex-prompt-"));
   tempDirs.push(dir);
   return dir;
 }
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+    NodeFS.rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -36,8 +36,8 @@ describe("Codex custom prompt expansion", () => {
 
   it("expands a discovered /prompts:name invocation from the prompt file body", async () => {
     const dir = tempDir();
-    const promptPath = join(dir, "draftpr.md");
-    writeFileSync(
+    const promptPath = NodePath.join(dir, "draftpr.md");
+    NodeFS.writeFileSync(
       promptPath,
       "---\ndescription: Draft a PR\n---\nCreate PR for $FILES with title $PR_TITLE.",
     );
@@ -61,8 +61,8 @@ describe("Codex custom prompt expansion", () => {
 
   it("does not expand a prompt command by its native basename", async () => {
     const dir = tempDir();
-    const promptPath = join(dir, "draftpr.md");
-    writeFileSync(promptPath, "Create PR for $ARGUMENTS.");
+    const promptPath = NodePath.join(dir, "draftpr.md");
+    NodeFS.writeFileSync(promptPath, "Create PR for $ARGUMENTS.");
     const catalog: SkillInfo[] = [{
       name: "prompts:draftpr",
       nativeName: "draftpr",

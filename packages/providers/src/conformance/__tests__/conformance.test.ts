@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { ProviderEventDraft } from "../../host-ports.js";
 import {
   DeterministicCanonicalSink,
@@ -178,13 +178,13 @@ describe("Provider fixture pipeline", () => {
   });
 
   it("sanitizes raw rows without retaining private fields or native identifiers", () => {
-    const root = mkdtempSync(join(tmpdir(), "provider-conformance-"));
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "provider-conformance-"));
     const priorCwd = process.cwd();
     try {
       process.chdir(root);
-      mkdirSync(".conformance-raw", { recursive: true });
-      mkdirSync("src/conformance/fixtures", { recursive: true });
-      writeFileSync(".conformance-raw/capture.jsonl", [
+      NodeFS.mkdirSync(".conformance-raw", { recursive: true });
+      NodeFS.mkdirSync("src/conformance/fixtures", { recursive: true });
+      NodeFS.writeFileSync(".conformance-raw/capture.jsonl", [
         JSON.stringify({ kind: "turn", nativeId: "private-native-id", status: "started", prompt: "private prompt" }),
         JSON.stringify({ kind: "terminal", nativeId: "private-native-id", status: "completed", rawOutput: "private output" }),
       ].join("\n"));
@@ -202,7 +202,7 @@ describe("Provider fixture pipeline", () => {
           expected: { orderedKinds: ["turn", "terminal"], terminal: "completed", toolPairs: [] },
         },
       });
-      const output = readFileSync("src/conformance/fixtures/captured.json", "utf8");
+      const output = NodeFS.readFileSync("src/conformance/fixtures/captured.json", "utf8");
 
       expect(manifest.input.events[0]?.nativeId).toMatch(/^NATIVE_/);
       expect(output).not.toContain("private-native-id");
@@ -210,7 +210,7 @@ describe("Provider fixture pipeline", () => {
       expect(output).not.toContain("private output");
     } finally {
       process.chdir(priorCwd);
-      rmSync(root, { recursive: true, force: true });
+      NodeFS.rmSync(root, { recursive: true, force: true });
     }
   });
 });

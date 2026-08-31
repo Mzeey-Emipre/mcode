@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -14,26 +14,26 @@ import {
 let workspacePath: string;
 
 beforeEach(async () => {
-  workspacePath = await mkdtemp(join(tmpdir(), "mcode-preview-local-file-"));
-  await mkdir(join(workspacePath, "sub"));
-  await writeFile(join(workspacePath, "index.html"), "<h1>Home</h1>");
-  await writeFile(join(workspacePath, "sub", "page.html"), "<h1>Page</h1>");
-  await writeFile(join(workspacePath, ".env"), "SECRET=value");
+  workspacePath = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-preview-local-file-"));
+  await NodeFSPromises.mkdir(NodePath.join(workspacePath, "sub"));
+  await NodeFSPromises.writeFile(NodePath.join(workspacePath, "index.html"), "<h1>Home</h1>");
+  await NodeFSPromises.writeFile(NodePath.join(workspacePath, "sub", "page.html"), "<h1>Page</h1>");
+  await NodeFSPromises.writeFile(NodePath.join(workspacePath, ".env"), "SECRET=value");
 });
 
 afterEach(async () => {
-  await rm(workspacePath, { recursive: true, force: true });
+  await NodeFSPromises.rm(workspacePath, { recursive: true, force: true });
 });
 
 describe("preview local file navigation", () => {
   it("resolves relative files and directory indexes inside the workspace", async () => {
     await expect(resolveLocalFileUrl("sub/page.html", workspacePath)).resolves.toEqual({
       ok: true,
-      url: pathToFileURL(join(workspacePath, "sub", "page.html")).href,
+      url: NodeURL.pathToFileURL(NodePath.join(workspacePath, "sub", "page.html")).href,
     });
     await expect(resolveLocalFileUrl(workspacePath, null)).resolves.toEqual({
       ok: true,
-      url: pathToFileURL(join(workspacePath, "index.html")).href,
+      url: NodeURL.pathToFileURL(NodePath.join(workspacePath, "index.html")).href,
     });
   });
 
@@ -71,11 +71,11 @@ describe("preview local file navigation", () => {
   });
 
   it("rechecks symlink targets before serving them", async () => {
-    const sensitiveDirectory = join(workspacePath, ".ssh");
-    const linkPath = join(workspacePath, "safe-looking.html");
-    await mkdir(sensitiveDirectory);
-    await writeFile(join(sensitiveDirectory, "secret.html"), "secret");
-    await symlink(join(sensitiveDirectory, "secret.html"), linkPath, "file");
+    const sensitiveDirectory = NodePath.join(workspacePath, ".ssh");
+    const linkPath = NodePath.join(workspacePath, "safe-looking.html");
+    await NodeFSPromises.mkdir(sensitiveDirectory);
+    await NodeFSPromises.writeFile(NodePath.join(sensitiveDirectory, "secret.html"), "secret");
+    await NodeFSPromises.symlink(NodePath.join(sensitiveDirectory, "secret.html"), linkPath, "file");
 
     await expect(resolveLocalFileUrl(linkPath, null)).resolves.toEqual({
       ok: false,
@@ -88,7 +88,7 @@ describe("preview local file navigation", () => {
       resolveMcodeWorkspacePreviewUrl("mcode-workspace:///sub/page.html", workspacePath),
     ).resolves.toEqual({
       ok: true,
-      url: pathToFileURL(join(workspacePath, "sub", "page.html")).href,
+      url: NodeURL.pathToFileURL(NodePath.join(workspacePath, "sub", "page.html")).href,
     });
     for (const address of [
       "mcode-workspace:///%2Ftmp%2Foutside.html",
@@ -103,8 +103,8 @@ describe("preview local file navigation", () => {
   });
 
   it("validates restored file URLs with the same security rules", async () => {
-    const safeUrl = pathToFileURL(join(workspacePath, "index.html")).href;
-    const sensitiveUrl = pathToFileURL(join(workspacePath, ".env")).href;
+    const safeUrl = NodeURL.pathToFileURL(NodePath.join(workspacePath, "index.html")).href;
+    const sensitiveUrl = NodeURL.pathToFileURL(NodePath.join(workspacePath, ".env")).href;
 
     await expect(validateResumeUrl(safeUrl)).resolves.toBe(safeUrl);
     await expect(validateResumeUrl(sensitiveUrl)).resolves.toBeNull();

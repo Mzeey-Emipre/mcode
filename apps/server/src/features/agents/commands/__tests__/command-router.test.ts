@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import type { IAgentProvider } from "@mcode/contracts";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import { CommandRouter } from "../command-router.js";
 import type { CommandContext, CommandOutcome, McodeCommand } from "../command-router.js";
 
 /** A bare provider stub; capability is decided by each command's probe. */
 function fakeProvider(id = "claude"): IAgentProvider {
-  return Object.assign(new EventEmitter(), { id }) as unknown as IAgentProvider;
+  return Object.assign(new NodeEvents.EventEmitter(), { id }) as unknown as IAgentProvider;
 }
 
 /** Build a routing context for the given content and provider. */

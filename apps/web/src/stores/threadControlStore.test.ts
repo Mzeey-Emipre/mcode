@@ -93,4 +93,24 @@ describe("thread control projection store", () => {
       updatedAt: "2026-07-29T00:01:00.000Z",
     });
   });
+
+  it("runs a queued forced refresh after the active request fails", async () => {
+    let rejectInitial!: (reason?: unknown) => void;
+    const initialRequest = new Promise<ThreadControlReadResult>((_resolve, reject) => { rejectInitial = reject; });
+    readThreadControlMock.mockReturnValueOnce(initialRequest).mockResolvedValueOnce({
+      status: "found",
+      projection: projection("completed", "2026-07-29T00:01:00.000Z"),
+    });
+
+    const initialLoad = useThreadControlStore.getState().load(IDENTITY);
+    await Promise.resolve();
+    await useThreadControlStore.getState().refreshByThreadId(IDENTITY.threadId, IDENTITY.workspaceId);
+    rejectInitial(new Error("network unavailable"));
+    await initialLoad;
+    await Promise.resolve();
+
+    expect(readThreadControlMock).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+    expect(getThreadControlEntry(IDENTITY)?.projection?.thread.state).toEqual({ status: "completed" });
+  });
 });

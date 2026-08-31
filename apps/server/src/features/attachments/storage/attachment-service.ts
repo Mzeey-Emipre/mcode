@@ -5,10 +5,10 @@
  */
 
 import { injectable } from "tsyringe";
-import { randomUUID } from "crypto";
-import { existsSync, statSync, rmSync, copyFileSync, mkdirSync } from "fs";
-import { copyFile, mkdir, unlink } from "fs/promises";
-import { basename, extname, join, resolve, relative } from "path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { getMcodeDir } from "@mcode/shared";
 import type { AttachmentMeta, StoredAttachment } from "@mcode/contracts";
 import {
@@ -29,7 +29,7 @@ const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 /** Return the stored MIME type for supported image file extensions. */
 export function imageMimeTypeFromPath(filePath: string): string | null {
-  const ext = extname(filePath).toLowerCase();
+  const ext = NodePath.extname(filePath).toLowerCase();
   if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
   if (ext === ".png") return "image/png";
   if (ext === ".gif") return "image/gif";
@@ -39,7 +39,7 @@ export function imageMimeTypeFromPath(filePath: string): string | null {
 
 /** Resolve the base directory for attachment storage. */
 function getAttachmentsDir(): string {
-  return join(getMcodeDir(), "attachments");
+  return NodePath.join(getMcodeDir(), "attachments");
 }
 
 function assertSafeId(kind: string, value: string): void {
@@ -53,16 +53,16 @@ function assertSafeId(kind: string, value: string): void {
 function resolveStoredAttachmentPath(baseDir: string, id: string, mimeType: string): string {
   const ext = storedAttachmentSuffix(mimeType);
   if (!ext) throw new Error(`Unsupported attachment MIME type: ${mimeType}`);
-  const destPath = resolve(baseDir, `${id}${ext}`);
-  const rel = relative(baseDir, destPath);
-  if (rel.startsWith("..") || resolve(baseDir, rel) !== destPath) {
+  const destPath = NodePath.resolve(baseDir, `${id}${ext}`);
+  const rel = NodePath.relative(baseDir, destPath);
+  if (rel.startsWith("..") || NodePath.resolve(baseDir, rel) !== destPath) {
     throw new Error(`Attachment path escapes thread directory: ${id}`);
   }
   return destPath;
 }
 
 function displayNameFromPath(filePath: string): string {
-  const name = basename(filePath).replace(/[\x00-\x1f\x7f]/g, "").trim();
+  const name = NodePath.basename(filePath).replace(/[\x00-\x1f\x7f]/g, "").trim();
   return name.length > 0 ? name : "generated-image";
 }
 
@@ -75,17 +75,17 @@ export class AttachmentService {
     attachments: readonly StoredAttachment[],
   ): AttachmentMeta[] {
     assertSafeId("thread ID", threadId);
-    const baseDir = join(getAttachmentsDir(), threadId);
+    const baseDir = NodePath.join(getAttachmentsDir(), threadId);
     return attachments.map((attachment) => {
       assertSafeId("attachment ID", attachment.id);
       if (shouldPersistAttachmentWithoutFile({ ...attachment, sourcePath: "" })) {
-        return { ...attachment, id: randomUUID(), sourcePath: "" };
+        return { ...attachment, id: NodeCrypto.randomUUID(), sourcePath: "" };
       }
       const sourcePath = resolveStoredAttachmentPath(baseDir, attachment.id, attachment.mimeType);
-      if (!existsSync(sourcePath) || !statSync(sourcePath).isFile()) {
+      if (!NodeFS.existsSync(sourcePath) || !NodeFS.statSync(sourcePath).isFile()) {
         throw new Error(`Stored attachment file not found: ${attachment.id}`);
       }
-      return { ...attachment, id: randomUUID(), sourcePath };
+      return { ...attachment, id: NodeCrypto.randomUUID(), sourcePath };
     });
   }
 
@@ -102,8 +102,8 @@ export class AttachmentService {
   }> {
     if (attachments.length === 0) return { stored: [], persisted: [] };
 
-    const baseDir = join(getAttachmentsDir(), threadId);
-    await mkdir(baseDir, { recursive: true });
+    const baseDir = NodePath.join(getAttachmentsDir(), threadId);
+    await NodeFSPromises.mkdir(baseDir, { recursive: true });
 
     const results = await Promise.all(
       attachments.map(async (att) => {
@@ -127,11 +127,11 @@ export class AttachmentService {
           };
         }
 
-        if (!existsSync(att.sourcePath)) {
+        if (!NodeFS.existsSync(att.sourcePath)) {
           throw new Error(`Attachment file not found: ${att.sourcePath}`);
         }
 
-        const actualSize = statSync(att.sourcePath).size;
+        const actualSize = NodeFS.statSync(att.sourcePath).size;
         const maxSize = getAttachmentMaxSizeForMime(att.mimeType);
         if (actualSize > maxSize) {
           throw new Error(
@@ -143,15 +143,15 @@ export class AttachmentService {
         assertSafeId("attachment ID", att.id);
         const destPath = resolveStoredAttachmentPath(baseDir, att.id, att.mimeType);
 
-        await copyFile(att.sourcePath, destPath);
+        await NodeFSPromises.copyFile(att.sourcePath, destPath);
 
         // Clean up temp file if it came from a known temp location
-        const tempDir = resolve(getMcodeDir(), "temp", "attachments");
-        const resolvedSource = resolve(att.sourcePath);
-        const tempRel = relative(tempDir, resolvedSource);
-        if (!tempRel.startsWith("..") && !resolve(tempDir, tempRel).includes("..")) {
+        const tempDir = NodePath.resolve(getMcodeDir(), "temp", "attachments");
+        const resolvedSource = NodePath.resolve(att.sourcePath);
+        const tempRel = NodePath.relative(tempDir, resolvedSource);
+        if (!tempRel.startsWith("..") && !NodePath.resolve(tempDir, tempRel).includes("..")) {
           try {
-            await unlink(att.sourcePath);
+            await NodeFSPromises.unlink(att.sourcePath);
           } catch {
             /* non-fatal */
           }
@@ -182,13 +182,13 @@ export class AttachmentService {
   /** Remove only the Mcode-owned files for the specified stored attachments. */
   async removeStoredAttachments(threadId: string, attachments: readonly StoredAttachment[]): Promise<void> {
     assertSafeId("thread ID", threadId);
-    const baseDir = join(getAttachmentsDir(), threadId);
+    const baseDir = NodePath.join(getAttachmentsDir(), threadId);
     await Promise.all(attachments.map(async (attachment) => {
       assertSafeId("attachment ID", attachment.id);
       if (shouldPersistAttachmentWithoutFile({ ...attachment, sourcePath: "" })) return;
       const storedPath = resolveStoredAttachmentPath(baseDir, attachment.id, attachment.mimeType);
       try {
-        await unlink(storedPath);
+        await NodeFSPromises.unlink(storedPath);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
         throw error;
@@ -204,11 +204,11 @@ export class AttachmentService {
     if (!mimeType) {
       throw new Error("Generated image has an unsupported file extension");
     }
-    if (!existsSync(sourcePath)) {
+    if (!NodeFS.existsSync(sourcePath)) {
       throw new Error("Generated image file not found");
     }
 
-    const stat = statSync(sourcePath);
+    const stat = NodeFS.statSync(sourcePath);
     if (!stat.isFile()) {
       throw new Error("Generated image source is not a file");
     }
@@ -218,11 +218,11 @@ export class AttachmentService {
       );
     }
 
-    const id = randomUUID();
-    const baseDir = join(getAttachmentsDir(), threadId);
-    mkdirSync(baseDir, { recursive: true });
+    const id = NodeCrypto.randomUUID();
+    const baseDir = NodePath.join(getAttachmentsDir(), threadId);
+    NodeFS.mkdirSync(baseDir, { recursive: true });
     const destPath = resolveStoredAttachmentPath(baseDir, id, mimeType);
-    copyFileSync(sourcePath, destPath);
+    NodeFS.copyFileSync(sourcePath, destPath);
 
     return {
       id,
@@ -242,17 +242,17 @@ export class AttachmentService {
     }
 
     const attachmentsBase = getAttachmentsDir();
-    const dir = resolve(attachmentsBase, threadId);
+    const dir = NodePath.resolve(attachmentsBase, threadId);
 
     // Verify the resolved path stays within the attachments directory
-    const rel = relative(attachmentsBase, dir);
-    if (rel.startsWith("..") || resolve(attachmentsBase, rel) !== dir) {
+    const rel = NodePath.relative(attachmentsBase, dir);
+    if (rel.startsWith("..") || NodePath.resolve(attachmentsBase, rel) !== dir) {
       throw new Error(`Thread attachment path escapes attachments directory: ${threadId}`);
     }
 
-    if (existsSync(dir)) {
+    if (NodeFS.existsSync(dir)) {
       try {
-        rmSync(dir, { recursive: true, force: true });
+        NodeFS.rmSync(dir, { recursive: true, force: true });
       } catch {
         // Non-fatal
       }

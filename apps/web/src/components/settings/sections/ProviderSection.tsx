@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
@@ -116,6 +116,22 @@ interface ProviderRowProps {
   onCliPathChange?: (v: string) => void;
 }
 
+function ProviderControls({ row, switchDisabled, onToggle }: Pick<ProviderRowProps, "row" | "onToggle"> & { switchDisabled: boolean }) {
+  return <div className="flex items-center gap-2 min-[80rem]:min-w-[9.2rem] min-[80rem]:justify-end">
+    {row.beta && <Tooltip><TooltipTrigger><Badge variant="secondary" data-testid={`provider-badge-${row.id}-beta`}>Beta</Badge></TooltipTrigger><TooltipContent>This provider is in early phase. Expect bugs or incomplete features.</TooltipContent></Tooltip>}
+    {row.enabled && row.cli.status === "not_found" && <Tooltip><TooltipTrigger><Badge variant="destructive" data-testid={`provider-badge-${row.id}-cli-missing`}>CLI not found</Badge></TooltipTrigger><TooltipContent>Tried: {row.cli.configuredPath ? row.cli.configuredPath : "PATH lookup"}. Install the CLI or set the path below.</TooltipContent></Tooltip>}
+    <Switch data-testid={`provider-switch-${row.id}`} checked={row.enabled && row.hasAdapter} disabled={switchDisabled} onCheckedChange={onToggle} />
+  </div>;
+}
+
+function ProviderConfig({ row, label, hint, cliPath, onCliPathChange, controls }: { row: ProviderAvailability; label: string; hint: string; cliPath: string | undefined; onCliPathChange: (value: string) => void; controls: ReactNode }) {
+  const [isConfigOpen, setIsConfigOpen] = useState(row.beta);
+  return <Collapsible open={isConfigOpen} onOpenChange={setIsConfigOpen} className="border-b border-border/50 last:border-b-0"><div className="px-1 py-4"><div className={SETTING_ROW_GRID_CLASS}>
+    <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm" data-testid={`provider-config-trigger-${row.id}`} aria-label={`${isConfigOpen ? "Hide" : "Show"} ${label} configuration`} className="-ml-2 h-auto w-full min-w-0 items-start justify-between gap-4 rounded-md px-2 py-1 text-left hover:bg-accent/60 aria-expanded:bg-transparent dark:aria-expanded:bg-transparent"><span className="flex min-w-0 flex-col items-start"><span className="text-sm font-semibold text-foreground">{label}</span>{hint && <span className="mt-1 text-xs text-muted-foreground">{hint}</span>}</span><ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none", isConfigOpen && "rotate-180")} aria-hidden /></Button></CollapsibleTrigger>
+    {controls}
+  </div><CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down motion-reduce:animate-none"><div className={cn(SETTING_ROW_GRID_CLASS, "mt-3 border-t border-border/40 pt-3 pl-2")}><label htmlFor={`provider-cli-path-${row.id}`} className="text-sm font-medium text-foreground">{label} CLI path</label><Input id={`provider-cli-path-${row.id}`} data-testid={`provider-cli-path-${row.id}`} value={cliPath ?? ""} onChange={(event) => onCliPathChange(event.target.value)} placeholder={row.id} className="h-7 w-56 text-xs" /></div></CollapsibleContent></div></Collapsible>;
+}
+
 /**
  * Single provider row with a disclosure for editable CLI path configuration.
  */
@@ -124,46 +140,9 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
   // blocks toggling to prevent an unusable state.
   const switchDisabled = !row.hasAdapter || isLastEnabled;
   const canConfigure = onCliPathChange != null;
-  const [isConfigOpen, setIsConfigOpen] = useState(row.beta);
   const label = labelFor(row.id);
   const hint = hintFor(row, isLastEnabled);
-
-  const controls = (
-    <div className="flex items-center gap-2 min-[80rem]:min-w-[9.2rem] min-[80rem]:justify-end">
-      {row.beta && (
-        <Tooltip>
-          <TooltipTrigger>
-            <Badge variant="secondary" data-testid={`provider-badge-${row.id}-beta`}>
-              Beta
-            </Badge>
-          </TooltipTrigger>
-          <TooltipContent>
-            This provider is in early phase. Expect bugs or incomplete features.
-          </TooltipContent>
-        </Tooltip>
-      )}
-      {row.enabled && row.cli.status === "not_found" && (
-        <Tooltip>
-          <TooltipTrigger>
-            <Badge variant="destructive" data-testid={`provider-badge-${row.id}-cli-missing`}>
-              CLI not found
-            </Badge>
-          </TooltipTrigger>
-          <TooltipContent>
-            Tried:{" "}
-            {row.cli.configuredPath ? row.cli.configuredPath : "PATH lookup"}. Install
-            the CLI or set the path below.
-          </TooltipContent>
-        </Tooltip>
-      )}
-      <Switch
-        data-testid={`provider-switch-${row.id}`}
-        checked={row.enabled && row.hasAdapter}
-        disabled={switchDisabled}
-        onCheckedChange={onToggle}
-      />
-    </div>
-  );
+  const controls = <ProviderControls row={row} switchDisabled={switchDisabled} onToggle={onToggle} />;
 
   if (!canConfigure) {
     return (
@@ -173,61 +152,7 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
     );
   }
 
-  return (
-    <Collapsible
-      open={isConfigOpen}
-      onOpenChange={setIsConfigOpen}
-      className="border-b border-border/50 last:border-b-0"
-    >
-      <div className="px-1 py-4">
-        <div className={SETTING_ROW_GRID_CLASS}>
-          <CollapsibleTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-testid={`provider-config-trigger-${row.id}`}
-              aria-label={`${isConfigOpen ? "Hide" : "Show"} ${label} configuration`}
-              className="-ml-2 h-auto w-full min-w-0 items-start justify-between gap-4 rounded-md px-2 py-1 text-left hover:bg-accent/60 aria-expanded:bg-transparent dark:aria-expanded:bg-transparent"
-            >
-              <span className="flex min-w-0 flex-col items-start">
-                <span className="text-sm font-semibold text-foreground">{label}</span>
-                {hint && <span className="mt-1 text-xs text-muted-foreground">{hint}</span>}
-              </span>
-              <ChevronDown
-                className={cn(
-                  "size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none",
-                  isConfigOpen && "rotate-180",
-                )}
-                aria-hidden
-              />
-            </Button>
-          </CollapsibleTrigger>
-          {controls}
-        </div>
-        <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down motion-reduce:animate-none">
-          <div
-            className={cn(
-              SETTING_ROW_GRID_CLASS,
-              "mt-3 border-t border-border/40 pt-3 pl-2",
-            )}
-          >
-            <label htmlFor={`provider-cli-path-${row.id}`} className="text-sm font-medium text-foreground">
-              {label} CLI path
-            </label>
-            <Input
-              id={`provider-cli-path-${row.id}`}
-              data-testid={`provider-cli-path-${row.id}`}
-              value={cliPath ?? ""}
-              onChange={(e) => onCliPathChange(e.target.value)}
-              placeholder={row.id}
-              className="h-7 w-56 text-xs"
-            />
-          </div>
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
-  );
+  return <ProviderConfig row={row} label={label} hint={hint} cliPath={cliPath} onCliPathChange={onCliPathChange} controls={controls} />;
 }
 
 /** Displays a non-interactive provider that is not available yet. */

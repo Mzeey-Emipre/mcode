@@ -1,7 +1,7 @@
-import { copyFile, mkdir, chmod, readFile, writeFile, symlink } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-import path from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
 
 /**
  * Resolve where the Electron binary lives in the packaged output and
@@ -22,22 +22,22 @@ export function resolveBinaryPaths({ appOutDir, electronPlatformName, productFil
   }
   if (electronPlatformName === "win32") {
     return {
-      srcBinary: path.join(appOutDir, `${productFilename}.exe`),
-      dstBinary: path.join(appOutDir, "resources", "bin", "mcode-server.exe"),
+      srcBinary: NodePath.join(appOutDir, `${productFilename}.exe`),
+      dstBinary: NodePath.join(appOutDir, "resources", "bin", "mcode-server.exe"),
     };
   }
   if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
-    const appBundle = path.join(appOutDir, `${productFilename}.app`);
+    const appBundle = NodePath.join(appOutDir, `${productFilename}.app`);
     return {
-      srcBinary: path.join(appBundle, "Contents", "MacOS", productFilename),
-      dstBinary: path.join(appBundle, "Contents", "Resources", "bin", "mcode-server"),
+      srcBinary: NodePath.join(appBundle, "Contents", "MacOS", productFilename),
+      dstBinary: NodePath.join(appBundle, "Contents", "Resources", "bin", "mcode-server"),
     };
   }
   // linux and any other Unix — electron-builder names the binary after
   // executableName (package.json "name"), not productName.
   return {
-    srcBinary: path.join(appOutDir, executableName || productFilename),
-    dstBinary: path.join(appOutDir, "resources", "bin", "mcode-server"),
+    srcBinary: NodePath.join(appOutDir, executableName || productFilename),
+    dstBinary: NodePath.join(appOutDir, "resources", "bin", "mcode-server"),
   };
 }
 
@@ -60,7 +60,7 @@ export function resolveBinaryPaths({ appOutDir, electronPlatformName, productFil
  */
 export async function stampWindowsVersionInfo(exePath, info) {
   const { NtExecutable, NtExecutableResource, Resource, Data } = await import("resedit");
-  const buf = await readFile(exePath);
+  const buf = await NodeFSPromises.readFile(exePath);
   const exe = NtExecutable.from(buf);
   const res = NtExecutableResource.from(exe);
 
@@ -89,7 +89,7 @@ export async function stampWindowsVersionInfo(exePath, info) {
   // generic glyph. Stamp the app favicon onto the binary's icon group, reusing
   // the existing group id so Windows treats it as the executable icon.
   if (info.iconPath) {
-    const iconBuf = await readFile(info.iconPath);
+    const iconBuf = await NodeFSPromises.readFile(info.iconPath);
     const iconFile = Data.IconFile.from(iconBuf);
     const existingGroups = Resource.IconGroupEntry.fromEntries(res.entries);
     const iconGroupId = existingGroups.length > 0 ? existingGroups[0].id : 1;
@@ -103,7 +103,7 @@ export async function stampWindowsVersionInfo(exePath, info) {
 
   res.outputResource(exe);
 
-  await writeFile(exePath, Buffer.from(exe.generate()));
+  await NodeFSPromises.writeFile(exePath, Buffer.from(exe.generate()));
 }
 
 /**
@@ -137,92 +137,67 @@ export async function buildServerBinary({
     productFilename,
     executableName,
   });
-  await mkdir(path.dirname(dstBinary), { recursive: true });
-  await copyFile(srcBinary, dstBinary);
-  if (electronPlatformName !== "win32") {
-    await chmod(dstBinary, 0o755);
-  }
+  await copyRenamedServerBinary(srcBinary, dstBinary, electronPlatformName);
+  await signMacServerBinary(dstBinary, electronPlatformName);
+  await copyRequiredElectronResources(srcBinary, dstBinary, appOutDir, productFilename, electronPlatformName);
+  await createMacFrameworksLink(appOutDir, productFilename, electronPlatformName);
+  await copyLinuxFfmpegLibrary(srcBinary, dstBinary, electronPlatformName);
+  await stampWindowsServerBinary(dstBinary, electronPlatformName, appVersion, companyName, iconPath);
+}
 
-  // ARM64 macOS requires all executables to be signed. The copy invalidates
-  // the original ad-hoc signature, so re-sign to prevent a kernel SIGKILL.
-  if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
-    execFileSync("codesign", ["--sign", "-", "--force", dstBinary]);
-    console.log(`[build-server-binary] Ad-hoc signed ${dstBinary}`);
-  }
+function isMacElectronPlatform(electronPlatformName) {
+  return electronPlatformName === "darwin" || electronPlatformName === "mas";
+}
 
-  // Electron (even with ELECTRON_RUN_AS_NODE=1) resolves icudtl.dat relative
-  // to its own binary location. The renamed copy lives in a different directory
-  // than the original, so we must place a copy of icudtl.dat alongside it.
-  let icuSrc;
-  if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
-    const appBundle = path.join(appOutDir, `${productFilename}.app`);
-    icuSrc = path.join(
-      appBundle, "Contents", "Frameworks",
-      "Electron Framework.framework", "Resources", "icudtl.dat",
-    );
-  } else {
-    icuSrc = path.join(path.dirname(srcBinary), "icudtl.dat");
-  }
-  if (existsSync(icuSrc)) {
-    const icuDst = path.join(path.dirname(dstBinary), "icudtl.dat");
-    await copyFile(icuSrc, icuDst);
-    console.log(`[build-server-binary] Copied icudtl.dat to ${icuDst}`);
-  } else {
-    console.warn(`[build-server-binary] icudtl.dat not found at ${icuSrc}, server may fail to start`);
-  }
+async function copyRenamedServerBinary(srcBinary, dstBinary, electronPlatformName) {
+  await NodeFSPromises.mkdir(NodePath.dirname(dstBinary), { recursive: true });
+  await NodeFSPromises.copyFile(srcBinary, dstBinary);
+  if (electronPlatformName !== "win32") await NodeFSPromises.chmod(dstBinary, 0o755);
+}
 
-  // Electron's built-in v8_context_snapshot.bin is required by V8 at startup
-  // (separate from the custom browser snapshot used by the GUI fuse). Without
-  // it next to the binary, ELECTRON_RUN_AS_NODE crashes on snapshot load.
-  let v8SnapSrc;
-  if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
-    const appBundle = path.join(appOutDir, `${productFilename}.app`);
-    v8SnapSrc = path.join(
-      appBundle, "Contents", "Frameworks",
-      "Electron Framework.framework", "Resources", "v8_context_snapshot.bin",
-    );
-  } else {
-    v8SnapSrc = path.join(path.dirname(srcBinary), "v8_context_snapshot.bin");
-  }
-  if (existsSync(v8SnapSrc)) {
-    const v8SnapDst = path.join(path.dirname(dstBinary), "v8_context_snapshot.bin");
-    await copyFile(v8SnapSrc, v8SnapDst);
-    console.log(`[build-server-binary] Copied v8_context_snapshot.bin to ${v8SnapDst}`);
-  }
+async function signMacServerBinary(dstBinary, electronPlatformName) {
+  if (!isMacElectronPlatform(electronPlatformName)) return;
+  NodeChildProcess.execFileSync("codesign", ["--sign", "-", "--force", dstBinary]);
+  console.log(`[build-server-binary] Ad-hoc signed ${dstBinary}`);
+}
 
-  // On macOS, the Electron binary's @rpath includes @loader_path/../Frameworks.
-  // For the original at Contents/MacOS/<name> this resolves to Contents/Frameworks.
-  // For the renamed copy at Contents/Resources/bin/mcode-server it resolves to
-  // Contents/Resources/Frameworks (doesn't exist). Create a symlink so dyld
-  // finds the Electron Framework without requiring DYLD_* env vars (which SIP
-  // strips from signed binaries).
-  if (electronPlatformName === "darwin" || electronPlatformName === "mas") {
-    const appBundle = path.join(appOutDir, `${productFilename}.app`);
-    const frameworksLink = path.join(appBundle, "Contents", "Resources", "Frameworks");
-    if (!existsSync(frameworksLink)) {
-      await symlink("../Frameworks", frameworksLink);
-      console.log(`[build-server-binary] Created Frameworks symlink at ${frameworksLink}`);
-    }
-  }
+async function copyRequiredElectronResources(srcBinary, dstBinary, appOutDir, productFilename, electronPlatformName) {
+  const macResourceDir = isMacElectronPlatform(electronPlatformName)
+    ? NodePath.join(appOutDir, `${productFilename}.app`, "Contents", "Frameworks", "Electron Framework.framework", "Resources")
+    : null;
+  await copyElectronResource(macResourceDir ?? NodePath.dirname(srcBinary), NodePath.dirname(dstBinary), "icudtl.dat", true);
+  await copyElectronResource(macResourceDir ?? NodePath.dirname(srcBinary), NodePath.dirname(dstBinary), "v8_context_snapshot.bin", false);
+}
 
-  // On Linux, libffmpeg.so is linked into the Electron binary. The dynamic
-  // linker uses RPATH ($ORIGIN) to find it, so a copy in a different directory
-  // needs the library alongside it or LD_LIBRARY_PATH set at runtime.
-  if (electronPlatformName === "linux") {
-    const ffmpegSrc = path.join(path.dirname(srcBinary), "libffmpeg.so");
-    if (existsSync(ffmpegSrc)) {
-      const ffmpegDst = path.join(path.dirname(dstBinary), "libffmpeg.so");
-      await copyFile(ffmpegSrc, ffmpegDst);
-      console.log(`[build-server-binary] Copied libffmpeg.so to ${ffmpegDst}`);
-    }
+async function copyElectronResource(sourceDir, destinationDir, fileName, required) {
+  const source = NodePath.join(sourceDir, fileName);
+  if (!NodeFS.existsSync(source)) {
+    if (required) console.warn(`[build-server-binary] ${fileName} not found at ${source}, server may fail to start`);
+    return;
   }
+  const destination = NodePath.join(destinationDir, fileName);
+  await NodeFSPromises.copyFile(source, destination);
+  console.log(`[build-server-binary] Copied ${fileName} to ${destination}`);
+}
 
-  if (electronPlatformName === "win32") {
-    if (!appVersion) {
-      throw new Error(
-        "buildServerBinary: appVersion is required when electronPlatformName is win32",
-      );
-    }
+async function createMacFrameworksLink(appOutDir, productFilename, electronPlatformName) {
+  if (!isMacElectronPlatform(electronPlatformName)) return;
+  const frameworksLink = NodePath.join(appOutDir, `${productFilename}.app`, "Contents", "Resources", "Frameworks");
+  if (NodeFS.existsSync(frameworksLink)) return;
+  await NodeFSPromises.symlink("../Frameworks", frameworksLink);
+  console.log(`[build-server-binary] Created Frameworks symlink at ${frameworksLink}`);
+}
+
+async function copyLinuxFfmpegLibrary(srcBinary, dstBinary, electronPlatformName) {
+  if (electronPlatformName !== "linux") return;
+  await copyElectronResource(NodePath.dirname(srcBinary), NodePath.dirname(dstBinary), "libffmpeg.so", false);
+}
+
+async function stampWindowsServerBinary(dstBinary, electronPlatformName, appVersion, companyName, iconPath) {
+  if (electronPlatformName !== "win32") return;
+  if (!appVersion) {
+    throw new Error("buildServerBinary: appVersion is required when electronPlatformName is win32");
+  }
     // VERSIONINFO numeric fields require a dotted quad of integers, each
     // bounded to 16 bits (HIWORD/LOWORD of dwFileVersionMS/LS). Catch upstream
     // callers that forgot to normalize semver prerelease suffixes or that
@@ -235,19 +210,18 @@ export async function buildServerBinary({
         const n = Number(part);
         return Number.isInteger(n) && n >= 0 && n <= 65535;
       });
-    if (!segmentsInRange) {
-      throw new Error(
-        `buildServerBinary: appVersion must be a numeric dotted quad with each segment in [0, 65535] on win32 (got ${JSON.stringify(appVersion)})`,
-      );
-    }
-    await stampWindowsVersionInfo(dstBinary, {
-      fileDescription: "Mcode Server",
-      productName: "Mcode Server",
-      companyName,
-      fileVersion: appVersion,
-      productVersion: appVersion,
-      originalFilename: "mcode-server.exe",
-      iconPath,
-    });
+  if (!segmentsInRange) {
+    throw new Error(
+      `buildServerBinary: appVersion must be a numeric dotted quad with each segment in [0, 65535] on win32 (got ${JSON.stringify(appVersion)})`,
+    );
   }
+  await stampWindowsVersionInfo(dstBinary, {
+    fileDescription: "Mcode Server",
+    productName: "Mcode Server",
+    companyName,
+    fileVersion: appVersion,
+    productVersion: appVersion,
+    originalFilename: "mcode-server.exe",
+    iconPath,
+  });
 }

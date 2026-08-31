@@ -220,17 +220,12 @@ export class CanonicalAgentEventStore {
     decision: "duplicate" | "conflict",
     replayGuard: CanonicalAgentEventStoreInput["replayGuard"],
   ): CanonicalAgentCommitResult {
-    const acceptedThrough = checkpoint?.lastAcceptedSequence ?? 0;
+    const progress = this.replayProgress(checkpoint);
+    const revisions = this.replayRevisions(thread);
     return {
-      outcome: decision === "conflict"
-        ? "conflict"
-        : replayGuard === "terminal-confirmed" && checkpoint?.terminalOutcome
-          ? "terminal-outcome-confirmed"
-          : "duplicate",
-      conversationRevision: thread?.conversationRevision ?? 0,
-      rosterRevision: thread?.rosterRevision ?? 0,
-      acceptedThrough,
-      durableThrough: checkpoint?.lastDurableSequence ?? acceptedThrough,
+      outcome: this.replayOutcome(decision, replayGuard, this.replayTerminalOutcome(checkpoint)),
+      ...revisions,
+      ...progress,
       events: [],
     };
   }
@@ -290,17 +285,71 @@ export class CanonicalAgentEventStore {
     updatedAt: string,
   ): void {
     if (input.persistCheckpoint === false) return;
-    this.operations.persistCheckpoint({
+    this.operations.persistCheckpoint(this.checkpointToPersist(input, current, sequence, updatedAt));
+  }
+
+  private replayOutcome(
+    decision: "duplicate" | "conflict",
+    replayGuard: CanonicalAgentEventStoreInput["replayGuard"],
+    terminalOutcome: TurnOutcome | null,
+  ): CanonicalAgentCommitResult["outcome"] {
+    if (decision === "conflict") return "conflict";
+    if (replayGuard === "terminal-confirmed" && terminalOutcome) {
+      return "terminal-outcome-confirmed";
+    }
+    return "duplicate";
+  }
+
+  private replayProgress(
+    checkpoint: CanonicalAgentEventStoreCheckpoint | null,
+  ): Pick<CanonicalAgentCommitResult, "acceptedThrough" | "durableThrough"> {
+    const acceptedThrough = checkpoint?.lastAcceptedSequence ?? 0;
+    return {
+      acceptedThrough,
+      durableThrough: checkpoint?.lastDurableSequence ?? acceptedThrough,
+    };
+  }
+
+  private replayRevisions(
+    thread: AgentThread | null,
+  ): Pick<CanonicalAgentCommitResult, "conversationRevision" | "rosterRevision"> {
+    return {
+      conversationRevision: thread?.conversationRevision ?? 0,
+      rosterRevision: thread?.rosterRevision ?? 0,
+    };
+  }
+
+  private replayTerminalOutcome(
+    checkpoint: CanonicalAgentEventStoreCheckpoint | null,
+  ): TurnOutcome | null {
+    return checkpoint?.terminalOutcome ?? null;
+  }
+
+  private checkpointToPersist(
+    input: CanonicalAgentEventStoreInput,
+    current: CanonicalAgentEventStoreCheckpoint | null,
+    sequence: number,
+    updatedAt: string,
+  ): CanonicalAgentEventStoreCheckpoint {
+    const terminalOutcome = current?.terminalOutcome ?? null;
+    return {
       executionId: input.executionId,
       threadId: input.threadId,
       turnId: input.turnId,
       lastAcceptedSequence: sequence,
       lastDurableSequence: sequence,
-      recoveryCursor: input.recoveryCursor ?? current?.recoveryCursor ?? null,
-      phase: current?.terminalOutcome ? current.phase : input.phase,
-      terminalOutcome: current?.terminalOutcome ?? input.terminalOutcome ?? null,
-      error: current?.terminalOutcome ? current.error : input.error ?? null,
+      recoveryCursor: this.recoveryCursorToPersist(input, current),
+      phase: terminalOutcome ? current!.phase : input.phase,
+      terminalOutcome: terminalOutcome ?? input.terminalOutcome ?? null,
+      error: terminalOutcome ? current!.error : input.error ?? null,
       updatedAt,
-    });
+    };
+  }
+
+  private recoveryCursorToPersist(
+    input: CanonicalAgentEventStoreInput,
+    current: CanonicalAgentEventStoreCheckpoint | null,
+  ): unknown | null {
+    return input.recoveryCursor ?? current?.recoveryCursor ?? null;
   }
 }

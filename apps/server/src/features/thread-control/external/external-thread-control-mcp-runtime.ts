@@ -1,4 +1,4 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type * as NodeHTTP from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { inject, injectable } from "tsyringe";
@@ -39,7 +39,7 @@ export class ExternalThreadControlMcpRuntime {
   }
 
   /** Handle one authenticated loopback request without opening a second listener. */
-  async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async handleRequest(request: NodeHTTP.IncomingMessage, response: NodeHTTP.ServerResponse): Promise<void> {
     if (!isLoopback(request.socket.remoteAddress)) {
       response.writeHead(403).end("Forbidden");
       return;
@@ -120,7 +120,7 @@ function isLoopback(address: string | undefined): boolean {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
-function contentLengthExceedsLimit(request: IncomingMessage): boolean {
+function contentLengthExceedsLimit(request: NodeHTTP.IncomingMessage): boolean {
   const header = request.headers["content-length"];
   const value = Array.isArray(header) ? header[0] : header;
   if (value === undefined || !/^\d+$/.test(value)) return false;
@@ -128,7 +128,7 @@ function contentLengthExceedsLimit(request: IncomingMessage): boolean {
   return !Number.isSafeInteger(length) || length > MAX_BODY_BYTES;
 }
 
-async function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
+async function readBoundedBody(request: NodeHTTP.IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -146,7 +146,7 @@ function bearerCredential(value: string | undefined): string | undefined {
   return credential.length > 0 ? credential : undefined;
 }
 
-function headerValue(request: IncomingMessage, name: string): string | undefined {
+function headerValue(request: NodeHTTP.IncomingMessage, name: string): string | undefined {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
 }

@@ -8,7 +8,7 @@ describe("createGitGuiAdapter", () => {
       label: "GitHub Desktop",
       iconKey: "githubDesktop",
       command: "github",
-    });
+    }, "linux");
 
     expect(adapter.id).toBe("github-desktop");
     expect(adapter.label).toBe("GitHub Desktop");
@@ -22,7 +22,7 @@ describe("createGitGuiAdapter", () => {
       label: "Missing GUI",
       iconKey: "githubDesktop",
       command: "definitely-not-a-real-command-xyz",
-    });
+    }, "linux");
 
     expect(adapter.detect()).toBe(false);
     await expect(adapter.launch({ path: "/abs/x" })).rejects.toThrow(

@@ -1,21 +1,21 @@
 /** Tests the db:info Electron wrapper against a real temporary SQLite database. */
-import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { test } from "node:test";
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeTest from "node:test";
 
-test("db:info opens a SQLite database through Electron Node", { timeout: 75_000 }, () => {
-  const dataDir = mkdtempSync(join(tmpdir(), "mcode-db-info-"));
-  const dbPath = join(dataDir, "mcode.db");
+NodeTest.test("db:info opens a SQLite database through Electron Node", { timeout: 75_000 }, () => {
+  const dataDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-db-info-"));
+  const dbPath = NodePath.join(dataDir, "mcode.db");
   const env = { ...process.env, MCODE_DB_PATH: dbPath };
-  const electronRequire = createRequire(join(process.cwd(), "apps", "desktop", "package.json"));
+  const electronRequire = NodeModule.createRequire(NodePath.join(process.cwd(), "apps", "desktop", "package.json"));
   const electronBinary = electronRequire("electron");
 
   try {
-    const createDatabase = spawnSync(
+    const createDatabase = NodeChildProcess.spawnSync(
       process.execPath,
       [
         "scripts/run-electron-node.mjs",
@@ -24,32 +24,32 @@ test("db:info opens a SQLite database through Electron Node", { timeout: 75_000 
       ],
       { cwd: process.cwd(), env, encoding: "utf8", timeout: 60_000 },
     );
-    assert.equal(createDatabase.error, undefined);
-    assert.equal(createDatabase.status, 0, createDatabase.stderr);
+    NodeAssertStrict.default.equal(createDatabase.error, undefined);
+    NodeAssertStrict.default.equal(createDatabase.status, 0, createDatabase.stderr);
 
-    const result = spawnSync(
+    const result = NodeChildProcess.spawnSync(
       process.execPath,
       ["scripts/run-electron-node.mjs", "scripts/db-info.mjs"],
       { cwd: process.cwd(), env, encoding: "utf8", timeout: 60_000 },
     );
 
-    assert.equal(result.error, undefined);
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Schema   : v7/);
-    assert.match(result.stdout, /workspaces: 0 rows/);
+    NodeAssertStrict.default.equal(result.error, undefined);
+    NodeAssertStrict.default.equal(result.status, 0, result.stderr);
+    NodeAssertStrict.default.match(result.stdout, /Schema   : v7/);
+    NodeAssertStrict.default.match(result.stdout, /workspaces: 0 rows/);
 
     const missingBindingEnv = { ...env, ELECTRON_RUN_AS_NODE: "1" };
     delete missingBindingEnv.BETTER_SQLITE3_BINDING;
-    const missingBinding = spawnSync(
+    const missingBinding = NodeChildProcess.spawnSync(
       electronBinary,
       ["scripts/db-info.mjs"],
       { cwd: process.cwd(), env: missingBindingEnv, encoding: "utf8", timeout: 60_000 },
     );
-    assert.equal(missingBinding.error, undefined);
-    assert.equal(missingBinding.status, 1, missingBinding.stderr);
-    assert.match(missingBinding.stderr, /BETTER_SQLITE3_BINDING is required/);
+    NodeAssertStrict.default.equal(missingBinding.error, undefined);
+    NodeAssertStrict.default.equal(missingBinding.status, 1, missingBinding.stderr);
+    NodeAssertStrict.default.match(missingBinding.stderr, /BETTER_SQLITE3_BINDING is required/);
 
-    const invalidBinding = spawnSync(
+    const invalidBinding = NodeChildProcess.spawnSync(
       electronBinary,
       ["scripts/db-info.mjs"],
       {
@@ -57,16 +57,16 @@ test("db:info opens a SQLite database through Electron Node", { timeout: 75_000 
         env: {
           ...env,
           ELECTRON_RUN_AS_NODE: "1",
-          BETTER_SQLITE3_BINDING: join(dataDir, "missing.node"),
+          BETTER_SQLITE3_BINDING: NodePath.join(dataDir, "missing.node"),
         },
         encoding: "utf8",
         timeout: 60_000,
       },
     );
-    assert.equal(invalidBinding.error, undefined);
-    assert.equal(invalidBinding.status, 1, invalidBinding.stderr);
-    assert.match(invalidBinding.stderr, /must reference an existing absolute file/);
+    NodeAssertStrict.default.equal(invalidBinding.error, undefined);
+    NodeAssertStrict.default.equal(invalidBinding.status, 1, invalidBinding.stderr);
+    NodeAssertStrict.default.match(invalidBinding.stderr, /must reference an existing absolute file/);
   } finally {
-    rmSync(dataDir, { recursive: true, force: true });
+    NodeFS.rmSync(dataDir, { recursive: true, force: true });
   }
 });

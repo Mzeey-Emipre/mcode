@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { spawn } from "child_process";
-import { setTimeout as delay } from "timers/promises";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeTimersPromises from "node:timers/promises";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import { JobObject } from "../job-object.js";
 
 /**
@@ -13,13 +14,13 @@ describe.runIf(process.platform === "win32")(
   "JobObject grandchild propagation",
   () => {
     it("kills grandchildren when the job closes", async () => {
-      const job = new JobObject();
+      const job = new JobObject(hostRuntime);
 
       // Spawn a parent that spawns a grandchild via cmd /c.
       // We use a nested ping so both parent and grandchild have measurable lifetime.
       // cmd /c cmd /c ping keeps an intermediate cmd.exe alive as a grandchild,
       // testing that job membership propagates through process inheritance.
-      const parent = spawn(
+      const parent = NodeChildProcess.spawn(
         "cmd",
         ["/c", "cmd", "/c", "ping", "-n", "30", "127.0.0.1"],
         { stdio: "ignore", windowsHide: true },
@@ -28,7 +29,7 @@ describe.runIf(process.platform === "win32")(
       job.assign(parent.pid!);
 
       // Allow the nested cmd → ping chain time to start on a loaded CI machine.
-      await delay(1500);
+      await NodeTimersPromises.setTimeout(1500);
 
       let exited = false;
       try {
@@ -37,7 +38,7 @@ describe.runIf(process.platform === "win32")(
 
         exited = await Promise.race([
           new Promise<true>((r) => parent.once("exit", () => r(true))),
-          delay(3000).then(() => false as const),
+          NodeTimersPromises.setTimeout(3000).then(() => false as const),
         ]);
         expect(exited).toBe(true);
       } finally {

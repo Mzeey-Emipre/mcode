@@ -1,5 +1,5 @@
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import * as NodeAssertStrict from "node:assert/strict";
+import * as NodeTest from "node:test";
 import {
   buildFrameComparison,
   buildProcessSummary,
@@ -11,9 +11,9 @@ import {
   summarizeWindowsGpuEngineSamples,
 } from "../../perf/windows-gpu-engine-collector.mjs";
 
-describe("packaged Windows acceleration runner", () => {
-  it("requires an explicit GPU type and bounded equal sample counts", () => {
-    assert.deepEqual(
+NodeTest.describe("packaged Windows acceleration runner", () => {
+  NodeTest.it("requires an explicit GPU type and bounded equal sample counts", () => {
+    NodeAssertStrict.default.deepEqual(
       parsePackagedWindowsArguments([
         "--gpu-type",
         "integrated",
@@ -31,21 +31,21 @@ describe("packaged Windows acceleration runner", () => {
         sampleCount: 5,
       },
     );
-    assert.throws(
+    NodeAssertStrict.default.throws(
       () => parsePackagedWindowsArguments([]),
       /--gpu-type must be integrated or discrete/,
     );
-    assert.throws(
+    NodeAssertStrict.default.throws(
       () => parsePackagedWindowsArguments(["--gpu-type", "virtual"]),
       /--gpu-type must be integrated or discrete/,
     );
-    assert.throws(
+    NodeAssertStrict.default.throws(
       () => parsePackagedWindowsArguments(["--gpu-type", "integrated"]),
       /--adapter-name must identify one Windows video adapter/,
     );
   });
 
-  it("fails closed unless both packaged modes pass with their requested state", () => {
+  NodeTest.it("fails closed unless both packaged modes pass with their requested state", () => {
     const makeResult = (mode, overrides = {}) => ({
       accelerationMode: mode,
       buildMode: "production",
@@ -70,21 +70,21 @@ describe("packaged Windows acceleration runner", () => {
       disabled: makeResult("disabled"),
       default: makeResult("default"),
     });
-    assert.deepEqual(result, { passed: true, failures: [] });
-    assert.deepEqual(
+    NodeAssertStrict.default.deepEqual(result, { passed: true, failures: [] });
+    NodeAssertStrict.default.deepEqual(
       validateAccelerationPair({
         disabled: makeResult("disabled"),
       }),
       { passed: false, failures: ["default packaged result is missing"] },
     );
-    assert.match(
+    NodeAssertStrict.default.match(
       validateAccelerationPair({
         disabled: makeResult("disabled"),
         default: makeResult("disabled"),
       }).failures.join(" | "),
       /default packaged result has the wrong acceleration mode/,
     );
-    assert.match(
+    NodeAssertStrict.default.match(
       validateAccelerationPair({
         disabled: makeResult("disabled"),
         default: makeResult("default", { packaged: false }),
@@ -93,7 +93,7 @@ describe("packaged Windows acceleration runner", () => {
     );
   });
 
-  it("keeps frame cadence as the primary paired comparison", () => {
+  NodeTest.it("keeps frame cadence as the primary paired comparison", () => {
     const results = {
       disabled: {
         frameResults: {
@@ -106,7 +106,7 @@ describe("packaged Windows acceleration runner", () => {
         },
       },
     };
-    assert.deepEqual(buildFrameComparison(results), {
+    NodeAssertStrict.default.deepEqual(buildFrameComparison(results), {
       denseNarrative: {
         primaryStatistic: "p95FrameIntervalMs",
         disabled: { medianMs: 16, p95Ms: 22 },
@@ -115,19 +115,19 @@ describe("packaged Windows acceleration runner", () => {
     });
   });
 
-  it("reports absent and zero GPU signals as inconclusive", () => {
-    assert.deepEqual(summarizeWindowsGpuEngineSamples([], [42]), {
+  NodeTest.it("reports absent and zero GPU signals as inconclusive", () => {
+    NodeAssertStrict.default.deepEqual(summarizeWindowsGpuEngineSamples([], [42]), {
       status: "inconclusive",
       reason: "No attributable GPU Engine counter samples were returned",
       processes: [],
     });
-    assert.equal(
+    NodeAssertStrict.default.equal(
       summarizeWindowsGpuEngineSamples([
         { pid: 42, timestamp: "2026-08-12T12:00:00.000Z", valuePercent: 0 },
       ], [42]).status,
       "inconclusive",
     );
-    assert.equal(
+    NodeAssertStrict.default.equal(
       summarizeWindowsGpuEngineSamples([
         { pid: 42, timestamp: "2026-08-12T12:00:00.000Z", valuePercent: 7.5 },
       ], [42]).status,
@@ -135,8 +135,8 @@ describe("packaged Windows acceleration runner", () => {
     );
   });
 
-  it("binds the operator GPU classification to a Windows adapter", () => {
-    assert.deepEqual(
+  NodeTest.it("binds the operator GPU classification to a Windows adapter", () => {
+    NodeAssertStrict.default.deepEqual(
       resolveWindowsGpuClassification(
         [{ name: "Intel Test GPU" }],
         "intel test gpu",
@@ -148,7 +148,7 @@ describe("packaged Windows acceleration runner", () => {
         adapterName: "Intel Test GPU",
       },
     );
-    assert.throws(
+    NodeAssertStrict.default.throws(
       () => resolveWindowsGpuClassification(
         [{ name: "Intel Test GPU" }],
         "Discrete Test GPU",
@@ -158,7 +158,7 @@ describe("packaged Windows acceleration runner", () => {
     );
   });
 
-  it("summarizes CPU and memory independently by Electron process type", () => {
+  NodeTest.it("summarizes CPU and memory independently by Electron process type", () => {
     const sample = (cpuPercent, workingSetSizeKiB, privateBytesKiB) => ({
       correctness: { passed: true },
       attribution: {
@@ -173,7 +173,7 @@ describe("packaged Windows acceleration runner", () => {
         },
       },
     });
-    assert.deepEqual(buildProcessSummary({
+    NodeAssertStrict.default.deepEqual(buildProcessSummary({
       metrics: { workload: { rawSamples: [sample(2, 100, 80), sample(4, 120, 90)] } },
     }), {
       GPU: {

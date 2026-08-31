@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -33,7 +33,7 @@ const overlayTest = vi.hoisted(() => ({
   currentWindow: null as FakeWindow | null,
 }));
 
-class FakeGuest extends EventEmitter {
+class FakeGuest extends NodeEvents.EventEmitter {
   public readonly id: number;
   public destroyed = false;
   public url: string;

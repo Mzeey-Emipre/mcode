@@ -1,4 +1,4 @@
-import { memo, type RefObject } from "react";
+import { memo, type ComponentType, type RefObject } from "react";
 import { HookActivitySection } from "@/components/chat/HookActivitySection";
 import { PermissionRequestCard } from "@/components/chat/PermissionRequestCard";
 import { StreamingCard } from "@/components/chat/StreamingCard";
@@ -41,6 +41,206 @@ export interface TranscriptItemRendererProps {
   showParentAgentProvenance: boolean;
 }
 
+type TranscriptItemComponent = ComponentType<TranscriptItemRendererProps>;
+
+type MessageTranscriptItem = Extract<ChatVirtualItem, { type: "message" }>;
+
+/** Renders a message virtual item and withholds actions while its agent response remains active. */
+function MessageTranscriptItemRenderer({
+  item,
+  onBranch,
+  onReply,
+  onScrollToMessage,
+  currentTurnMessageIdByThread,
+  showParentAgentProvenance,
+}: TranscriptItemRendererProps) {
+  const messageItem = item as MessageTranscriptItem;
+  const isJustPersisted =
+    messageItem.message.role === "assistant"
+    && currentTurnMessageIdByThread[messageItem.message.thread_id] === messageItem.message.id
+    && messageItem.agentDisplayState?.phase !== "completed";
+  const agentActionsDisabled = messageItem.agentDisplayState != null
+    && messageItem.agentDisplayState.phase !== "completed";
+  return (
+    <div className={isJustPersisted ? "agent-response-just-persisted" : ""}>
+      <MessageBubble
+        message={messageItem.message}
+        onBranch={agentActionsDisabled ? undefined : onBranch}
+        onReply={agentActionsDisabled ? undefined : onReply}
+        onScrollToMessage={onScrollToMessage}
+        agentDisplayState={messageItem.agentDisplayState}
+        showParentAgentProvenance={showParentAgentProvenance}
+      />
+    </div>
+  );
+}
+
+/** Renders active tool calls. */
+function ActiveToolsTranscriptItemRenderer({ item }: TranscriptItemRendererProps) {
+  return <ToolCallCard toolCalls={(item as Extract<ChatVirtualItem, { type: "active-tools" }>).toolCalls} />;
+}
+
+/** Renders the legacy streaming indicator. */
+function IndicatorTranscriptItemRenderer({ item }: TranscriptItemRendererProps) {
+  const indicator = item as Extract<ChatVirtualItem, { type: "indicator" }>;
+  return <StreamingIndicator startTime={indicator.startTime} activeToolCalls={indicator.activeToolCalls} />;
+}
+
+/** Renders legacy streamed text. */
+function StreamingTranscriptItemRenderer({ item }: TranscriptItemRendererProps) {
+  return <StreamingCard text={(item as Extract<ChatVirtualItem, { type: "streaming" }>).text} />;
+}
+
+/** Renders the persisted turn-change summary. */
+function TurnChangesTranscriptItemRenderer({ item, turnExpandRef }: TranscriptItemRendererProps) {
+  const changes = item as Extract<ChatVirtualItem, { type: "turn-changes" }>;
+  return (
+    <TurnChangeSummary
+      messageId={changes.messageId}
+      filesChanged={changes.filesChanged}
+      isLatestTurn={changes.isLatestTurn}
+      manualExpandRef={turnExpandRef}
+    />
+  );
+}
+
+/** Renders a permission request row. */
+function PermissionRequestTranscriptItemRenderer({ item }: TranscriptItemRendererProps) {
+  const request = item as Extract<ChatVirtualItem, { type: "permission-request" }>;
+  return (
+    <PermissionRequestCard
+      requestId={request.requestId}
+      toolName={request.toolName}
+      input={request.input}
+      title={request.title}
+      settled={request.settled}
+      decision={request.decision}
+    />
+  );
+}
+
+/** Renders hook activity. */
+function HookActivityTranscriptItemRenderer({ item }: TranscriptItemRendererProps) {
+  return <HookActivitySection hooks={(item as Extract<ChatVirtualItem, { type: "hook-activity" }>).hooks} />;
+}
+
+/** Renders the live narrative flow. */
+function NarrativeFlowTranscriptItemRenderer({ item, onSubagentSelect, onOpenSubagents }: TranscriptItemRendererProps) {
+  const flow = item as Extract<ChatVirtualItem, { type: "narrative-flow" }>;
+  return (
+    <NarrativeFlow
+      toolCalls={flow.toolCalls}
+      hooks={flow.hooks}
+      thoughtSegments={flow.thoughtSegments}
+      streamingText={flow.streamingText}
+      isAgentRunning={flow.isAgentRunning}
+      startTime={flow.startTime}
+      committedAssistantBody={flow.committedAssistantBody}
+      onSubagentSelect={onSubagentSelect}
+      onOpenSubagents={onOpenSubagents}
+    />
+  );
+}
+
+/** Renders durable narrative records. */
+function PersistedNarrativeTranscriptItemRenderer({ item, threadId, onSubagentSelect, onOpenSubagents }: TranscriptItemRendererProps) {
+  const narrative = item as Extract<ChatVirtualItem, { type: "persisted-narrative" }>;
+  return (
+    <PersistedNarrative
+      threadId={threadId}
+      messageId={narrative.messageId}
+      messageContent={narrative.messageContent}
+      onSubagentSelect={onSubagentSelect}
+      onOpenSubagents={onOpenSubagents}
+    />
+  );
+}
+
+/** Renders durable hooks that arrived after turn persistence. */
+function PersistedLateHooksTranscriptItemRenderer({ item, threadId }: TranscriptItemRendererProps) {
+  const hooks = item as Extract<ChatVirtualItem, { type: "persisted-late-hooks" }>;
+  return <PersistedLateHooks threadId={threadId} messageId={hooks.messageId} />;
+}
+
+/** Renders the durable turn footer. */
+function PersistedTurnFooterTranscriptItemRenderer({ item, threadId, onContinue, onRetry }: TranscriptItemRendererProps) {
+  const footer = item as Extract<ChatVirtualItem, { type: "persisted-turn-footer" }>;
+  return (
+    <PersistedTurnFooter
+      threadId={threadId}
+      messageId={footer.messageId}
+      summary={footer.summary}
+      onContinue={onContinue}
+      onRetry={onRetry}
+    />
+  );
+}
+
+/** Renders live narrative progress below the response. */
+function NarrativeIndicatorTranscriptItemRenderer({ item }: TranscriptItemRendererProps) {
+  const indicator = item as Extract<ChatVirtualItem, { type: "narrative-indicator" }>;
+  return (
+    <NarrativeIndicator
+      stepCount={indicator.stepCount}
+      subagentCount={indicator.subagentCount}
+      activeToolCalls={indicator.activeToolCalls}
+      startTime={indicator.startTime}
+      isAgentRunning={indicator.isAgentRunning}
+    />
+  );
+}
+
+const TRANSCRIPT_ITEM_COMPONENTS: Record<ChatVirtualItem["type"], TranscriptItemComponent> = {
+  message: MessageTranscriptItemRenderer,
+  "active-tools": ActiveToolsTranscriptItemRenderer,
+  indicator: IndicatorTranscriptItemRenderer,
+  streaming: StreamingTranscriptItemRenderer,
+  "turn-changes": TurnChangesTranscriptItemRenderer,
+  "permission-request": PermissionRequestTranscriptItemRenderer,
+  "hook-activity": HookActivityTranscriptItemRenderer,
+  "narrative-flow": NarrativeFlowTranscriptItemRenderer,
+  "persisted-narrative": PersistedNarrativeTranscriptItemRenderer,
+  "persisted-late-hooks": PersistedLateHooksTranscriptItemRenderer,
+  "persisted-turn-footer": PersistedTurnFooterTranscriptItemRenderer,
+  "narrative-indicator": NarrativeIndicatorTranscriptItemRenderer,
+};
+
+/** Compares render props that determine the selected virtual item subtree. */
+function sameTranscriptItemContext(
+  previous: TranscriptItemRendererProps,
+  next: TranscriptItemRendererProps,
+): boolean {
+  return previous.turnExpandRef === next.turnExpandRef
+    && previous.threadId === next.threadId
+    && previous.showParentAgentProvenance === next.showParentAgentProvenance
+    && previous.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread;
+}
+
+/** Compares event handlers that may affect a virtual item subtree. */
+function sameTranscriptItemHandlers(
+  previous: TranscriptItemRendererProps,
+  next: TranscriptItemRendererProps,
+): boolean {
+  return previous.onBranch === next.onBranch
+    && previous.onReply === next.onReply
+    && previous.onSubagentSelect === next.onSubagentSelect
+    && previous.onOpenSubagents === next.onOpenSubagents
+    && previous.onContinue === next.onContinue
+    && previous.onRetry === next.onRetry
+    && previous.onScrollToMessage === next.onScrollToMessage;
+}
+
+/** Compares all render inputs without deep-checking an immutable virtual item. */
+function sameTranscriptItemRendererProps(
+  previous: TranscriptItemRendererProps,
+  next: TranscriptItemRendererProps,
+): boolean {
+  return previous.item.key === next.item.key
+    && previous.item === next.item
+    && sameTranscriptItemContext(previous, next)
+    && sameTranscriptItemHandlers(previous, next);
+}
+
 /** Renders one discriminated transcript item without owning transcript or viewport state. */
 export const TranscriptItemRenderer = memo(function TranscriptItemRenderer({
   item,
@@ -56,114 +256,21 @@ export const TranscriptItemRenderer = memo(function TranscriptItemRenderer({
   threadId,
   showParentAgentProvenance,
 }: TranscriptItemRendererProps) {
-  switch (item.type) {
-    case "message": {
-      const isJustPersisted =
-        item.message.role === "assistant"
-        && currentTurnMessageIdByThread[item.message.thread_id] === item.message.id
-        && item.agentDisplayState?.phase !== "completed";
-      const agentActionsDisabled = item.agentDisplayState != null
-        && item.agentDisplayState.phase !== "completed";
-      return (
-        <div className={isJustPersisted ? "agent-response-just-persisted" : ""}>
-          <MessageBubble
-            message={item.message}
-            onBranch={agentActionsDisabled ? undefined : onBranch}
-            onReply={agentActionsDisabled ? undefined : onReply}
-            onScrollToMessage={onScrollToMessage}
-            agentDisplayState={item.agentDisplayState}
-            showParentAgentProvenance={showParentAgentProvenance}
-          />
-        </div>
-      );
-    }
-    case "active-tools":
-      return <ToolCallCard toolCalls={item.toolCalls} />;
-    case "indicator":
-      return <StreamingIndicator startTime={item.startTime} activeToolCalls={item.activeToolCalls} />;
-    case "streaming":
-      return <StreamingCard text={item.text} />;
-    case "turn-changes":
-      return (
-        <TurnChangeSummary
-          messageId={item.messageId}
-          filesChanged={item.filesChanged}
-          isLatestTurn={item.isLatestTurn}
-          manualExpandRef={turnExpandRef}
-        />
-      );
-    case "permission-request":
-      return (
-        <PermissionRequestCard
-          requestId={item.requestId}
-          toolName={item.toolName}
-          input={item.input}
-          title={item.title}
-          settled={item.settled}
-          decision={item.decision}
-        />
-      );
-    case "hook-activity":
-      return <HookActivitySection hooks={item.hooks} />;
-    case "narrative-flow":
-      return (
-        <NarrativeFlow
-          toolCalls={item.toolCalls}
-          hooks={item.hooks}
-          thoughtSegments={item.thoughtSegments}
-          streamingText={item.streamingText}
-          isAgentRunning={item.isAgentRunning}
-          startTime={item.startTime}
-          committedAssistantBody={item.committedAssistantBody}
-          onSubagentSelect={onSubagentSelect}
-          onOpenSubagents={onOpenSubagents}
-        />
-      );
-    case "persisted-narrative":
-      return (
-        <PersistedNarrative
-          threadId={threadId}
-          messageId={item.messageId}
-          messageContent={item.messageContent}
-          onSubagentSelect={onSubagentSelect}
-          onOpenSubagents={onOpenSubagents}
-        />
-      );
-    case "persisted-late-hooks":
-      return <PersistedLateHooks threadId={threadId} messageId={item.messageId} />;
-    case "persisted-turn-footer":
-      return (
-        <PersistedTurnFooter
-          threadId={threadId}
-          messageId={item.messageId}
-          summary={item.summary}
-          onContinue={onContinue}
-          onRetry={onRetry}
-        />
-      );
-    case "narrative-indicator":
-      return (
-        <NarrativeIndicator
-          stepCount={item.stepCount}
-          subagentCount={item.subagentCount}
-          activeToolCalls={item.activeToolCalls}
-          startTime={item.startTime}
-          isAgentRunning={item.isAgentRunning}
-        />
-      );
-  }
-}, (previous, next) =>
-  previous.item.key === next.item.key
-  && previous.item === next.item
-  && previous.turnExpandRef === next.turnExpandRef
-  && previous.onBranch === next.onBranch
-  && previous.onReply === next.onReply
-  && previous.onSubagentSelect === next.onSubagentSelect
-  && previous.onOpenSubagents === next.onOpenSubagents
-  && previous.onContinue === next.onContinue
-  && previous.onRetry === next.onRetry
-  && previous.onScrollToMessage === next.onScrollToMessage
-  && previous.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread
-  && previous.threadId === next.threadId
-  && previous.showParentAgentProvenance === next.showParentAgentProvenance,
-);
+  const ItemComponent = TRANSCRIPT_ITEM_COMPONENTS[item.type];
+  return (
+    <ItemComponent
+      item={item}
+      turnExpandRef={turnExpandRef}
+      onBranch={onBranch}
+      onReply={onReply}
+      onSubagentSelect={onSubagentSelect}
+      onOpenSubagents={onOpenSubagents}
+      onContinue={onContinue}
+      onRetry={onRetry}
+      onScrollToMessage={onScrollToMessage}
+      currentTurnMessageIdByThread={currentTurnMessageIdByThread}
+      threadId={threadId}
+      showParentAgentProvenance={showParentAgentProvenance}
+    />
+  );
+}, sameTranscriptItemRendererProps);

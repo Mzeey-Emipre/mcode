@@ -7,7 +7,7 @@
 
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import type { PlanRecord, PlanStatus } from "@mcode/contracts";
 
 @injectable()
@@ -58,7 +58,7 @@ export class PlanRepo {
     sectionsJson: string | null,
     changeSummary: string | null,
   ): PlanRecord {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const version = (this.stmtNextVersion.get(threadId) as { next: number })
       .next;
 

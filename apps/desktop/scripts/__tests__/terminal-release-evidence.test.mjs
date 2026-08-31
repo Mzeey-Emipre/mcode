@@ -1,13 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   createReleaseEvidenceManifest,
   createTargetEvidenceManifest,
@@ -78,19 +72,19 @@ function passedSignatures(platform) {
 }
 
 function createMacTargetFixture(root) {
-  const releaseDir = path.join(root, "release");
-  const appPath = path.join(
+  const releaseDir = NodePath.join(root, "release");
+  const appPath = NodePath.join(
     releaseDir,
     "mac-arm64",
     "Mcode.app",
     "Contents",
   );
-  mkdirSync(path.join(appPath, "MacOS"), { recursive: true });
-  mkdirSync(path.join(appPath, "Resources", "bin"), { recursive: true });
-  writeFileSync(path.join(appPath, "MacOS", "Mcode"), "electron");
-  writeFileSync(path.join(appPath, "Resources", "bin", "mcode-server"), "server");
+  NodeFS.mkdirSync(NodePath.join(appPath, "MacOS"), { recursive: true });
+  NodeFS.mkdirSync(NodePath.join(appPath, "Resources", "bin"), { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(appPath, "MacOS", "Mcode"), "electron");
+  NodeFS.writeFileSync(NodePath.join(appPath, "Resources", "bin", "mcode-server"), "server");
   for (const file of TARGETS[2].files) {
-    writeFileSync(path.join(releaseDir, file), file);
+    NodeFS.writeFileSync(NodePath.join(releaseDir, file), file);
   }
   return releaseDir;
 }
@@ -99,20 +93,20 @@ describe("Terminal release evidence", () => {
   let fixtureRoot;
 
   afterEach(() => {
-    if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true });
+    if (fixtureRoot) NodeFS.rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
   it("stages exact target artifacts and records bounded signed evidence", () => {
-    fixtureRoot = mkdtempSync(
-      path.join(tmpdir(), "terminal-release-evidence-"),
+    fixtureRoot = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "terminal-release-evidence-"),
     );
-    const releaseDir = path.join(fixtureRoot, "release");
-    const stagingDir = path.join(fixtureRoot, "stage", "windows-x64");
-    const attestationPath = path.join(fixtureRoot, "attestation.json");
-    mkdirSync(releaseDir, { recursive: true });
+    const releaseDir = NodePath.join(fixtureRoot, "release");
+    const stagingDir = NodePath.join(fixtureRoot, "stage", "windows-x64");
+    const attestationPath = NodePath.join(fixtureRoot, "attestation.json");
+    NodeFS.mkdirSync(releaseDir, { recursive: true });
     for (const file of TARGETS[0].files)
-      writeFileSync(path.join(releaseDir, file), file);
-    writeFileSync(attestationPath, JSON.stringify(attestation("win32", "x64")));
+      NodeFS.writeFileSync(NodePath.join(releaseDir, file), file);
+    NodeFS.writeFileSync(attestationPath, JSON.stringify(attestation("win32", "x64")));
 
     const manifest = createTargetEvidenceManifest({
       releaseDir,
@@ -143,21 +137,21 @@ describe("Terminal release evidence", () => {
   });
 
   it("stages supported updater metadata but excludes builder diagnostics", () => {
-    fixtureRoot = mkdtempSync(
-      path.join(tmpdir(), "terminal-release-metadata-filter-"),
+    fixtureRoot = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "terminal-release-metadata-filter-"),
     );
-    const releaseDir = path.join(fixtureRoot, "release");
-    const stagingDir = path.join(fixtureRoot, "stage", "windows-x64");
-    const attestationPath = path.join(fixtureRoot, "attestation.json");
-    mkdirSync(releaseDir, { recursive: true });
+    const releaseDir = NodePath.join(fixtureRoot, "release");
+    const stagingDir = NodePath.join(fixtureRoot, "stage", "windows-x64");
+    const attestationPath = NodePath.join(fixtureRoot, "attestation.json");
+    NodeFS.mkdirSync(releaseDir, { recursive: true });
     for (const file of [
       ...TARGETS[0].files,
       "latest.yml",
       "builder-debug.yml",
     ]) {
-      writeFileSync(path.join(releaseDir, file), file);
+      NodeFS.writeFileSync(NodePath.join(releaseDir, file), file);
     }
-    writeFileSync(attestationPath, JSON.stringify(attestation("win32", "x64")));
+    NodeFS.writeFileSync(attestationPath, JSON.stringify(attestation("win32", "x64")));
 
     const manifest = createTargetEvidenceManifest({
       releaseDir,
@@ -180,17 +174,17 @@ describe("Terminal release evidence", () => {
     expect(manifest.artifacts.map((artifact) => artifact.name)).not.toContain(
       "builder-debug.yml",
     );
-    expect(existsSync(path.join(stagingDir, "latest.yml"))).toBe(true);
-    expect(existsSync(path.join(stagingDir, "builder-debug.yml"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(stagingDir, "latest.yml"))).toBe(true);
+    expect(NodeFS.existsSync(NodePath.join(stagingDir, "builder-debug.yml"))).toBe(false);
   });
 
   it("runs full final-package Terminal attestation when no report is supplied", () => {
-    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-final-attestation-"));
-    const releaseDir = path.join(fixtureRoot, "release");
-    const stagingDir = path.join(fixtureRoot, "stage", "linux-x64");
-    mkdirSync(releaseDir, { recursive: true });
+    fixtureRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "terminal-final-attestation-"));
+    const releaseDir = NodePath.join(fixtureRoot, "release");
+    const stagingDir = NodePath.join(fixtureRoot, "stage", "linux-x64");
+    NodeFS.mkdirSync(releaseDir, { recursive: true });
     for (const file of TARGETS[3].files)
-      writeFileSync(path.join(releaseDir, file), file);
+      NodeFS.writeFileSync(NodePath.join(releaseDir, file), file);
     const calls = [];
     const manifest = createTargetEvidenceManifest({
       releaseDir,
@@ -217,8 +211,8 @@ describe("Terminal release evidence", () => {
     expect(calls[0]).toMatchObject({
       targetPlatform: "linux",
       targetArch: "x64",
-      resourcesRoot: path.join(releaseDir, "linux-unpacked", "resources"),
-      runtimePath: path.join(
+      resourcesRoot: NodePath.join(releaseDir, "linux-unpacked", "resources"),
+      runtimePath: NodePath.join(
         releaseDir,
         "linux-unpacked",
         "resources",
@@ -229,17 +223,17 @@ describe("Terminal release evidence", () => {
   });
 
   it("selects the executable that matches macOS signing state for final attestation", () => {
-    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-macos-runtime-"));
+    fixtureRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "terminal-macos-runtime-"));
     const releaseDir = createMacTargetFixture(fixtureRoot);
     const calls = [];
 
     for (const [signingRequired, expectedRuntime] of [
-      [false, path.join(releaseDir, "mac-arm64", "Mcode.app", "Contents", "MacOS", "Mcode")],
-      [true, path.join(releaseDir, "mac-arm64", "Mcode.app", "Contents", "Resources", "bin", "mcode-server")],
+      [false, NodePath.join(releaseDir, "mac-arm64", "Mcode.app", "Contents", "MacOS", "Mcode")],
+      [true, NodePath.join(releaseDir, "mac-arm64", "Mcode.app", "Contents", "Resources", "bin", "mcode-server")],
     ]) {
       createTargetEvidenceManifest({
         releaseDir,
-        stagingDir: path.join(
+        stagingDir: NodePath.join(
           fixtureRoot,
           "stage",
           signingRequired ? "signed" : "unsigned",
@@ -263,25 +257,25 @@ describe("Terminal release evidence", () => {
   });
 
   it("requires a complete, consistent target matrix before aggregate publication", () => {
-    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-release-matrix-"));
-    const inputDir = path.join(fixtureRoot, "stage");
+    fixtureRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "terminal-release-matrix-"));
+    const inputDir = NodePath.join(fixtureRoot, "stage");
     for (const target of TARGETS) {
-      const releaseDir = path.join(
+      const releaseDir = NodePath.join(
         fixtureRoot,
         `release-${target.platform}-${target.arch}`,
       );
-      const stagingDir = path.join(
+      const stagingDir = NodePath.join(
         inputDir,
         `${target.platform}-${target.arch}`,
       );
-      const attestationPath = path.join(
+      const attestationPath = NodePath.join(
         fixtureRoot,
         `attestation-${target.platform}-${target.arch}.json`,
       );
-      mkdirSync(releaseDir, { recursive: true });
+      NodeFS.mkdirSync(releaseDir, { recursive: true });
       for (const file of target.files)
-        writeFileSync(path.join(releaseDir, file), file);
-      writeFileSync(
+        NodeFS.writeFileSync(NodePath.join(releaseDir, file), file);
+      NodeFS.writeFileSync(
         attestationPath,
         JSON.stringify(attestation(target.nativePlatform, target.arch)),
       );
@@ -321,17 +315,17 @@ describe("Terminal release evidence", () => {
   });
 
   it("rejects duplicate target manifests before checking matrix completeness", () => {
-    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-release-duplicate-"));
-    const inputDir = path.join(fixtureRoot, "stage");
+    fixtureRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "terminal-release-duplicate-"));
+    const inputDir = NodePath.join(fixtureRoot, "stage");
 
     for (const suffix of ["first", "second"]) {
-      const releaseDir = path.join(fixtureRoot, `release-${suffix}`);
-      const stagingDir = path.join(inputDir, suffix);
-      const attestationPath = path.join(fixtureRoot, `attestation-${suffix}.json`);
-      mkdirSync(releaseDir, { recursive: true });
+      const releaseDir = NodePath.join(fixtureRoot, `release-${suffix}`);
+      const stagingDir = NodePath.join(inputDir, suffix);
+      const attestationPath = NodePath.join(fixtureRoot, `attestation-${suffix}.json`);
+      NodeFS.mkdirSync(releaseDir, { recursive: true });
       for (const file of TARGETS[3].files)
-        writeFileSync(path.join(releaseDir, file), file);
-      writeFileSync(
+        NodeFS.writeFileSync(NodePath.join(releaseDir, file), file);
+      NodeFS.writeFileSync(
         attestationPath,
         JSON.stringify(attestation(TARGETS[3].nativePlatform, TARGETS[3].arch)),
       );
@@ -362,14 +356,14 @@ describe("Terminal release evidence", () => {
   });
 
   it("rejects a staged artifact after its bytes change", () => {
-    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-release-tamper-"));
-    const releaseDir = path.join(fixtureRoot, "release");
-    const stagingDir = path.join(fixtureRoot, "stage", "linux-x64");
-    const attestationPath = path.join(fixtureRoot, "attestation.json");
-    mkdirSync(releaseDir, { recursive: true });
+    fixtureRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "terminal-release-tamper-"));
+    const releaseDir = NodePath.join(fixtureRoot, "release");
+    const stagingDir = NodePath.join(fixtureRoot, "stage", "linux-x64");
+    const attestationPath = NodePath.join(fixtureRoot, "attestation.json");
+    NodeFS.mkdirSync(releaseDir, { recursive: true });
     for (const file of TARGETS[3].files)
-      writeFileSync(path.join(releaseDir, file), file);
-    writeFileSync(attestationPath, JSON.stringify(attestation("linux", "x64")));
+      NodeFS.writeFileSync(NodePath.join(releaseDir, file), file);
+    NodeFS.writeFileSync(attestationPath, JSON.stringify(attestation("linux", "x64")));
     createTargetEvidenceManifest({
       releaseDir,
       stagingDir,
@@ -386,11 +380,11 @@ describe("Terminal release evidence", () => {
         { kind: "release-key", status: "skipped", subject: "SHA256SUMS.sig" },
       ],
     });
-    writeFileSync(path.join(stagingDir, TARGETS[3].files[0]), "changed");
+    NodeFS.writeFileSync(NodePath.join(stagingDir, TARGETS[3].files[0]), "changed");
 
     expect(() =>
       createReleaseEvidenceManifest({
-        inputDir: path.dirname(stagingDir),
+        inputDir: NodePath.dirname(stagingDir),
         channel: "pull-request",
       }),
     ).toThrow("hash mismatch");

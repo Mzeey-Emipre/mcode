@@ -18,31 +18,39 @@ interface ErrorShape {
  */
 export function classifyProviderError(err: unknown): ProviderErrorClass {
   if (err === null || err === undefined) return "fatal";
-  const e = err as ErrorShape;
-  const msg = (e.message ?? "").toLowerCase();
+  const error = err as ErrorShape;
+  return ERROR_CLASSIFIERS
+    .map((classifier) => classifier(error))
+    .find((classification): classification is ProviderErrorClass => classification !== null)
+    ?? "fatal";
+}
 
-  if (e.status === 429 || /rate.?limit|too many requests/.test(msg)) return "quota";
-  if (/credit balance|quota.*exhaust|billing|usage limit/.test(msg)) return "quota";
+type ErrorClassifier = (error: ErrorShape) => ProviderErrorClass | null;
 
-  if (e.status === 401 || e.status === 403) return "auth";
-  if (/unauthori[sz]ed|invalid api key|authentication/.test(msg)) return "auth";
+const ERROR_CLASSIFIERS: readonly ErrorClassifier[] = [
+  (error) => (error.status === 429 || hasMessage(error, /rate.?limit|too many requests/) ? "quota" : null),
+  (error) => (hasMessage(error, /credit balance|quota.*exhaust|billing|usage limit/) ? "quota" : null),
+  (error) => (error.status === 401 || error.status === 403 ? "auth" : null),
+  (error) => (hasMessage(error, /unauthori[sz]ed|invalid api key|authentication/) ? "auth" : null),
+  (error) => (hasMessage(error, /prompt is too long|context length|exceeds.*tokens|input too large/) ? "context-overflow" : null),
+  (error) => (isServerError(error.status) ? "transient" : null),
+  (error) => (isTransientCode(error.code) ? "transient" : null),
+  (error) => (hasMessage(error, /network|timeout|fetch failed/) ? "transient" : null),
+  // SDK wrapper errors may describe a crashed subprocess rather than a permanent failure.
+  (error) => (hasMessage(error, /sdk error|subprocess|claude.*error|cli.*error|side-channel/i) ? "transient" : null),
+  (error) => (hasMessage(error, /maximum context|tokens? exceeded|too many tokens/i) ? "context-overflow" : null),
+];
 
-  if (/prompt is too long|context length|exceeds.*tokens|input too large/.test(msg)) return "context-overflow";
+function hasMessage(error: ErrorShape, pattern: RegExp): boolean {
+  return pattern.test((error.message ?? "").toLowerCase());
+}
 
-  if (e.status !== undefined && e.status >= 500 && e.status < 600) return "transient";
-  if (e.code === "ECONNRESET" || e.code === "ETIMEDOUT" || e.code === "ENOTFOUND") return "transient";
-  if (/network|timeout|fetch failed/.test(msg)) return "transient";
+function isServerError(status: number | undefined): boolean {
+  return status !== undefined && status >= 500 && status < 600;
+}
 
-  // SDK wrapper errors that don't match other patterns are transient — the
-  // subprocess may have crashed or the CLI returned an unexpected error shape.
-  // Treating them as transient (rather than fatal) lets path D fire with a
-  // "try again later" hint instead of a permanent failure banner.
-  if (/sdk error|subprocess|claude.*error|cli.*error|side-channel/i.test(msg)) return "transient";
-
-  // Broader context-overflow patterns beyond the SDK-specific message.
-  if (/maximum context|tokens? exceeded|too many tokens/i.test(msg)) return "context-overflow";
-
-  return "fatal";
+function isTransientCode(code: string | undefined): boolean {
+  return code === "ECONNRESET" || code === "ETIMEDOUT" || code === "ENOTFOUND";
 }
 
 /**

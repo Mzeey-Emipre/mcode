@@ -8,6 +8,8 @@ const CLOSE_MARKER = "```";
 /** Maximum number of questions allowed in a batch. */
 const MAX_QUESTIONS = 15;
 
+const planQuestionBatchSchema = z.array(PlanQuestionSchema());
+
 /**
  * Streaming parser that scans accumulated textDelta output for a fenced
  * plan-questions block and extracts structured questions from it.
@@ -64,7 +66,7 @@ export class PlanQuestionParser {
       return null;
     }
 
-    const parsed = z.array(PlanQuestionSchema()).safeParse(raw);
+    const parsed = planQuestionBatchSchema.safeParse(raw);
     if (!parsed.success) {
       logger.warn("plan-question-parser: schema validation failed", {
         error: parsed.error.message,

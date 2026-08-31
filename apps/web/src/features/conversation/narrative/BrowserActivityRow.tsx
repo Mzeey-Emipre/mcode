@@ -69,6 +69,21 @@ const COMPLETED_ACTION_LABELS: Record<string, string> = {
   recordingStop: "Stopped the page recording",
 };
 
+const BROWSER_OPERATION_LABELS: Record<string, readonly [string, string]> = {
+  browser_open: ["Opening a page", "Opened a page"],
+  browser_inspect: ["Inspecting the page", "Inspected the page"],
+  browser_act: ["Acting on the page", "Acted on the page"],
+  browser_evaluate: ["Evaluating the page · Privileged", "Evaluated the page · Privileged"],
+};
+
+const BROWSER_TAB_LABELS: Record<string, readonly [string, string]> = {
+  select: ["Selecting a Browser tab", "Selected a Browser tab"],
+  claim: ["Claiming a Browser tab", "Claimed a Browser tab"],
+  release: ["Releasing a Browser tab", "Released a Browser tab"],
+  close: ["Closing a Browser tab", "Closed a Browser tab"],
+  finalize: ["Finalizing Browser tabs", "Finalized Browser tabs"],
+};
+
 /** Returns true when a tool call belongs to the Browser v2 narrative surface. */
 export function isBrowserNarrativeCall(toolCall: Pick<ToolCall, "toolName">): boolean {
   return resolveBrowserNarrativeTool(toolCall.toolName) !== null;
@@ -157,48 +172,110 @@ function failedToolLabel(
   cancelled: boolean,
 ): string | null {
   if (cancelled) return "Browser action cancelled";
-  if (!result || result.outcome === "completed") return null;
-  if (result.recovery === "yield_to_user" || result.errorCode === "HUMAN_INTERRUPTED") {
-    return "Stopped when you took control";
-  }
-  if (["STALE_TARGET_GENERATION", "CAPABILITY_CHANGED", "STALE_CONTROL_EPOCH"].includes(result.errorCode ?? "")) {
-    return "Page changed before the action";
-  }
-  if (["TAB_UNAVAILABLE", "HOST_UNAVAILABLE"].includes(result.errorCode ?? "")) {
-    return "Browser became unavailable";
-  }
-  if (["TIMEOUT", "DEADLINE_EXCEEDED"].includes(result.errorCode ?? "")) {
-    return "Browser action timed out";
-  }
-  return result.outcome === "interrupted" ? "Browser action stopped" : "Browser action failed";
+  if (!hasFailedResult(result)) return null;
+  if (wasInterruptedByUser(result)) return "Stopped when you took control";
+  if (pageChangedBeforeAction(result)) return "Page changed before the action";
+  if (browserBecameUnavailable(result)) return "Browser became unavailable";
+  if (browserActionTimedOut(result)) return "Browser action timed out";
+  return result.outcome === "interrupted"
+    ? "Browser action stopped"
+    : "Browser action failed";
+}
+
+function hasFailedResult(result: BrowserNarrativeResult | null): result is BrowserNarrativeResult {
+  return result !== null && result.outcome !== "completed";
+}
+
+function wasInterruptedByUser(result: BrowserNarrativeResult): boolean {
+  return result.recovery === "yield_to_user" || result.errorCode === "HUMAN_INTERRUPTED";
+}
+
+function pageChangedBeforeAction(result: BrowserNarrativeResult): boolean {
+  return ["STALE_TARGET_GENERATION", "CAPABILITY_CHANGED", "STALE_CONTROL_EPOCH"]
+    .includes(result.errorCode ?? "");
+}
+
+function browserBecameUnavailable(result: BrowserNarrativeResult): boolean {
+  return ["TAB_UNAVAILABLE", "HOST_UNAVAILABLE"].includes(result.errorCode ?? "");
+}
+
+function browserActionTimedOut(result: BrowserNarrativeResult): boolean {
+  return ["TIMEOUT", "DEADLINE_EXCEEDED"].includes(result.errorCode ?? "");
+}
+
+function operationLabel(operation: string | null, active: boolean): string | undefined {
+  return operation ? BROWSER_OPERATION_LABELS[operation]?.[active ? 0 : 1] : undefined;
+}
+
+function browserTabsLabel(action: string | undefined, active: boolean): string {
+  return action
+    ? BROWSER_TAB_LABELS[action]?.[active ? 0 : 1] ?? "Updated Browser tabs"
+    : "Updated Browser tabs";
+}
+
+function granularStepLabel(step: BrowserNarrativeStepInput, active: boolean): string {
+  const labels = active ? ACTIVE_ACTION_LABELS : COMPLETED_ACTION_LABELS;
+  const fallback = active ? "Using the Browser" : "Completed a Browser action";
+  return `${labels[step.operation] ?? fallback}${resizeSuffix(step)}`;
+}
+
+function nonFailureToolLabel(toolCall: ToolCall, active: boolean): string {
+  const operation = resolveBrowserNarrativeTool(toolCall.toolName);
+  const input = safeInput(toolCall);
+  const granularStep = operation === "browser_act" ? undefined : input?.steps?.[0];
+  if (granularStep) return granularStepLabel(granularStep, active);
+  if (operation === "browser_tabs") return browserTabsLabel(input?.action, active);
+  const label = operationLabel(operation, active);
+  if (label) return label;
+  return active ? "Using the Browser" : "Completed Browser actions";
 }
 
 function toolLabel(toolCall: ToolCall, active: boolean, result: BrowserNarrativeResult | null): string {
   const failureLabel = failedToolLabel(result, toolCall.isCancelled === true);
   if (!active && failureLabel) return failureLabel;
-  const operation = resolveBrowserNarrativeTool(toolCall.toolName);
-  const input = safeInput(toolCall);
-  const action = input?.action;
-  const granularStep = operation === "browser_act" ? undefined : input?.steps?.[0];
-  if (granularStep) {
-    const labels = active ? ACTIVE_ACTION_LABELS : COMPLETED_ACTION_LABELS;
-    return `${labels[granularStep.operation] ?? (active ? "Using the Browser" : "Completed a Browser action")}${resizeSuffix(granularStep)}`;
-  }
-  if (operation === "browser_open") return active ? "Opening a page" : "Opened a page";
-  if (operation === "browser_inspect") return active ? "Inspecting the page" : "Inspected the page";
-  if (operation === "browser_act") return active ? "Acting on the page" : "Acted on the page";
-  if (operation === "browser_evaluate") return active ? "Evaluating the page · Privileged" : "Evaluated the page · Privileged";
-  if (operation === "browser_tabs") {
-    const labels: Record<string, [string, string]> = {
-      select: ["Selecting a Browser tab", "Selected a Browser tab"],
-      claim: ["Claiming a Browser tab", "Claimed a Browser tab"],
-      release: ["Releasing a Browser tab", "Released a Browser tab"],
-      close: ["Closing a Browser tab", "Closed a Browser tab"],
-      finalize: ["Finalizing Browser tabs", "Finalized Browser tabs"],
-    };
-    return action ? labels[action]?.[active ? 0 : 1] ?? "Updated Browser tabs" : "Updated Browser tabs";
-  }
-  return active ? "Using the Browser" : "Completed Browser actions";
+  return nonFailureToolLabel(toolCall, active);
+}
+
+function completedActivityLines(
+  toolCall: ToolCall,
+  input: ReturnType<typeof safeInput>,
+  result: BrowserNarrativeResult | null,
+  privileged: boolean,
+): BrowserActivityLine[] {
+  if (!result?.receipts || result.receipts.length === 0) return [];
+  return result.receipts.map((receipt) => ({
+    key: `${toolCall.id}-${receipt.index}`,
+    label: receiptLabel(result, receipt, input?.steps?.[receipt.index], result.receipts!.length),
+    receipt: receiptText(result, receipt),
+    privileged,
+  }));
+}
+
+function activeActivityLines(
+  toolCall: ToolCall,
+  input: ReturnType<typeof safeInput>,
+  privileged: boolean,
+): BrowserActivityLine[] {
+  if (!input?.steps || input.steps.length === 0) return [];
+  return input.steps.map((step, index) => ({
+    key: `${toolCall.id}-${index}`,
+    label: granularStepLabel(step, true),
+    privileged,
+  }));
+}
+
+function fallbackActivityLine(
+  toolCall: ToolCall,
+  active: boolean,
+  result: BrowserNarrativeResult | null,
+  privileged: boolean,
+): BrowserActivityLine {
+  return {
+    key: toolCall.id,
+    label: toolLabel(toolCall, active, result),
+    ...(result ? { receipt: receiptText(result) } : {}),
+    privileged,
+  };
 }
 
 function buildActivityLines(toolCall: ToolCall, active: boolean): BrowserActivityLine[] {
@@ -206,29 +283,13 @@ function buildActivityLines(toolCall: ToolCall, active: boolean): BrowserActivit
   const result = safeResult(toolCall);
   const privileged = input?.operation === "browser_evaluate";
 
-  if (!active && result?.receipts && result.receipts.length > 0) {
-    return result.receipts.map((receipt) => ({
-      key: `${toolCall.id}-${receipt.index}`,
-      label: receiptLabel(result, receipt, input?.steps?.[receipt.index], result.receipts!.length),
-      receipt: receiptText(result, receipt),
-      privileged,
-    }));
-  }
+  const completedLines = active ? [] : completedActivityLines(toolCall, input, result, privileged);
+  if (completedLines.length > 0) return completedLines;
 
-  if (active && input?.steps && input.steps.length > 0) {
-    return input.steps.map((step, index) => ({
-      key: `${toolCall.id}-${index}`,
-      label: `${ACTIVE_ACTION_LABELS[step.operation] ?? "Using the Browser"}${resizeSuffix(step)}`,
-      privileged,
-    }));
-  }
+  const activeLines = active ? activeActivityLines(toolCall, input, privileged) : [];
+  if (activeLines.length > 0) return activeLines;
 
-  return [{
-    key: toolCall.id,
-    label: toolLabel(toolCall, active, result),
-    ...(result ? { receipt: receiptText(result) } : {}),
-    privileged,
-  }];
+  return [fallbackActivityLine(toolCall, active, result, privileged)];
 }
 
 function BrowserActivityLineRow({ line }: { line: BrowserActivityLine }) {

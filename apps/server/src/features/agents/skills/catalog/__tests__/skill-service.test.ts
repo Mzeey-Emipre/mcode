@@ -1,19 +1,19 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { SkillService, codexPluginNameFromSkillPath } from "../skill-service.js";
 
 function tmp(): string {
-  return mkdtempSync(join(tmpdir(), "skill-svc-"));
+  return NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "skill-svc-"));
 }
 
 function writeMd(path: string, frontmatter: Record<string, string>, body = "") {
   const fm = Object.entries(frontmatter)
     .map(([k, v]) => `${k}: ${v}`)
     .join("\n");
-  writeFileSync(path, `---\n${fm}\n---\n${body}`);
+  NodeFS.writeFileSync(path, `---\n${fm}\n---\n${body}`);
 }
 
 describe("SkillService", () => {
@@ -29,7 +29,7 @@ describe("SkillService", () => {
     originalAppData = process.env.APPDATA;
     process.env.HOME = fakeHome;
     process.env.USERPROFILE = fakeHome; // Windows
-    process.env.APPDATA = join(fakeHome, "AppData", "Roaming"); // Windows Copilot path
+    process.env.APPDATA = NodePath.join(fakeHome, "AppData", "Roaming"); // Windows Copilot path
   });
 
   afterEach(() => {
@@ -39,13 +39,13 @@ describe("SkillService", () => {
     else delete process.env.USERPROFILE;
     if (originalAppData !== undefined) process.env.APPDATA = originalAppData;
     else delete process.env.APPDATA;
-    rmSync(fakeHome, { recursive: true, force: true });
+    NodeFS.rmSync(fakeHome, { recursive: true, force: true });
   });
 
   it("scans commands/*.md as command-kind entries", () => {
-    const cmdDir = join(fakeHome, ".claude", "plugins", "cache", "mp", "superpowers", "5.0.7", "commands");
-    mkdirSync(cmdDir, { recursive: true });
-    writeMd(join(cmdDir, "brainstorm.md"), { description: "Brainstorm an idea" });
+    const cmdDir = NodePath.join(fakeHome, ".claude", "plugins", "cache", "mp", "superpowers", "5.0.7", "commands");
+    NodeFS.mkdirSync(cmdDir, { recursive: true });
+    writeMd(NodePath.join(cmdDir, "brainstorm.md"), { description: "Brainstorm an idea" });
 
     const svc = new SkillService();
     const items = svc.list();
@@ -58,9 +58,9 @@ describe("SkillService", () => {
   });
 
   it("scans plugin skills nested under <version>/.claude/skills", () => {
-    const skillDir = join(fakeHome, ".claude", "plugins", "cache", "mp", "impeccable", "2.1.1", ".claude", "skills", "audit");
-    mkdirSync(skillDir, { recursive: true });
-    writeMd(join(skillDir, "SKILL.md"), { description: "Run audit checks" });
+    const skillDir = NodePath.join(fakeHome, ".claude", "plugins", "cache", "mp", "impeccable", "2.1.1", ".claude", "skills", "audit");
+    NodeFS.mkdirSync(skillDir, { recursive: true });
+    writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Run audit checks" });
 
     const items = new SkillService().list();
     expect(items.find((i) => i.name === "impeccable:audit")).toMatchObject({
@@ -71,9 +71,9 @@ describe("SkillService", () => {
 
   it("scans project-level <cwd>/.claude/commands/*.md", () => {
     const cwd = tmp();
-    const cmdDir = join(cwd, ".claude", "commands");
-    mkdirSync(cmdDir, { recursive: true });
-    writeMd(join(cmdDir, "deploy.md"), { description: "Deploy to staging" });
+    const cmdDir = NodePath.join(cwd, ".claude", "commands");
+    NodeFS.mkdirSync(cmdDir, { recursive: true });
+    writeMd(NodePath.join(cmdDir, "deploy.md"), { description: "Deploy to staging" });
 
     const items = new SkillService().list(cwd);
     const deploy = items.find((i) => i.name === "deploy");
@@ -83,16 +83,16 @@ describe("SkillService", () => {
       description: "Deploy to staging",
     });
 
-    rmSync(cwd, { recursive: true, force: true });
+    NodeFS.rmSync(cwd, { recursive: true, force: true });
   });
 
   it("dedupes by name with priority user > project > agent > plugin", () => {
-    const userDir = join(fakeHome, ".claude", "skills", "shared");
-    const pluginDir = join(fakeHome, ".claude", "plugins", "cache", "mp", "p", "1.0.0", "skills", "shared");
-    mkdirSync(userDir, { recursive: true });
-    mkdirSync(pluginDir, { recursive: true });
-    writeMd(join(userDir, "SKILL.md"), { description: "User wins" });
-    writeMd(join(pluginDir, "SKILL.md"), { description: "Plugin loses" });
+    const userDir = NodePath.join(fakeHome, ".claude", "skills", "shared");
+    const pluginDir = NodePath.join(fakeHome, ".claude", "plugins", "cache", "mp", "p", "1.0.0", "skills", "shared");
+    NodeFS.mkdirSync(userDir, { recursive: true });
+    NodeFS.mkdirSync(pluginDir, { recursive: true });
+    writeMd(NodePath.join(userDir, "SKILL.md"), { description: "User wins" });
+    writeMd(NodePath.join(pluginDir, "SKILL.md"), { description: "Plugin loses" });
 
     const items = new SkillService().list();
     const shared = items.find((i) => i.name === "shared");
@@ -105,11 +105,11 @@ describe("SkillService", () => {
     // other is a helper folder (e.g., shared utilities, scaffolding scripts).
     // Without the SKILL.md guard, the helper would surface as an empty
     // command in the popup.
-    const realDir = join(fakeHome, ".claude", "skills", "real-skill");
-    const helperDir = join(fakeHome, ".claude", "skills", "_helpers");
-    mkdirSync(realDir, { recursive: true });
-    mkdirSync(helperDir, { recursive: true });
-    writeMd(join(realDir, "SKILL.md"), { description: "A real skill" });
+    const realDir = NodePath.join(fakeHome, ".claude", "skills", "real-skill");
+    const helperDir = NodePath.join(fakeHome, ".claude", "skills", "_helpers");
+    NodeFS.mkdirSync(realDir, { recursive: true });
+    NodeFS.mkdirSync(helperDir, { recursive: true });
+    writeMd(NodePath.join(realDir, "SKILL.md"), { description: "A real skill" });
     // helperDir intentionally has no SKILL.md.
 
     const items = new SkillService().list();
@@ -157,9 +157,9 @@ describe("SkillService", () => {
 
   describe("provider-scoped scanning", () => {
     it("tags skills from ~/.claude/skills with providers=['claude']", () => {
-      const skillDir = join(fakeHome, ".claude", "skills", "my-skill");
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Claude skill" });
+      const skillDir = NodePath.join(fakeHome, ".claude", "skills", "my-skill");
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Claude skill" });
 
       const items = new SkillService().list(undefined, "claude");
 
@@ -169,9 +169,9 @@ describe("SkillService", () => {
     });
 
     it("does not expose Codex Skills from the filesystem fallback", () => {
-      const skillDir = join(fakeHome, ".codex", "skills", "codex-skill");
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Codex skill" });
+      const skillDir = NodePath.join(fakeHome, ".codex", "skills", "codex-skill");
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Codex skill" });
 
       const items = new SkillService().list(undefined, "codex");
 
@@ -179,7 +179,7 @@ describe("SkillService", () => {
     });
 
     it("does not scan Codex plugin cache Skills", () => {
-      const skillDir = join(
+      const skillDir = NodePath.join(
         fakeHome,
         ".codex",
         "plugins",
@@ -190,8 +190,8 @@ describe("SkillService", () => {
         "skills",
         "audit",
       );
-      mkdirSync(skillDir, { recursive: true });
-      const skillPath = join(skillDir, "SKILL.md");
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      const skillPath = NodePath.join(skillDir, "SKILL.md");
       writeMd(skillPath, { name: "audit", description: "Run audit checks" });
 
       const items = new SkillService().list(undefined, "codex");
@@ -199,7 +199,7 @@ describe("SkillService", () => {
     });
 
     it("does not scan bundled Codex runtime plugin Skills", () => {
-      const skillDir = join(
+      const skillDir = NodePath.join(
         fakeHome,
         ".cache",
         "codex-runtimes",
@@ -211,15 +211,15 @@ describe("SkillService", () => {
         "skills",
         "documents",
       );
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { name: "documents", description: "Edit documents" });
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { name: "documents", description: "Edit documents" });
 
       const items = new SkillService().list(undefined, "codex");
       expect(items.find((i) => i.name === "documents:documents")).toBeUndefined();
     });
 
     it("extracts Codex plugin names from cache and runtime skill paths", () => {
-      const cacheSkillPath = join(
+      const cacheSkillPath = NodePath.join(
         fakeHome,
         ".codex",
         "plugins",
@@ -231,7 +231,7 @@ describe("SkillService", () => {
         "control-in-app-browser",
         "SKILL.md",
       );
-      const runtimeSkillPath = join(
+      const runtimeSkillPath = NodePath.join(
         fakeHome,
         ".cache",
         "codex-runtimes",
@@ -250,9 +250,9 @@ describe("SkillService", () => {
     });
 
     it("leaves ~/.agents/skills discovery to the native Codex catalog", () => {
-      const skillDir = join(fakeHome, ".agents", "skills", "shared-skill");
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Shared skill" });
+      const skillDir = NodePath.join(fakeHome, ".agents", "skills", "shared-skill");
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Shared skill" });
 
       const svc = new SkillService();
 
@@ -269,13 +269,13 @@ describe("SkillService", () => {
     });
 
     it("filters by providerId and returns only matching skills", () => {
-      const claudeSkillDir = join(fakeHome, ".claude", "skills", "claude-only");
-      mkdirSync(claudeSkillDir, { recursive: true });
-      writeMd(join(claudeSkillDir, "SKILL.md"), { description: "Claude only" });
+      const claudeSkillDir = NodePath.join(fakeHome, ".claude", "skills", "claude-only");
+      NodeFS.mkdirSync(claudeSkillDir, { recursive: true });
+      writeMd(NodePath.join(claudeSkillDir, "SKILL.md"), { description: "Claude only" });
 
-      const codexSkillDir = join(fakeHome, ".codex", "skills", "codex-only");
-      mkdirSync(codexSkillDir, { recursive: true });
-      writeMd(join(codexSkillDir, "SKILL.md"), { description: "Codex only" });
+      const codexSkillDir = NodePath.join(fakeHome, ".codex", "skills", "codex-only");
+      NodeFS.mkdirSync(codexSkillDir, { recursive: true });
+      writeMd(NodePath.join(codexSkillDir, "SKILL.md"), { description: "Codex only" });
 
       const svc = new SkillService();
 
@@ -290,13 +290,13 @@ describe("SkillService", () => {
     });
 
     it("returns all skills when no providerId is given", () => {
-      const claudeSkillDir = join(fakeHome, ".claude", "skills", "claude-skill");
-      mkdirSync(claudeSkillDir, { recursive: true });
-      writeMd(join(claudeSkillDir, "SKILL.md"), { description: "Claude" });
+      const claudeSkillDir = NodePath.join(fakeHome, ".claude", "skills", "claude-skill");
+      NodeFS.mkdirSync(claudeSkillDir, { recursive: true });
+      writeMd(NodePath.join(claudeSkillDir, "SKILL.md"), { description: "Claude" });
 
-      const codexSkillDir = join(fakeHome, ".codex", "skills", "codex-skill");
-      mkdirSync(codexSkillDir, { recursive: true });
-      writeMd(join(codexSkillDir, "SKILL.md"), { description: "Codex" });
+      const codexSkillDir = NodePath.join(fakeHome, ".codex", "skills", "codex-skill");
+      NodeFS.mkdirSync(codexSkillDir, { recursive: true });
+      writeMd(NodePath.join(codexSkillDir, "SKILL.md"), { description: "Codex" });
 
       const items = new SkillService().list();
 
@@ -308,27 +308,27 @@ describe("SkillService", () => {
     it("deduplicates by name within same provider using source priority", () => {
       const cwd = tmp();
       try {
-        const userSkillDir = join(fakeHome, ".claude", "skills", "shared");
-        mkdirSync(userSkillDir, { recursive: true });
-        writeMd(join(userSkillDir, "SKILL.md"), { description: "User wins" });
+        const userSkillDir = NodePath.join(fakeHome, ".claude", "skills", "shared");
+        NodeFS.mkdirSync(userSkillDir, { recursive: true });
+        writeMd(NodePath.join(userSkillDir, "SKILL.md"), { description: "User wins" });
 
-        const projectSkillDir = join(cwd, ".claude", "skills", "shared");
-        mkdirSync(projectSkillDir, { recursive: true });
-        writeMd(join(projectSkillDir, "SKILL.md"), { description: "Project loses" });
+        const projectSkillDir = NodePath.join(cwd, ".claude", "skills", "shared");
+        NodeFS.mkdirSync(projectSkillDir, { recursive: true });
+        writeMd(NodePath.join(projectSkillDir, "SKILL.md"), { description: "Project loses" });
 
         const items = new SkillService().list(cwd, "claude");
         const shared = items.find((i) => i.name === "shared");
         expect(shared!.description).toBe("User wins");
         expect(shared!.source).toBe("user");
       } finally {
-        rmSync(cwd, { recursive: true, force: true });
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
       }
     });
 
     it("leaves Codex custom prompts to the bounded catalog adapter", () => {
-      const cmdDir = join(fakeHome, ".codex", "prompts");
-      mkdirSync(cmdDir, { recursive: true });
-      const promptPath = join(cmdDir, "deploy.md");
+      const cmdDir = NodePath.join(fakeHome, ".codex", "prompts");
+      NodeFS.mkdirSync(cmdDir, { recursive: true });
+      const promptPath = NodePath.join(cmdDir, "deploy.md");
       writeMd(promptPath, { description: "Codex deploy prompt" });
 
       const items = new SkillService().list(undefined, "codex");
@@ -337,13 +337,13 @@ describe("SkillService", () => {
     });
 
     it("leaves Codex commands outside the two documented compatibility adapters", () => {
-      const userCommands = join(fakeHome, ".agents", "commands");
+      const userCommands = NodePath.join(fakeHome, ".agents", "commands");
       const cwd = tmp();
-      const projectCommands = join(cwd, ".agents", "commands");
-      mkdirSync(userCommands, { recursive: true });
-      mkdirSync(projectCommands, { recursive: true });
-      writeMd(join(userCommands, "user-command.md"), { description: "Legacy user command" });
-      writeMd(join(projectCommands, "project-command.md"), {
+      const projectCommands = NodePath.join(cwd, ".agents", "commands");
+      NodeFS.mkdirSync(userCommands, { recursive: true });
+      NodeFS.mkdirSync(projectCommands, { recursive: true });
+      writeMd(NodePath.join(userCommands, "user-command.md"), { description: "Legacy user command" });
+      writeMd(NodePath.join(projectCommands, "project-command.md"), {
         description: "Legacy project command",
       });
 
@@ -352,14 +352,14 @@ describe("SkillService", () => {
 
         expect(items).toEqual([]);
       } finally {
-        rmSync(cwd, { recursive: true, force: true });
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
       }
     });
 
     it("tags skills from ~/.cursor/skills with providers=['cursor']", () => {
-      const skillDir = join(fakeHome, ".cursor", "skills", "my-cursor-skill");
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Cursor user skill" });
+      const skillDir = NodePath.join(fakeHome, ".cursor", "skills", "my-cursor-skill");
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Cursor user skill" });
 
       const items = new SkillService().list(undefined, "cursor");
       const skill = items.find((i) => i.name === "my-cursor-skill");
@@ -372,9 +372,9 @@ describe("SkillService", () => {
     });
 
     it("tags commands from ~/.cursor/commands with providers=['cursor']", () => {
-      const cmdDir = join(fakeHome, ".cursor", "commands");
-      mkdirSync(cmdDir, { recursive: true });
-      writeMd(join(cmdDir, "lint.md"), { description: "Cursor lint command" });
+      const cmdDir = NodePath.join(fakeHome, ".cursor", "commands");
+      NodeFS.mkdirSync(cmdDir, { recursive: true });
+      writeMd(NodePath.join(cmdDir, "lint.md"), { description: "Cursor lint command" });
 
       const items = new SkillService().list(undefined, "cursor");
       const cmd = items.find((i) => i.name === "lint");
@@ -389,13 +389,13 @@ describe("SkillService", () => {
     it("scans project-level <cwd>/.cursor/skills and commands for cursor", () => {
       const cwd = tmp();
       try {
-        const skillDir = join(cwd, ".cursor", "skills", "proj-skill");
-        mkdirSync(skillDir, { recursive: true });
-        writeMd(join(skillDir, "SKILL.md"), { description: "Project cursor skill" });
+        const skillDir = NodePath.join(cwd, ".cursor", "skills", "proj-skill");
+        NodeFS.mkdirSync(skillDir, { recursive: true });
+        writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Project cursor skill" });
 
-        const cmdDir = join(cwd, ".cursor", "commands");
-        mkdirSync(cmdDir, { recursive: true });
-        writeMd(join(cmdDir, "ship.md"), { description: "Ship it" });
+        const cmdDir = NodePath.join(cwd, ".cursor", "commands");
+        NodeFS.mkdirSync(cmdDir, { recursive: true });
+        writeMd(NodePath.join(cmdDir, "ship.md"), { description: "Ship it" });
 
         const items = new SkillService().list(cwd, "cursor");
         expect(items.find((i) => i.name === "proj-skill")).toMatchObject({
@@ -409,27 +409,27 @@ describe("SkillService", () => {
           providers: ["cursor"],
         });
       } finally {
-        rmSync(cwd, { recursive: true, force: true });
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
       }
     });
 
     it("cursor plugin cache: scans newest hash dir by mtime, not lexical order", () => {
-      const pluginRoot = join(fakeHome, ".cursor", "plugins", "cache", "mp", "myplug");
+      const pluginRoot = NodePath.join(fakeHome, ".cursor", "plugins", "cache", "mp", "myplug");
       /** Lexically last — would win if we wrongly sorted by name instead of mtime. */
-      const dirStaleLexLast = join(pluginRoot, "zebra-hash");
+      const dirStaleLexLast = NodePath.join(pluginRoot, "zebra-hash");
       /** Lexically first — must win because its mtime is newest. */
-      const dirFreshLexFirst = join(pluginRoot, "apple-hash");
-      mkdirSync(join(dirStaleLexLast, "skills", "deploy"), { recursive: true });
-      mkdirSync(join(dirFreshLexFirst, "skills", "deploy"), { recursive: true });
-      writeMd(join(dirStaleLexLast, "skills", "deploy", "SKILL.md"), {
+      const dirFreshLexFirst = NodePath.join(pluginRoot, "apple-hash");
+      NodeFS.mkdirSync(NodePath.join(dirStaleLexLast, "skills", "deploy"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.join(dirFreshLexFirst, "skills", "deploy"), { recursive: true });
+      writeMd(NodePath.join(dirStaleLexLast, "skills", "deploy", "SKILL.md"), {
         description: "Stale plugin skill",
       });
-      writeMd(join(dirFreshLexFirst, "skills", "deploy", "SKILL.md"), {
+      writeMd(NodePath.join(dirFreshLexFirst, "skills", "deploy", "SKILL.md"), {
         description: "Fresh plugin skill",
       });
 
-      utimesSync(dirStaleLexLast, new Date("2020-06-01"), new Date("2020-06-01"));
-      utimesSync(dirFreshLexFirst, new Date("2025-06-01"), new Date("2025-06-01"));
+      NodeFS.utimesSync(dirStaleLexLast, new Date("2020-06-01"), new Date("2020-06-01"));
+      NodeFS.utimesSync(dirFreshLexFirst, new Date("2025-06-01"), new Date("2025-06-01"));
 
       const items = new SkillService().list(undefined, "cursor");
       const deploy = items.find((i) => i.name === "myplug:deploy");
@@ -442,7 +442,7 @@ describe("SkillService", () => {
     });
 
     it("cursor plugin cache: scans workflow-skills alongside skills/", () => {
-      const wfDir = join(
+      const wfDir = NodePath.join(
         fakeHome,
         ".cursor",
         "plugins",
@@ -453,8 +453,8 @@ describe("SkillService", () => {
         "workflow-skills",
         "analyze",
       );
-      mkdirSync(wfDir, { recursive: true });
-      writeMd(join(wfDir, "SKILL.md"), { description: "Workflow skill" });
+      NodeFS.mkdirSync(wfDir, { recursive: true });
+      writeMd(NodePath.join(wfDir, "SKILL.md"), { description: "Workflow skill" });
 
       const items = new SkillService().list(undefined, "cursor");
       expect(items.find((i) => i.name === "wfplug:analyze")).toMatchObject({
@@ -465,7 +465,7 @@ describe("SkillService", () => {
     });
 
     it("cursor plugin skills under .cursor/skills are tagged for cursor provider", () => {
-      const skillDir = join(
+      const skillDir = NodePath.join(
         fakeHome,
         ".cursor",
         "plugins",
@@ -477,8 +477,8 @@ describe("SkillService", () => {
         "skills",
         "native-skill",
       );
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Native cursor plugin layout" });
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Native cursor plugin layout" });
 
       const items = new SkillService().list(undefined, "cursor");
       expect(items.find((i) => i.name === "native:native-skill")).toMatchObject({
@@ -490,12 +490,12 @@ describe("SkillService", () => {
       // Plugins live under ~/.claude/plugins/ — Claude's own infrastructure.
       // Even if a plugin ships .agents/ subdirs, those don't grant cross-provider access.
       // A user who installed impeccable as a Claude plugin should not see it in Codex/Copilot.
-      const skillDir = join(
+      const skillDir = NodePath.join(
         fakeHome, ".claude", "plugins", "cache", "mp", "impeccable", "2.1.1",
         ".agents", "skills", "impeccable",
       );
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Cross-provider skill" });
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Cross-provider skill" });
 
       const svc = new SkillService();
 
@@ -510,12 +510,12 @@ describe("SkillService", () => {
 
     it("plugin .codex/skills/ is NOT exposed to Codex", () => {
       // Same rule — .codex/ subdir in a Claude plugin does not make it available to Codex.
-      const skillDir = join(
+      const skillDir = NodePath.join(
         fakeHome, ".claude", "plugins", "cache", "mp", "myplugin", "1.0.0",
         ".codex", "skills", "codex-task",
       );
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Codex subdir skill" });
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Codex subdir skill" });
 
       const svc = new SkillService();
 
@@ -527,12 +527,12 @@ describe("SkillService", () => {
       // Marketplace plugins are part of Claude's plugin infrastructure — same rule as
       // the cache. Skills under .agents/ don't grant cross-provider access. The skill
       // name uses the marketplace name as prefix (not ".agents:"), but it's Claude-only.
-      const skillDir = join(
+      const skillDir = NodePath.join(
         fakeHome, ".claude", "plugins", "marketplaces", "impeccable",
         ".agents", "skills", "impeccable",
       );
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Marketplace skill" });
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Marketplace skill" });
 
       const svc = new SkillService();
 
@@ -547,12 +547,12 @@ describe("SkillService", () => {
     });
 
     it("marketplace plugin: .claude/skills/ produces <marketplace-name>:* prefix for claude only", () => {
-      const skillDir = join(
+      const skillDir = NodePath.join(
         fakeHome, ".claude", "plugins", "marketplaces", "impeccable",
         ".claude", "skills", "audit",
       );
-      mkdirSync(skillDir, { recursive: true });
-      writeMd(join(skillDir, "SKILL.md"), { description: "Claude-only marketplace skill" });
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Claude-only marketplace skill" });
 
       const svc = new SkillService();
 
@@ -568,18 +568,18 @@ describe("SkillService", () => {
 
     it("marketplace plugin: cache and marketplace produce same skill names (dedup collapses them)", () => {
       // Cache and marketplace both produce "impeccable:adapt" — dedup should keep one.
-      const cacheSkillDir = join(
+      const cacheSkillDir = NodePath.join(
         fakeHome, ".claude", "plugins", "cache", "mp", "impeccable", "2.1.1",
         ".claude", "skills", "adapt",
       );
-      const marketplaceSkillDir = join(
+      const marketplaceSkillDir = NodePath.join(
         fakeHome, ".claude", "plugins", "marketplaces", "impeccable",
         ".claude", "skills", "adapt",
       );
-      mkdirSync(cacheSkillDir, { recursive: true });
-      mkdirSync(marketplaceSkillDir, { recursive: true });
-      writeMd(join(cacheSkillDir, "SKILL.md"), { description: "Cache version" });
-      writeMd(join(marketplaceSkillDir, "SKILL.md"), { description: "Marketplace version" });
+      NodeFS.mkdirSync(cacheSkillDir, { recursive: true });
+      NodeFS.mkdirSync(marketplaceSkillDir, { recursive: true });
+      writeMd(NodePath.join(cacheSkillDir, "SKILL.md"), { description: "Cache version" });
+      writeMd(NodePath.join(marketplaceSkillDir, "SKILL.md"), { description: "Marketplace version" });
 
       const items = new SkillService().list(undefined, "claude");
       const matches = items.filter((i) => i.name === "impeccable:adapt");

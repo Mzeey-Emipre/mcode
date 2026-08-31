@@ -118,6 +118,29 @@ describe("browser automation isolated-world identities", () => {
     ]);
   });
 
+  it("treats hostile tags and input types as unmapped roles during snapshots and target inspection", () => {
+    const hostileTag = new FakeElement("CONSTRUCTOR", { "aria-label": "Hostile tag" }, { x: 1, y: 2, width: 30, height: 20 });
+    const hostileInput = new FakeElement("INPUT", { type: "__proto__", "aria-label": "Hostile input" }, { x: 40, y: 2, width: 30, height: 20 });
+    installDom([hostileTag, hostileInput]);
+
+    expect(snapshotPage({ semanticGeneration: 0, maxElements: 10, maxText: 100 }).elements).toEqual([
+      expect.objectContaining({ role: "generic", accessibleName: "Hostile tag" }),
+      expect.objectContaining({ role: "textbox", accessibleName: "Hostile input" }),
+    ]);
+    expect(inspectPageTarget({ target: { role: "generic", accessibleName: "Hostile tag" } })).toMatchObject({ attached: true, visible: true });
+    expect(inspectPageTarget({ target: { role: "textbox", accessibleName: "Hostile input" } })).toMatchObject({ attached: true, visible: true });
+  });
+
+  it("preserves an empty aria-label ahead of a fallback alt label", () => {
+    const labelled = new FakeElement("BUTTON", { "aria-label": "", alt: "Fallback label" }, { x: 1, y: 2, width: 30, height: 20 });
+    installDom([labelled]);
+
+    expect(snapshotPage({ semanticGeneration: 0, maxElements: 10, maxText: 100 }).elements[0]).toMatchObject({
+      accessibleName: "",
+    });
+    expect(inspectPageTarget({ target: { role: "button", accessibleName: "" } })).toMatchObject({ attached: true, visible: true });
+  });
+
   it("serializes cyclic and secret-bearing evaluation values inside the guest bound", async () => {
     const cyclic = await evaluateIsolatedExpression({
       expression: "(() => { const value = { token: 'secret' }; value.self = value; return value; })()",

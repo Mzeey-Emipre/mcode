@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { AgentEventType, type TurnFileEffectSummary } from "@mcode/contracts";
 import { TurnFileTracker } from "../turn-file-tracker.js";
 import {
@@ -10,15 +10,16 @@ import {
 } from "../../../../../../../packages/providers/src/private/cursor/acp/cursor-acp-event-mapper.js";
 
 const dirs: string[] = [];
+const TEST_PLATFORM = "win32" as const;
 
 async function tempDir(prefix: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
+  const dir = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix));
   dirs.push(dir);
   return dir;
 }
 
 afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(dirs.splice(0).map((dir) => NodeFSPromises.rm(dir, { recursive: true, force: true })));
 });
 
 function trackerWithBaseline(
@@ -31,18 +32,20 @@ function trackerWithBaseline(
       return value == null ? { kind: "missing" } : { kind: "text", text: value };
     },
     (_threadId, _turnId, summary) => updates.push(summary),
+    TEST_PLATFORM,
   );
 }
 
 describe("TurnFileTracker", () => {
   it("captures an unavailable-Git baseline before an early child mutation is attributed", async () => {
     const root = await tempDir("mcode-early-child-effects-");
-    const trackedPath = join(root, "tracked.txt");
-    await writeFile(trackedPath, "before\n");
+    const trackedPath = NodePath.join(root, "tracked.txt");
+    await NodeFSPromises.writeFile(trackedPath, "before\n");
     const updates: TurnFileEffectSummary[] = [];
     const tracker = new TurnFileTracker(
       async () => ({ kind: "unavailable" }),
       (_threadId, _turnId, summary) => updates.push(summary),
+      TEST_PLATFORM,
     );
     tracker.beginTurn("t", root, "unavailable-ref");
     const pendingStarts = [tracker.observeToolUse(
@@ -51,7 +54,7 @@ describe("TurnFileTracker", () => {
       "file_change",
       { changes: [{ path: "tracked.txt", kind: "edit" }] },
     )];
-    await writeFile(trackedPath, "after\nextra\n");
+    await NodeFSPromises.writeFile(trackedPath, "after\nextra\n");
     expect(pendingStarts).toHaveLength(1);
     await tracker.observeToolResult("t", "file-child");
     await Promise.all(pendingStarts);
@@ -68,8 +71,8 @@ describe("TurnFileTracker", () => {
 
   it("classifies added, edited, and removed files with net line totals", async () => {
     const root = await tempDir("mcode-file-effects-");
-    await writeFile(join(root, "edited.txt"), "one\ntwo");
-    await writeFile(join(root, "removed.txt"), "old");
+    await NodeFSPromises.writeFile(NodePath.join(root, "edited.txt"), "one\ntwo");
+    await NodeFSPromises.writeFile(NodePath.join(root, "removed.txt"), "old");
     const updates: TurnFileEffectSummary[] = [];
     const tracker = trackerWithBaseline({
       "edited.txt": "one\ntwo",
@@ -79,13 +82,13 @@ describe("TurnFileTracker", () => {
     await tracker.beginTurn("t", root, "before");
 
     await tracker.observeToolUse("t", "edit", "Edit", { file_path: "edited.txt" });
-    await writeFile(join(root, "edited.txt"), "one\nthree");
+    await NodeFSPromises.writeFile(NodePath.join(root, "edited.txt"), "one\nthree");
     await tracker.observeToolResult("t", "edit");
     await tracker.observeToolUse("t", "add", "Write", { file_path: "added.txt", content: "a\nb" });
-    await writeFile(join(root, "added.txt"), "a\nb");
+    await NodeFSPromises.writeFile(NodePath.join(root, "added.txt"), "a\nb");
     await tracker.observeToolResult("t", "add");
     await tracker.observeToolUse("t", "remove", "Delete", { file_path: "removed.txt" });
-    await rm(join(root, "removed.txt"));
+    await NodeFSPromises.rm(NodePath.join(root, "removed.txt"));
     await tracker.observeToolResult("t", "remove", undefined);
 
     const summary = await tracker.finalizeTurn("t");
@@ -100,16 +103,17 @@ describe("TurnFileTracker", () => {
 
   it("reports an observation failure while keeping finalization recoverable", async () => {
     const root = await tempDir("mcode-file-effects-observation-error-");
-    await writeFile(join(root, "edited.txt"), "before\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "edited.txt"), "before\n");
     const tracker = new TurnFileTracker(
       async () => ({ kind: "text", text: "before\n" }),
       () => {
         throw new Error("update failed");
       },
+      TEST_PLATFORM,
     );
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "edit", "Edit", { file_path: "edited.txt" });
-    await writeFile(join(root, "edited.txt"), "after\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "edited.txt"), "after\n");
 
     await expect(tracker.observeToolResult("t", "edit")).rejects.toThrow("update failed");
     await expect(tracker.finalizeTurn("t")).resolves.toMatchObject({ fileCount: 1 });
@@ -117,28 +121,28 @@ describe("TurnFileTracker", () => {
 
   it("counts repeated edits once and removes a reverted effect", async () => {
     const root = await tempDir("mcode-file-effects-");
-    await writeFile(join(root, "same.txt"), "base");
+    await NodeFSPromises.writeFile(NodePath.join(root, "same.txt"), "base");
     const updates: TurnFileEffectSummary[] = [];
     const tracker = trackerWithBaseline({ "same.txt": "base" }, updates);
     await tracker.beginTurn("t", root, "before");
 
     await tracker.observeToolUse("t", "a", "Edit", { file_path: "same.txt" });
-    await writeFile(join(root, "same.txt"), "first");
+    await NodeFSPromises.writeFile(NodePath.join(root, "same.txt"), "first");
     await tracker.observeToolResult("t", "a");
     await tracker.observeToolUse("t", "b", "Edit", { file_path: "same.txt" });
-    await writeFile(join(root, "same.txt"), "second");
+    await NodeFSPromises.writeFile(NodePath.join(root, "same.txt"), "second");
     await tracker.observeToolResult("t", "b");
     expect((await tracker.finalizeTurn("t")).fileCount).toBe(1);
 
     await tracker.observeToolUse("t", "c", "Edit", { file_path: "same.txt" });
-    await writeFile(join(root, "same.txt"), "base");
+    await NodeFSPromises.writeFile(NodePath.join(root, "same.txt"), "base");
     await tracker.observeToolResult("t", "c");
     expect(await tracker.finalizeTurn("t")).toMatchObject({ fileCount: 0, additions: 0, deletions: 0 });
   });
 
   it("coalesces parallel sub-agent tools by path while retaining their provenance", async () => {
     const root = await tempDir("mcode-file-effects-subagents-");
-    await writeFile(join(root, "shared.txt"), "base\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "shared.txt"), "base\n");
     const tracker = trackerWithBaseline({ "shared.txt": "base\n" }, []);
     tracker.beginTurn("parent-turn", root, "before");
 
@@ -146,7 +150,7 @@ describe("TurnFileTracker", () => {
       tracker.observeToolUse("parent-turn", "subagent-a-edit", "Edit", { file_path: "shared.txt" }),
       tracker.observeToolUse("parent-turn", "subagent-b-edit", "Edit", { file_path: "shared.txt" }),
     ]);
-    await writeFile(join(root, "shared.txt"), "changed\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "shared.txt"), "changed\n");
     await Promise.all([
       tracker.observeToolResult("parent-turn", "subagent-a-edit"),
       tracker.observeToolResult("parent-turn", "subagent-b-edit"),
@@ -162,11 +166,11 @@ describe("TurnFileTracker", () => {
 
   it("detects a partial write even when the tool result is an error", async () => {
     const root = await tempDir("mcode-file-effects-");
-    await writeFile(join(root, "partial.txt"), "before");
+    await NodeFSPromises.writeFile(NodePath.join(root, "partial.txt"), "before");
     const tracker = trackerWithBaseline({ "partial.txt": "before" }, []);
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "failed", "Write", { file_path: "partial.txt" });
-    await writeFile(join(root, "partial.txt"), "part");
+    await NodeFSPromises.writeFile(NodePath.join(root, "partial.txt"), "part");
     await tracker.observeToolResult("t", "failed");
     expect((await tracker.finalizeTurn("t")).effects[0]).toMatchObject({ kind: "edited" });
   });
@@ -174,16 +178,16 @@ describe("TurnFileTracker", () => {
   it("marks external and symlink-escaped paths without persisting content", async () => {
     const root = await tempDir("mcode-file-effects-root-");
     const external = await tempDir("mcode-file-effects-external-");
-    await writeFile(join(external, "outside.txt"), "old");
-    await symlink(join(external, "outside.txt"), join(root, "link.txt"));
+    await NodeFSPromises.writeFile(NodePath.join(external, "outside.txt"), "old");
+    await NodeFSPromises.symlink(NodePath.join(external, "outside.txt"), NodePath.join(root, "link.txt"));
     const tracker = trackerWithBaseline({}, []);
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "external", "Edit", {
-      file_path: join(root, "link.txt"),
+      file_path: NodePath.join(root, "link.txt"),
       old_string: "old",
       new_string: "new",
     });
-    await writeFile(join(external, "outside.txt"), "new");
+    await NodeFSPromises.writeFile(NodePath.join(external, "outside.txt"), "new");
     await tracker.observeToolResult("t", "external");
     const effect = (await tracker.finalizeTurn("t")).effects[0]!;
     expect(effect).toMatchObject({ scope: "external", kind: "edited" });
@@ -204,12 +208,12 @@ describe("TurnFileTracker", () => {
 
   it("uses the tool-start state instead of unrelated earlier workspace changes", async () => {
     const root = await tempDir("mcode-file-effects-tool-baseline-");
-    await writeFile(join(root, "same.txt"), "pulled-a\npulled-b\npulled-c\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "same.txt"), "pulled-a\npulled-b\npulled-c\n");
     const tracker = trackerWithBaseline({ "same.txt": "old-a\nold-b\n" }, []);
     await tracker.beginTurn("t", root, "before-pull");
 
     await tracker.observeToolUse("t", "edit", "Edit", { file_path: "same.txt" });
-    await writeFile(join(root, "same.txt"), "pulled-a\nagent-b\npulled-c\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "same.txt"), "pulled-a\nagent-b\npulled-c\n");
     await tracker.observeToolResult("t", "edit");
 
     expect((await tracker.finalizeTurn("t")).effects[0]).toMatchObject({
@@ -221,11 +225,11 @@ describe("TurnFileTracker", () => {
 
   it("tracks explicit edits when no Git baseline is available", async () => {
     const root = await tempDir("mcode-file-effects-no-git-");
-    await writeFile(join(root, "plain.txt"), "before\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "plain.txt"), "before\n");
     const tracker = trackerWithBaseline({}, []);
     await tracker.beginTurn("t", root, null);
     await tracker.observeToolUse("t", "edit", "Edit", { file_path: "plain.txt" });
-    await writeFile(join(root, "plain.txt"), "after\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "plain.txt"), "after\n");
     await tracker.observeToolResult("t", "edit");
 
     expect((await tracker.finalizeTurn("t")).effects[0]).toMatchObject({
@@ -237,7 +241,7 @@ describe("TurnFileTracker", () => {
 
   it("does not treat Edit replacement snippets as full-file evidence", async () => {
     const root = await tempDir("mcode-file-effects-snippet-");
-    await writeFile(join(root, "plain.txt"), "prefix\nneedle\nsuffix\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "plain.txt"), "prefix\nneedle\nsuffix\n");
     const tracker = trackerWithBaseline({}, []);
     await tracker.beginTurn("t", root, null);
 
@@ -254,8 +258,8 @@ describe("TurnFileTracker", () => {
   it("records completion-only external changes without inventing line totals", async () => {
     const root = await tempDir("mcode-file-effects-completed-root-");
     const external = await tempDir("mcode-file-effects-completed-external-");
-    const externalPath = join(external, "late.txt");
-    await writeFile(externalPath, "after\n");
+    const externalPath = NodePath.join(external, "late.txt");
+    await NodeFSPromises.writeFile(externalPath, "after\n");
     const tracker = trackerWithBaseline({}, []);
     await tracker.beginTurn("t", root, null);
 
@@ -275,7 +279,7 @@ describe("TurnFileTracker", () => {
 
   it("keeps a provider-confirmed completion when a late Git ref already contains it", async () => {
     const root = await tempDir("mcode-file-effects-late-ref-");
-    await writeFile(join(root, "late.txt"), "after\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "late.txt"), "after\n");
     const tracker = trackerWithBaseline({ "late.txt": "after\n" }, []);
     const generation = tracker.beginTurn("t", root, null);
 
@@ -296,7 +300,7 @@ describe("TurnFileTracker", () => {
 
   it("deduplicates bulk full-file evidence without synchronous file reads", async () => {
     const root = await tempDir("mcode-file-effects-bulk-evidence-");
-    await writeFile(join(root, "bulk.txt"), "after\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "bulk.txt"), "after\n");
     const tracker = trackerWithBaseline({}, []);
     tracker.beginTurn("t", root, null);
     const fullBeforeText = "x".repeat(1_048_576);
@@ -343,9 +347,9 @@ describe("TurnFileTracker", () => {
   it("falls back to complete async observation when a rename exceeds the remaining path budget", async () => {
     const root = await tempDir("mcode-file-effects-mixed-budget-");
     for (let index = 0; index < 3; index += 1) {
-      await writeFile(join(root, `edit-${index}.txt`), "before\n");
+      await NodeFSPromises.writeFile(NodePath.join(root, `edit-${index}.txt`), "before\n");
     }
-    await writeFile(join(root, "source.txt"), "rename me\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "source.txt"), "rename me\n");
     const tracker = trackerWithBaseline({}, []);
     tracker.beginTurn("t", root, null);
     const mutations = [
@@ -358,9 +362,9 @@ describe("TurnFileTracker", () => {
 
     await tracker.observeToolUse("t", "mixed", "edit", { _mcodeFileMutations: mutations });
     for (let index = 0; index < 3; index += 1) {
-      await writeFile(join(root, `edit-${index}.txt`), "after\n");
+      await NodeFSPromises.writeFile(NodePath.join(root, `edit-${index}.txt`), "after\n");
     }
-    await rename(join(root, "source.txt"), join(root, "destination.txt"));
+    await NodeFSPromises.rename(NodePath.join(root, "source.txt"), NodePath.join(root, "destination.txt"));
     await tracker.observeToolResult("t", "mixed");
 
     expect((await tracker.finalizeTurn("t")).effects).toContainEqual(expect.objectContaining({
@@ -373,8 +377,8 @@ describe("TurnFileTracker", () => {
   it("records provider-confirmed external additions that exceed the read limit", async () => {
     const root = await tempDir("mcode-file-effects-large-root-");
     const external = await tempDir("mcode-file-effects-large-external-");
-    const externalPath = join(external, "large.txt");
-    await writeFile(externalPath, "x".repeat(1_048_577));
+    const externalPath = NodePath.join(external, "large.txt");
+    await NodeFSPromises.writeFile(externalPath, "x".repeat(1_048_577));
     const tracker = trackerWithBaseline({}, []);
     await tracker.beginTurn("t", root, null);
 
@@ -395,7 +399,7 @@ describe("TurnFileTracker", () => {
 
   it("does not turn an unchanged oversized file into an edit", async () => {
     const root = await tempDir("mcode-file-effects-oversized-");
-    await writeFile(join(root, "large.txt"), "x".repeat(1_048_577));
+    await NodeFSPromises.writeFile(NodePath.join(root, "large.txt"), "x".repeat(1_048_577));
     const tracker = trackerWithBaseline({ "large.txt": "ignored" }, []);
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "large", "Edit", { file_path: "large.txt" });
@@ -412,11 +416,11 @@ describe("TurnFileTracker", () => {
       file_path: "new/nested/file.txt",
       content: "created",
     });
-    await mkdir(join(root, "new", "nested"), { recursive: true });
-    await writeFile(join(root, "new", "nested", "file.txt"), "created");
+    await NodeFSPromises.mkdir(NodePath.join(root, "new", "nested"), { recursive: true });
+    await NodeFSPromises.writeFile(NodePath.join(root, "new", "nested", "file.txt"), "created");
     await tracker.observeToolResult("t", "add-nested");
     expect((await tracker.finalizeTurn("t")).effects[0]).toMatchObject({
-      path: join("new", "nested", "file.txt"),
+      path: NodePath.join("new", "nested", "file.txt"),
       kind: "added",
       scope: "workspace",
     });
@@ -428,7 +432,7 @@ describe("TurnFileTracker", () => {
     const baseline: Record<string, string> = {};
     for (let i = 0; i < 20; i += 1) {
       baseline[`file-${i}.txt`] = "base";
-      await writeFile(join(root, `file-${i}.txt`), "base");
+      await NodeFSPromises.writeFile(NodePath.join(root, `file-${i}.txt`), "base");
     }
     const tracker = trackerWithBaseline(baseline, updates);
     await tracker.beginTurn("stress", root, "before");
@@ -439,14 +443,14 @@ describe("TurnFileTracker", () => {
       const id = `call-${i}`;
       const path = `file-${index}.txt`;
       await tracker.observeToolUse("stress", id, "Edit", { file_path: path });
-      await writeFile(join(root, path), i >= 100 ? `final-${index}` : `value-${i}`);
+      await NodeFSPromises.writeFile(NodePath.join(root, path), i >= 100 ? `final-${index}` : `value-${i}`);
       await tracker.observeToolResult("stress", id);
     }));
     await Promise.all(Array.from({ length: 5 }, async (_, index) => {
       const id = `revert-${index}`;
       const path = `file-${index}.txt`;
       await tracker.observeToolUse("stress", id, "Edit", { file_path: path });
-      await writeFile(join(root, path), "base");
+      await NodeFSPromises.writeFile(NodePath.join(root, path), "base");
       await tracker.observeToolResult("stress", id);
     }));
     const summary = await tracker.finalizeTurn("stress");
@@ -463,16 +467,16 @@ describe("TurnFileTracker", () => {
 
   it("keeps an older finalizing generation isolated from a newly-started turn", async () => {
     const root = await tempDir("mcode-file-effects-generation-");
-    await writeFile(join(root, "one.txt"), "base");
+    await NodeFSPromises.writeFile(NodePath.join(root, "one.txt"), "base");
     const tracker = trackerWithBaseline({ "one.txt": "base" }, []);
     const first = await tracker.beginTurn("t", root, "first");
     await tracker.observeToolUse("t", "first-edit", "Edit", { file_path: "one.txt" });
-    await writeFile(join(root, "one.txt"), "first");
+    await NodeFSPromises.writeFile(NodePath.join(root, "one.txt"), "first");
     await tracker.observeToolResult("t", "first-edit");
 
     const second = await tracker.beginTurn("t", root, "second");
     await tracker.observeToolUse("t", "second-edit", "Edit", { file_path: "one.txt" });
-    await writeFile(join(root, "one.txt"), "second");
+    await NodeFSPromises.writeFile(NodePath.join(root, "one.txt"), "second");
     await tracker.observeToolResult("t", "second-edit");
 
     expect((await tracker.finalizeTurn("t", first)).effects[0]?.toolCallIds).toEqual(["first-edit"]);
@@ -482,12 +486,12 @@ describe("TurnFileTracker", () => {
 
   it("routes a late result to the generation that received ToolUse after retry rollover", async () => {
     const root = await tempDir("mcode-file-effects-late-result-");
-    await writeFile(join(root, "late.txt"), "base");
+    await NodeFSPromises.writeFile(NodePath.join(root, "late.txt"), "base");
     const tracker = trackerWithBaseline({ "late.txt": "base" }, []);
     const first = await tracker.beginTurn("t", root, "first");
     await tracker.observeToolUse("t", "late-call", "Edit", { file_path: "late.txt" });
     const second = await tracker.beginTurn("t", root, "second");
-    await writeFile(join(root, "late.txt"), "changed");
+    await NodeFSPromises.writeFile(NodePath.join(root, "late.txt"), "changed");
     await tracker.observeToolResult("t", "late-call");
 
     expect((await tracker.finalizeTurn("t", first)).effects[0]).toMatchObject({
@@ -500,8 +504,8 @@ describe("TurnFileTracker", () => {
 
   it("tracks every completion-time Cursor ACP diff on an existing tool call", async () => {
     const root = await tempDir("mcode-file-effects-cursor-");
-    await writeFile(join(root, "one.txt"), "one\n");
-    await writeFile(join(root, "two.txt"), "two\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "one.txt"), "one\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "two.txt"), "two\n");
     const tracker = trackerWithBaseline({ "one.txt": "one\n", "two.txt": "two\n" }, []);
     await tracker.beginTurn("cursor-thread", root, "before");
     const state = createCursorAcpTurnState();
@@ -522,8 +526,8 @@ describe("TurnFileTracker", () => {
       }
     }
 
-    await writeFile(join(root, "one.txt"), "one changed\n");
-    await writeFile(join(root, "two.txt"), "two changed\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "one.txt"), "one changed\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "two.txt"), "two changed\n");
     const completed = mapCursorAcpSessionNotification({
       sessionId: "s",
       update: {
@@ -552,14 +556,14 @@ describe("TurnFileTracker", () => {
 
   it("emits one validated explicit rename with a normalized old path", async () => {
     const root = await tempDir("mcode-file-effects-rename-");
-    await writeFile(join(root, "old.txt"), "one\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "old.txt"), "one\n");
     const tracker = trackerWithBaseline({ "old.txt": "one\n", "new.txt": null }, []);
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "rename", "Move", {
-      from: join(".", "old.txt"),
+      from: NodePath.join(".", "old.txt"),
       to: "new.txt",
     });
-    await rename(join(root, "old.txt"), join(root, "new.txt"));
+    await NodeFSPromises.rename(NodePath.join(root, "old.txt"), NodePath.join(root, "new.txt"));
     await tracker.observeToolResult("t", "rename");
 
     expect(await tracker.finalizeTurn("t")).toMatchObject({
@@ -572,14 +576,14 @@ describe("TurnFileTracker", () => {
 
   it("does not label a copy as a rename when the normalized source still exists", async () => {
     const root = await tempDir("mcode-file-effects-invalid-rename-");
-    await writeFile(join(root, "old.txt"), "one\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "old.txt"), "one\n");
     const tracker = trackerWithBaseline({ "old.txt": "one\n", "new.txt": null }, []);
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "copy", "Move", {
       from: "old.txt",
-      to: join(".", "new.txt"),
+      to: NodePath.join(".", "new.txt"),
     });
-    await writeFile(join(root, "new.txt"), "one\n");
+    await NodeFSPromises.writeFile(NodePath.join(root, "new.txt"), "one\n");
     await tracker.observeToolResult("t", "copy");
 
     expect((await tracker.finalizeTurn("t")).effects).toEqual([
@@ -598,13 +602,13 @@ describe("TurnFileTracker", () => {
       baseline[oldPath] = content;
       baseline[newPath] = null;
       changes.push({ path: oldPath, kind: "remove" }, { path: newPath, kind: "add" });
-      await writeFile(join(root, oldPath), content);
+      await NodeFSPromises.writeFile(NodePath.join(root, oldPath), content);
     }
     const tracker = trackerWithBaseline(baseline, []);
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "move-batch", "file_change", { changes });
     await Promise.all(Array.from({ length: 8 }, (_, index) => (
-      rename(join(root, `old-${index}.txt`), join(root, `new-${index}.txt`))
+      NodeFSPromises.rename(NodePath.join(root, `old-${index}.txt`), NodePath.join(root, `new-${index}.txt`))
     )));
     await tracker.observeToolResult("t", "move-batch");
 
@@ -625,14 +629,14 @@ describe("TurnFileTracker", () => {
     { label: "edited", before: "one\n", after: "two\n", additions: 1, deletions: 1 },
   ])("uses Git-style trailing-newline totals for $label files", async ({ before, after, additions, deletions }) => {
     const root = await tempDir("mcode-file-effects-lines-");
-    if (before !== "") await writeFile(join(root, "lines.txt"), before);
+    if (before !== "") await NodeFSPromises.writeFile(NodePath.join(root, "lines.txt"), before);
     const tracker = trackerWithBaseline({ "lines.txt": before === "" ? null : before }, []);
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "lines", before === "" ? "Write" : after === "" ? "Delete" : "Edit", {
       file_path: "lines.txt",
     });
-    if (after === "") await rm(join(root, "lines.txt"), { force: true });
-    else await writeFile(join(root, "lines.txt"), after);
+    if (after === "") await NodeFSPromises.rm(NodePath.join(root, "lines.txt"), { force: true });
+    else await NodeFSPromises.writeFile(NodePath.join(root, "lines.txt"), after);
     await tracker.observeToolResult("t", "lines");
     expect((await tracker.finalizeTurn("t")).effects[0]).toMatchObject({ additions, deletions });
   });
@@ -642,11 +646,11 @@ describe("TurnFileTracker", () => {
     { label: "removed", before: "one\n", after: "one" },
   ])("counts an EOF newline $label as one added and one removed line", async ({ before, after }) => {
     const root = await tempDir("mcode-file-effects-eof-newline-");
-    await writeFile(join(root, "lines.txt"), before);
+    await NodeFSPromises.writeFile(NodePath.join(root, "lines.txt"), before);
     const tracker = trackerWithBaseline({ "lines.txt": before }, []);
     await tracker.beginTurn("t", root, "before");
     await tracker.observeToolUse("t", "lines", "Edit", { file_path: "lines.txt" });
-    await writeFile(join(root, "lines.txt"), after);
+    await NodeFSPromises.writeFile(NodePath.join(root, "lines.txt"), after);
     await tracker.observeToolResult("t", "lines");
     expect((await tracker.finalizeTurn("t")).effects[0]).toMatchObject({
       additions: 1,

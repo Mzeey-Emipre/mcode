@@ -24,6 +24,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -103,6 +104,68 @@ export interface PullRequestSummaryProps {
   ) => void;
   defaultChecksOpen?: boolean;
   defaultCommentsOpen?: boolean;
+}
+
+type ResolvedPullRequestSummaryProps = Omit<
+  PullRequestSummaryProps,
+  | "detailBoundedData"
+  | "checksHasMore"
+  | "commentsHasMore"
+  | "checksBoundedData"
+  | "commentsBoundedData"
+  | "checksLoading"
+  | "commentsLoading"
+  | "checksLoaded"
+  | "commentsLoaded"
+  | "defaultChecksOpen"
+  | "defaultCommentsOpen"
+> & {
+  detailBoundedData: PullRequestBoundedDataMarker | null;
+  checksHasMore: boolean;
+  commentsHasMore: boolean;
+  checksBoundedData: PullRequestBoundedDataMarker | null;
+  commentsBoundedData: PullRequestBoundedDataMarker | null;
+  checksLoading: boolean;
+  commentsLoading: boolean;
+  checksLoaded: boolean;
+  commentsLoaded: boolean;
+  defaultChecksOpen: boolean;
+  defaultCommentsOpen: boolean;
+};
+
+function resolveDescriptionProps(props: PullRequestSummaryProps) {
+  return { detailBoundedData: props.detailBoundedData ?? null };
+}
+
+function resolveChecksProps(props: PullRequestSummaryProps) {
+  return {
+    checksHasMore: props.checksHasMore ?? false,
+    checksBoundedData: props.checksBoundedData ?? null,
+    checksLoading: props.checksLoading ?? false,
+    checksLoaded: props.checksLoaded ?? false,
+    defaultChecksOpen: props.defaultChecksOpen ?? true,
+  };
+}
+
+function resolveCommentsProps(props: PullRequestSummaryProps) {
+  return {
+    commentsHasMore: props.commentsHasMore ?? false,
+    commentsBoundedData: props.commentsBoundedData ?? null,
+    commentsLoading: props.commentsLoading ?? false,
+    commentsLoaded: props.commentsLoaded ?? false,
+    defaultCommentsOpen: props.defaultCommentsOpen ?? true,
+  };
+}
+
+function resolvePullRequestSummaryProps(
+  props: PullRequestSummaryProps,
+): ResolvedPullRequestSummaryProps {
+  return {
+    ...props,
+    ...resolveDescriptionProps(props),
+    ...resolveChecksProps(props),
+    ...resolveCommentsProps(props),
+  };
 }
 
 function titleCase(value: string): string {
@@ -380,7 +443,106 @@ function ConversationAuthor({
   );
 }
 
-const ConversationRow = memo(function ConversationRow({
+type IssueComment = Extract<
+  PullRequestConversationItem,
+  { kind: "issue_comment" }
+>;
+
+interface ConversationRowProps {
+  item: PullRequestConversationItem;
+  canReply: boolean;
+  replying: boolean;
+  prompting: boolean;
+  onReply: (item: IssueComment) => void;
+  onTogglePrompt: (item: IssueComment) => void;
+  onPromptFix?: (item: IssueComment) => void;
+  replyComposer: ReactNode;
+}
+
+function IssueCommentActions({
+  item,
+  canReply,
+  prompting,
+  onReply,
+  onTogglePrompt,
+  onPromptFix,
+}: {
+  item: IssueComment;
+  canReply: boolean;
+  prompting: boolean;
+  onReply: (item: IssueComment) => void;
+  onTogglePrompt: (item: IssueComment) => void;
+  onPromptFix?: (item: IssueComment) => void;
+}) {
+  if (!canReply && !onPromptFix) return null;
+
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      {onPromptFix && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-xs text-muted-foreground"
+          aria-expanded={prompting}
+          onClick={() => onTogglePrompt(item)}
+        >
+          <ChevronDown
+            size={13}
+            aria-hidden
+            className={cn(
+              "transition-transform",
+              prompting ? "rotate-0" : "-rotate-90",
+            )}
+          />
+          Prompt to fix with AI
+        </Button>
+      )}
+      {canReply && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="ml-auto text-xs text-muted-foreground"
+          onClick={() => onReply(item)}
+        >
+          Reply
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function PromptFixConfirmation({
+  item,
+  prompting,
+  onPromptFix,
+}: {
+  item: IssueComment;
+  prompting: boolean;
+  onPromptFix?: (item: IssueComment) => void;
+}) {
+  if (!prompting || !onPromptFix) return null;
+
+  return (
+    <div className="mt-2 flex items-center gap-3 border-t border-border/40 pt-3">
+      <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+        Start a Review task with this comment as context.
+      </p>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        className="text-xs"
+        onClick={() => onPromptFix(item)}
+      >
+        Create task
+      </Button>
+    </div>
+  );
+}
+
+function IssueCommentRow({
   item,
   canReply,
   replying,
@@ -389,91 +551,48 @@ const ConversationRow = memo(function ConversationRow({
   onTogglePrompt,
   onPromptFix,
   replyComposer,
-}: {
-  item: PullRequestConversationItem;
-  canReply: boolean;
-  replying: boolean;
-  prompting: boolean;
-  onReply: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
-  onTogglePrompt: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
-  onPromptFix?: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
-  replyComposer: ReactNode;
-}) {
-  if (item.kind === "issue_comment") {
-    const author = item.author?.login ?? "Unknown actor";
-    return (
-      <article
-        aria-label={`Comment from ${author}`}
-        className="min-w-0 overflow-hidden rounded-lg bg-card/45 px-4 py-4"
-      >
-        <header className="flex min-h-8 items-center gap-2 pb-3 text-xs text-muted-foreground">
-          <ConversationAuthor author={item.author} />
-          <time dateTime={item.createdAt} className="font-mono tabular-nums">
-            {formatRelative(item.createdAt)}
-          </time>
-        </header>
-        <div>
-          <RemoteMarkdown
-            content={item.body}
-            className={CONVERSATION_MARKDOWN_CLASS}
-          />
-        </div>
-        {(canReply || onPromptFix) && !replying ? (
-          <div className="mt-3 flex items-center gap-2">
-            {onPromptFix ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-xs text-muted-foreground"
-                aria-expanded={prompting}
-                onClick={() => onTogglePrompt(item)}
-              >
-                <ChevronDown
-                  size={13}
-                  aria-hidden
-                  className={cn(
-                    "transition-transform",
-                    prompting ? "rotate-0" : "-rotate-90",
-                  )}
-                />
-                Prompt to fix with AI
-              </Button>
-            ) : null}
-            {canReply ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="ml-auto text-xs text-muted-foreground"
-                onClick={() => onReply(item)}
-              >
-                Reply
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        {prompting && onPromptFix ? (
-          <div className="mt-2 flex items-center gap-3 border-t border-border/40 pt-3">
-            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-              Start a Review task with this comment as context.
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="text-xs"
-              onClick={() => onPromptFix(item)}
-            >
-              Create task
-            </Button>
-          </div>
-        ) : null}
-        {replying ? replyComposer : null}
-      </article>
-    );
-  }
+}: Omit<ConversationRowProps, "item"> & { item: IssueComment }) {
+  const author = item.author?.login ?? "Unknown actor";
 
+  return (
+    <article
+      aria-label={`Comment from ${author}`}
+      className="min-w-0 overflow-hidden rounded-lg bg-card/45 px-4 py-4"
+    >
+      <header className="flex min-h-8 items-center gap-2 pb-3 text-xs text-muted-foreground">
+        <ConversationAuthor author={item.author} />
+        <time dateTime={item.createdAt} className="font-mono tabular-nums">
+          {formatRelative(item.createdAt)}
+        </time>
+      </header>
+      <div>
+        <RemoteMarkdown content={item.body} className={CONVERSATION_MARKDOWN_CLASS} />
+      </div>
+      {!replying && (
+        <IssueCommentActions
+          item={item}
+          canReply={canReply}
+          prompting={prompting}
+          onReply={onReply}
+          onTogglePrompt={onTogglePrompt}
+          onPromptFix={onPromptFix}
+        />
+      )}
+      <PromptFixConfirmation
+        item={item}
+        prompting={prompting}
+        onPromptFix={onPromptFix}
+      />
+      {replying ? replyComposer : null}
+    </article>
+  );
+}
+
+function ReviewThreadRow({
+  item,
+}: {
+  item: Extract<PullRequestConversationItem, { kind: "review_thread" }>;
+}) {
   const location = `${item.path}${item.line === null ? "" : `:${item.line}`}`;
   return (
     <article
@@ -521,6 +640,13 @@ const ConversationRow = memo(function ConversationRow({
       )}
     </article>
   );
+}
+
+const ConversationRow = memo(function ConversationRow(props: ConversationRowProps) {
+  if (props.item.kind === "issue_comment") {
+    return <IssueCommentRow {...props} item={props.item} />;
+  }
+  return <ReviewThreadRow item={props.item} />;
 });
 
 ConversationRow.displayName = "ConversationRow";
@@ -573,82 +699,318 @@ const ConversationList = memo(function ConversationList({
 
 ConversationList.displayName = "ConversationList";
 
-function PullRequestSummaryComponent({
-  detail,
+function SummaryDescription({
+  body,
+  boundedData,
+}: {
+  body: string;
+  boundedData: PullRequestBoundedDataMarker | null;
+}) {
+  return (
+    <section aria-label="Description">
+      {body ? (
+        <RemoteMarkdown
+          content={body}
+          className="max-w-[72ch] [&_h1:first-child]:mt-0 [&_h2:first-child]:mt-0 [&_h3:first-child]:mt-0"
+        />
+      ) : (
+        <p className="text-xs text-muted-foreground">No description</p>
+      )}
+      {boundedData && (
+        <p
+          role="status"
+          data-bounded-reason={boundedData.reason}
+          className="mt-2 flex items-start gap-2 bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground"
+        >
+          <AlertCircle
+            size={13}
+            aria-hidden
+            className="mt-0.5 shrink-0 text-primary/80"
+          />
+          Description truncated at the remote data limit.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function ResourceListState({
+  loading,
+  loaded,
+  itemCount,
+  loadingLabel,
+  emptyLabel,
+  children,
+}: {
+  loading: boolean;
+  loaded: boolean;
+  itemCount: number;
+  loadingLabel: string;
+  emptyLabel: string;
+  children: ReactNode;
+}) {
+  if (loading && itemCount === 0) {
+    return (
+      <p
+        role="status"
+        className="flex items-center gap-2 py-3 text-xs text-muted-foreground"
+      >
+        <Spinner size="xs" aria-hidden />
+        {loadingLabel}
+      </p>
+    );
+  }
+  if (loaded && itemCount === 0) {
+    return <p className="py-3 text-xs text-muted-foreground">{emptyLabel}</p>;
+  }
+  return children;
+}
+
+function ResourceLoadContinuation({
+  boundedData,
+  subject,
+  hasMore,
+  loading,
+  onLoadMore,
+  loadingLabel,
+  loadMoreLabel,
+}: {
+  boundedData: PullRequestBoundedDataMarker | null;
+  subject: "check records" | "comments";
+  hasMore: boolean;
+  loading: boolean;
+  onLoadMore: (() => void) | undefined;
+  loadingLabel: string;
+  loadMoreLabel: string;
+}) {
+  if (boundedData) return <BoundedDataNotice marker={boundedData} subject={subject} />;
+  if (!hasMore || !onLoadMore) return null;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="mt-2 w-full text-xs text-muted-foreground"
+      onClick={onLoadMore}
+      disabled={loading}
+    >
+      {loading ? loadingLabel : loadMoreLabel}
+    </Button>
+  );
+}
+
+function PullRequestResourceSection({
+  label,
+  icon,
+  loadedCount,
+  totalCount,
+  defaultOpen,
+  onOpenChange,
+  children,
+}: {
+  label: "Checks" | "Comments";
+  icon: ReactNode;
+  loadedCount: number;
+  totalCount: number;
+  defaultOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <Collapsible
+      defaultOpen={defaultOpen}
+      onOpenChange={onOpenChange}
+      className="border-t border-border/45"
+    >
+      <CollapsibleTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          className="group h-11 w-full justify-start rounded-none px-0 text-xs hover:bg-muted/15 aria-expanded:bg-transparent dark:hover:bg-muted/10 dark:aria-expanded:bg-transparent"
+          aria-label={`${label}, ${loadedCount} loaded of ${totalCount}`}
+        >
+          {icon}
+          <span>{label}</span>
+          <Badge
+            variant="ghost"
+            size="sm"
+            className="ml-auto text-muted-foreground"
+          >
+            {totalCount}
+          </Badge>
+          <ChevronDown
+            size={13}
+            aria-hidden
+            className="text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
+          />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pb-1">{children}</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function ChecksResourceContent({
   checks,
+  loading,
+  loaded,
+  boundedData,
+  hasMore,
+  onLoadMore,
+}: {
+  checks: readonly PullRequestCheck[];
+  loading: boolean;
+  loaded: boolean;
+  boundedData: PullRequestBoundedDataMarker | null;
+  hasMore: boolean;
+  onLoadMore: (() => void) | undefined;
+}) {
+  return (
+    <>
+      <ResourceListState
+        loading={loading}
+        loaded={loaded}
+        itemCount={checks.length}
+        loadingLabel="Loading checks"
+        emptyLabel="No checks reported."
+      >
+        <CheckList checks={checks} />
+      </ResourceListState>
+      <ResourceLoadContinuation
+        boundedData={boundedData}
+        subject="check records"
+        hasMore={hasMore}
+        loading={loading}
+        onLoadMore={onLoadMore}
+        loadingLabel="Loading checks"
+        loadMoreLabel="Load more checks"
+      />
+    </>
+  );
+}
+
+function CommentsResourceContent({
   comments,
-  detailBoundedData = null,
-  checksHasMore = false,
-  commentsHasMore = false,
-  checksBoundedData = null,
-  commentsBoundedData = null,
-  checksLoading = false,
-  commentsLoading = false,
-  checksLoaded = false,
-  commentsLoaded = false,
-  onLoadMoreChecks,
-  onLoadMoreComments,
-  onChecksFirstOpen,
-  onCommentsFirstOpen,
-  commentCapability,
-  mutationTransport,
-  readTransport,
-  onRefresh,
+  loading,
+  loaded,
+  boundedData,
+  hasMore,
+  onLoadMore,
+  activeReplyId,
+  activePromptId,
+  canReply,
+  onReply,
+  onTogglePrompt,
   onPromptFix,
-  defaultChecksOpen = true,
-  defaultCommentsOpen = true,
-}: PullRequestSummaryProps) {
-  const [activeReply, setActiveReply] = useState<{
-    identityKey: string;
-    providerNodeId: string;
-    actor: string;
-  } | null>(null);
-  const [activePrompt, setActivePrompt] = useState<{
-    identityKey: string;
-    providerNodeId: string;
-  } | null>(null);
-  const conversationCount = detail.commentCount + detail.reviewThreadCount;
-  const identityKey = getPullRequestMutationIdentityKey(detail.identity);
-  const expected = pullRequestMutationExpected(detail);
-  const activeReplyId =
-    activeReply?.identityKey === identityKey
-      ? activeReply.providerNodeId
-      : null;
-  const activePromptId =
-    activePrompt?.identityKey === identityKey
-      ? activePrompt.providerNodeId
-      : null;
-  const canReply = commentCapability?.allowed === true && expected !== null;
+  replyComposer,
+}: {
+  comments: readonly PullRequestConversationItem[];
+  loading: boolean;
+  loaded: boolean;
+  boundedData: PullRequestBoundedDataMarker | null;
+  hasMore: boolean;
+  onLoadMore: (() => void) | undefined;
+  activeReplyId: string | null;
+  activePromptId: string | null;
+  canReply: boolean;
+  onReply: (item: IssueComment) => void;
+  onTogglePrompt: (item: IssueComment) => void;
+  onPromptFix?: (item: IssueComment) => void;
+  replyComposer: ReactNode;
+}) {
+  return (
+    <>
+      <ResourceListState
+        loading={loading}
+        loaded={loaded}
+        itemCount={comments.length}
+        loadingLabel="Loading comments"
+        emptyLabel="No comments yet."
+      >
+        <ConversationList
+          comments={comments}
+          activeReplyId={activeReplyId}
+          activePromptId={activePromptId}
+          canReply={canReply}
+          onReply={onReply}
+          onTogglePrompt={onTogglePrompt}
+          onPromptFix={onPromptFix}
+          replyComposer={replyComposer}
+        />
+      </ResourceListState>
+      <ResourceLoadContinuation
+        boundedData={boundedData}
+        subject="comments"
+        hasMore={hasMore}
+        loading={loading}
+        onLoadMore={onLoadMore}
+        loadingLabel="Loading comments"
+        loadMoreLabel="Load more comments"
+      />
+    </>
+  );
+}
+
+interface ActiveReply {
+  identityKey: string;
+  providerNodeId: string;
+  actor: string;
+}
+
+interface ActivePrompt {
+  identityKey: string;
+  providerNodeId: string;
+}
+
+function useActiveReply(
+  identityKey: string,
+  identity: PullRequestDetail["identity"],
+): {
+  activeReply: ActiveReply | null;
+  activeReplyId: string | null;
+  startReply: (item: IssueComment) => void;
+  clearActiveReply: () => void;
+} {
+  const [storedActiveReply, setActiveReply] = useState<ActiveReply | null>(
+    null,
+  );
+  const activeReply =
+    storedActiveReply?.identityKey === identityKey ? storedActiveReply : null;
+  const activeReplyId = activeReply?.providerNodeId ?? null;
   const startReply = useCallback(
-    (
-      item: Extract<
-        PullRequestConversationItem,
-        { kind: "issue_comment" }
-      >,
-    ): void => {
+    (item: IssueComment): void => {
       const actor = item.author?.login;
       if (!actor) return;
       const mutationStore = usePullRequestMutationStore.getState();
       if (!mutationStore.commentDrafts[identityKey]?.trim()) {
-        mutationStore.setCommentDraft(detail.identity, `@${actor} `);
+        mutationStore.setCommentDraft(identity, `@${actor} `);
       }
-      setActivePrompt(null);
       setActiveReply({
         identityKey,
         providerNodeId: item.providerNodeId,
         actor,
       });
     },
-    [detail.identity, identityKey],
+    [identity, identityKey],
   );
-  const togglePrompt = useCallback(
-    (
-      item: Extract<
-        PullRequestConversationItem,
-        { kind: "issue_comment" }
-      >,
-    ): void => {
-      setActiveReply(null);
+  const clearActiveReply = useCallback((): void => setActiveReply(null), []);
+
+  return { activeReply, activeReplyId, startReply, clearActiveReply };
+}
+
+function useActivePrompt(identityKey: string): {
+  activePromptId: string | null;
+  toggleActivePrompt: (item: IssueComment) => void;
+  clearActivePrompt: () => void;
+} {
+  const [activePrompt, setActivePrompt] = useState<ActivePrompt | null>(null);
+  const activePromptId =
+    activePrompt?.identityKey === identityKey
+      ? activePrompt.providerNodeId
+      : null;
+  const toggleActivePrompt = useCallback(
+    (item: IssueComment): void => {
       setActivePrompt((current) =>
         current?.identityKey === identityKey &&
         current.providerNodeId === item.providerNodeId
@@ -658,20 +1020,116 @@ function PullRequestSummaryComponent({
     },
     [identityKey],
   );
-  const replyComposer = activeReplyId ? (
-    <PullRequestIssueCommentComposer
-      identity={detail.identity}
-      expected={expected}
-      capability={commentCapability}
-      mutationTransport={mutationTransport}
-      readTransport={readTransport}
-      onRefresh={onRefresh}
-      variant="reply"
-      replyTo={activeReply?.actor}
-      onCancel={() => setActiveReply(null)}
-      onPosted={() => setActiveReply(null)}
-    />
-  ) : null;
+  const clearActivePrompt = useCallback((): void => setActivePrompt(null), []);
+
+  return { activePromptId, toggleActivePrompt, clearActivePrompt };
+}
+
+function useReplyComposer({
+  activeReply,
+  identity,
+  expected,
+  capability,
+  mutationTransport,
+  readTransport,
+  onRefresh,
+  onCancel,
+}: {
+  activeReply: ActiveReply | null;
+  identity: PullRequestDetail["identity"];
+  expected: ReturnType<typeof pullRequestMutationExpected>;
+  capability: PullRequestCapability | null | undefined;
+  mutationTransport: PullRequestMutationTransport | undefined;
+  readTransport: PullRequestTransport | undefined;
+  onRefresh: (() => Promise<boolean> | boolean) | undefined;
+  onCancel: () => void;
+}): ReactNode {
+  return useMemo(() => {
+    if (!activeReply) return null;
+    return (
+      <PullRequestIssueCommentComposer
+        identity={identity}
+        expected={expected}
+        capability={capability}
+        mutationTransport={mutationTransport}
+        readTransport={readTransport}
+        onRefresh={onRefresh}
+        variant="reply"
+        replyTo={activeReply.actor}
+        onCancel={onCancel}
+        onPosted={onCancel}
+      />
+    );
+  }, [
+    activeReply,
+    capability,
+    expected,
+    identity,
+    mutationTransport,
+    onCancel,
+    onRefresh,
+    readTransport,
+  ]);
+}
+
+function PullRequestSummaryComponent(props: PullRequestSummaryProps) {
+  return <PullRequestSummaryContent {...resolvePullRequestSummaryProps(props)} />;
+}
+
+function PullRequestSummaryContent({
+  detail,
+  checks,
+  comments,
+  detailBoundedData,
+  checksHasMore,
+  commentsHasMore,
+  checksBoundedData,
+  commentsBoundedData,
+  checksLoading,
+  commentsLoading,
+  checksLoaded,
+  commentsLoaded,
+  onLoadMoreChecks,
+  onLoadMoreComments,
+  onChecksFirstOpen,
+  onCommentsFirstOpen,
+  commentCapability,
+  mutationTransport,
+  readTransport,
+  onRefresh,
+  onPromptFix,
+  defaultChecksOpen,
+  defaultCommentsOpen,
+}: ResolvedPullRequestSummaryProps) {
+  const conversationCount = detail.commentCount + detail.reviewThreadCount;
+  const identityKey = getPullRequestMutationIdentityKey(detail.identity);
+  const expected = pullRequestMutationExpected(detail);
+  const { activeReply, activeReplyId, startReply: startActiveReply, clearActiveReply } =
+    useActiveReply(identityKey, detail.identity);
+  const { activePromptId, toggleActivePrompt, clearActivePrompt } =
+    useActivePrompt(identityKey);
+  const canReply = commentCapability?.allowed === true && expected !== null;
+  const startReply = useCallback((item: IssueComment): void => {
+    clearActivePrompt();
+    startActiveReply(item);
+  }, [clearActivePrompt, startActiveReply]);
+  const togglePrompt = useCallback(
+    (item: IssueComment): void => {
+      clearActiveReply();
+      toggleActivePrompt(item);
+    },
+    [clearActiveReply, toggleActivePrompt],
+  );
+  const replyComposer = useReplyComposer({
+    activeReply,
+    identity: detail.identity,
+    expected,
+    capability: commentCapability,
+    mutationTransport,
+    readTransport,
+    onRefresh,
+    onCancel: clearActiveReply,
+  });
   const handleChecksOpenChange = useFirstOpenTrigger(
     `${detail.providerNodeId}:${detail.head.oid ?? "unknown"}:checks`,
     defaultChecksOpen,
@@ -688,170 +1146,48 @@ function PullRequestSummaryComponent({
       aria-label="Pull request summary"
       className="mx-auto min-w-0 w-full max-w-5xl space-y-10 px-4 pb-12 sm:px-6"
     >
-      <section aria-label="Description">
-        {detail.body ? (
-          <RemoteMarkdown
-            content={detail.body}
-            className="max-w-[72ch] [&_h1:first-child]:mt-0 [&_h2:first-child]:mt-0 [&_h3:first-child]:mt-0"
-          />
-        ) : (
-          <p className="text-xs text-muted-foreground">No description</p>
-        )}
-        {detailBoundedData && (
-          <p
-            role="status"
-            data-bounded-reason={detailBoundedData.reason}
-            className="mt-2 flex items-start gap-2 bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground"
-          >
-            <AlertCircle
-              size={13}
-              aria-hidden
-              className="mt-0.5 shrink-0 text-primary/80"
-            />
-            Description truncated at the remote data limit.
-          </p>
-        )}
-      </section>
-
-      <Collapsible
+      <SummaryDescription body={detail.body} boundedData={detailBoundedData} />
+      <PullRequestResourceSection
+        label="Checks"
+        icon={null}
+        loadedCount={checks.length}
+        totalCount={detail.checkCount}
         defaultOpen={defaultChecksOpen}
         onOpenChange={handleChecksOpenChange}
-        className="border-t border-border/45"
       >
-        <CollapsibleTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            className="group h-11 w-full justify-start rounded-none px-0 text-xs hover:bg-muted/15 aria-expanded:bg-transparent dark:hover:bg-muted/10 dark:aria-expanded:bg-transparent"
-            aria-label={`Checks, ${checks.length} loaded of ${detail.checkCount}`}
-          >
-            <span>Checks</span>
-            <Badge
-              variant="ghost"
-              size="sm"
-              className="ml-auto text-muted-foreground"
-            >
-              {detail.checkCount}
-            </Badge>
-            <ChevronDown
-              size={13}
-              aria-hidden
-              className="text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
-            />
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="pb-1">
-          {checksLoading && checks.length === 0 ? (
-            <p
-              role="status"
-              className="flex items-center gap-2 py-3 text-xs text-muted-foreground"
-            >
-              <Spinner size="xs" aria-hidden />
-              Loading checks
-            </p>
-          ) : checksLoaded && checks.length === 0 ? (
-            <p className="py-3 text-xs text-muted-foreground">
-              No checks reported.
-            </p>
-          ) : (
-            <CheckList checks={checks} />
-          )}
-          {checksBoundedData ? (
-            <BoundedDataNotice
-              marker={checksBoundedData}
-              subject="check records"
-            />
-          ) : checksHasMore && onLoadMoreChecks ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mt-2 w-full text-xs text-muted-foreground"
-              onClick={onLoadMoreChecks}
-              disabled={checksLoading}
-            >
-              {checksLoading ? "Loading checks" : "Load more checks"}
-            </Button>
-          ) : null}
-        </CollapsibleContent>
-      </Collapsible>
-
-      <Collapsible
+        <ChecksResourceContent
+          checks={checks}
+          loading={checksLoading}
+          loaded={checksLoaded}
+          boundedData={checksBoundedData}
+          hasMore={checksHasMore}
+          onLoadMore={onLoadMoreChecks}
+        />
+      </PullRequestResourceSection>
+      <PullRequestResourceSection
+        label="Comments"
+        icon={<MessageCircle size={13} aria-hidden className="text-muted-foreground" />}
+        loadedCount={comments.length}
+        totalCount={conversationCount}
         defaultOpen={defaultCommentsOpen}
         onOpenChange={handleCommentsOpenChange}
-        className="border-t border-border/45"
       >
-        <CollapsibleTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            className="group h-11 w-full justify-start rounded-none px-0 text-xs hover:bg-muted/15 aria-expanded:bg-transparent dark:hover:bg-muted/10 dark:aria-expanded:bg-transparent"
-            aria-label={`Comments, ${comments.length} loaded of ${conversationCount}`}
-          >
-            <MessageCircle
-              size={13}
-              aria-hidden
-              className="text-muted-foreground"
-            />
-            <span>Comments</span>
-            <Badge
-              variant="ghost"
-              size="sm"
-              className="ml-auto text-muted-foreground"
-            >
-              {conversationCount}
-            </Badge>
-            <ChevronDown
-              size={13}
-              aria-hidden
-              className="text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
-            />
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="pb-1">
-          {commentsLoading && comments.length === 0 ? (
-            <p
-              role="status"
-              className="flex items-center gap-2 py-3 text-xs text-muted-foreground"
-            >
-              <Spinner size="xs" aria-hidden />
-              Loading comments
-            </p>
-          ) : commentsLoaded && comments.length === 0 ? (
-            <p className="py-3 text-xs text-muted-foreground">
-              No comments yet.
-            </p>
-          ) : (
-            <ConversationList
-              comments={comments}
-              activeReplyId={activeReplyId}
-              activePromptId={activePromptId}
-              canReply={canReply}
-              onReply={startReply}
-              onTogglePrompt={togglePrompt}
-              onPromptFix={onPromptFix}
-              replyComposer={replyComposer}
-            />
-          )}
-          {commentsBoundedData ? (
-            <BoundedDataNotice
-              marker={commentsBoundedData}
-              subject="comments"
-            />
-          ) : commentsHasMore && onLoadMoreComments ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mt-2 w-full text-xs text-muted-foreground"
-              onClick={onLoadMoreComments}
-              disabled={commentsLoading}
-            >
-              {commentsLoading ? "Loading comments" : "Load more comments"}
-            </Button>
-          ) : null}
-        </CollapsibleContent>
-      </Collapsible>
+        <CommentsResourceContent
+          comments={comments}
+          loading={commentsLoading}
+          loaded={commentsLoaded}
+          boundedData={commentsBoundedData}
+          hasMore={commentsHasMore}
+          onLoadMore={onLoadMoreComments}
+          activeReplyId={activeReplyId}
+          activePromptId={activePromptId}
+          canReply={canReply}
+          onReply={startReply}
+          onTogglePrompt={togglePrompt}
+          onPromptFix={onPromptFix}
+          replyComposer={replyComposer}
+        />
+      </PullRequestResourceSection>
     </section>
   );
 }

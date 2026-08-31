@@ -1,4 +1,4 @@
-import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useRef, useState } from "react";
 
 /** Values from the preview session used to derive smart omnibox display state. */
 export interface UseOmniboxStateOptions {
@@ -49,20 +49,30 @@ export function useOmniboxState({
 }: UseOmniboxStateOptions): OmniboxState {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isFocused, setIsFocused] = useState(false);
-  const [draftUrl, setDraftUrl] = useState(url);
-  const [isDirty, setIsDirty] = useState(false);
-
-  // Sync draftUrl when a navigation completes (new URL arrives from IPC).
-  useEffect(() => {
-    setDraftUrl(url);
-    setIsDirty(false);
-  }, [url]);
+  const [draft, setDraft] = useState(() => ({
+    sourceUrl: url,
+    value: url,
+    dirty: false,
+  }));
+  const activeDraft = draft.sourceUrl === url
+    ? draft
+    : { sourceUrl: url, value: url, dirty: false };
+  const { value: draftUrl, dirty: isDirty } = activeDraft;
 
   const onFocus = useCallback(() => {
     setIsFocused(true);
     // Populate draft from current URL (not the stale draft).
     if (!isDirty) {
-      setDraftUrl(url);
+      setDraft((current) => {
+        if (
+          current.sourceUrl === url &&
+          current.value === url &&
+          !current.dirty
+        ) {
+          return current;
+        }
+        return { sourceUrl: url, value: url, dirty: false };
+      });
     }
     // Select all text after React re-renders with the URL value.
     requestAnimationFrame(() => {
@@ -75,9 +85,8 @@ export function useOmniboxState({
   }, []);
 
   const onChange = useCallback((value: string) => {
-    setDraftUrl(value);
-    setIsDirty(true);
-  }, []);
+    setDraft({ sourceUrl: url, value, dirty: true });
+  }, [url]);
 
   const onSubmit = useCallback((): string => {
     return draftUrl;

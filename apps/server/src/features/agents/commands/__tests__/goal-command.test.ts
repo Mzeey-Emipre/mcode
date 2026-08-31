@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type Database from "better-sqlite3";
 import type { IAgentProvider, AgentEvent, GoalState } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { GoalCommand } from "../goal-command.js";
@@ -36,7 +36,7 @@ function fakeGoalCapableProvider() {
     source: "claude",
     controls: { canInspect: true, canClear: true },
   });
-  return Object.assign(new EventEmitter(), {
+  return Object.assign(new NodeEvents.EventEmitter(), {
     id: "claude" as const,
     setGoal: vi.fn<(sid: string, condition: string) => GoalState>((_, condition) => makeGoal(condition)),
     clearGoal: vi.fn<(sid: string) => boolean>(() => true),
@@ -56,7 +56,7 @@ function fakeGoalCapableProvider() {
 
 /** A provider lacking the goal capability (e.g. codex/copilot). */
 function fakeNonGoalProvider() {
-  return Object.assign(new EventEmitter(), {
+  return Object.assign(new NodeEvents.EventEmitter(), {
     id: "codex" as const,
   }) as unknown as IAgentProvider;
 }

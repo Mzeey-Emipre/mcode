@@ -30,26 +30,25 @@ export function parseClaudeGoalCommandResult(
   if (result?.type !== "result" || result.num_turns !== 0) return null;
 
   const text = assistantText.trim();
-  if (text.startsWith(ACTIVE_PREFIX)) {
-    const raw = text.slice(ACTIVE_PREFIX.length).trim();
-    const objective = raw.endsWith(" (not yet evaluated)")
-      ? raw.slice(0, -" (not yet evaluated)".length).trim()
-      : raw;
-    return objective.length > 0 ? { kind: "active", objective } : null;
-  }
+  return parseGoalText(text);
+}
 
-  if (text.startsWith(CLEARED_PREFIX)) {
-    const objective = text.slice(CLEARED_PREFIX.length).trim();
-    return { kind: "cleared", objective };
-  }
+function parseGoalText(text: string): ClaudeGoalCommandParseResult | null {
+  if (text.startsWith(ACTIVE_PREFIX)) return parseActiveGoal(text);
+  if (text.startsWith(CLEARED_PREFIX))
+    return {
+      kind: "cleared",
+      objective: text.slice(CLEARED_PREFIX.length).trim(),
+    };
+  if (text.startsWith("No goal set")) return { kind: "empty" };
+  return text === UNAVAILABLE_TEXT ? { kind: "unavailable" } : null;
+}
 
-  if (text.startsWith("No goal set")) {
-    return { kind: "empty" };
-  }
-
-  if (text === UNAVAILABLE_TEXT) {
-    return { kind: "unavailable" };
-  }
-
-  return null;
+function parseActiveGoal(text: string): ClaudeGoalCommandParseResult | null {
+  const raw = text.slice(ACTIVE_PREFIX.length).trim();
+  const suffix = " (not yet evaluated)";
+  const objective = raw.endsWith(suffix)
+    ? raw.slice(0, -suffix.length).trim()
+    : raw;
+  return objective.length > 0 ? { kind: "active", objective } : null;
 }

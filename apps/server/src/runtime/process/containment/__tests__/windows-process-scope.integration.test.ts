@@ -1,13 +1,14 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeTimersPromises from "node:timers/promises";
 import { describe, expect, it } from "vitest";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import { JobObject } from "../job-object.js";
 import { WindowsProcessScopeFactory } from "../windows-process-scope.js";
 
 describe.runIf(process.platform === "win32")("WindowsProcessScope integration", () => {
   it("terminates one nested process tree without affecting another", async () => {
-    const globalJob = new JobObject();
-    const factory = new WindowsProcessScopeFactory();
+    const globalJob = new JobObject(hostRuntime);
+    const factory = new WindowsProcessScopeFactory(hostRuntime);
     const scopeA = factory.create();
     const scopeB = factory.create();
     const processA = spawnTree();
@@ -39,9 +40,9 @@ describe.runIf(process.platform === "win32")("WindowsProcessScope integration", 
   }, 15_000);
 
   it("reconciles and terminates a descendant created before root assignment", async () => {
-    const globalJob = new JobObject();
-    const scope = new WindowsProcessScopeFactory().create();
-    const root = spawn(
+    const globalJob = new JobObject(hostRuntime);
+    const scope = new WindowsProcessScopeFactory(hostRuntime).create();
+    const root = NodeChildProcess.spawn(
       "powershell.exe",
       [
         "-NoLogo",
@@ -75,8 +76,8 @@ describe.runIf(process.platform === "win32")("WindowsProcessScope integration", 
   }, 15_000);
 });
 
-function spawnTree(): ChildProcess {
-  return spawn(
+function spawnTree(): NodeChildProcess.ChildProcess {
+  return NodeChildProcess.spawn(
     "powershell.exe",
     [
       "-NoLogo",
@@ -97,20 +98,20 @@ async function waitForMembership(
   while (Date.now() < deadline) {
     const snapshot = scope.queryProcessIds();
     if (snapshot.ok && snapshot.processIds.length >= expected) return;
-    await delay(20);
+    await NodeTimersPromises.setTimeout(20);
   }
   expect(scope.queryProcessIds().processIds.length).toBeGreaterThanOrEqual(expected);
 }
 
-async function hasExited(process: ChildProcess, timeoutMs: number): Promise<boolean> {
+async function hasExited(process: NodeChildProcess.ChildProcess, timeoutMs: number): Promise<boolean> {
   if (process.exitCode !== null || process.signalCode !== null) return true;
   return Promise.race([
     new Promise<true>((resolve) => process.once("exit", () => resolve(true))),
-    delay(timeoutMs).then(() => false),
+    NodeTimersPromises.setTimeout(timeoutMs).then(() => false),
   ]);
 }
 
-async function readFirstPid(process: ChildProcess): Promise<number> {
+async function readFirstPid(process: NodeChildProcess.ChildProcess): Promise<number> {
   return new Promise((resolve, reject) => {
     let output = "";
     const timeout = setTimeout(() => reject(new Error("child PID output timed out")), 3_000);

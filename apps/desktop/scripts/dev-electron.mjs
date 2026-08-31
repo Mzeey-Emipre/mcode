@@ -11,17 +11,11 @@
  * 6. Cleans up all child processes on SIGINT/SIGTERM.
  */
 
-import { context, build } from "esbuild";
-import { spawn } from "child_process";
-import { mkdirSync, watch } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
-import { createRequire } from "module";
-import {
-  rebuildServerDevBundle,
-  resolveServerTscBin,
-  copyClaudeSdkCliNextTo,
-} from "../../../scripts/build-server-dev-bundle.mjs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeModule from "node:module";
 import { killProcessTree } from "../../../scripts/kill-process-tree.mjs";
 import { ensureElectronBinary } from "../../../scripts/ensure-electron.mjs";
 import { makeCoalescedAsync } from "./coalesce-async.mjs";
@@ -30,26 +24,34 @@ import {
   ensureRuntimeRoot,
 } from "../../../scripts/agent/runtime-contract.mjs";
 import { seedFixtureRepo } from "../../../scripts/agent/fixture-repo.mjs";
+import { ensureDependencies } from "../../../scripts/agent/ensure-dependencies.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectRoot = resolve(__dirname, "..");
-const repoRoot = resolve(projectRoot, "..", "..");
-const webRoot = resolve(projectRoot, "..", "web");
-const serverRoot = resolve(projectRoot, "..", "server");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const projectRoot = NodePath.resolve(__dirname, "..");
+const repoRoot = NodePath.resolve(projectRoot, "..", "..");
+await ensureDependencies({ repoRoot });
+const { context, build } = await import("esbuild");
+const {
+  rebuildServerDevBundle,
+  resolveServerTscBin,
+  copyClaudeSdkCliNextTo,
+} = await import("../../../scripts/build-server-dev-bundle.mjs");
+const webRoot = NodePath.resolve(projectRoot, "..", "web");
+const serverRoot = NodePath.resolve(projectRoot, "..", "server");
 const runtimePaths = ensureRuntimeRoot(repoRoot);
-mkdirSync(runtimePaths.dbDir, { recursive: true });
-mkdirSync(runtimePaths.logsDir, { recursive: true });
-mkdirSync(runtimePaths.electronDir, { recursive: true });
+NodeFS.mkdirSync(runtimePaths.dbDir, { recursive: true });
+NodeFS.mkdirSync(runtimePaths.logsDir, { recursive: true });
+NodeFS.mkdirSync(runtimePaths.electronDir, { recursive: true });
 const fixtureRepo = seedFixtureRepo(repoRoot);
 const runtimeStateEnv = buildRuntimeStateEnv(repoRoot, {
   MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
 });
 
 /** Paths to Electron main/preload bundles and server bundle (restart triggers). */
-const mainOutFile = resolve(projectRoot, "dist/main/main.cjs");
-const preloadOutFile = resolve(projectRoot, "dist/preload/preload.cjs");
-const guestPreloadOutFile = resolve(projectRoot, "dist/preload/preview-guest-preload.cjs");
-const serverOutFile = resolve(projectRoot, "dist/server/server.cjs");
+const mainOutFile = NodePath.resolve(projectRoot, "dist/main/main.cjs");
+const preloadOutFile = NodePath.resolve(projectRoot, "dist/preload/preload.cjs");
+const guestPreloadOutFile = NodePath.resolve(projectRoot, "dist/preload/preview-guest-preload.cjs");
+const serverOutFile = NodePath.resolve(projectRoot, "dist/server/server.cjs");
 
 /** Shared esbuild options. */
 const shared = {
@@ -74,10 +76,10 @@ const shared = {
  */
 function startServerTscWatch() {
   const tscBin = resolveServerTscBin(serverRoot);
-  const proc = spawn(process.execPath, [
+  const proc = NodeChildProcess.spawn(process.execPath, [
     tscBin,
     "--project",
-    resolve(serverRoot, "tsconfig.build.json"),
+    NodePath.resolve(serverRoot, "tsconfig.build.json"),
     "--watch",
     "--preserveWatchOutput",
   ], {
@@ -128,19 +130,19 @@ function startServerTscWatch() {
 const entries = [
   {
     ...shared,
-    entryPoints: [resolve(projectRoot, "src/main/main.ts")],
+    entryPoints: [NodePath.resolve(projectRoot, "src/main/main.ts")],
     outfile: mainOutFile,
     external: ["electron"],
   },
   {
     ...shared,
-    entryPoints: [resolve(projectRoot, "src/main/preload.ts")],
-    outfile: resolve(projectRoot, "dist/preload/preload.cjs"),
+    entryPoints: [NodePath.resolve(projectRoot, "src/main/preload.ts")],
+    outfile: NodePath.resolve(projectRoot, "dist/preload/preload.cjs"),
     external: ["electron"],
   },
   {
     ...shared,
-    entryPoints: [resolve(projectRoot, "src/features/preview/preload/guest-input.ts")],
+    entryPoints: [NodePath.resolve(projectRoot, "src/features/preview/preload/guest-input.ts")],
     outfile: guestPreloadOutFile,
     external: ["electron"],
   },
@@ -155,7 +157,7 @@ let { proc: serverTscWatch, initialSettled: serverTscInitialSettled } =
 
 const serverEsbuildCfg = {
   ...shared,
-  entryPoints: [resolve(serverRoot, "dist-tsc/index.js")],
+  entryPoints: [NodePath.resolve(serverRoot, "dist-tsc/index.js")],
   outfile: serverOutFile,
   external: ["better-sqlite3", "node-pty", "electron", "koffi"],
   banner: {
@@ -220,7 +222,7 @@ function startViteDevServer() {
       }
     }
 
-    viteProcess = spawn("bun", ["run", "dev"], {
+    viteProcess = NodeChildProcess.spawn("bun", ["run", "dev"], {
       cwd: webRoot,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, NODE_ENV: "development", ...runtimeStateEnv },
@@ -300,7 +302,7 @@ console.log("[dev] tsc settled; launching Electron.");
 
 // Start the dist-tsc watcher AFTER settle so only real user edits fire it.
 try {
-  distTscWatcher = watch(resolve(serverRoot, "dist-tsc"), { recursive: true }, () => {
+  distTscWatcher = NodeFS.watch(NodePath.resolve(serverRoot, "dist-tsc"), { recursive: true }, () => {
     scheduleServerBundleRebuild();
   });
 } catch (err) {
@@ -332,7 +334,7 @@ async function spawnElectron() {
   // launched from terminals running inside Electron-based apps (e.g. Claude
   // Code, VS Code), this flag is inherited and forces Electron to run as
   // plain Node.js, making the `electron` module API unavailable.
-  const desktopRequire = createRequire(resolve(projectRoot, "package.json"));
+  const desktopRequire = NodeModule.createRequire(NodePath.resolve(projectRoot, "package.json"));
   const electronBin = desktopRequire("electron");
   const electronEnv = {
     ...process.env,
@@ -341,7 +343,7 @@ async function spawnElectron() {
     NODE_ENV: "development",
   };
   delete electronEnv.ELECTRON_RUN_AS_NODE;
-  electronProcess = spawn(electronBin, ["."], {
+  electronProcess = NodeChildProcess.spawn(electronBin, ["."], {
     cwd: projectRoot,
     stdio: "inherit",
     env: electronEnv,
@@ -386,10 +388,10 @@ function scheduleElectronRestart(reason) {
   }, 300);
 }
 
-watch(mainOutFile, () => scheduleElectronRestart("main bundle updated"));
-watch(preloadOutFile, () => scheduleElectronRestart("preload bundle updated"));
-watch(guestPreloadOutFile, () => scheduleElectronRestart("preview guest preload bundle updated"));
-watch(serverOutFile, () => scheduleElectronRestart("server bundle updated"));
+NodeFS.watch(mainOutFile, () => scheduleElectronRestart("main bundle updated"));
+NodeFS.watch(preloadOutFile, () => scheduleElectronRestart("preload bundle updated"));
+NodeFS.watch(guestPreloadOutFile, () => scheduleElectronRestart("preview guest preload bundle updated"));
+NodeFS.watch(serverOutFile, () => scheduleElectronRestart("server bundle updated"));
 
 // -------------------------------------------------------------------------
 // Step 4: Cleanup on exit signals

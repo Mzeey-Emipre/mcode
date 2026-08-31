@@ -2,9 +2,9 @@
 /**
  * Stops only the processes recorded for the per-worktree agent runtime.
  */
-import { existsSync, readdirSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import {
   getRuntimePaths,
@@ -97,14 +97,14 @@ function readPortsFileForShutdown(repoRoot) {
  */
 export async function stopRecordedRuntimePids(repoRoot = resolveRepoRoot(), options = {}) {
   const paths = getRuntimePaths(repoRoot);
-  if (!existsSync(paths.pidsDir)) return;
-  const pidFiles = readdirSync(paths.pidsDir)
+  if (!NodeFS.existsSync(paths.pidsDir)) return;
+  const pidFiles = NodeFS.readdirSync(paths.pidsDir)
     .filter((name) => name.endsWith(".pid"))
     .sort()
     .reverse();
 
   for (const name of pidFiles) {
-    const pidFile = join(paths.pidsDir, name);
+    const pidFile = NodePath.join(paths.pidsDir, name);
     try {
       if (name === "server.pid") {
         await stopRecordedServerPidFile(pidFile, repoRoot, options);
@@ -141,7 +141,7 @@ async function stopRecordedServerPidFile(pidFile, repoRoot, options) {
     now: options.now,
   });
   if (stopped) {
-    rmSync(pidFile);
+    NodeFS.rmSync(pidFile);
     return;
   }
   await stopRecordedPidFile(pidFile, { repoRoot, stop: options.stop });
@@ -180,7 +180,7 @@ function delay(timeoutMs) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, timeoutMs));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const repoRoot = process.argv[2] ? resolve(process.argv[2]) : resolveRepoRoot();
+if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
+  const repoRoot = process.argv[2] ? NodePath.resolve(process.argv[2]) : resolveRepoRoot();
   await agentDown(repoRoot);
 }

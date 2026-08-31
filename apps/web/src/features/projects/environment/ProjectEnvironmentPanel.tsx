@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import type {
   WorkspaceEnvironmentAction,
@@ -160,6 +160,298 @@ function ActionEditor({ action, onChange, onRemove, nameRef }: ActionEditorProps
   );
 }
 
+interface EnvironmentPersistenceOptions {
+  workspaceId: string;
+  threadId: string | undefined;
+  scopeId: string;
+  revision: string | null;
+  draftRef: RefObject<WorkspaceEnvironmentDocument>;
+  applyRead: (result: WorkspaceEnvironmentReadResult) => void;
+  setRevision: Dispatch<SetStateAction<string | null>>;
+  setLoadedScopeId: Dispatch<SetStateAction<string | null>>;
+  setLoading: Dispatch<SetStateAction<boolean>>;
+  setSaving: Dispatch<SetStateAction<boolean>>;
+  setStatus: Dispatch<SetStateAction<string | null>>;
+  setError: Dispatch<SetStateAction<string[] | null>>;
+  setConfirmSharedStorage: Dispatch<SetStateAction<boolean>>;
+  firstTaskRef: RefObject<HTMLButtonElement | null>;
+}
+
+function useEnvironmentPersistence({
+  workspaceId,
+  threadId,
+  scopeId,
+  revision,
+  draftRef,
+  applyRead,
+  setRevision,
+  setLoadedScopeId,
+  setLoading,
+  setSaving,
+  setStatus,
+  setError,
+  setConfirmSharedStorage,
+  firstTaskRef,
+}: EnvironmentPersistenceOptions) {
+  const reload = useCallback(async (announce = false) => {
+    setLoading(true);
+    setStatus(null);
+    try {
+      const result = threadId
+        ? await getTransport().readWorkspaceEnvironment(workspaceId, threadId)
+        : await getTransport().readWorkspaceEnvironment(workspaceId);
+      applyRead(result);
+      if (announce) setStatus("Environment reloaded");
+    } catch (nextError) {
+      setError(issueText(nextError));
+    } finally {
+      setLoading(false);
+    }
+  }, [applyRead, setError, setLoading, setStatus, threadId, workspaceId]);
+  const save = useCallback(async () => {
+    const submittedDraft = draftRef.current;
+    const submittedDraftJson = JSON.stringify(submittedDraft);
+    setSaving(true);
+    setStatus(null);
+    try {
+      const result = threadId
+        ? await getTransport().saveWorkspaceEnvironment(workspaceId, submittedDraft, revision, threadId)
+        : await getTransport().saveWorkspaceEnvironment(workspaceId, submittedDraft, revision);
+      setRevision(result.revision);
+      setLoadedScopeId(scopeId);
+      if (JSON.stringify(draftRef.current) === submittedDraftJson) applyRead(result);
+      useProjectActionStore.getState().invalidateWorkspaceConfiguration(workspaceId);
+      setStatus("Environment saved");
+      requestAnimationFrame(() => firstTaskRef.current?.focus());
+    } catch (nextError) {
+      setError(issueText(nextError));
+    } finally {
+      setSaving(false);
+    }
+  }, [applyRead, draftRef, firstTaskRef, revision, scopeId, setError, setLoadedScopeId, setRevision, setSaving, setStatus, threadId, workspaceId]);
+  const changeStorageMode = useCallback(async (nextStorageMode: WorkspaceEnvironmentStorageMode) => {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const result = threadId
+        ? await getTransport().setWorkspaceEnvironmentStorageMode(workspaceId, nextStorageMode, threadId)
+        : await getTransport().setWorkspaceEnvironmentStorageMode(workspaceId, nextStorageMode);
+      applyRead(result);
+      useProjectActionStore.getState().invalidateWorkspaceConfiguration(workspaceId);
+      setStatus(nextStorageMode === "shared" ? "Shared environment enabled" : "System environment enabled");
+    } catch (nextError) {
+      setError(issueText(nextError));
+    } finally {
+      setSaving(false);
+      setConfirmSharedStorage(false);
+    }
+  }, [applyRead, setConfirmSharedStorage, setError, setSaving, setStatus, threadId, workspaceId]);
+  const clearApprovals = useCallback(async () => {
+    setSaving(true);
+    setStatus(null);
+    try {
+      await getTransport().clearWorkspaceEnvironmentApprovals(workspaceId);
+      setStatus("Shared command approvals cleared");
+    } catch (nextError) {
+      setError(issueText(nextError));
+    } finally {
+      setSaving(false);
+    }
+  }, [setError, setSaving, setStatus, workspaceId]);
+  return { reload, save, changeStorageMode, clearApprovals };
+}
+
+function useEnvironmentDraftActions(
+  setDraft: Dispatch<SetStateAction<WorkspaceEnvironmentDocument>>,
+  setSetupEnabled: Dispatch<SetStateAction<boolean>>,
+  setupScriptRef: RefObject<HTMLTextAreaElement | null>,
+  firstTaskRef: RefObject<HTMLButtonElement | null>,
+  firstActionNameRef: RefObject<HTMLInputElement | null>,
+) {
+  const setSetup = useCallback((enabled: boolean) => {
+    setSetupEnabled(enabled);
+    setDraft((current) => ({ ...current, setup: enabled ? current.setup ?? { default: "" } : undefined }));
+    requestAnimationFrame(() => {
+      if (enabled) setupScriptRef.current?.focus();
+      else firstTaskRef.current?.focus();
+    });
+  }, [firstTaskRef, setDraft, setSetupEnabled, setupScriptRef]);
+  const addAction = useCallback(() => {
+    const action = newAction();
+    setDraft((current) => ({ ...current, actions: [...current.actions, action] }));
+    requestAnimationFrame(() => firstActionNameRef.current?.focus());
+  }, [firstActionNameRef, setDraft]);
+  const updateAction = useCallback((id: string, action: WorkspaceEnvironmentAction) => {
+    setDraft((current) => ({ ...current, actions: current.actions.map((candidate) => candidate.id === id ? action : candidate) }));
+  }, [setDraft]);
+  const removeAction = useCallback((id: string) => {
+    setDraft((current) => ({ ...current, actions: current.actions.filter((candidate) => candidate.id !== id) }));
+    requestAnimationFrame(() => firstTaskRef.current?.focus());
+  }, [firstTaskRef, setDraft]);
+  return { setSetup, addAction, updateAction, removeAction };
+}
+
+function EnvironmentStorageSection({
+  storageMode,
+  saving,
+  systemStorageDescriptionId,
+  sharedStorageDescriptionId,
+  onChangeStorageMode,
+  onConfirmSharedStorage,
+  onClearApprovals,
+}: {
+  storageMode: WorkspaceEnvironmentStorageMode;
+  saving: boolean;
+  systemStorageDescriptionId: string;
+  sharedStorageDescriptionId: string;
+  onChangeStorageMode: (mode: WorkspaceEnvironmentStorageMode) => Promise<void>;
+  onConfirmSharedStorage: Dispatch<SetStateAction<boolean>>;
+  onClearApprovals: () => Promise<void>;
+}) {
+  return (
+    <section aria-labelledby="project-environment-storage-title" className="space-y-3">
+      <div className="space-y-1">
+        <h2 id="project-environment-storage-title" className="text-sm font-semibold">Environment storage</h2>
+        <p className="text-xs text-muted-foreground">Choose where Mcode saves this Project’s Setup and actions.</p>
+      </div>
+      <div role="radiogroup" aria-label="Environment storage" className="mt-3 grid gap-2">
+        <EnvironmentStorageOption
+          mode="system"
+          storageMode={storageMode}
+          descriptionId={systemStorageDescriptionId}
+          description="Only available on this computer."
+          disabled={saving}
+          onClick={() => { if (storageMode !== "system") void onChangeStorageMode("system"); }}
+        />
+        <EnvironmentStorageOption
+          mode="shared"
+          storageMode={storageMode}
+          descriptionId={sharedStorageDescriptionId}
+          description="Save in .mcode/environment.json for this Project."
+          disabled={saving}
+          onClick={() => { if (storageMode !== "shared") onConfirmSharedStorage(true); }}
+        />
+        <ClearSharedApprovals storageMode={storageMode} saving={saving} onClearApprovals={onClearApprovals} />
+      </div>
+    </section>
+  );
+}
+
+function EnvironmentStorageOption({
+  mode,
+  storageMode,
+  descriptionId,
+  description,
+  disabled,
+  onClick,
+}: {
+  mode: WorkspaceEnvironmentStorageMode;
+  storageMode: WorkspaceEnvironmentStorageMode;
+  descriptionId: string;
+  description: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const selected = storageMode === mode;
+  const label = mode === "system" ? "System storage" : "Shared storage";
+  return (
+    <Button type="button" role="radio" aria-checked={selected} aria-label={label} aria-describedby={descriptionId} variant={selected ? "secondary" : "outline"} disabled={disabled} className="h-auto justify-start px-3 py-3 text-left" onClick={onClick}>
+      <span className="flex min-w-0 flex-col gap-1"><span>{label}</span><span id={descriptionId} className="text-xs font-normal text-muted-foreground">{description}</span></span>
+    </Button>
+  );
+}
+
+function ClearSharedApprovals({ storageMode, saving, onClearApprovals }: { storageMode: WorkspaceEnvironmentStorageMode; saving: boolean; onClearApprovals: () => Promise<void> }) {
+  if (storageMode !== "shared") return null;
+  return <Button type="button" variant="ghost" size="sm" className="w-fit" disabled={saving} onClick={() => { void onClearApprovals(); }}>Clear shared command approvals</Button>;
+}
+
+function EnvironmentSetupSection({
+  draft,
+  setupEnabled,
+  firstTaskRef,
+  setupScriptRef,
+  onSetSetup,
+  onDraftChange,
+}: {
+  draft: WorkspaceEnvironmentDocument;
+  setupEnabled: boolean;
+  firstTaskRef: RefObject<HTMLButtonElement | null>;
+  setupScriptRef: RefObject<HTMLTextAreaElement | null>;
+  onSetSetup: (enabled: boolean) => void;
+  onDraftChange: Dispatch<SetStateAction<WorkspaceEnvironmentDocument>>;
+}) {
+  return (
+    <section aria-labelledby="project-environment-setup-title" className="space-y-3 border-t border-border/60 pt-6">
+      <div className="flex items-center justify-between gap-3">
+        <div><h2 id="project-environment-setup-title" className="text-base font-semibold">Setup</h2><p className="mt-1 text-xs text-muted-foreground">Optional setup command configuration for this Project.</p></div>
+        <Button ref={firstTaskRef} type="button" variant="outline" size="sm" onClick={() => onSetSetup(!setupEnabled)}>{setupEnabled ? "Remove Setup" : "Add Setup"}</Button>
+      </div>
+      <EnvironmentSetupEditor setup={setupEnabled ? draft.setup : undefined} setupScriptRef={setupScriptRef} onDraftChange={onDraftChange} />
+    </section>
+  );
+}
+
+function EnvironmentSetupEditor({
+  setup,
+  setupScriptRef,
+  onDraftChange,
+}: {
+  setup: WorkspaceEnvironmentCommand | undefined;
+  setupScriptRef: RefObject<HTMLTextAreaElement | null>;
+  onDraftChange: Dispatch<SetStateAction<WorkspaceEnvironmentDocument>>;
+}) {
+  if (!setup) return null;
+  return <PlatformCommandEditor idPrefix="setup" command={setup} onChange={(nextSetup) => onDraftChange((current) => ({ ...current, setup: nextSetup }))} firstControlRef={setupScriptRef} />;
+}
+
+function EnvironmentActionsSection({
+  actions,
+  firstActionNameRef,
+  onAddAction,
+  onUpdateAction,
+  onRemoveAction,
+}: {
+  actions: WorkspaceEnvironmentAction[];
+  firstActionNameRef: RefObject<HTMLInputElement | null>;
+  onAddAction: () => void;
+  onUpdateAction: (id: string, action: WorkspaceEnvironmentAction) => void;
+  onRemoveAction: (id: string) => void;
+}) {
+  return (
+    <section aria-labelledby="project-environment-actions-title" className="space-y-3 border-t border-border/60 pt-6">
+      <div className="flex items-center justify-between gap-3">
+        <div><h2 id="project-environment-actions-title" className="text-base font-semibold">Project actions</h2><p className="mt-1 text-xs text-muted-foreground">Save named commands for this Project.</p></div>
+        <Button type="button" variant="outline" size="sm" aria-label="Add action" onClick={onAddAction}><Plus size={15} aria-hidden /> Add action</Button>
+      </div>
+      <EnvironmentActionList actions={actions} firstActionNameRef={firstActionNameRef} onUpdateAction={onUpdateAction} onRemoveAction={onRemoveAction} />
+    </section>
+  );
+}
+
+function EnvironmentActionList({
+  actions,
+  firstActionNameRef,
+  onUpdateAction,
+  onRemoveAction,
+}: Omit<Parameters<typeof EnvironmentActionsSection>[0], "onAddAction">) {
+  if (actions.length === 0) return <p className="text-xs text-muted-foreground">No project actions configured.</p>;
+  return (
+    <div className="space-y-8">
+      {actions.map((action, index) => <ActionEditor key={action.id} action={action} onChange={(next) => onUpdateAction(action.id, next)} onRemove={() => onRemoveAction(action.id)} nameRef={index === actions.length - 1 ? firstActionNameRef : undefined} />)}
+    </div>
+  );
+}
+
+function EnvironmentMessages({ error, status }: { error: string[] | null; status: string | null }) {
+  return (
+    <>
+      {error ? <div className="max-h-32 overflow-y-auto rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs" role="alert" tabIndex={0} aria-label="Project environment errors">{error.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div> : null}
+      {status ? <p className="text-xs text-muted-foreground" role="status">{status}</p> : null}
+    </>
+  );
+}
+
 /** Right-panel editor for one Project environment document. */
 export function ProjectEnvironmentPanel({ workspaceId, threadId, active = true }: {
   readonly workspaceId: string;
@@ -203,22 +495,22 @@ export function ProjectEnvironmentPanel({ workspaceId, threadId, active = true }
     draftRef.current = draft;
   }, [draft]);
 
-  const reload = useCallback(async (announce = false) => {
-    setLoading(true);
-    setStatus(null);
-    try {
-      const transport = getTransport();
-      const result = threadId
-        ? await transport.readWorkspaceEnvironment(workspaceId, threadId)
-        : await transport.readWorkspaceEnvironment(workspaceId);
-      applyRead(result);
-      if (announce) setStatus("Environment reloaded");
-    } catch (nextError) {
-      setError(issueText(nextError));
-    } finally {
-      setLoading(false);
-    }
-  }, [applyRead, threadId, workspaceId]);
+  const { reload, save, changeStorageMode, clearApprovals } = useEnvironmentPersistence({
+    workspaceId,
+    threadId,
+    scopeId,
+    revision,
+    draftRef,
+    applyRead,
+    setRevision,
+    setLoadedScopeId,
+    setLoading,
+    setSaving,
+    setStatus,
+    setError,
+    setConfirmSharedStorage,
+    firstTaskRef,
+  });
 
   useEffect(() => {
     if (loadedScopeId !== scopeId) void reload();
@@ -230,90 +522,13 @@ export function ProjectEnvironmentPanel({ workspaceId, threadId, active = true }
     requestAnimationFrame(() => firstTaskRef.current?.focus());
   }, [active, loading]);
 
-  const save = async () => {
-    const submittedDraft = draftRef.current;
-    const submittedDraftJson = JSON.stringify(submittedDraft);
-    setSaving(true);
-    setStatus(null);
-    try {
-      const transport = getTransport();
-      const result = threadId
-        ? await transport.saveWorkspaceEnvironment(workspaceId, submittedDraft, revision, threadId)
-        : await transport.saveWorkspaceEnvironment(workspaceId, submittedDraft, revision);
-      setRevision(result.revision);
-      setLoadedScopeId(scopeId);
-      if (JSON.stringify(draftRef.current) === submittedDraftJson) applyRead(result);
-      useProjectActionStore.getState().invalidateWorkspaceConfiguration(workspaceId);
-      setStatus("Environment saved");
-      requestAnimationFrame(() => firstTaskRef.current?.focus());
-    } catch (nextError) {
-      setError(issueText(nextError));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const changeStorageMode = async (nextStorageMode: WorkspaceEnvironmentStorageMode) => {
-    setSaving(true);
-    setStatus(null);
-    try {
-      const transport = getTransport();
-      const result = threadId
-        ? await transport.setWorkspaceEnvironmentStorageMode(workspaceId, nextStorageMode, threadId)
-        : await transport.setWorkspaceEnvironmentStorageMode(workspaceId, nextStorageMode);
-      applyRead(result);
-      useProjectActionStore.getState().invalidateWorkspaceConfiguration(workspaceId);
-      setStatus(nextStorageMode === "shared" ? "Shared environment enabled" : "System environment enabled");
-    } catch (nextError) {
-      setError(issueText(nextError));
-    } finally {
-      setSaving(false);
-      setConfirmSharedStorage(false);
-    }
-  };
-
-  const clearApprovals = async () => {
-    setSaving(true);
-    setStatus(null);
-    try {
-      await getTransport().clearWorkspaceEnvironmentApprovals(workspaceId);
-      setStatus("Shared command approvals cleared");
-    } catch (nextError) {
-      setError(issueText(nextError));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const setSetup = (enabled: boolean) => {
-    setSetupEnabled(enabled);
-    setDraft((current) => ({
-      ...current,
-      setup: enabled ? current.setup ?? { default: "" } : undefined,
-    }));
-    requestAnimationFrame(() => {
-      if (enabled) setupScriptRef.current?.focus();
-      else firstTaskRef.current?.focus();
-    });
-  };
-
-  const addAction = () => {
-    const action = newAction();
-    setDraft((current) => ({ ...current, actions: [...current.actions, action] }));
-    requestAnimationFrame(() => firstActionNameRef.current?.focus());
-  };
-
-  const updateAction = (id: string, action: WorkspaceEnvironmentAction) => {
-    setDraft((current) => ({
-      ...current,
-      actions: current.actions.map((candidate) => candidate.id === id ? action : candidate),
-    }));
-  };
-
-  const removeAction = (id: string) => {
-    setDraft((current) => ({ ...current, actions: current.actions.filter((candidate) => candidate.id !== id) }));
-    requestAnimationFrame(() => firstTaskRef.current?.focus());
-  };
+  const { setSetup, addAction, updateAction, removeAction } = useEnvironmentDraftActions(
+    setDraft,
+    setSetupEnabled,
+    setupScriptRef,
+    firstTaskRef,
+    firstActionNameRef,
+  );
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden" aria-labelledby="project-environment-title">
@@ -323,102 +538,33 @@ export function ProjectEnvironmentPanel({ workspaceId, threadId, active = true }
             <h1 id="project-environment-title" className="text-base font-semibold">Project settings</h1>
             <p className="text-xs text-muted-foreground">{projectName}</p>
           </header>
-          {error ? (
-            <div className="max-h-32 overflow-y-auto rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs" role="alert" tabIndex={0} aria-label="Project environment errors">
-              {error.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}
-            </div>
-          ) : null}
-          {status ? <p className="text-xs text-muted-foreground" role="status">{status}</p> : null}
+          <EnvironmentMessages error={error} status={status} />
           {loading ? <p className="text-xs text-muted-foreground">Loading environment...</p> : (
             <>
-            <section aria-labelledby="project-environment-storage-title" className="space-y-3">
-              <div className="space-y-1">
-                <h2 id="project-environment-storage-title" className="text-sm font-semibold">Environment storage</h2>
-                <p className="text-xs text-muted-foreground">Choose where Mcode saves this Project’s Setup and actions.</p>
-              </div>
-              <div role="radiogroup" aria-label="Environment storage" className="mt-3 grid gap-2">
-                <Button
-                  type="button"
-                  role="radio"
-                  aria-checked={storageMode === "system"}
-                  aria-label="System storage"
-                  aria-describedby={systemStorageDescriptionId}
-                  variant={storageMode === "system" ? "secondary" : "outline"}
-                  disabled={saving}
-                  className="h-auto justify-start px-3 py-3 text-left"
-                  onClick={() => { if (storageMode !== "system") void changeStorageMode("system"); }}
-                >
-                  <span className="flex min-w-0 flex-col gap-1">
-                    <span>System storage</span>
-                    <span id={systemStorageDescriptionId} className="text-xs font-normal text-muted-foreground">Only available on this computer.</span>
-                  </span>
-                </Button>
-                <Button
-                  type="button"
-                  role="radio"
-                  aria-checked={storageMode === "shared"}
-                  aria-label="Shared storage"
-                  aria-describedby={sharedStorageDescriptionId}
-                  variant={storageMode === "shared" ? "secondary" : "outline"}
-                  disabled={saving}
-                  className="h-auto justify-start px-3 py-3 text-left"
-                  onClick={() => { if (storageMode !== "shared") setConfirmSharedStorage(true); }}
-                >
-                  <span className="flex min-w-0 flex-col gap-1">
-                    <span>Shared storage</span>
-                    <span id={sharedStorageDescriptionId} className="text-xs font-normal text-muted-foreground">Save in .mcode/environment.json for this Project.</span>
-                  </span>
-                </Button>
-                {storageMode === "shared" ? (
-                  <Button type="button" variant="ghost" size="sm" className="w-fit" disabled={saving} onClick={() => { void clearApprovals(); }}>
-                    Clear shared command approvals
-                  </Button>
-                ) : null}
-              </div>
-            </section>
-            <section aria-labelledby="project-environment-setup-title" className="space-y-3 border-t border-border/60 pt-6">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 id="project-environment-setup-title" className="text-base font-semibold">Setup</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">Optional setup command configuration for this Project.</p>
-                </div>
-                <Button ref={firstTaskRef} type="button" variant="outline" size="sm" onClick={() => setSetup(!setupEnabled)}>
-                  {setupEnabled ? "Remove Setup" : "Add Setup"}
-                </Button>
-              </div>
-              {setupEnabled && draft.setup ? (
-                <PlatformCommandEditor
-                  idPrefix="setup"
-                  command={draft.setup}
-                  onChange={(setup) => setDraft((current) => ({ ...current, setup }))}
-                  firstControlRef={setupScriptRef}
-                />
-                ) : null}
-            </section>
-            <section aria-labelledby="project-environment-actions-title" className="space-y-3 border-t border-border/60 pt-6">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 id="project-environment-actions-title" className="text-base font-semibold">Project actions</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">Save named commands for this Project.</p>
-                </div>
-                <Button type="button" variant="outline" size="sm" aria-label="Add action" onClick={addAction}>
-                  <Plus size={15} aria-hidden /> Add action
-                </Button>
-              </div>
-              {draft.actions.length === 0 ? <p className="text-xs text-muted-foreground">No project actions configured.</p> : (
-                <div className="space-y-8">
-                  {draft.actions.map((action, index) => (
-                    <ActionEditor
-                      key={action.id}
-                      action={action}
-                      onChange={(next) => updateAction(action.id, next)}
-                      onRemove={() => removeAction(action.id)}
-                      nameRef={index === draft.actions.length - 1 ? firstActionNameRef : undefined}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
+            <EnvironmentStorageSection
+              storageMode={storageMode}
+              saving={saving}
+              systemStorageDescriptionId={systemStorageDescriptionId}
+              sharedStorageDescriptionId={sharedStorageDescriptionId}
+              onChangeStorageMode={changeStorageMode}
+              onConfirmSharedStorage={setConfirmSharedStorage}
+              onClearApprovals={clearApprovals}
+            />
+            <EnvironmentSetupSection
+              draft={draft}
+              setupEnabled={setupEnabled}
+              firstTaskRef={firstTaskRef}
+              setupScriptRef={setupScriptRef}
+              onSetSetup={setSetup}
+              onDraftChange={setDraft}
+            />
+            <EnvironmentActionsSection
+              actions={draft.actions}
+              firstActionNameRef={firstActionNameRef}
+              onAddAction={addAction}
+              onUpdateAction={updateAction}
+              onRemoveAction={removeAction}
+            />
             </>
           )}
         </div>

@@ -43,6 +43,7 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
 
   useEffect(() => {
     opGenRef.current += 1;
+    // oxlint-disable-next-line react/set-state-in-effect -- A global thread change invalidates pending terminal actions.
     setPendingKill(null);
     setIsClosing(false);
   }, [threadId]);
@@ -71,7 +72,7 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
       console.error("[terminal] Failed to kill terminal", ptyId, err);
       return false;
     }
-  }, [threadId]);
+  }, []);
 
   /** Kill with optional confirmation. */
   const closeTerminal = useCallback(

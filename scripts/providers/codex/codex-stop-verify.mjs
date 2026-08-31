@@ -4,83 +4,57 @@
  * confirm thread.status push -> in-flight tool rows get cancelled.
  * Mirrors the client-side ws-events.ts thread.status handler.
  */
-import { createRequire } from "node:module";
-import { request } from "node:http";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const require = createRequire(join(REPO_ROOT, "apps", "web", "package.json"));
-const { WebSocket } = require("ws");
-
-const PORT = Number(process.env.MCODE_PORT || 19400);
-
-function getHealth() {
-  return new Promise((resolve, reject) => {
-    const req = request({ host: "127.0.0.1", port: PORT, path: "/health" }, (res) => {
-      let b = ""; res.on("data", (c) => (b += c));
-      res.on("end", () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
-    });
-    req.on("error", reject); req.end();
-  });
-}
-const health = await getHealth();
-const ws = new WebSocket(`ws://127.0.0.1:${PORT}/?token=${health.authToken}`);
-const pending = new Map();
-let nextId = 1;
-function rpc(method, params) {
-  const id = String(nextId++);
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject, method });
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-}
+import { connectMcodeWebSocket } from "./mcode-websocket-client.mjs";
 
 // Simulated client store: { id -> {isComplete, isError, output, toolName} }
 const toolCalls = new Map();
-let threadStatus = "active";
 let statusEvents = [];
 
-ws.on("message", (raw) => {
-  let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
-  if (typeof msg.id === "string" && pending.has(msg.id)) {
-    const { resolve, reject, method } = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.error) reject(new Error(`${method}: ${msg.error.message}`));
-    else resolve(msg.result);
-    return;
-  }
-  if (msg.type === "push") {
-    if (msg.channel === "agent.event") {
-      const e = msg.data;
-      if (e.type === "toolUse") {
-        toolCalls.set(e.toolCallId, {
-          id: e.toolCallId, toolName: e.toolName, isComplete: false, isError: false,
-          parentToolCallId: e.parentToolCallId ?? null, output: null,
-        });
-      } else if (e.type === "toolResult") {
-        const tc = toolCalls.get(e.toolCallId);
-        if (tc) { tc.isComplete = true; tc.isError = !!e.isError; tc.output = e.output ?? null; }
-      }
-    } else if (msg.channel === "thread.status") {
-      threadStatus = msg.data.status;
-      statusEvents.push(threadStatus);
-      // Replicate the ws-events.ts fix: mark in-flight tools cancelled on terminal status.
-      const isTerminal = ["paused", "interrupted", "errored"].includes(threadStatus);
-      if (isTerminal) {
-        for (const tc of toolCalls.values()) {
-          if (!tc.isComplete) {
-            tc.isComplete = true;
-            tc.isError = true;
-            tc.output = tc.output ?? "Cancelled";
-          }
-        }
-      }
-    }
-  }
-});
+function recordToolUse(event) {
+  toolCalls.set(event.toolCallId, {
+    id: event.toolCallId, toolName: event.toolName, isComplete: false, isError: false,
+    parentToolCallId: event.parentToolCallId ?? null, output: null,
+  });
+}
 
-await new Promise((r) => ws.on("open", r));
+function recordToolResult(event) {
+  const toolCall = toolCalls.get(event.toolCallId);
+  if (!toolCall) return;
+  toolCall.isComplete = true;
+  toolCall.isError = Boolean(event.isError);
+  toolCall.output = event.output ?? null;
+}
+
+function recordAgentEvent(event) {
+  const recorders = { toolUse: recordToolUse, toolResult: recordToolResult };
+  recorders[event.type]?.(event);
+}
+
+function cancelIncompleteToolCalls() {
+  for (const toolCall of toolCalls.values()) {
+    if (toolCall.isComplete) continue;
+    toolCall.isComplete = true;
+    toolCall.isError = true;
+    toolCall.output = toolCall.output ?? "Cancelled";
+  }
+}
+
+function recordThreadStatus(status) {
+  statusEvents.push(status);
+  if (["paused", "interrupted", "errored"].includes(status)) {
+    cancelIncompleteToolCalls();
+  }
+}
+
+function recordPushMessage(msg) {
+  if (msg.channel === "agent.event") {
+    recordAgentEvent(msg.data);
+  } else if (msg.channel === "thread.status") {
+    recordThreadStatus(msg.data.status);
+  }
+}
+
+const { rpc, close } = await connectMcodeWebSocket({ onPush: recordPushMessage });
 
 // Use existing codex-trace workspace.
 const ws_list = await rpc("workspace.list", {});
@@ -138,5 +112,5 @@ const pass =
   cancelled.length > 0;
 
 console.log(`\n========== RESULT: ${pass ? "PASS ✓" : "FAIL ✗"} ==========`);
-ws.close();
+close();
 process.exit(pass ? 0 : 1);

@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 
 const previewTest = vi.hoisted(() => {
@@ -57,11 +57,12 @@ import {
   resolveMcodeWorkspacePreviewUrl,
   resolvePreviewGuestPreloadPath,
 } from "../index.js";
+import { getSession, sessions } from "../state/window-session.js";
 
 describe("Preview feature public interface", () => {
   beforeAll(() => {
     vi.useFakeTimers();
-    registerPreviewBrowserHandlers();
+    registerPreviewBrowserHandlers("linux");
   });
 
   afterAll(() => {
@@ -134,6 +135,39 @@ describe("Preview feature public interface", () => {
       expect.any(Function),
     );
     expect(previewTest.session.fromPartition).toHaveBeenCalledWith("persist:mcode-preview");
+  });
+
+  it("rejects malformed bounds and validates invalid URLs before requiring an active guest", async () => {
+    const sender = { id: 301, isDestroyed: vi.fn(() => false), send: vi.fn() };
+    const win = {
+      id: 31,
+      webContents: sender,
+      isDestroyed: vi.fn(() => false),
+      isFocused: vi.fn(() => true),
+    };
+    previewTest.browserWindowFromWebContents.mockReturnValue(win);
+    sessions.delete(win.id);
+    const session = getSession(win as never);
+    const sync = previewTest.handlers.get("preview:sync")!;
+
+    for (const bounds of [
+      { x: 0, y: 0, width: Number.NaN, height: 100 },
+      { x: 0, y: 0, width: 100, height: Number.POSITIVE_INFINITY },
+      { x: 0, y: 0, width: "100", height: 100 },
+    ]) {
+      await sync({ sender }, { visible: false, bounds, workspaceId: "workspace-1" });
+      expect(session.lastBounds).toBeNull();
+    }
+
+    const navigate = previewTest.handlers.get("preview:navigate")!;
+    await expect(navigate({ sender }, "")).resolves.toEqual({ ok: false, error: "empty-url" });
+    await expect(navigate({ sender }, "file://attacker/share/page.html")).resolves.toEqual({
+      ok: false,
+      error: "sensitive-file",
+    });
+
+    if (session.discardHiddenTimer) clearTimeout(session.discardHiddenTimer);
+    sessions.delete(win.id);
   });
 
   it("disposes the real window session and adopted Preview surfaces", async () => {
@@ -227,22 +261,22 @@ describe("Preview feature public interface", () => {
   });
 
   it("resolves a workspace Preview URL and rejects traversal", async () => {
-    const workspacePath = await mkdtemp(join(tmpdir(), "mcode-preview-feature-"));
+    const workspacePath = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-preview-feature-"));
     try {
-      await mkdir(join(workspacePath, "sub"));
-      await writeFile(join(workspacePath, "sub", "page.html"), "<h1>Page</h1>");
+      await NodeFSPromises.mkdir(NodePath.join(workspacePath, "sub"));
+      await NodeFSPromises.writeFile(NodePath.join(workspacePath, "sub", "page.html"), "<h1>Page</h1>");
 
       await expect(
         resolveMcodeWorkspacePreviewUrl("mcode-workspace:///sub/page.html", workspacePath),
       ).resolves.toEqual({
         ok: true,
-        url: pathToFileURL(join(workspacePath, "sub", "page.html")).href,
+        url: NodeURL.pathToFileURL(NodePath.join(workspacePath, "sub", "page.html")).href,
       });
       await expect(
         resolveMcodeWorkspacePreviewUrl("mcode-workspace:///%2e%2e%2Fescape.html", workspacePath),
       ).resolves.toEqual({ ok: false, error: "invalid-url" });
     } finally {
-      await rm(workspacePath, { recursive: true, force: true });
+      await NodeFSPromises.rm(workspacePath, { recursive: true, force: true });
     }
   });
 });

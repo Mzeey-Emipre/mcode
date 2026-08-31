@@ -1,7 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readAnthropicOauthToken } from "../anthropic-credentials.js";
 
@@ -17,7 +16,7 @@ describe("readAnthropicOauthToken", () => {
   let tmpHome: string;
 
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "mcode-cred-"));
+    tmpHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-cred-"));
     // Stub both HOME (Linux/macOS) and USERPROFILE (Windows) so homedir()
     // resolves to the temp dir on any platform this test suite runs on.
     vi.stubEnv("HOME", tmpHome);
@@ -25,15 +24,15 @@ describe("readAnthropicOauthToken", () => {
   });
 
   afterEach(() => {
-    rmSync(tmpHome, { recursive: true, force: true });
+    NodeFS.rmSync(tmpHome, { recursive: true, force: true });
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
   it("reads plaintext credentials on linux", async () => {
-    mkdirSync(join(tmpHome, ".claude"), { recursive: true });
-    writeFileSync(
-      join(tmpHome, ".claude", ".credentials.json"),
+    NodeFS.mkdirSync(NodePath.join(tmpHome, ".claude"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(tmpHome, ".claude", ".credentials.json"),
       JSON.stringify({
         claudeAiOauth: {
           accessToken: "sk-ant-oat-test",
@@ -55,8 +54,8 @@ describe("readAnthropicOauthToken", () => {
   });
 
   it("returns null when the file is malformed JSON", async () => {
-    mkdirSync(join(tmpHome, ".claude"), { recursive: true });
-    writeFileSync(join(tmpHome, ".claude", ".credentials.json"), "{not json");
+    NodeFS.mkdirSync(NodePath.join(tmpHome, ".claude"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(tmpHome, ".claude", ".credentials.json"), "{not json");
     expect(await readAnthropicOauthToken("linux")).toBeNull();
   });
 
@@ -87,18 +86,18 @@ describe("readAnthropicOauthToken", () => {
   });
 
   it("returns null when expiresAt is missing from credentials", async () => {
-    mkdirSync(join(tmpHome, ".claude"), { recursive: true });
-    writeFileSync(
-      join(tmpHome, ".claude", ".credentials.json"),
+    NodeFS.mkdirSync(NodePath.join(tmpHome, ".claude"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(tmpHome, ".claude", ".credentials.json"),
       JSON.stringify({ claudeAiOauth: { accessToken: "sk-no-expiry" } }),
     );
     expect(await readAnthropicOauthToken("linux")).toBeNull();
   });
 
   it("reads plaintext credentials on win32", async () => {
-    mkdirSync(join(tmpHome, ".claude"), { recursive: true });
-    writeFileSync(
-      join(tmpHome, ".claude", ".credentials.json"),
+    NodeFS.mkdirSync(NodePath.join(tmpHome, ".claude"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(tmpHome, ".claude", ".credentials.json"),
       JSON.stringify({
         claudeAiOauth: {
           accessToken: "sk-win",

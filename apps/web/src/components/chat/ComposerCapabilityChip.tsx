@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ComposerCapabilityChipProps {
   /** Stable label shown for the attached composer capability. */
@@ -30,17 +31,23 @@ export function ComposerCapabilityChip({
     >
       <Icon size={14} className="text-primary" aria-hidden />
       <span>{label}</span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        onClick={onRemove}
-        aria-label={removeLabel}
-        title={removeLabel}
-        className="rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
-        <X size={13} aria-hidden />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              onClick={onRemove}
+              aria-label={removeLabel}
+              className="rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <X size={13} aria-hidden />
+            </Button>
+          }
+        />
+        <TooltipContent>{removeLabel}</TooltipContent>
+      </Tooltip>
     </span>
   );
 }

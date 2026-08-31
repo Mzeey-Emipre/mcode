@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalLaunchSnapshot, TerminalScope } from "@mcode/contracts";
 import type {
@@ -827,7 +827,7 @@ describe("ModernTerminalSessionRuntime", () => {
       dataBase64: Buffer.from("before-checkpoint").toString("base64"),
     });
     const checkpointData = Buffer.from("serialized-screen");
-    const sha256 = createHash("sha256").update(checkpointData).digest("hex");
+    const sha256 = NodeCrypto.createHash("sha256").update(checkpointData).digest("hex");
 
     await expect(runtime.saveCheckpoint({
       sessionId: SESSION_ID,

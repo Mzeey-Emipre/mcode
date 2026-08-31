@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import {
   AgentEventType,
@@ -143,7 +143,7 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
   ): Record<string, unknown> | undefined {
     if (!collaboration) return toolInput;
     return {
-      ...(toolInput ?? {}),
+      ...toolInput,
       codexCollabKind: collaboration.kind,
       ...(collaboration.senderThreadId ? { senderThreadId: collaboration.senderThreadId } : {}),
       ...(collaboration.receiverThreadIds ? { receiverThreadIds: collaboration.receiverThreadIds } : {}),
@@ -291,7 +291,7 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
       if (!context) return false;
       this.durability.startProviderContinuation({
         parentThreadId: context.parentThreadId,
-        turnId: randomUUID(),
+        turnId: NodeCrypto.randomUUID(),
         executionId,
         permissionMode: this.durability.loadLatestPermissionMode(context.parentThreadId) ?? "supervised",
         providerIdentities: context.providerIdentities,
@@ -744,26 +744,16 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
     const evidence = this.childEvidence(event);
     const senderThreadId = this.stringInput(event.toolInput?.senderThreadId)?.trim().slice(0, 512)
       ?? evidence?.nativeThreadId;
-    const sourceThread = evidence?.nativeThreadId
-      ? this.durability.loadThreadByProviderIdentity(this.nativeIdentity("thread", evidence.nativeThreadId))
-      : this.durability.loadThread(event.threadId);
+    const sourceThread = this.actionSourceThread(event, evidence);
     if (!sourceThread) return { reason: "collaboration-source-thread-not-found" };
-    const sourceTurn = evidence?.nativeTurnId
-      ? this.durability.loadTurnByProviderIdentity(sourceThread.id, this.nativeIdentity("turn", evidence.nativeTurnId))
-      : event.turnExecutionId
-        ? this.durability.loadTurnByExecution(event.turnExecutionId)
-        : null;
+    const sourceTurn = this.actionSourceTurn(event, evidence, sourceThread.id);
     if (!sourceTurn) return { reason: "collaboration-source-turn-not-found" };
     const diagnostic = {
       threadId: sourceTurn.threadId,
       executionId: this.durability.loadExecutionIdForTurn(sourceTurn.id),
     };
-    if (sourceTurn.threadId !== sourceThread.id) {
-      return { reason: "collaboration-source-turn-mismatch", diagnostic };
-    }
-    if (senderThreadId && !this.senderMatches(sourceThread.id, senderThreadId)) {
-      return { reason: "collaboration-sender-mismatch", diagnostic };
-    }
+    const validation = this.validateActionSource(sourceThread.id, sourceTurn.threadId, senderThreadId, diagnostic);
+    if (validation) return validation;
     return {
       diagnostic,
       evidence,
@@ -772,6 +762,42 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
       sourceTurnId: sourceTurn.id,
       receiverThreadIds: [...new Set(this.nativeThreadIds(event.toolInput?.receiverThreadIds))],
     };
+  }
+
+  private actionSourceThread(event: CodexToolEvent, evidence: CodexChildEvidence | undefined) {
+    if (evidence?.nativeThreadId) {
+      return this.durability.loadThreadByProviderIdentity(this.nativeIdentity("thread", evidence.nativeThreadId));
+    }
+    return this.durability.loadThread(event.threadId);
+  }
+
+  private actionSourceTurn(
+    event: CodexToolEvent,
+    evidence: CodexChildEvidence | undefined,
+    sourceThreadId: string,
+  ) {
+    if (evidence?.nativeTurnId) {
+      return this.durability.loadTurnByProviderIdentity(
+        sourceThreadId,
+        this.nativeIdentity("turn", evidence.nativeTurnId),
+      );
+    }
+    return event.turnExecutionId ? this.durability.loadTurnByExecution(event.turnExecutionId) : null;
+  }
+
+  private validateActionSource(
+    sourceThreadId: string,
+    sourceTurnThreadId: string,
+    senderThreadId: string | undefined,
+    diagnostic: DiagnosticContext,
+  ): CollaborationFailure | undefined {
+    if (sourceTurnThreadId !== sourceThreadId) {
+      return { reason: "collaboration-source-turn-mismatch", diagnostic };
+    }
+    if (senderThreadId && !this.senderMatches(sourceThreadId, senderThreadId)) {
+      return { reason: "collaboration-sender-mismatch", diagnostic };
+    }
+    return undefined;
   }
 
   private senderMatches(sourceThreadId: string, senderThreadId: string): boolean {
@@ -865,7 +891,7 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
   }
 
   private actionId(sourceThreadId: string, sourceTurnId: string, sourceItemId: string, kind: CollaborationActionKind): string {
-    return `collaboration:codex:${createHash("sha256")
+    return `collaboration:codex:${NodeCrypto.createHash("sha256")
       .update(`${sourceThreadId}:${sourceTurnId}:${sourceItemId}:${kind}`)
       .digest("hex")}`;
   }
@@ -923,12 +949,8 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
       reasoningEffort: _reasoningEffort,
       ...toolInput
     } = genericEvent.toolInput ?? {};
-    return {
-      ...genericEvent,
-      ...(genericEvent.type === AgentEventType.ToolUse
-        ? { toolInput }
-        : { ...(Object.keys(toolInput).length > 0 ? { toolInput } : {}) }),
-    } as AgentEvent;
+    if (genericEvent.type === AgentEventType.ToolUse) return { ...genericEvent, toolInput };
+    return Object.keys(toolInput).length > 0 ? { ...genericEvent, toolInput } : genericEvent;
   }
 
   private reject(
@@ -946,29 +968,51 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
     evidence = this.childEvidence(event),
     context?: DiagnosticContext,
   ): CodexChildRoutingDiagnosticInput {
-    const diagnostic = {
+    const diagnostic = this.routingDiagnostic(event, reason, evidence, context);
+    const persisted = this.persistRoutingDiagnostic(diagnostic, reason);
+    this.logRoutingDiagnostic(diagnostic, evidence, reason, persisted);
+    return diagnostic;
+  }
+
+  private routingDiagnostic(
+    event: CodexRuntimeEvent,
+    reason: string,
+    evidence: CodexChildEvidence | undefined,
+    context: DiagnosticContext | undefined,
+  ): CodexChildRoutingDiagnosticInput {
+    return {
       threadId: context?.threadId ?? event.threadId,
       parentItemId: context?.parentItemId ?? (evidence ? `toolCall:${evidence.parentCollaborationItemId}` : undefined),
       executionId: context?.executionId ?? event.turnExecutionId,
       event: this.sanitize(event),
       reason,
     };
-    let persisted = false;
+  }
+
+  private persistRoutingDiagnostic(diagnostic: CodexChildRoutingDiagnosticInput, reason: string): boolean {
     try {
-      persisted = this.durability.recordCodexChildRoutingDiagnostic(diagnostic);
+      return this.durability.recordCodexChildRoutingDiagnostic(diagnostic);
     } catch (error) {
       logger.error("Codex child routing diagnostic persistence failed", {
         threadId: diagnostic.threadId,
         reason,
         error: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
+  }
+
+  private logRoutingDiagnostic(
+    diagnostic: CodexChildRoutingDiagnosticInput,
+    evidence: CodexChildEvidence | undefined,
+    reason: string,
+    persisted: boolean,
+  ): void {
     logger.warn("Codex child routing diagnostic", {
       threadId: diagnostic.threadId,
       parentCollaborationItemId: evidence?.parentCollaborationItemId,
       reason,
       persisted,
     });
-    return diagnostic;
   }
 }

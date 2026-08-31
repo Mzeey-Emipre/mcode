@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Props for PathLabel. */
 interface Props {
@@ -30,15 +31,23 @@ export function PathLabel({ path, home, className }: Props) {
   }
 
   return (
-    <span
-      className={cn(
-        "block min-w-0 truncate font-mono text-[11.5px] text-muted-foreground/70 tabular-nums",
-        className,
-      )}
-      style={{ direction: "rtl", unicodeBidi: "plaintext", textAlign: "left" }}
-      title={path}
-    >
-      {display}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn(
+              "block min-w-0 truncate font-mono text-[11.5px] text-muted-foreground/70 tabular-nums",
+              className,
+            )}
+            style={{ direction: "rtl", unicodeBidi: "plaintext", textAlign: "left" }}
+          >
+            {display}
+          </span>
+        }
+      />
+      <TooltipContent variant="surface" className="max-w-72 break-all font-mono">
+        {path}
+      </TooltipContent>
+    </Tooltip>
   );
 }

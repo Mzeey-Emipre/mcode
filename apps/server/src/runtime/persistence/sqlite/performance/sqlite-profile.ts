@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { statSync } from "node:fs";
-import { cpus } from "node:os";
-import { performance } from "node:perf_hooks";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePerfHooks from "node:perf_hooks";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { NarrativeEntry } from "@mcode/contracts";
@@ -370,23 +370,32 @@ export function parseSQLiteProfileCliOptions(args: readonly string[]): SQLitePro
       throw new Error(`Missing value for ${name}.`);
     }
 
-    switch (name) {
-      case "--samples":
-        options.samples = parseBoundedInteger(value, name, MIN_SAMPLES, MAX_SAMPLES);
-        break;
-      case "--threshold-percent":
-        options.thresholdPercent = parseBoundedNumber(value, name, 0.01, 100);
-        break;
-      case "--baseline":
-        options.baselinePath = value;
-        break;
-      case "--output":
-        options.outputPath = value;
-        break;
-    }
+    applySQLiteProfileOption(options, name, value);
   }
 
   return options;
+}
+
+/** Immutable host facts recorded with a SQLite profile report. */
+export interface SQLiteProfileHostRuntime {
+  readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
+}
+
+type SQLiteProfileMetricName = SQLiteProfileMetricComparison["metric"];
+
+function applySQLiteProfileOption(
+  options: SQLiteProfileCliOptions,
+  name: string,
+  value: string,
+): void {
+  switch (name) {
+    case "--samples": options.samples = parseBoundedInteger(value, name, MIN_SAMPLES, MAX_SAMPLES); return;
+    case "--threshold-percent": options.thresholdPercent = parseBoundedNumber(value, name, 0.01, 100); return;
+    case "--baseline": options.baselinePath = value; return;
+    case "--output": options.outputPath = value; return;
+    default: throw new Error(`Unknown option: ${name}`);
+  }
 }
 
 /** Validate an untrusted baseline report before comparison. */
@@ -419,39 +428,9 @@ export function compareSQLiteProfileReports(
   ] as const;
 
   for (const workload of SQLITE_PROFILE_WORKLOADS) {
-    const candidateAggregate = candidate.aggregates.find((item) => item.workload === workload);
-    const baselineAggregate = baseline.aggregates.find((item) => item.workload === workload);
-    if (!candidateAggregate || !baselineAggregate) {
-      throw new Error(`Profile report is missing the ${workload} aggregate.`);
-    }
-
-    for (const metric of metricNames) {
-      const baselineMedian = baselineAggregate[metric].median;
-      const candidateMedian = candidateAggregate[metric].median;
-      const changePercent = baselineMedian === 0
-        ? null
-        : ((candidateMedian - baselineMedian) / baselineMedian) * 100;
-      const isRegression = baselineMedian === 0
-        ? candidateMedian > 0
-        : changePercent! > thresholdPercent;
-      metrics.push({
-        workload,
-        metric,
-        baselineMedian,
-        candidateMedian,
-        changePercent,
-        thresholdPercent,
-        status: isRegression ? "regression" : "pass",
-      });
-    }
+    metrics.push(...compareWorkloadMetrics(candidate, baseline, workload, metricNames, thresholdPercent));
   }
-
-  const warnings: string[] = [];
-  for (const key of ["platform", "architecture", "nodeVersion", "electronVersion", "sqliteVersion", "cpu"] as const) {
-    if (candidate.runtime[key] !== baseline.runtime[key]) {
-      warnings.push(`Runtime mismatch for ${key}: baseline=${baseline.runtime[key] ?? "none"}, candidate=${candidate.runtime[key] ?? "none"}.`);
-    }
-  }
+  const warnings = compareProfileRuntime(candidate.runtime, baseline.runtime);
 
   return {
     baselinePath,
@@ -462,10 +441,45 @@ export function compareSQLiteProfileReports(
   };
 }
 
+function compareWorkloadMetrics(
+  candidate: Pick<SQLiteProfileReport, "aggregates">,
+  baseline: BaselineReport,
+  workload: SQLiteProfileWorkloadName,
+  metricNames: readonly SQLiteProfileMetricName[],
+  thresholdPercent: number,
+): SQLiteProfileMetricComparison[] {
+  const candidateAggregate = candidate.aggregates.find((item) => item.workload === workload);
+  const baselineAggregate = baseline.aggregates.find((item) => item.workload === workload);
+  if (!candidateAggregate || !baselineAggregate) throw new Error(`Profile report is missing the ${workload} aggregate.`);
+  return metricNames.map((metric) => compareProfileMetric(workload, metric, candidateAggregate[metric].median, baselineAggregate[metric].median, thresholdPercent));
+}
+
+function compareProfileMetric(
+  workload: SQLiteProfileWorkloadName,
+  metric: SQLiteProfileMetricName,
+  candidateMedian: number,
+  baselineMedian: number,
+  thresholdPercent: number,
+): SQLiteProfileMetricComparison {
+  const changePercent = baselineMedian === 0 ? null : ((candidateMedian - baselineMedian) / baselineMedian) * 100;
+  const isRegression = baselineMedian === 0 ? candidateMedian > 0 : changePercent! > thresholdPercent;
+  return { workload, metric, baselineMedian, candidateMedian, changePercent, thresholdPercent, status: isRegression ? "regression" : "pass" };
+}
+
+function compareProfileRuntime(
+  candidate: SQLiteProfileReport["runtime"],
+  baseline: BaselineReport["runtime"],
+): string[] {
+  return (["platform", "architecture", "nodeVersion", "electronVersion", "sqliteVersion", "cpu"] as const)
+    .filter((key) => candidate[key] !== baseline[key])
+    .map((key) => `Runtime mismatch for ${key}: baseline=${baseline[key] ?? "none"}, candidate=${candidate[key] ?? "none"}.`);
+}
+
 /** Run all five workloads against isolated deterministic databases. */
 export async function runSQLiteProfile(
   samplesPerWorkload: number,
   createDatabase: (workload: SQLiteProfileWorkloadName, sample: number) => WorkloadDatabase,
+  hostRuntime: SQLiteProfileHostRuntime,
 ): Promise<SQLiteProfileReport> {
   if (!Number.isInteger(samplesPerWorkload) || samplesPerWorkload < MIN_SAMPLES || samplesPerWorkload > MAX_SAMPLES) {
     throw new Error(`samplesPerWorkload must be an integer from ${MIN_SAMPLES} to ${MAX_SAMPLES}.`);
@@ -478,15 +492,15 @@ export async function runSQLiteProfile(
     for (const workload of SQLITE_PROFILE_WORKLOADS) {
       if (workload === "startup-and-migrations") {
         const before = process.memoryUsage();
-        const started = performance.now();
+        const started = NodePerfHooks.performance.now();
         const workloadDatabase = createDatabase(workload, sample);
         try {
-          const completed = performance.now();
+          const completed = NodePerfHooks.performance.now();
           const after = process.memoryUsage();
           const startupResult = {
             migrations: (workloadDatabase.db.prepare("SELECT COUNT(*) AS count FROM __drizzle_migrations").get() as { count: number }).count,
             tables: (workloadDatabase.db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table'").get() as { count: number }).count,
-            databaseBytes: statSync(workloadDatabase.dbPath).size,
+            databaseBytes: NodeFS.statSync(workloadDatabase.dbPath).size,
           };
           sqliteVersion = readSQLiteVersion(workloadDatabase.db);
           samples.push({
@@ -535,12 +549,12 @@ export async function runSQLiteProfile(
       contentBytesPerMessage: Buffer.byteLength(CONTENT, "utf8"),
     },
     runtime: {
-      platform: process.platform,
-      architecture: process.arch,
+      platform: hostRuntime.platform,
+      architecture: hostRuntime.architecture,
       nodeVersion: process.version,
       electronVersion: process.versions.electron ?? null,
       sqliteVersion,
-      cpu: cpus()[0]?.model ?? "unknown",
+      cpu: NodeOS.cpus()[0]?.model ?? "unknown",
     },
     samples,
     aggregates: aggregateSamples(samples),
@@ -557,27 +571,7 @@ async function runWorkload(
   workload: SQLiteProfileWorkloadName,
   sample: number,
 ): Promise<SQLiteProfileSample> {
-  let measured: MeasuredResult<unknown>;
-  switch (workload) {
-    case "startup-and-migrations":
-      throw new Error("Startup must be measured while the database opens.");
-    case "active-turn-writes":
-      seedWorkspaceAndThread(db);
-      measured = await measureAsync(() => writeActiveTurn(db));
-      break;
-    case "conversation-read-100":
-      seedConversation(db);
-      measured = measureSync(() => readConversation(db, 100));
-      break;
-    case "conversation-read-1000":
-      seedConversation(db);
-      measured = measureSync(() => readConversation(db, 1000));
-      break;
-    case "cleanup":
-      seedConversation(db);
-      measured = measureSync(() => db.prepare("DELETE FROM threads WHERE id = ?").run(THREAD_ID));
-      break;
-  }
+  const measured = await measureSQLiteWorkload(db, workload);
 
   const queryPlans = workload === "conversation-read-100"
     ? captureConversationReadQueryPlans(db, 100)
@@ -600,6 +594,28 @@ async function runWorkload(
       ? { activeTurnWrite: measured.value as SQLiteProfileSample["activeTurnWrite"] }
       : {}),
   };
+}
+
+async function measureSQLiteWorkload(
+  db: Database.Database,
+  workload: SQLiteProfileWorkloadName,
+): Promise<MeasuredResult<unknown>> {
+  switch (workload) {
+    case "startup-and-migrations": throw new Error("Startup must be measured while the database opens.");
+    case "active-turn-writes":
+      seedWorkspaceAndThread(db);
+      return measureAsync(() => writeActiveTurn(db));
+    case "conversation-read-100": return measureConversationRead(db, 100);
+    case "conversation-read-1000": return measureConversationRead(db, 1000);
+    case "cleanup":
+      seedConversation(db);
+      return measureSync(() => db.prepare("DELETE FROM threads WHERE id = ?").run(THREAD_ID));
+  }
+}
+
+function measureConversationRead(db: Database.Database, limit: 100 | 1000): MeasuredResult<unknown> {
+  seedConversation(db);
+  return measureSync(() => readConversation(db, limit));
 }
 
 function seedWorkspaceAndThread(db: Database.Database): void {
@@ -715,7 +731,7 @@ function measureCheckpointPolicy(
   const appendChunkLatenciesMs: number[] = [];
   let transactions = 0;
   let commits = 0;
-  const started = performance.now();
+  const started = NodePerfHooks.performance.now();
   const simulation = simulateCheckpointPolicy(
     streams,
     virtualDurationMs,
@@ -730,9 +746,9 @@ function measureCheckpointPolicy(
         sequence: chunk.firstSequence + offset,
         text: CHECKPOINT_DELTA_TEXT,
       }));
-      const appendStarted = performance.now();
+      const appendStarted = NodePerfHooks.performance.now();
       const result = checkpoints.appendChunk(inputs);
-      appendChunkLatenciesMs.push(performance.now() - appendStarted);
+      appendChunkLatenciesMs.push(NodePerfHooks.performance.now() - appendStarted);
       transactions += 1;
       if (result.outcome !== "committed") {
         throw new Error(`Checkpoint profile expected a durable commit, received ${result.outcome}.`);
@@ -740,7 +756,7 @@ function measureCheckpointPolicy(
       commits += 1;
     },
   );
-  const elapsedDurationMs = performance.now() - started;
+  const elapsedDurationMs = NodePerfHooks.performance.now() - started;
   const retained = readCheckpointRetention(db, executions.map((execution) => execution.executionId));
 
   if (transactions !== simulation.durableChunkCount || commits !== simulation.durableChunkCount) {
@@ -992,9 +1008,9 @@ function readConversation(db: Database.Database, limit: 100 | 1000): unknown {
 
 function measureSync<T>(work: () => T): MeasuredResult<T> {
   const before = process.memoryUsage();
-  const started = performance.now();
+  const started = NodePerfHooks.performance.now();
   const value = work();
-  const durationMs = performance.now() - started;
+  const durationMs = NodePerfHooks.performance.now() - started;
   const after = process.memoryUsage();
   return {
     value,
@@ -1006,9 +1022,9 @@ function measureSync<T>(work: () => T): MeasuredResult<T> {
 
 async function measureAsync<T>(work: () => Promise<T>): Promise<MeasuredResult<T>> {
   const before = process.memoryUsage();
-  const started = performance.now();
+  const started = NodePerfHooks.performance.now();
   const value = await work();
-  const durationMs = performance.now() - started;
+  const durationMs = NodePerfHooks.performance.now() - started;
   const after = process.memoryUsage();
   return {
     value,

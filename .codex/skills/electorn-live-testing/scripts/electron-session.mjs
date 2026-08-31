@@ -1,32 +1,58 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 const SESSION_FILE_NAME = "electron-live-testing.json";
 
 /** Connects Playwright to the Electron process owned by start-electron.mjs. */
 export async function connectElectronSession({ playwright, repoRoot, sessionFileName = SESSION_FILE_NAME }) {
+  validateConnectionArguments(playwright, repoRoot, sessionFileName);
+  const root = NodePath.resolve(repoRoot);
+  const sessionFile = NodePath.join(root, ".dev", sessionFileName);
+  const record = readSessionRecord(sessionFile, root);
+  const ports = readRuntimePorts(root, record.appUrlPrefix);
+  const connection = await connectToElectron(playwright, record, ports);
+  const page = await waitForAppPage(connection.context, record.appUrlPrefix);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  return {
+    appUrl: ports?.appUrl ?? null,
+    ...connection,
+    page,
+    pid: record.pid,
+    repoRoot: root,
+    sessionFile,
+  };
+}
+
+function validateConnectionArguments(playwright, repoRoot, sessionFileName) {
   if (!playwright?.chromium?.connectOverCDP) {
     throw new Error("Pass the module returned by await import(\"playwright\")");
   }
   if (typeof repoRoot !== "string" || repoRoot.trim().length === 0) {
     throw new Error("Pass the repository root from nodeRepl.cwd");
   }
-
-  const root = resolve(repoRoot);
   if (!/^electron-[a-z0-9-]+\.json$/.test(sessionFileName)) {
     throw new Error("sessionFileName must be a safe Electron session file name");
   }
-  const sessionFile = join(root, ".dev", sessionFileName);
-  if (!existsSync(sessionFile)) {
+}
+
+function readSessionRecord(sessionFile, root) {
+  if (!NodeFS.existsSync(sessionFile)) {
     throw new Error("Run start-electron.mjs before connecting Playwright");
   }
-  const record = JSON.parse(readFileSync(sessionFile, "utf8"));
+  const record = JSON.parse(NodeFS.readFileSync(sessionFile, "utf8"));
   validateSessionRecord(record, root);
+  return record;
+}
 
-  const ports = record.appUrlPrefix.startsWith("http://127.0.0.1:")
-    ? JSON.parse(readFileSync(join(root, ".dev", "ports.json"), "utf8"))
+function readRuntimePorts(root, appUrlPrefix) {
+  const ports = appUrlPrefix.startsWith("http://127.0.0.1:")
+    ? JSON.parse(NodeFS.readFileSync(NodePath.join(root, ".dev", "ports.json"), "utf8"))
     : null;
   if (ports) validatePortsRecord(ports, root);
+  return ports;
+}
+
+async function connectToElectron(playwright, record, ports) {
   const endpoint = `http://127.0.0.1:${record.debugPort}`;
   const browser = await playwright.chromium.connectOverCDP(endpoint);
   const context = browser.contexts()[0];
@@ -44,18 +70,10 @@ export async function connectElectronSession({ playwright, repoRoot, sessionFile
       },
     ]);
   }
-
-  const page = await waitForAppPage(context, record.appUrlPrefix);
-  await page.reload({ waitUntil: "domcontentloaded" });
   return {
-    appUrl: ports?.appUrl ?? null,
     browser,
     context,
     endpoint,
-    page,
-    pid: record.pid,
-    repoRoot: root,
-    sessionFile,
   };
 }
 
@@ -78,21 +96,29 @@ async function waitForAppPage(context, appUrl) {
 }
 
 function validateSessionRecord(record, root) {
-  if (
-    !record ||
-    record.status !== "running" ||
-    !Number.isSafeInteger(record.pid) ||
-    record.pid <= 0 ||
-    !Number.isInteger(record.debugPort) ||
-    record.debugPort <= 0 ||
-    record.debugPort > 65_535 ||
-    typeof record.repoRoot !== "string" ||
-    typeof record.appUrlPrefix !== "string" ||
-    !(record.appUrlPrefix === "file://" || record.appUrlPrefix.startsWith("http://127.0.0.1:")) ||
-    resolve(record.repoRoot).toLowerCase() !== root.toLowerCase()
-  ) {
+  if (!hasRunningElectronProcess(record) || !hasSafeElectronEndpoint(record) || !isRecordForRoot(record, root)) {
     throw new Error("Electron session record is invalid or not ready");
   }
+}
+
+function hasRunningElectronProcess(record) {
+  return record
+    && record.status === "running"
+    && Number.isSafeInteger(record.pid)
+    && record.pid > 0
+    && Number.isInteger(record.debugPort)
+    && record.debugPort > 0
+    && record.debugPort <= 65_535;
+}
+
+function hasSafeElectronEndpoint(record) {
+  return typeof record.repoRoot === "string"
+    && typeof record.appUrlPrefix === "string"
+    && (record.appUrlPrefix === "file://" || record.appUrlPrefix.startsWith("http://127.0.0.1:"));
+}
+
+function isRecordForRoot(record, root) {
+  return NodePath.resolve(record.repoRoot).toLowerCase() === root.toLowerCase();
 }
 
 function validatePortsRecord(ports, root) {
@@ -101,7 +127,7 @@ function validatePortsRecord(ports, root) {
     typeof ports.appUrl !== "string" ||
     !ports.appUrl.startsWith("http://127.0.0.1:") ||
     typeof ports.worktreeIdentity !== "string" ||
-    resolve(ports.worktreeIdentity).toLowerCase() !== root.toLowerCase() ||
+    NodePath.resolve(ports.worktreeIdentity).toLowerCase() !== root.toLowerCase() ||
     !ports.seedLogin ||
     ports.seedLogin.cookieName !== "mcode-auth" ||
     typeof ports.seedLogin.token !== "string" ||

@@ -1,5 +1,5 @@
-import type { TerminalPlatform } from "@mcode/contracts";
-import { Buffer } from "node:buffer";
+import * as NodeBuffer from "node:buffer";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   PTY_HOST_MAX_MESSAGE_BYTES,
   PTY_HOST_MAX_RETAINED_RECORDS,
@@ -7,6 +7,7 @@ import {
   type PtyHostEvent,
 } from "./pty-host-protocol.js";
 import { PtyHostProcessRuntime } from "./pty-host-runtime.js";
+import { terminalPlatform } from "../terminal-platform.js";
 
 const MAX_IPC_QUEUE_BYTES = 1_048_576;
 
@@ -33,7 +34,7 @@ export class PtyHostMessageQueue {
     if (serialized === undefined) {
       throw new Error("PTY host IPC message is not serializable");
     }
-    const messageBytes = Buffer.byteLength(serialized, "utf8");
+    const messageBytes = NodeBuffer.Buffer.byteLength(serialized, "utf8");
     if (
       messageBytes > PTY_HOST_MAX_MESSAGE_BYTES ||
       this.records >= PTY_HOST_MAX_RETAINED_RECORDS ||
@@ -65,16 +66,8 @@ export class PtyHostMessageQueue {
   }
 }
 
-/** Converts the Node platform name to the frozen Terminal platform value. */
-export function terminalPlatform(platform: NodeJS.Platform): TerminalPlatform {
-  if (platform === "win32") return "windows";
-  if (platform === "darwin") return "macos";
-  if (platform === "linux") return "linux";
-  throw new Error(`Unsupported PTY host platform: ${platform}`);
-}
-
 /** Starts the isolated PTY host message loop in the current Node process. */
-export function runPtyHostProcess(): PtyHostProcessRuntime {
+export function runPtyHostProcess(hostRuntime: HostRuntime): PtyHostProcessRuntime {
   if (typeof process.send !== "function") {
     throw new Error("PTY host requires an inherited IPC channel");
   }
@@ -97,7 +90,7 @@ export function runPtyHostProcess(): PtyHostProcessRuntime {
     if (!process.connected || !process.send) {
       throw new Error("PTY host IPC channel is unavailable");
     }
-    const eventBytes = Buffer.byteLength(JSON.stringify(validated), "utf8");
+    const eventBytes = NodeBuffer.Buffer.byteLength(JSON.stringify(validated), "utf8");
     if (outboundBytes + eventBytes > MAX_IPC_QUEUE_BYTES) {
       throw new Error("PTY host event queue exceeds 1 MiB");
     }
@@ -108,8 +101,9 @@ export function runPtyHostProcess(): PtyHostProcessRuntime {
     });
   };
   runtime = new PtyHostProcessRuntime({
-    platform: terminalPlatform(process.platform),
-    nativeAbi: `${process.platform}-${process.arch}-${process.versions.modules}`,
+    platform: terminalPlatform(hostRuntime.platform),
+    hostRuntime,
+    nativeAbi: `${hostRuntime.platform}-${hostRuntime.architecture}-${hostRuntime.nodeAbi}`,
     publish,
     queueBytes: () =>
       Math.min(MAX_IPC_QUEUE_BYTES, (queue?.pendingBytes ?? 0) + outboundBytes),

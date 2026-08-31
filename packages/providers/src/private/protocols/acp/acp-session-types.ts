@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import type * as NodeChildProcess from "node:child_process";
 import type {
   Client,
   ClientSideConnection,
@@ -14,6 +14,7 @@ export type AcpSpawnSpec = {
   args: readonly string[];
   cwd: string;
   env: Record<string, string>;
+  shell?: boolean;
 };
 
 /** Inputs used when opening one logical ACP session. */
@@ -44,7 +45,7 @@ export type AcpSessionCallbacks = {
 
 /** Protocol-level state for one ACP child and logical session. */
 export type AcpSessionState = {
-  child: ChildProcess;
+  child: NodeChildProcess.ChildProcess;
   connection: ClientSideConnection;
   sessionId: string;
   agentCapabilities: unknown;

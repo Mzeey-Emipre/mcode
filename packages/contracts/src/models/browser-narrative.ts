@@ -202,44 +202,59 @@ export function projectBrowserNarrativeResult(
   if (!operation) return null;
   const raw = parseJsonRecord(output) ?? {};
   const error = isRecord(raw.error) ? raw.error : raw;
-  const rawOutcome = allowedString(raw.outcome, OUTCOMES) as BrowserNarrativeResult["outcome"];
-  const outcome = rawOutcome ?? (isError || isRecord(raw.error) ? "failed" : "completed");
-  const effect = allowedString(raw.effect, EFFECTS) ?? allowedString(error.effect, EFFECTS);
-  const recovery = allowedString(raw.recovery, RECOVERIES) ?? allowedString(error.recovery, RECOVERIES);
-  const errorCode = allowedString(raw.code, ERROR_CODES) ?? allowedString(error.code, ERROR_CODES);
-  const action = operation === "browser_tabs"
-    ? allowedString(raw.action, TAB_ACTIONS) as BrowserNarrativeResult["action"]
-    : undefined;
-  const readinessRecord = isRecord(raw.readiness) ? raw.readiness : null;
-  const readiness = operation === "browser_inspect"
-    ? allowedString(readinessRecord?.state, READINESS_STATES) as BrowserNarrativeResult["readiness"]
-    : undefined;
-  const receipts = operation === "browser_act" && Array.isArray(raw.receipts)
-    ? raw.receipts
-        .slice(0, BROWSER_AUTOMATION_ACT_MAX_STEPS)
-        .map(projectReceipt)
-        .filter((receipt): receipt is BrowserNarrativeReceipt => receipt !== null)
-    : [];
-  const tabCount = (operation === "browser_tabs" || operation === "browser_inspect")
-    && Array.isArray(raw.tabs)
-    ? raw.tabs.length
-    : undefined;
-  const capabilityCount = operation === "browser_inspect" && Array.isArray(raw.capabilities)
-    ? raw.capabilities.length
-    : undefined;
+  const result: BrowserNarrativeResult = { operation, outcome: projectOutcome(raw, isError) };
+  assignCommonResultFields(result, raw, error);
+  assignOperationResultFields(result, operation, raw);
+  return result;
+}
 
-  return {
-    operation,
-    outcome,
-    ...(action ? { action } : {}),
-    ...(effect ? { effect } : {}),
-    ...(recovery ? { recovery } : {}),
-    ...(errorCode ? { errorCode } : {}),
-    ...(readiness ? { readiness } : {}),
-    ...(receipts.length > 0 ? { receipts } : {}),
-    ...(tabCount === undefined ? {} : { tabCount }),
-    ...(capabilityCount === undefined ? {} : { capabilityCount }),
-  };
+function projectOutcome(raw: Record<string, unknown>, isError: boolean): BrowserNarrativeResult["outcome"] {
+  const outcome = allowedString(raw.outcome, OUTCOMES) as BrowserNarrativeResult["outcome"];
+  return outcome ?? (isError || isRecord(raw.error) ? "failed" : "completed");
+}
+
+function assignCommonResultFields(
+  result: BrowserNarrativeResult,
+  raw: Record<string, unknown>,
+  error: Record<string, unknown>,
+): void {
+  assignResultField(result, "effect", allowedString(raw.effect, EFFECTS) ?? allowedString(error.effect, EFFECTS));
+  assignResultField(result, "recovery", allowedString(raw.recovery, RECOVERIES) ?? allowedString(error.recovery, RECOVERIES));
+  assignResultField(result, "errorCode", allowedString(raw.code, ERROR_CODES) ?? allowedString(error.code, ERROR_CODES));
+}
+
+function assignOperationResultFields(
+  result: BrowserNarrativeResult,
+  operation: BrowserNarrativeTool,
+  raw: Record<string, unknown>,
+): void {
+  if (operation === "browser_tabs") assignResultField(result, "action", allowedString(raw.action, TAB_ACTIONS));
+  if (operation === "browser_inspect") assignInspectionResultFields(result, raw);
+  if (operation === "browser_act") assignActionReceipts(result, raw);
+}
+
+function assignInspectionResultFields(result: BrowserNarrativeResult, raw: Record<string, unknown>): void {
+  const readiness = isRecord(raw.readiness) ? allowedString(raw.readiness.state, READINESS_STATES) : undefined;
+  assignResultField(result, "readiness", readiness);
+  assignResultField(result, "tabCount", Array.isArray(raw.tabs) ? raw.tabs.length : undefined);
+  assignResultField(result, "capabilityCount", Array.isArray(raw.capabilities) ? raw.capabilities.length : undefined);
+}
+
+function assignActionReceipts(result: BrowserNarrativeResult, raw: Record<string, unknown>): void {
+  if (!Array.isArray(raw.receipts)) return;
+  const receipts = raw.receipts
+    .slice(0, BROWSER_AUTOMATION_ACT_MAX_STEPS)
+    .map(projectReceipt)
+    .filter((receipt): receipt is BrowserNarrativeReceipt => receipt !== null);
+  if (receipts.length > 0) result.receipts = receipts;
+}
+
+function assignResultField(
+  result: BrowserNarrativeResult,
+  field: "action" | "effect" | "recovery" | "errorCode" | "readiness" | "tabCount" | "capabilityCount",
+  value: string | number | undefined,
+): void {
+  if (value !== undefined) Object.assign(result, { [field]: value });
 }
 
 /** Serializes a Browser narrative result without exposing the raw MCP result. */

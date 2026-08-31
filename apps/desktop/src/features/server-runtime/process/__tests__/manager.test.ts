@@ -14,6 +14,8 @@ const refs = vi.hoisted(() => {
     }),
     unref: vi.fn(),
     pid: 12345,
+    exitCode: null,
+    signalCode: null,
   };
 
   // Shared existsSync spy used by "fs"/"node:fs" mocks.
@@ -90,6 +92,10 @@ vi.mock("node:fs", () => ({
     throw err;
   }),
   renameSync: vi.fn(),
+  linkSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  readdirSync: vi.fn(),
+  rmdirSync: vi.fn(),
   unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
   // createWriteStream is used in non-dev mode to route stderr to a log file.
@@ -124,6 +130,17 @@ const LOCK_FILE_JSON = JSON.stringify({
   version: "0.1.0-test",
   ipcPath: "",
 });
+const TEST_PLATFORM: NodeJS.Platform = "linux";
+
+/** Create lock data for a specific spawned child process. */
+function lockFileJsonForPid(pid: number): string {
+  return JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid });
+}
+
+/** Update the platform selected for this manager's explicit runtime boundary. */
+function setManagerPlatform(manager: ServerManager, platform: NodeJS.Platform): void {
+  Object.defineProperty(manager, "platform", { value: platform });
+}
 
 /**
  * Build the standard readFileSync mock sequence for a normal start():
@@ -139,28 +156,21 @@ function setupDefaultReadFileMock() {
     err.code = "ENOENT";
     throw err;
   };
-  vi.mocked(readFileSync)
+  vi.mocked(NodeFS.readFileSync)
     .mockImplementationOnce(enoent) // tryExistingServer lock read
     .mockImplementationOnce(enoent); // readServerHeapMb settings.json read
-  vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock (async)
+  vi.mocked(NodeFSPromises.readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock (async)
 }
 
 // Mock fetch for health check
 const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../manager.js";
-import { execFileSync, spawn } from "child_process";
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  createWriteStream,
-  renameSync,
-  unlinkSync,
-} from "fs";
-import { readFile } from "fs/promises";
-import { join } from "path";
-import { createServer } from "net";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeNet from "node:net";
 import {
   SERVER_HEAP_DEFAULT_MB,
   SERVER_HEAP_LEGACY_DEFAULT_MB,
@@ -175,13 +185,13 @@ describe("ServerManager", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(execFileSync).mockReset();
+    vi.mocked(NodeChildProcess.execFileSync).mockReset();
     refs.resetExitCallback();
-    manager = new ServerManager();
+    manager = new ServerManager(TEST_PLATFORM);
 
     // Reset readFileSync fully (clears queued once-returns) then restore
     // the default throwing implementation so it simulates a missing file.
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.readFileSync)
       .mockReset()
       .mockImplementation(() => {
         const err = new Error(
@@ -192,14 +202,14 @@ describe("ServerManager", () => {
       });
 
     // Reset async readFile (fs/promises) used by readAuthTokenFromLock
-    vi.mocked(readFile).mockReset();
+    vi.mocked(NodeFSPromises.readFile).mockReset();
 
     // Mock fetch: first call returns healthy (waitForReady); subsequent calls
     // also return ok so tryExistingServer health probes work too.
     globalThis.fetch = vi
       .fn()
       .mockResolvedValue({ ok: true }) as unknown as typeof fetch;
-    vi.mocked(existsSync).mockImplementation((path) =>
+    vi.mocked(NodeFS.existsSync).mockImplementation((path) =>
       String(path).includes("better_sqlite3"),
     );
 
@@ -212,7 +222,7 @@ describe("ServerManager", () => {
     delete process.env.MCODE_SERVER_HEAP_MB;
     refs.setIsPackaged(false);
     delete (process as Record<string, unknown>).resourcesPath;
-    vi.mocked(existsSync).mockImplementation((path) =>
+    vi.mocked(NodeFS.existsSync).mockImplementation((path) =>
       String(path).includes("better_sqlite3"),
     );
   });
@@ -224,8 +234,8 @@ describe("ServerManager", () => {
   it("starts the server by spawning a detached child process", async () => {
     const result = await manager.start();
 
-    expect(spawn).toHaveBeenCalledOnce();
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    expect(NodeChildProcess.spawn).toHaveBeenCalledOnce();
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     // First arg is process.execPath
     expect(spawnCall[0]).toBe(process.execPath);
     // Options include detached: true; in non-dev mode stderr is piped to a log file
@@ -234,7 +244,7 @@ describe("ServerManager", () => {
     expect(opts.stdio).toEqual(["ignore", "ignore", "pipe"]);
     expect(result.port).toBe(19600);
     expect(result.authToken).toBe("test-auth-token");
-    const portProbe = vi.mocked(createServer).mock.results[0]?.value;
+    const portProbe = vi.mocked(NodeNet.createServer).mock.results[0]?.value;
     expect(portProbe.listen).toHaveBeenCalledWith(
       19600,
       "127.0.0.1",
@@ -266,7 +276,7 @@ describe("ServerManager", () => {
 
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const opts = spawnCall[2] as Record<string, unknown>;
     const env = opts.env as Record<string, string>;
     expect(env.MCODE_PORT).toBe("19600");
@@ -285,7 +295,7 @@ describe("ServerManager", () => {
   it("passes V8 flags in the args array with default heap", async () => {
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args).toContain(`--max-old-space-size=${SERVER_HEAP_DEFAULT_MB}`);
     expect(args).toContain("--max-semi-space-size=2");
@@ -326,6 +336,16 @@ describe("ServerManager", () => {
     expect(() => manager.shutdown()).not.toThrow();
   });
 
+  it("ends the packaged stderr stream after a normal server exit", async () => {
+    const stderrStream = { write: vi.fn(), end: vi.fn(), destroy: vi.fn() };
+    vi.mocked(NodeFS.createWriteStream).mockReturnValueOnce(stderrStream as never);
+
+    await manager.start();
+    refs.getExitCallback()!(0);
+
+    expect(stderrStream.end).toHaveBeenCalledOnce();
+  });
+
   it("calls onUnexpectedExit when the process exits without shutdown", async () => {
     const onCrash = vi.fn();
     manager.onUnexpectedExit = onCrash;
@@ -350,6 +370,110 @@ describe("ServerManager", () => {
     expect(onCrash).not.toHaveBeenCalled();
   });
 
+  it("suppresses the expected exit when forceReplace stops the current child", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.spyOn(manager, "stopServerHeldByLock").mockImplementation(async () => {
+      exitCallback?.(0);
+    });
+
+    await manager.forceReplace();
+
+    expect(onCrash).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the expected exit when an ordinary restart replaces the child", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.spyOn(manager, "stopServerHeldByLock").mockImplementation(async () => {
+      exitCallback?.(0);
+    });
+    vi.spyOn(manager, "start").mockResolvedValue({
+      port: 19600,
+      authToken: "replacement-token",
+    });
+    vi.useFakeTimers();
+
+    try {
+      const restart = manager.restart();
+      await vi.advanceTimersByTimeAsync(500);
+      await restart;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(onCrash).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the expected exit when a version mismatch replaces the child", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.mocked(NodeFS.readFileSync)
+      .mockReset()
+      .mockReturnValue(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), version: "0.0.0" }),
+      );
+    vi.mocked(NodeFSPromises.readFile)
+      .mockReset()
+      .mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    vi.spyOn(manager, "stopServerHeldByLock").mockImplementation(async () => {
+      exitCallback?.(0);
+    });
+
+    await manager.start();
+
+    expect(onCrash).not.toHaveBeenCalled();
+  });
+
+  it("clears a version-replacement marker when the replacement fails to spawn", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.mocked(NodeFS.readFileSync)
+      .mockReset()
+      .mockReturnValue(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), version: "0.0.0" }),
+      );
+    vi.mocked(NodeChildProcess.spawn).mockImplementationOnce(() => {
+      throw new Error("replacement spawn failed");
+    });
+    vi.spyOn(manager, "stopServerHeldByLock").mockResolvedValue();
+
+    await expect(manager.start()).rejects.toThrow("replacement spawn failed");
+
+    exitCallback?.(1);
+    expect(onCrash).toHaveBeenCalledWith(1);
+  });
+
+  it("clears an ordinary restart marker when replacement startup fails", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const exitCallback = refs.getExitCallback();
+    vi.spyOn(manager, "stopServerHeldByLock").mockResolvedValue();
+    vi.spyOn(manager, "start").mockRejectedValue(new Error("start failed"));
+    vi.useFakeTimers();
+
+    try {
+      const restart = manager.restart();
+      const rejectedRestart = expect(restart).rejects.toThrow("start failed");
+      await vi.advanceTimersByTimeAsync(500);
+      await rejectedRestart;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    exitCallback?.(1);
+    expect(onCrash).toHaveBeenCalledWith(1);
+  });
+
   it("suppresses only the planned old child during a planned restart", async () => {
     const onCrash = vi.fn();
     manager.onUnexpectedExit = onCrash;
@@ -359,6 +483,8 @@ describe("ServerManager", () => {
       }),
       unref: vi.fn(),
       pid: 54321,
+      exitCode: null,
+      signalCode: null,
       exit: undefined as ((code: number | null) => void) | undefined,
     };
     const newChild = {
@@ -367,19 +493,28 @@ describe("ServerManager", () => {
       }),
       unref: vi.fn(),
       pid: 54322,
+      exitCode: null,
+      signalCode: null,
       exit: undefined as ((code: number | null) => void) | undefined,
     };
-    vi.mocked(spawn)
+    vi.mocked(NodeChildProcess.spawn)
       .mockImplementationOnce(() => oldChild as never)
       .mockImplementationOnce(() => newChild as never);
+    vi.mocked(NodeFSPromises.readFile)
+      .mockReset()
+      .mockResolvedValueOnce(lockFileJsonForPid(54321) as never);
     await manager.start();
 
-    const restart = vi.spyOn(manager, "restart").mockImplementation(async () => {
-      oldChild.exit?.(0);
-      vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
-      await manager.start();
-      newChild.exit?.(1);
-    });
+    const restart = vi
+      .spyOn(manager, "restart")
+      .mockImplementation(async () => {
+        oldChild.exit?.(0);
+        vi.mocked(NodeFSPromises.readFile)
+          .mockReset()
+          .mockResolvedValueOnce(lockFileJsonForPid(54322) as never);
+        await manager.start();
+        newChild.exit?.(1);
+      });
 
     await manager.restartPlanned();
 
@@ -389,15 +524,20 @@ describe("ServerManager", () => {
   });
 
   it("coalesces concurrent planned restart requests", async () => {
-    const restart = vi.spyOn(manager, "restart").mockImplementation(
-      () => new Promise<void>((resolve) => setImmediate(resolve)),
-    );
+    const restart = vi
+      .spyOn(manager, "restart")
+      .mockImplementation(
+        () => new Promise<void>((resolve) => setImmediate(resolve)),
+      );
 
     const first = manager.restartPlanned();
     const second = manager.restartPlanned();
 
     expect(restart).toHaveBeenCalledOnce();
-    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 
   it("rejects a planned restart when the server is unowned", async () => {
@@ -417,13 +557,22 @@ describe("ServerManager", () => {
       }),
       unref: vi.fn(),
       pid: 54323,
+      exitCode: null,
+      signalCode: null,
       exit: undefined as ((code: number | null) => void) | undefined,
     };
-    vi.mocked(spawn).mockImplementationOnce(() => oldChild as never);
+    vi.mocked(NodeChildProcess.spawn).mockImplementationOnce(() => oldChild as never);
+    vi.mocked(NodeFSPromises.readFile)
+      .mockReset()
+      .mockResolvedValueOnce(lockFileJsonForPid(54323) as never);
     await manager.start();
-    vi.spyOn(manager, "restart").mockRejectedValue(new Error("planned restart failed"));
+    vi.spyOn(manager, "restart").mockRejectedValue(
+      new Error("planned restart failed"),
+    );
 
-    await expect(manager.restartPlanned()).rejects.toThrow("planned restart failed");
+    await expect(manager.restartPlanned()).rejects.toThrow(
+      "planned restart failed",
+    );
     oldChild.exit?.(9);
 
     expect(onCrash).toHaveBeenCalledWith(9);
@@ -438,19 +587,30 @@ describe("ServerManager", () => {
       }),
       unref: vi.fn(),
       pid: 54324,
+      exitCode: null,
+      signalCode: null,
       exit: undefined as ((code: number | null) => void) | undefined,
     };
     const replacement = {
       on: vi.fn(),
       unref: vi.fn(),
       pid: 54325,
+      exitCode: null,
+      signalCode: null,
     };
-    vi.mocked(spawn)
+    vi.mocked(NodeChildProcess.spawn)
       .mockImplementationOnce(() => oldChild as never)
       .mockImplementationOnce(() => replacement as never);
+    vi.mocked(NodeFSPromises.readFile)
+      .mockReset()
+      .mockResolvedValueOnce(lockFileJsonForPid(54324) as never);
     await manager.start();
-    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
-    vi.spyOn(manager, "restart").mockImplementation(() => manager.start().then(() => undefined));
+    vi.mocked(NodeFSPromises.readFile)
+      .mockReset()
+      .mockResolvedValueOnce(lockFileJsonForPid(54325) as never);
+    vi.spyOn(manager, "restart").mockImplementation(() =>
+      manager.start().then(() => undefined),
+    );
 
     await manager.restartPlanned();
     oldChild.exit?.(4);
@@ -465,45 +625,43 @@ describe("ServerManager", () => {
   it("reads heapMb from settings.json", async () => {
     // Re-sequence readFileSync: lock ENOENT, then settings.json with custom heap.
     // readAuthTokenFromLock uses async readFile (fs/promises), set up separately.
-    vi.mocked(readFileSync).mockReset();
+    vi.mocked(NodeFS.readFileSync).mockReset();
     const enoent = () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
       err.code = "ENOENT";
       throw err;
     };
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.readFileSync)
       .mockImplementationOnce(enoent) // tryExistingServer
       .mockReturnValueOnce(
         JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
       ); // settings.json
-    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
-
+    vi.mocked(NodeFSPromises.readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args).toContain("--max-old-space-size=1024");
   });
 
   it("treats the old default heap setting as unset", async () => {
-    vi.mocked(readFileSync).mockReset();
+    vi.mocked(NodeFS.readFileSync).mockReset();
     const enoent = () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
       err.code = "ENOENT";
       throw err;
     };
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.readFileSync)
       .mockImplementationOnce(enoent)
       .mockReturnValueOnce(
         JSON.stringify({
           server: { memory: { heapMb: SERVER_HEAP_LEGACY_DEFAULT_MB } },
         }),
       );
-    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
-
+    vi.mocked(NodeFSPromises.readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args).toContain(`--max-old-space-size=${SERVER_HEAP_DEFAULT_MB}`);
   });
@@ -513,18 +671,18 @@ describe("ServerManager", () => {
 
     // When env var is set, settings.json is never read. Re-sequence accordingly:
     // tryExistingServer lock ENOENT only. readAuthTokenFromLock via async readFile.
-    vi.mocked(readFileSync).mockReset();
+    vi.mocked(NodeFS.readFileSync).mockReset();
     const enoent = () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
       err.code = "ENOENT";
       throw err;
     };
-    vi.mocked(readFileSync).mockImplementationOnce(enoent); // tryExistingServer
-    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
+    vi.mocked(NodeFS.readFileSync).mockImplementationOnce(enoent); // tryExistingServer
+    vi.mocked(NodeFSPromises.readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
 
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args).toContain("--max-old-space-size=2048");
   });
@@ -532,22 +690,22 @@ describe("ServerManager", () => {
   it("falls through to settings.json when MCODE_SERVER_HEAP_MB is invalid", async () => {
     process.env.MCODE_SERVER_HEAP_MB = "invalid";
 
-    vi.mocked(readFileSync).mockReset();
+    vi.mocked(NodeFS.readFileSync).mockReset();
     const enoent = () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
       err.code = "ENOENT";
       throw err;
     };
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.readFileSync)
       .mockImplementationOnce(enoent)
       .mockReturnValueOnce(
         JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
       );
-    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    vi.mocked(NodeFSPromises.readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
 
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args).toContain("--max-old-space-size=1024");
   });
@@ -559,7 +717,7 @@ describe("ServerManager", () => {
   it("spawns the bundled server.cjs without ts-loader when app.isPackaged is false", async () => {
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(
       args.some(
@@ -576,7 +734,7 @@ describe("ServerManager", () => {
   it("sets ELECTRON_RUN_AS_NODE=1 in the server child process env", async () => {
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const options = spawnCall[2] as { env: Record<string, string> };
     expect(options.env.ELECTRON_RUN_AS_NODE).toBe("1");
   });
@@ -588,7 +746,7 @@ describe("ServerManager", () => {
     try {
       await manager.start();
 
-      const spawnCall = vi.mocked(spawn).mock.calls[0];
+      const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
       const options = spawnCall[2] as { env: Record<string, string> };
       expect(options.env.BETTER_SQLITE3_BINDING).toContain(
         "better_sqlite3.electron.node",
@@ -610,7 +768,7 @@ describe("ServerManager", () => {
 
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args.join(" ")).toContain("server.cjs");
   });
@@ -625,7 +783,7 @@ describe("ServerManager", () => {
 
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
     expect(args).toContain("--report-on-fatalerror");
     expect(args).toContain("--report-directory=/tmp/mcode");
@@ -648,9 +806,9 @@ describe("ServerManager", () => {
       isPackaged: true,
       execPath: process.execPath,
       resourcesPath: "/test/resources",
-      platform: process.platform,
+      platform: TEST_PLATFORM,
     });
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     expect(spawnCall[0]).toBe(process.execPath);
     const opts = spawnCall[2] as { env: Record<string, string> };
     expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
@@ -663,10 +821,7 @@ describe("ServerManager", () => {
       configurable: true,
       writable: true,
     });
-    const expectedBinary =
-      process.platform === "win32"
-        ? "/test/resources/bin/mcode-server.exe"
-        : "/test/resources/bin/mcode-server";
+    const expectedBinary = "/test/resources/bin/mcode-server";
     // Resolver returns the renamed binary when it exists
     refs.resolveServerBinarySpy.mockReturnValue(expectedBinary);
 
@@ -676,9 +831,9 @@ describe("ServerManager", () => {
       isPackaged: true,
       execPath: process.execPath,
       resourcesPath: "/test/resources",
-      platform: process.platform,
+      platform: TEST_PLATFORM,
     });
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     expect(spawnCall[0]).toBe(expectedBinary);
     const opts = spawnCall[2] as { env: Record<string, string> };
     expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
@@ -691,13 +846,13 @@ describe("ServerManager", () => {
       configurable: true,
       writable: true,
     });
-    vi.mocked(existsSync).mockImplementation((p) =>
+    vi.mocked(NodeFS.existsSync).mockImplementation((p) =>
       String(p).includes("better_sqlite3.node"),
     );
 
     await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const opts = spawnCall[2] as Record<string, unknown>;
     const env = opts.env as Record<string, string>;
     expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.node");
@@ -711,12 +866,12 @@ describe("ServerManager", () => {
       configurable: true,
       writable: true,
     });
-    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(false);
 
     await expect(manager.start()).rejects.toThrow(
       "Packaged better-sqlite3 binding not found",
     );
-    expect(spawn).not.toHaveBeenCalled();
+    expect(NodeChildProcess.spawn).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
@@ -725,8 +880,8 @@ describe("ServerManager", () => {
 
   it("forceReplace sends POST /shutdown to the running server", async () => {
     // Lock file exists with a running server
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
 
     // process.kill returns normally (server is alive) then throws (server dead)
     const killSpy = vi
@@ -754,8 +909,8 @@ describe("ServerManager", () => {
   });
 
   it("stopServerHeldByLock matches forceReplace shutdown behavior", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     const killSpy = vi
       .spyOn(process, "kill")
       .mockImplementationOnce(() => true as never);
@@ -779,8 +934,8 @@ describe("ServerManager", () => {
   });
 
   it("rejects a lock with an invalid PID before probing or stopping it", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync)
       .mockReset()
       .mockReturnValue(
         JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 0 }),
@@ -794,40 +949,42 @@ describe("ServerManager", () => {
 
       expect(killSpy).not.toHaveBeenCalled();
       expect(globalThis.fetch).not.toHaveBeenCalled();
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
       killSpy.mockRestore();
     }
   });
 
   it("rejects malformed lock JSON and preserves the lock file", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue("{ malformed");
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue("{ malformed");
 
     await expect(manager.stopServerHeldByLock()).rejects.toThrow(
       "Unable to read server lock file",
     );
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(unlinkSync).not.toHaveBeenCalled();
+    expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
   });
 
   it("rejects an unreadable lock and preserves the lock file", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
     const denied = Object.assign(new Error("EACCES"), { code: "EACCES" });
-    vi.mocked(readFileSync).mockReset().mockImplementation(() => {
-      throw denied;
-    });
+    vi.mocked(NodeFS.readFileSync)
+      .mockReset()
+      .mockImplementation(() => {
+        throw denied;
+      });
 
     await expect(manager.stopServerHeldByLock()).rejects.toThrow(
       "Unable to read server lock file",
     );
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(unlinkSync).not.toHaveBeenCalled();
+    expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
   });
 
   it("preserves a foreign port-band lock without probing or stopping it", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync)
       .mockReset()
       .mockReturnValue(
         JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), port: 19500 }),
@@ -839,15 +996,15 @@ describe("ServerManager", () => {
 
       expect(globalThis.fetch).not.toHaveBeenCalled();
       expect(killSpy).not.toHaveBeenCalled();
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
       killSpy.mockRestore();
     }
   });
 
   it("refuses to force-kill a live process it does not own", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
     let now = 1000;
     const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
@@ -859,8 +1016,8 @@ describe("ServerManager", () => {
       await expect(manager.stopServerHeldByLock()).rejects.toThrow(
         "refusing to terminate unrelated process",
       );
-      expect(execFileSync).not.toHaveBeenCalled();
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeChildProcess.execFileSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
       killSpy.mockRestore();
       dateSpy.mockRestore();
@@ -868,21 +1025,21 @@ describe("ServerManager", () => {
   });
 
   it("keeps the lock and reports Windows tree-kill failure", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
-    vi.mocked(execFileSync).mockImplementation(() => {
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeChildProcess.execFileSync).mockImplementation(() => {
       throw new Error("taskkill failed");
     });
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
-    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
-      JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerIdentity: unknown }
+    ).ownedServerIdentity = JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerProcess: unknown }
+    ).ownedServerProcess = refs.mockChildProcess;
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "win32",
-      configurable: true,
-    });
+    setManagerPlatform(manager, "win32");
     let now = 1000;
     const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
       now += 5000;
@@ -893,29 +1050,25 @@ describe("ServerManager", () => {
       await expect(manager.stopServerHeldByLock()).rejects.toThrow(
         "Failed to terminate server process tree 12345",
       );
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
   });
 
   it("kills the owned POSIX process group and treats ESRCH as success", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
-    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
-      JSON.parse(LOCK_FILE_JSON);
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "linux",
-      configurable: true,
-    });
+    (
+      manager as unknown as { ownedServerIdentity: unknown }
+    ).ownedServerIdentity = JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerProcess: unknown }
+    ).ownedServerProcess = refs.mockChildProcess;
+    setManagerPlatform(manager, "linux");
     const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
       if (pid < 0) {
         const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
@@ -933,45 +1086,33 @@ describe("ServerManager", () => {
       await manager.stopServerHeldByLock();
 
       expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
-      expect(unlinkSync).toHaveBeenCalledOnce();
+      expect(NodeFS.unlinkSync).toHaveBeenCalledOnce();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
   });
 
-  it("kills an owned POSIX process group after its leader exits", async () => {
+  it("refuses a PID-reused POSIX process group after the owned leader exits", async () => {
     await manager.start();
     refs.getExitCallback()!(1);
 
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
-    vi.mocked(unlinkSync).mockReset();
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "linux",
-      configurable: true,
-    });
-    let groupAlive = true;
-    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
-      if (pid > 0) {
-        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
-        throw error;
-      }
-      if (signal === 0) {
-        if (!groupAlive) {
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.unlinkSync).mockReset();
+    setManagerPlatform(manager, "linux");
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation((pid, signal) => {
+        if (pid > 0) {
           const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
           throw error;
         }
+        if (signal === 0) {
+          return true as never;
+        }
         return true as never;
-      }
-      groupAlive = false;
-      return true as never;
-    });
+      });
     let now = 1000;
     const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
       now += 5000;
@@ -979,28 +1120,49 @@ describe("ServerManager", () => {
     });
 
     try {
-      await manager.stopServerHeldByLock();
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "refusing to terminate unrelated process",
+      );
 
-      expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
-      expect(unlinkSync).toHaveBeenCalledOnce();
+      expect(killSpy).not.toHaveBeenCalledWith(-12345, "SIGKILL");
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("refuses a PID-reused Windows process after the owned child exits", async () => {
+    await manager.start();
+    refs.getExitCallback()!(1);
+
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeChildProcess.execFileSync).mockReset();
+    setManagerPlatform(manager, "win32");
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "refusing to terminate unrelated process",
+      );
+
+      expect(NodeChildProcess.execFileSync).not.toHaveBeenCalled();
+    } finally {
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
   });
 
   it("preserves an unknown lock when its leader is dead but POSIX group remains", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "linux",
-      configurable: true,
-    });
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    setManagerPlatform(manager, "linux");
     const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
       if (pid > 0) {
         const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
@@ -1019,24 +1181,20 @@ describe("ServerManager", () => {
         "refusing to terminate unrelated process",
       );
       expect(killSpy).not.toHaveBeenCalledWith(-12345, "SIGKILL");
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
   });
 
   it("does not unlink a lock replaced while shutdown was in progress", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
     const replacement = JSON.stringify({
       ...JSON.parse(LOCK_FILE_JSON),
       authToken: "replacement-token",
     });
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.readFileSync)
       .mockReset()
       .mockReturnValueOnce(LOCK_FILE_JSON)
       .mockReturnValueOnce(replacement);
@@ -1051,7 +1209,9 @@ describe("ServerManager", () => {
     try {
       await manager.stopServerHeldByLock();
 
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalledWith(
+        NodePath.join("/tmp/mcode", "server.lock"),
+      );
     } finally {
       killSpy.mockRestore();
     }
@@ -1065,9 +1225,9 @@ describe("ServerManager", () => {
       ...JSON.parse(LOCK_FILE_JSON),
       authToken: "replacement-token",
     });
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(replacement);
-    vi.mocked(unlinkSync).mockReset();
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(replacement);
+    vi.mocked(NodeFS.unlinkSync).mockReset();
     globalThis.fetch = vi.fn() as unknown as typeof fetch;
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
 
@@ -1076,15 +1236,15 @@ describe("ServerManager", () => {
 
       expect(globalThis.fetch).not.toHaveBeenCalled();
       expect(killSpy).not.toHaveBeenCalled();
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
       killSpy.mockRestore();
     }
   });
 
   it("forceReplace polls PID until process exits", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
 
     // process.kill sequence during poll loop and force-kill check:
     // call 1 = alive (poll continues), call 2 = alive (poll continues),
@@ -1121,12 +1281,16 @@ describe("ServerManager", () => {
   });
 
   it("forceReplace force-kills server if it does not exit within timeout", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
-    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
-      JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerIdentity: unknown }
+    ).ownedServerIdentity = JSON.parse(LOCK_FILE_JSON);
+    (
+      manager as unknown as { ownedServerProcess: unknown }
+    ).ownedServerProcess = refs.mockChildProcess;
 
     // Always report alive so we hit the SIGKILL fallback.
     // Mock Date.now to fast-forward past the 10s deadline.
@@ -1138,25 +1302,17 @@ describe("ServerManager", () => {
       now += 5000; // jump 5s each call to exceed 10s deadline quickly
       return now;
     });
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "win32",
-      configurable: true,
-    });
+    setManagerPlatform(manager, "win32");
 
     try {
       await manager.forceReplace();
 
-      expect(execFileSync).toHaveBeenCalledWith(
+      expect(NodeChildProcess.execFileSync).toHaveBeenCalledWith(
         "taskkill",
         ["/T", "/F", "/PID", "12345"],
         expect.objectContaining({ stdio: "ignore" }),
       );
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
@@ -1174,11 +1330,11 @@ describe("ServerManager", () => {
     // Capture the stream instance created by createWriteStream so we can
     // assert that destroy() was called on it after spawn fails.
     const mockStream = { write: vi.fn(), end: vi.fn(), destroy: vi.fn() };
-    vi.mocked(createWriteStream).mockReturnValueOnce(mockStream as never);
+    vi.mocked(NodeFS.createWriteStream).mockReturnValueOnce(mockStream as never);
 
     // Make spawn throw synchronously - simulates a missing executable or
     // other OS-level failure before any child process is created.
-    vi.mocked(spawn).mockImplementationOnce(() => {
+    vi.mocked(NodeChildProcess.spawn).mockImplementationOnce(() => {
       throw new Error("spawn ENOENT");
     });
 
@@ -1186,8 +1342,29 @@ describe("ServerManager", () => {
     expect(mockStream.destroy).toHaveBeenCalledOnce();
   });
 
+  it("ends stderr and clears the child reference when readiness times out", async () => {
+    const stderrStream = { write: vi.fn(), end: vi.fn(), destroy: vi.fn() };
+    vi.mocked(NodeFS.createWriteStream).mockReturnValueOnce(stderrStream as never);
+    vi.spyOn(
+      manager as unknown as {
+        waitForReady: (timeoutMs: number) => Promise<void>;
+      },
+      "waitForReady",
+    ).mockRejectedValue(new Error("Server did not become ready"));
+
+    await expect(manager.start()).rejects.toThrow("did not become ready");
+
+    expect(stderrStream.end).toHaveBeenCalledOnce();
+    expect(
+      (manager as unknown as { serverProcess: unknown }).serverProcess,
+    ).toBeNull();
+    expect(NodeFS.rmdirSync).toHaveBeenCalledWith(
+      NodePath.join("/tmp/mcode", "server.starting"),
+    );
+  });
+
   it("rotates the previous stderr log before opening a new one", async () => {
-    vi.mocked(existsSync).mockImplementation(
+    vi.mocked(NodeFS.existsSync).mockImplementation(
       (path) =>
         String(path).endsWith("server-stderr.log") ||
         String(path).includes("better_sqlite3"),
@@ -1195,12 +1372,12 @@ describe("ServerManager", () => {
 
     await manager.start();
 
-    expect(renameSync).toHaveBeenCalledWith(
-      join("/tmp/mcode", "server-stderr.log"),
-      join("/tmp/mcode", "server-stderr.1.log"),
+    expect(NodeFS.renameSync).toHaveBeenCalledWith(
+      NodePath.join("/tmp/mcode", "server-stderr.log"),
+      NodePath.join("/tmp/mcode", "server-stderr.1.log"),
     );
-    expect(createWriteStream).toHaveBeenCalledWith(
-      join("/tmp/mcode", "server-stderr.log"),
+    expect(NodeFS.createWriteStream).toHaveBeenCalledWith(
+      NodePath.join("/tmp/mcode", "server-stderr.log"),
       { flags: "w" },
     );
   });
@@ -1209,9 +1386,128 @@ describe("ServerManager", () => {
   // Reuse existing server from lock file
   // -----------------------------------------------------------------------
 
+  it("bounds a never-resolving existing-server health probe before spawning", async () => {
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValueOnce(LOCK_FILE_JSON);
+    vi.mocked(NodeFSPromises.readFile)
+      .mockReset()
+      .mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+    vi.useFakeTimers();
+
+    try {
+      const start = manager.start();
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(start).resolves.toEqual({
+        port: 19600,
+        authToken: "test-auth-token",
+      });
+      expect(NodeChildProcess.spawn).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      killSpy.mockRestore();
+    }
+  });
+
+  it("rejects a readiness lock that belongs to a different spawned child", async () => {
+    vi.mocked(NodeFSPromises.readFile)
+      .mockReset()
+      .mockResolvedValueOnce(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 99999 }) as never,
+      );
+
+    await expect(manager.start()).rejects.toThrow(
+      "Server lock does not match the spawned server process",
+    );
+    expect(
+      (manager as unknown as { serverProcess: unknown }).serverProcess,
+    ).toBeNull();
+  });
+
+  it("rejects readiness when the spawned child exits before lock application", async () => {
+    vi.mocked(NodeFSPromises.readFile)
+      .mockReset()
+      .mockImplementationOnce(async () => {
+        refs.getExitCallback()!(1);
+        return LOCK_FILE_JSON as never;
+      });
+
+    await expect(manager.start()).rejects.toThrow(
+      "Server process exited before lock application",
+    );
+    expect(
+      (manager as unknown as { serverProcess: unknown }).serverProcess,
+    ).toBeNull();
+  });
+
+  it("detaches a prior child before it adopts an external lock holder", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    await manager.start();
+    const delayedExit = refs.getExitCallback();
+    const externalLock = JSON.stringify({
+      ...JSON.parse(LOCK_FILE_JSON),
+      pid: 54326,
+      authToken: "external-token",
+      startedAt: "2026-01-02T00:00:00.000Z",
+    });
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(externalLock);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+
+    try {
+      await expect(manager.start()).resolves.toEqual({
+        port: 19600,
+        authToken: "external-token",
+      });
+      delayedExit?.(1);
+
+      expect(onCrash).not.toHaveBeenCalled();
+      expect(manager.reusedExisting).toBe(true);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it("preserves a replacement lock when stale-lock cleanup reaches the deletion race", async () => {
+    const replacement = JSON.stringify({
+      ...JSON.parse(LOCK_FILE_JSON),
+      authToken: "replacement-token",
+    });
+    const enoent = () => {
+      const error = new Error("ENOENT") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    vi.mocked(NodeFS.readFileSync)
+      .mockReset()
+      .mockReturnValueOnce(LOCK_FILE_JSON)
+      .mockReturnValueOnce(replacement)
+      .mockImplementation(enoent);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      const error = new Error("ESRCH") as NodeJS.ErrnoException;
+      error.code = "ESRCH";
+      throw error;
+    });
+
+    try {
+      await manager.start();
+
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalledWith(
+        NodePath.join("/tmp/mcode", "server.lock"),
+      );
+      expect(NodeFS.renameSync).toHaveBeenCalledTimes(1);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
   it("reuses existing server when lock file is present and health check passes", async () => {
     // tryExistingServer: lock file returns valid JSON and health check passes
-    vi.mocked(readFileSync).mockReset().mockReturnValueOnce(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValueOnce(LOCK_FILE_JSON);
     // fetch already returns ok from beforeEach
 
     // Allow PID liveness check to succeed (process.kill(pid, 0) should not throw)
@@ -1222,7 +1518,7 @@ describe("ServerManager", () => {
     killSpy.mockRestore();
 
     // spawn should NOT have been called - we reused the existing server
-    expect(spawn).not.toHaveBeenCalled();
+    expect(NodeChildProcess.spawn).not.toHaveBeenCalled();
     expect(result.port).toBe(19600);
     expect(result.authToken).toBe("test-auth-token");
     expect(manager.reusedExisting).toBe(true);
@@ -1236,13 +1532,13 @@ describe("ServerManager", () => {
       err.code = "ENOENT";
       throw err;
     };
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.readFileSync)
       .mockReset()
       .mockReturnValueOnce(
         JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 0 }),
       )
       .mockImplementationOnce(enoent);
-    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    vi.mocked(NodeFSPromises.readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
     const killSpy = vi
       .spyOn(process, "kill")
       .mockImplementation(() => true as never);
@@ -1251,7 +1547,7 @@ describe("ServerManager", () => {
       await manager.start();
 
       expect(killSpy).not.toHaveBeenCalled();
-      expect(spawn).toHaveBeenCalled();
+      expect(NodeChildProcess.spawn).toHaveBeenCalled();
     } finally {
       killSpy.mockRestore();
     }

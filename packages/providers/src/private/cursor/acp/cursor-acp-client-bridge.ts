@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import type {
   Client,
   PermissionOption,
@@ -230,7 +230,7 @@ export class CursorAcpClientBridge {
       return optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } };
     }
 
-    const requestId = randomUUID();
+    const requestId = NodeCrypto.randomUUID();
     const toolTitle = typeof params.toolCall.title === "string" ? params.toolCall.title : "Tool";
     const request = synthesizeCursorAcpPermissionRequest({
       requestId,
@@ -281,11 +281,11 @@ export class CursorAcpClientBridge {
 
   /** Reads a UTF-8 file only when its resolved path stays inside the workspace. */
   readWorkspaceFile(cwd: string, filePath: string): string {
-    const root = path.resolve(cwd);
-    const resolved = path.resolve(root, filePath);
-    if (resolved !== root && !resolved.startsWith(root + path.sep)) return "";
+    const root = NodePath.resolve(cwd);
+    const resolved = NodePath.resolve(root, filePath);
+    if (resolved !== root && !resolved.startsWith(root + NodePath.sep)) return "";
     try {
-      return existsSync(resolved) ? readFileSync(resolved, "utf-8") : "";
+      return NodeFS.existsSync(resolved) ? NodeFS.readFileSync(resolved, "utf-8") : "";
     } catch {
       return "";
     }
@@ -293,13 +293,13 @@ export class CursorAcpClientBridge {
 
   /** Writes a UTF-8 file only when its resolved path stays inside the workspace. */
   writeWorkspaceFile(cwd: string, filePath: string, content: string): void {
-    const root = path.resolve(cwd);
-    const resolved = path.resolve(root, filePath);
-    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    const root = NodePath.resolve(cwd);
+    const resolved = NodePath.resolve(root, filePath);
+    if (resolved !== root && !resolved.startsWith(root + NodePath.sep)) {
       throw new Error("Path outside workspace root");
     }
-    mkdirSync(path.dirname(resolved), { recursive: true });
-    writeFileSync(resolved, content, "utf-8");
+    NodeFS.mkdirSync(NodePath.dirname(resolved), { recursive: true });
+    NodeFS.writeFileSync(resolved, content, "utf-8");
   }
 }
 

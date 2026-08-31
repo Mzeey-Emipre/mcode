@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import { ClaudeProvider } from "../claude-provider.js";
 import { stubEnvService } from "../../../../../runtime/environment/__tests__/stub-env-service.js";
 import { stubJobObject } from "../../../../../runtime/process/containment/__tests__/stub-job-object.js";
@@ -28,7 +28,7 @@ describe("ClaudeProvider resume listener cleanup", () => {
    * @returns The total count of listeners for both _resumeFailed and _streamDone events
    */
   function countResumeListeners(
-    provider: EventEmitter,
+    provider: NodeEvents.EventEmitter,
     sessionId: string,
   ): number {
     return (

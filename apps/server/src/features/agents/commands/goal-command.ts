@@ -4,6 +4,7 @@ import {
   type AgentEvent,
   AgentEventType,
   type GoalState,
+  type IGoalCapable,
   isGoalCapable,
   isGoalOpen,
 } from "@mcode/contracts";
@@ -106,54 +107,69 @@ export class GoalCommand implements McodeCommand {
    * leave a stale goal in the provider.
    */
   async handle(ctx: CommandContext): Promise<CommandOutcome> {
-    const { threadId, content } = ctx;
-    const match = GOAL_COMMAND.exec(content);
-    const capable = isGoalCapable(ctx.provider) ? ctx.provider : null;
-    if (!match || !capable) {
-      return { kind: "passthrough" };
-    }
+    const match = GOAL_COMMAND.exec(ctx.content);
+    const provider = isGoalCapable(ctx.provider) ? ctx.provider : null;
+    if (!match || !provider) return { kind: "passthrough" };
+    return this.handleGoal(ctx, provider, match[1].trim());
+  }
 
-    const arg = match[1].trim();
+  private async handleGoal(
+    ctx: CommandContext,
+    provider: IGoalCapable,
+    arg: string,
+  ): Promise<CommandOutcome> {
     const lower = arg.toLowerCase();
-    const session = this.sessionName(threadId);
-    const isControl =
-      arg === "" || lower === "show" || lower === "clear" || lower === "reset";
-
-    if (isControl) {
-      const native = asClaudeNativeGoalCommandProvider(ctx.provider);
-      const useNative = native?.hasNativeGoalCommand(session) === true;
-      if (useNative) {
-        const nativeContent = lower === "clear" || lower === "reset" ? "/goal off" : "/goal";
-        return {
-          kind: "rewrite",
-          content: nativeContent,
-        };
-      }
-      let replyText: string;
-      if (arg === "" || lower === "show") {
-        const current = await capable.getGoal(this.sessionName(threadId));
-        replyText = isGoalOpen(current)
-          ? `Active goal: "${current.objective}". Use \`/goal clear\` to remove it.`
-          : `No active goal. Use \`/goal <condition>\` to set one.`;
-      } else {
-        const cleared = await capable.clearGoal(this.sessionName(threadId));
-        this.broadcastGoalCleared(threadId, "cleared");
-        replyText = cleared ? `Goal cleared.` : `No active goal.`;
-      }
-      this.persistControlReply(threadId, content, replyText);
-      return { kind: "handled" };
-    }
-
+    if (this.isControlArgument(arg, lower)) return this.handleControl(ctx, provider, arg, lower);
     if (arg.length > MAX_GOAL_OBJECTIVE_CHARS) {
       this.persistControlReply(
-        threadId,
-        content,
+        ctx.threadId,
+        ctx.content,
         `Goal is too long. Keep goals under ${MAX_GOAL_OBJECTIVE_CHARS} characters.`,
       );
       return { kind: "handled" };
     }
 
     return this.prepareSet(ctx, arg);
+  }
+
+  private isControlArgument(arg: string, lower: string): boolean {
+    return arg === "" || lower === "show" || lower === "clear" || lower === "reset";
+  }
+
+  private async handleControl(
+    ctx: CommandContext,
+    provider: IGoalCapable,
+    arg: string,
+    lower: string,
+  ): Promise<CommandOutcome> {
+    const nativeContent = this.nativeControlContent(ctx, lower);
+    if (nativeContent) return { kind: "rewrite", content: nativeContent };
+    const replyText = await this.controlReply(ctx, provider, arg, lower);
+    this.persistControlReply(ctx.threadId, ctx.content, replyText);
+    return { kind: "handled" };
+  }
+
+  private nativeControlContent(ctx: CommandContext, lower: string): string | undefined {
+    const native = asClaudeNativeGoalCommandProvider(ctx.provider);
+    if (!native?.hasNativeGoalCommand(this.sessionName(ctx.threadId))) return undefined;
+    return lower === "clear" || lower === "reset" ? "/goal off" : "/goal";
+  }
+
+  private async controlReply(
+    ctx: CommandContext,
+    provider: IGoalCapable,
+    arg: string,
+    lower: string,
+  ): Promise<string> {
+    if (arg === "" || lower === "show") {
+      const current = await provider.getGoal(this.sessionName(ctx.threadId));
+      return isGoalOpen(current)
+        ? `Active goal: "${current.objective}". Use \`/goal clear\` to remove it.`
+        : `No active goal. Use \`/goal <condition>\` to set one.`;
+    }
+    const cleared = await provider.clearGoal(this.sessionName(ctx.threadId));
+    this.broadcastGoalCleared(ctx.threadId, "cleared");
+    return cleared ? `Goal cleared.` : `No active goal.`;
   }
 
   /** Broadcast that the active goal has been cleared. */

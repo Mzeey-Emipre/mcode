@@ -1,10 +1,11 @@
 import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EventEmitter } from "events";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeEvents from "node:events";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { WebSocket } from "ws";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import { routeMessage, type RouterDeps } from "../ws-router.js";
 import { CodexCatalogService } from "../../../features/providers/catalog/codex-catalog-service.js";
 import { ProviderCatalogService } from "../../../features/providers/catalog/provider-catalog-service.js";
@@ -190,27 +191,27 @@ describe("routeMessage snapshot.getCumulativeDiffStats", () => {
 
 describe("routeMessage provider.catalog", () => {
   it("merges scoped standalone agents and non-colliding config registrations", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-provider-catalog-ws-"));
-    const codexHome = join(root, "codex-home");
-    const cwd = join(root, "workspace");
-    await mkdir(join(codexHome, "agents"), { recursive: true });
-    await mkdir(join(cwd, ".codex", "agents"), { recursive: true });
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-provider-catalog-ws-"));
+    const codexHome = NodePath.join(root, "codex-home");
+    const cwd = NodePath.join(root, "workspace");
+    await NodeFSPromises.mkdir(NodePath.join(codexHome, "agents"), { recursive: true });
+    await NodeFSPromises.mkdir(NodePath.join(cwd, ".codex", "agents"), { recursive: true });
     await Promise.all([
-      writeFile(
-        join(codexHome, "agents", "reviewer.toml"),
+      NodeFSPromises.writeFile(
+        NodePath.join(codexHome, "agents", "reviewer.toml"),
         'name = "reviewer"\ndescription = "Global review"\n',
       ),
-      writeFile(
-        join(codexHome, "agents", "global-only.toml"),
+      NodeFSPromises.writeFile(
+        NodePath.join(codexHome, "agents", "global-only.toml"),
         'name = "global-only"\n',
       ),
-      writeFile(
-        join(cwd, ".codex", "agents", "reviewer.toml"),
+      NodeFSPromises.writeFile(
+        NodePath.join(cwd, ".codex", "agents", "reviewer.toml"),
         'name = "reviewer"\ndescription = "Project review"\n',
       ),
-      writeFile(join(cwd, ".codex", "agents", "broken.toml"), 'name = "broken\n'),
+      NodeFSPromises.writeFile(NodePath.join(cwd, ".codex", "agents", "broken.toml"), 'name = "broken\n'),
     ]);
-    const client = Object.assign(new EventEmitter(), {
+    const client = Object.assign(new NodeEvents.EventEmitter(), {
       isAlive: true,
       start: vi.fn(async () => undefined),
       kill: vi.fn(async () => undefined),
@@ -247,6 +248,7 @@ describe("routeMessage provider.catalog", () => {
         refresh: vi.fn(async () => ({ prompts: [], diagnostics: [], available: true })),
         currentPrompts: vi.fn(() => []),
       } as never,
+      hostRuntime,
     );
     const db = openMemoryDatabase();
     const providerCatalogService = new ProviderCatalogService(
@@ -289,21 +291,21 @@ describe("routeMessage provider.catalog", () => {
     } finally {
       await codexCatalogService.shutdown();
       db.close();
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 
   it("publishes standalone agents when the app-server catalog fails on first load", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-provider-catalog-offline-ws-"));
-    const codexHome = join(root, "codex-home");
-    const cwd = join(root, "workspace");
-    await mkdir(join(codexHome, "agents"), { recursive: true });
-    await mkdir(cwd, { recursive: true });
-    await writeFile(
-      join(codexHome, "agents", "offline-review.toml"),
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-provider-catalog-offline-ws-"));
+    const codexHome = NodePath.join(root, "codex-home");
+    const cwd = NodePath.join(root, "workspace");
+    await NodeFSPromises.mkdir(NodePath.join(codexHome, "agents"), { recursive: true });
+    await NodeFSPromises.mkdir(cwd, { recursive: true });
+    await NodeFSPromises.writeFile(
+      NodePath.join(codexHome, "agents", "offline-review.toml"),
       'name = "offline-review"\ndescription = "Standalone review"\n',
     );
-    const client = Object.assign(new EventEmitter(), {
+    const client = Object.assign(new NodeEvents.EventEmitter(), {
       isAlive: true,
       start: vi.fn(async () => undefined),
       kill: vi.fn(async () => undefined),
@@ -327,6 +329,7 @@ describe("routeMessage provider.catalog", () => {
         refresh: vi.fn(async () => ({ prompts: [], diagnostics: [], available: true })),
         currentPrompts: vi.fn(() => []),
       } as never,
+      hostRuntime,
     );
     const db = openMemoryDatabase();
     const providerCatalogService = new ProviderCatalogService(
@@ -368,13 +371,13 @@ describe("routeMessage provider.catalog", () => {
     } finally {
       await codexCatalogService.shutdown();
       db.close();
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 
   it("returns persisted Codex Skills immediately and reconciles refreshes in the background", async () => {
     let catalogVersion = 1;
-    const client = Object.assign(new EventEmitter(), {
+    const client = Object.assign(new NodeEvents.EventEmitter(), {
       isAlive: true,
       start: vi.fn(async () => undefined),
       kill: vi.fn(async () => undefined),
@@ -489,6 +492,7 @@ describe("routeMessage provider.catalog", () => {
       { getEnv: () => ({}) } as never,
       { create } as never,
       customPromptService as never,
+      hostRuntime,
     );
     const refresh = vi.spyOn(codexCatalogService, "refresh");
     const db = openMemoryDatabase();
@@ -1234,6 +1238,54 @@ describe("routeMessage thread.create", () => {
   });
 });
 
+describe("routeMessage workspace.create", () => {
+  it("initializes the workspace environment before starting its branch watcher", async () => {
+    const workspace = {
+      id: "ws-1",
+      name: "Project",
+      path: "C:/repo",
+      provider_config: {},
+      is_git_repo: true,
+      created_at: "2026-08-30T00:00:00.000Z",
+      updated_at: "2026-08-30T00:00:00.000Z",
+      pinned: false,
+      last_opened_at: null,
+      sort_order: 0,
+      deleted_at: null,
+    };
+    const environmentReadStarted = deferred<void>();
+    const environmentRead = deferred<void>();
+    const read = vi.fn(() => {
+      environmentReadStarted.resolve();
+      return environmentRead.promise;
+    });
+    const watchWorkspace = vi.fn();
+    const deps = {
+      workspaceService: { create: vi.fn().mockResolvedValue(workspace) },
+      workspaceEnvironmentService: { read },
+      gitWatcherService: { watchWorkspace },
+    } as unknown as RouterDeps;
+
+    const responsePromise = routeMessage(JSON.stringify({
+      id: "workspace-create",
+      method: "workspace.create",
+      params: { name: workspace.name, path: workspace.path },
+    }), deps);
+
+    await environmentReadStarted.promise;
+    expect(watchWorkspace).not.toHaveBeenCalled();
+
+    environmentRead.resolve();
+
+    await expect(responsePromise).resolves.toEqual({
+      id: "workspace-create",
+      result: workspace,
+    });
+    expect(read).toHaveBeenCalledWith(workspace.id);
+    expect(watchWorkspace).toHaveBeenCalledWith(workspace.id, workspace.path);
+  });
+});
+
 describe("routeMessage workspace.delete watcher teardown", () => {
   it("keeps thread worktree watchers when any workspace thread teardown fails", async () => {
     const unwatchThreadWorktree = vi.fn();
@@ -1522,11 +1574,12 @@ describe("routeMessage thread.delete watcher teardown", () => {
 
 describe("routeMessage Setup deletion barriers", () => {
   it("rejects Setup during a Thread deletion and releases the barrier after teardown fails", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-setup-thread-delete-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-setup-thread-delete-"));
     const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
     const environment = new WorkspaceEnvironmentService({
       mcodeDir: root,
       threads: { findById: (threadId) => threadId === thread.id ? thread : null },
+      platform: hostRuntime.platform,
     });
     const teardownEntered = deferred<void>();
     const teardown = deferred<void>();
@@ -1562,17 +1615,18 @@ describe("routeMessage Setup deletion barriers", () => {
       await expect(deletion).resolves.toMatchObject({ error: { message: "teardown failed" } });
       await expect(environment.startSetup({ threadId: thread.id })).resolves.toMatchObject({ status: "unavailable" });
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 
   it("rejects Setup during a workspace deletion and falls back to not found after deletion", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-setup-workspace-delete-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-setup-workspace-delete-"));
     const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
     let deleted = false;
     const environment = new WorkspaceEnvironmentService({
       mcodeDir: root,
       threads: { findById: (threadId) => !deleted && threadId === thread.id ? thread : null },
+      platform: hostRuntime.platform,
     });
     const teardownEntered = deferred<void>();
     const teardown = deferred<void>();
@@ -1616,7 +1670,7 @@ describe("routeMessage Setup deletion barriers", () => {
         code: "WORKSPACE_ENVIRONMENT_NOT_FOUND",
       });
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 });

@@ -6,14 +6,14 @@
  * `mcode-test-XXXX` directory behind every time `bun run test` runs.
  */
 
-import { rmSync } from "fs";
+import * as NodeFS from "node:fs";
 
 export default function setup(): () => void {
   return () => {
     const dir = process.env.MCODE_DATA_DIR;
     if (!dir) return;
     try {
-      rmSync(dir, { recursive: true, force: true });
+      NodeFS.rmSync(dir, { recursive: true, force: true });
     } catch {
       // Best-effort cleanup; CI runners will evict temp dirs on reboot anyway.
     }

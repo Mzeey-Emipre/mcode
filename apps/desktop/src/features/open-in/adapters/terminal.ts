@@ -9,10 +9,10 @@
  * leaf spawn is a thin fire-and-forget shim matching the editor adapters.
  */
 
-import { execFileSync, spawn } from "child_process";
-import { existsSync } from "fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import type { LaunchTarget, OpenInAdapter } from "../contracts/types.js";
-import { spawnDetached } from "../launch/spawn-launch.js";
+import { commandOnPath, spawnDetached } from "../launch/spawn-launch.js";
 
 /** IDs of the external terminals we detect and can launch. */
 export type TerminalId = "windows-terminal" | "git-bash" | "wsl";
@@ -40,27 +40,12 @@ export interface TerminalAdapterDeps {
   /** Whether an absolute path exists on disk. */
   fileExists(path: string): boolean;
   /** Spawn a detached child process. */
-  spawn: typeof spawn;
-  /** Host platform (terminals here are Windows-only). */
-  platform: NodeJS.Platform;
+  spawn: typeof NodeChildProcess.spawn;
 }
 
-/** Check whether a command exists on the system PATH. */
-function commandOnPathReal(cmd: string): boolean {
-  const checkCmd = process.platform === "win32" ? "where" : "which";
-  try {
-    execFileSync(checkCmd, [cmd], { stdio: "pipe", encoding: "utf-8" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const REAL_DEPS: TerminalAdapterDeps = {
-  commandOnPath: commandOnPathReal,
-  fileExists: existsSync,
-  spawn,
-  platform: process.platform,
+const REAL_DEPS: Omit<TerminalAdapterDeps, "commandOnPath"> = {
+  fileExists: NodeFS.existsSync,
+  spawn: NodeChildProcess.spawn,
 };
 
 /**
@@ -87,14 +72,18 @@ export function buildTerminalArgs(terminal: TerminalId, dir: string): string[] {
  */
 export function createTerminalAdapter(
   config: TerminalAdapterConfig,
-  deps: TerminalAdapterDeps = REAL_DEPS,
+  platform: NodeJS.Platform,
+  deps: TerminalAdapterDeps = {
+    ...REAL_DEPS,
+    commandOnPath: (command) => commandOnPath(command, platform),
+  },
 ): OpenInAdapter {
   // `undefined` = not yet resolved; `null` = resolved as not installed.
   let resolvedCommand: string | null | undefined;
 
   function resolveCommand(): string | null {
     if (resolvedCommand !== undefined) return resolvedCommand;
-    if (deps.platform !== "win32") {
+    if (platform !== "win32") {
       resolvedCommand = null;
       return resolvedCommand;
     }
@@ -130,7 +119,7 @@ export function createTerminalAdapter(
 
       const args = buildTerminalArgs(config.id, target.path);
 
-      return spawnDetached(cmd, args, deps.platform, deps.spawn);
+      return spawnDetached(cmd, args, platform, deps.spawn);
     },
   };
 }

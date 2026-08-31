@@ -45,12 +45,16 @@ describe("createPtyProcessScope", () => {
     async () => {
       const fallbackError = new Error("fallback cleanup failed");
       mocks.killProcessTree.mockRejectedValue(fallbackError);
-      const scope = createPtyProcessScope(123);
+      const scope = createPtyProcessScope(123, {
+        platform: "win32",
+        architecture: "x64",
+      });
 
       await expect(scope.close()).rejects.toBe(fallbackError);
 
       expect(mocks.scope.terminate).toHaveBeenCalledWith(0);
       expect(mocks.scope.waitForEmpty).toHaveBeenCalledWith(5_000);
+      expect(mocks.killProcessTree).toHaveBeenCalledWith(123, { platform: "win32" });
     },
   );
 });

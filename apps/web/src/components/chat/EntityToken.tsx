@@ -13,6 +13,27 @@ import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { cn } from "@/lib/utils";
 import { StackedLayersIcon } from "@/components/ui/StackedLayersIcon";
 
+const COMMAND_ICONS = {
+  goal: Target,
+  plan: ListTodo,
+  ultra: Gauge,
+  compact: Minimize2,
+};
+
+const ENTITY_ICONS = {
+  skill: BadgeCheck,
+  plugin: Plug,
+  mcode: Zap,
+  command: SquareTerminal,
+};
+
+function getEntityIcon(kind: EntityKind, commandName: string | undefined) {
+  if (kind === "command" || kind === "mcode") {
+    return COMMAND_ICONS[commandName as keyof typeof COMMAND_ICONS] ?? ENTITY_ICONS[kind];
+  }
+  return ENTITY_ICONS[kind as keyof typeof ENTITY_ICONS] ?? SquareTerminal;
+}
+
 /** Entity categories that share one visual language across composer and transcript surfaces. */
 export type EntityKind = "agent" | "command" | "file" | "mcode" | "plugin" | "skill";
 
@@ -61,21 +82,7 @@ export function EntityIcon({
     );
   }
 
-  const namedCommandIcon =
-    commandName === "goal"
-      ? Target
-      : commandName === "plan"
-        ? ListTodo
-        : commandName === "ultra"
-          ? Gauge
-          : commandName === "compact"
-            ? Minimize2
-            : null;
-  const Icon = kind === "skill"
-    ? BadgeCheck
-    : kind === "plugin"
-      ? Plug
-      : namedCommandIcon ?? (kind === "mcode" ? Zap : SquareTerminal);
+  const Icon = getEntityIcon(kind, commandName);
 
   return (
     <span data-entity-icon={kind} className={iconClassName} {...props}>

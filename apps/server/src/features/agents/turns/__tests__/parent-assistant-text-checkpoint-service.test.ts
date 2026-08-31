@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -113,7 +113,7 @@ describe("ParentAssistantTextCheckpointService", () => {
   });
 
   it("resets an unfinished retry even when its checkpoint rows are already absent", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-retry-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-retry-"));
     const retryService = new ParentAssistantTextCheckpointService(db, undefined, { directory: journalDirectory });
     const recovered = [];
     try {
@@ -125,12 +125,12 @@ describe("ParentAssistantTextCheckpointService", () => {
       expect(recovered).toEqual([]);
       expect(retryService.restore(EXECUTION_ID)).toBe("");
     } finally {
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
   it("removes a recovery journal after its equivalent canonical projection commits", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-retire-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-retire-"));
     const journalService = new ParentAssistantTextCheckpointService(db, undefined, { directory: journalDirectory });
     const recovered = [];
     try {
@@ -140,12 +140,12 @@ describe("ParentAssistantTextCheckpointService", () => {
       journalService.recoveryJournal.drain(EXECUTION_ID, (record) => recovered.push(record));
       expect(recovered).toEqual([]);
     } finally {
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
   it("removes journal-only provisional text after the canonical execution is terminal", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-terminal-journal-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-terminal-journal-"));
     const journalService = new ParentAssistantTextCheckpointService(db, undefined, { directory: journalDirectory });
     const recovered = [];
     try {
@@ -161,12 +161,12 @@ describe("ParentAssistantTextCheckpointService", () => {
 
       expect(recovered).toEqual([]);
     } finally {
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
   it("keeps a recovery journal when SQLite has no retained capacity for its next chunk", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-overflow-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-overflow-"));
     const journalService = new ParentAssistantTextCheckpointService(
       db,
       { maxBytes: 4, maxChunks: 4 },
@@ -186,22 +186,22 @@ describe("ParentAssistantTextCheckpointService", () => {
         expect.objectContaining({ firstSequence: 2, lastSequence: 2, text: "tail" }),
       ]);
     } finally {
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
   it("keeps an incomplete journal tail for later recovery instead of unlinking it", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-incomplete-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-incomplete-"));
     const journalService = new ParentAssistantTextCheckpointService(db, undefined, { directory: journalDirectory });
-    const journalPath = join(journalDirectory, `${EXECUTION_ID}.journal`);
+    const journalPath = NodePath.join(journalDirectory, `${EXECUTION_ID}.journal`);
     try {
-      writeFileSync(journalPath, "{\"version\":1", "utf8");
+      NodeFS.writeFileSync(journalPath, "{\"version\":1", "utf8");
 
       expect(() => journalService.recoveryJournal.drain(EXECUTION_ID, expect.unreachable))
         .toThrow("Assistant text recovery journal has an incomplete final record");
-      expect(existsSync(journalPath)).toBe(true);
+      expect(NodeFS.existsSync(journalPath)).toBe(true);
     } finally {
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
@@ -320,7 +320,7 @@ describe("ParentAssistantTextCheckpointQueue", () => {
   });
 
   it("publishes after a fsynced journal record and imports that record when SQLite recovers", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-"));
     const journalDb = openMemoryDatabase();
     seedParentAssistantTurn(journalDb);
     const journalService = new ParentAssistantTextCheckpointService(journalDb, undefined, { directory: journalDirectory });
@@ -354,12 +354,12 @@ describe("ParentAssistantTextCheckpointQueue", () => {
       expect(journalService.recoveryJournal.drain(EXECUTION_ID, () => expect.unreachable())).toBe(true);
     } finally {
       journalDb.close();
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
   it("stops safely when the final persistence check cannot import the journal", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-finalize-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-finalize-"));
     const journalDb = openMemoryDatabase();
     seedParentAssistantTurn(journalDb);
     const journalService = new ParentAssistantTextCheckpointService(journalDb, undefined, { directory: journalDirectory });
@@ -390,7 +390,7 @@ describe("ParentAssistantTextCheckpointQueue", () => {
       expect(failures).toEqual(["Assistant text recovery remained unavailable at turn finalization"]);
     } finally {
       journalDb.close();
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
@@ -507,7 +507,7 @@ describe("ParentAssistantTextCheckpointQueue", () => {
   });
 
   it("continues past a journal-blocked boundary only after the explicit unsaved choice", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-unsaved-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-unsaved-"));
     const journalDb = openMemoryDatabase();
     seedParentAssistantTurn(journalDb);
     const journalService = new ParentAssistantTextCheckpointService(journalDb, undefined, { directory: journalDirectory });
@@ -543,12 +543,12 @@ describe("ParentAssistantTextCheckpointQueue", () => {
       expect(published).toEqual(["a", "b"]);
     } finally {
       journalDb.close();
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 
   it("keeps the stop state after a non-recoverable journal drain failure", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-parent-text-stop-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-parent-text-stop-"));
     const journalDb = openMemoryDatabase();
     seedParentAssistantTurn(journalDb);
     const journalService = new ParentAssistantTextCheckpointService(journalDb, undefined, { directory: journalDirectory });
@@ -584,7 +584,7 @@ describe("ParentAssistantTextCheckpointQueue", () => {
       expect(failures).toEqual(["journal corruption"]);
     } finally {
       journalDb.close();
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 

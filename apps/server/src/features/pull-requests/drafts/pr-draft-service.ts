@@ -5,8 +5,8 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { existsSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { logger } from "@mcode/shared";
 import { GitComparisonService } from "../../projects/git/git-comparison-service.js";
 import { GitRepositoryService } from "../../projects/git/git-repository-service.js";
@@ -39,6 +39,26 @@ const DEFAULT_FORMAT = `## What
 /** Maximum PR template file size. Templates larger than this are skipped. */
 const MAX_TEMPLATE_BYTES = 64 * 1024;
 
+interface DraftContext {
+  commits: Array<{ message: string }>;
+  commitLog: string;
+  diffStat: string;
+  conversationSummary: string;
+  repoTemplate: string | null;
+  headBranch: string;
+  baseBranch: string;
+  repoPath: string;
+}
+
+function isNonRecoverableDraftError(message: string): boolean {
+  return [
+    "does not support",
+    "no valid JSON",
+    "could not be parsed",
+    "failed validation",
+  ].some((fragment) => message.includes(fragment));
+}
+
 /** Generates AI-powered PR titles and bodies from commit history and conversation context. */
 @injectable()
 export class PrDraftService {
@@ -63,6 +83,29 @@ export class PrDraftService {
     threadId: string,
     baseBranch: string,
   ): Promise<PrDraft> {
+    const context = await this.loadDraftContext(workspaceId, threadId, baseBranch);
+    if (context.commits.length === 0) {
+      return this.buildFallbackDraft(context.commits, context.diffStat);
+    }
+
+    try {
+      return await this.generateWithAI(context);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isNonRecoverableDraftError(message)) {
+        logger.error("PR draft generation failed with a non-recoverable error", { error: message });
+        throw error;
+      }
+      logger.warn("AI PR draft generation failed, using commit-only fallback", { error: message });
+      return this.buildFallbackDraft(context.commits, context.diffStat);
+    }
+  }
+
+  private async loadDraftContext(
+    workspaceId: string,
+    threadId: string,
+    baseBranch: string,
+  ): Promise<DraftContext> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread ${threadId} not found`);
     if (thread.workspace_id !== workspaceId) {
@@ -107,52 +150,24 @@ export class PrDraftService {
     ]);
 
     const repoTemplate = this.detectPrTemplate(repoPath);
-    const conversationSummary = this.buildConversationSummary(
-      messagesResult.messages,
-    );
+    const conversationSummary = this.buildConversationSummary(messagesResult.messages);
     const commitLog = commits
       .map((c: { message: string }) => `- ${c.message}`)
       .join("\n");
-
-    // Skip AI generation when there's nothing to draft from
-    if (commits.length === 0) {
-      return this.buildFallbackDraft(commits, diffStat);
-    }
-
-    const aiContext = { commitLog, diffStat, conversationSummary, repoTemplate, headBranch, baseBranch, repoPath };
-
-    try {
-      return await this.generateWithAI(aiContext);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      // Capability errors and malformed model output are non-recoverable bugs — surface them.
-      if (
-        message.includes("does not support") ||
-        message.includes("no valid JSON") ||
-        message.includes("could not be parsed") ||
-        message.includes("failed validation")
-      ) {
-        logger.error("PR draft generation failed with a non-recoverable error", { error: message });
-        throw error;
-      }
-
-      // Provider unavailable (auth, network, CLI missing) — fall back to commit-only draft.
-      logger.warn("AI PR draft generation failed, using commit-only fallback", { error: message });
-      return this.buildFallbackDraft(commits, diffStat);
-    }
+    return {
+      commits,
+      diffStat,
+      conversationSummary,
+      repoTemplate,
+      headBranch,
+      baseBranch,
+      repoPath,
+      commitLog,
+    };
   }
 
   /** Call the configured provider's one-shot completion and parse the structured result. */
-  private async generateWithAI(context: {
-    commitLog: string;
-    diffStat: string;
-    conversationSummary: string;
-    repoTemplate: string | null;
-    headBranch: string;
-    baseBranch: string;
-    repoPath: string;
-  }): Promise<PrDraft> {
+  private async generateWithAI(context: DraftContext): Promise<PrDraft> {
     const formatInstruction = context.repoTemplate
       ? `Follow this PR template structure from the repository:\n\n${context.repoTemplate}`
       : `Use this structure:\n\n${DEFAULT_FORMAT}`;
@@ -185,15 +200,15 @@ export class PrDraftService {
       return this.templateCache.get(repoPath) ?? null;
     }
     for (const templatePath of PR_TEMPLATE_PATHS) {
-      const fullPath = join(repoPath, templatePath);
-      if (existsSync(fullPath)) {
+      const fullPath = NodePath.join(repoPath, templatePath);
+      if (NodeFS.existsSync(fullPath)) {
         try {
-          const { size } = statSync(fullPath);
+          const { size } = NodeFS.statSync(fullPath);
           if (size > MAX_TEMPLATE_BYTES) {
             logger.warn("PR template file exceeds size limit, skipped", { fullPath, size });
             continue;
           }
-          const content = readFileSync(fullPath, "utf-8");
+          const content = NodeFS.readFileSync(fullPath, "utf-8");
           this.templateCache.set(repoPath, content);
           return content;
         } catch {

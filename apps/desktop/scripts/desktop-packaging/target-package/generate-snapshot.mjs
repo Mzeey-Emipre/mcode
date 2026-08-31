@@ -10,14 +10,14 @@
  */
 
 import { build } from "esbuild";
-import { spawn } from "child_process";
-import { renameSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const desktopRoot = resolve(__dirname, "..", "..", "..");
-const snapshotDir = resolve(desktopRoot, "dist/snapshot");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const desktopRoot = NodePath.resolve(__dirname, "..", "..", "..");
+const snapshotDir = NodePath.resolve(desktopRoot, "dist/snapshot");
 
 // ---------------------------------------------------------------------------
 // Cross-arch guard: electron-mksnapshot can only produce snapshots for the
@@ -37,10 +37,10 @@ if (targetArch !== process.arch) {
 
 // Clean stale artifacts from previous builds to prevent after-pack from
 // copying an outdated snapshot if this script fails mid-way.
-if (existsSync(snapshotDir)) {
-  rmSync(snapshotDir, { recursive: true, force: true });
+if (NodeFS.existsSync(snapshotDir)) {
+  NodeFS.rmSync(snapshotDir, { recursive: true, force: true });
 }
-mkdirSync(snapshotDir, { recursive: true });
+NodeFS.mkdirSync(snapshotDir, { recursive: true });
 
 // ---------------------------------------------------------------------------
 // Step 1: Bundle snapshot entry as IIFE
@@ -48,12 +48,12 @@ mkdirSync(snapshotDir, { recursive: true });
 
 console.log("Bundling snapshot entry...");
 await build({
-  entryPoints: [resolve(desktopRoot, "src/main/snapshot-entry.ts")],
+  entryPoints: [NodePath.resolve(desktopRoot, "src/main/snapshot-entry.ts")],
   bundle: true,
   format: "iife",
   platform: "browser",
   target: "esnext",
-  outfile: resolve(snapshotDir, "snapshot-entry.js"),
+  outfile: NodePath.resolve(snapshotDir, "snapshot-entry.js"),
   minify: true,
 });
 console.log("  -> dist/snapshot/snapshot-entry.js");
@@ -68,11 +68,11 @@ console.log("Generating V8 snapshot...");
 // In a bun workspace the binary may be hoisted to the monorepo root, so check
 // both the local and root node_modules/.bin directories.
 const ext = process.platform === "win32" ? ".exe" : "";
-const localBin = resolve(desktopRoot, `node_modules/.bin/mksnapshot${ext}`);
-const rootBin = resolve(desktopRoot, `../../node_modules/.bin/mksnapshot${ext}`);
-const mksnapshot = existsSync(localBin) ? localBin : rootBin;
+const localBin = NodePath.resolve(desktopRoot, `node_modules/.bin/mksnapshot${ext}`);
+const rootBin = NodePath.resolve(desktopRoot, `../../node_modules/.bin/mksnapshot${ext}`);
+const mksnapshot = NodeFS.existsSync(localBin) ? localBin : rootBin;
 
-if (!existsSync(mksnapshot)) {
+if (!NodeFS.existsSync(mksnapshot)) {
   console.error(
     `ERROR: mksnapshot binary not found at:\n  ${localBin}\n  ${rootBin}\n` +
     `Ensure electron-mksnapshot is listed in trustedDependencies (root package.json) ` +
@@ -82,9 +82,9 @@ if (!existsSync(mksnapshot)) {
 }
 
 const snapshotResult = await new Promise((resolveResult) => {
-  const child = spawn(
+  const child = NodeChildProcess.spawn(
     mksnapshot,
-    [resolve(snapshotDir, "snapshot-entry.js"), "--output_dir", snapshotDir],
+    [NodePath.resolve(snapshotDir, "snapshot-entry.js"), "--output_dir", snapshotDir],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   let output = "";
@@ -115,7 +115,7 @@ if (snapshotResult.status !== 0) {
       "Skipping V8 snapshot: electron-mksnapshot did not install a native mksnapshot binary for this platform. " +
       "The app will start without a custom snapshot.",
     );
-    rmSync(snapshotDir, { recursive: true, force: true });
+    NodeFS.rmSync(snapshotDir, { recursive: true, force: true });
     process.exit(0);
   }
 
@@ -139,10 +139,10 @@ if (platform === "darwin") {
   v8ContextFile = "v8_context_snapshot.bin";
 }
 
-const source = resolve(snapshotDir, v8ContextFile);
-const target = resolve(snapshotDir, "browser_v8_context_snapshot.bin");
+const source = NodePath.resolve(snapshotDir, v8ContextFile);
+const target = NodePath.resolve(snapshotDir, "browser_v8_context_snapshot.bin");
 
-if (!existsSync(source)) {
+if (!NodeFS.existsSync(source)) {
   console.error(
     `ERROR: electron-mksnapshot did not produce ${v8ContextFile}`,
   );
@@ -150,21 +150,21 @@ if (!existsSync(source)) {
 }
 
 // Remove stale target if it exists
-if (existsSync(target)) {
-  unlinkSync(target);
+if (NodeFS.existsSync(target)) {
+  NodeFS.unlinkSync(target);
 }
 
-renameSync(source, target);
+NodeFS.renameSync(source, target);
 console.log("  -> dist/snapshot/browser_v8_context_snapshot.bin");
 
 // Clean up intermediate files
-const intermediateEntry = resolve(snapshotDir, "snapshot-entry.js");
-if (existsSync(intermediateEntry)) {
-  unlinkSync(intermediateEntry);
+const intermediateEntry = NodePath.resolve(snapshotDir, "snapshot-entry.js");
+if (NodeFS.existsSync(intermediateEntry)) {
+  NodeFS.unlinkSync(intermediateEntry);
 }
-const snapshotBlob = resolve(snapshotDir, "snapshot_blob.bin");
-if (existsSync(snapshotBlob)) {
-  unlinkSync(snapshotBlob);
+const snapshotBlob = NodePath.resolve(snapshotDir, "snapshot_blob.bin");
+if (NodeFS.existsSync(snapshotBlob)) {
+  NodeFS.unlinkSync(snapshotBlob);
 }
 
 console.log("V8 snapshot generation complete.");

@@ -10,7 +10,7 @@ vi.mock("child_process", () => ({
 }));
 
 vi.mock("util", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("util")>();
+  const actual = await importOriginal<typeof import("node:util")>();
   return { ...actual, promisify: () => mockExecFile };
 });
 
@@ -495,13 +495,19 @@ describe("killProcessTree", () => {
     try {
       const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 
-      await killProcessTree(0);
+      await killProcessTree(0, { platform: "linux" });
 
       expect(killSpy).not.toHaveBeenCalled();
       killSpy.mockRestore();
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
+  });
+
+  it("rejects an unsupported platform instead of using the Unix process path", async () => {
+    await expect(killProcessTree(1234, {
+      platform: "unknown" as NodeJS.Platform,
+    })).rejects.toThrow("Unsupported process containment platform: unknown");
   });
 });
 
@@ -536,7 +542,7 @@ describe("findDescendantsByName", () => {
           stderr: "",
         });
 
-      const pids = await findDescendantsByName(1234, "claude.exe");
+      const pids = await findDescendantsByName(1234, "claude.exe", "win32");
 
       expect(pids).toContain(5555);
       expect(pids).toContain(7777);
@@ -555,7 +561,7 @@ describe("findDescendantsByName", () => {
         stderr: "",
       });
 
-      const pids = await findDescendantsByName(1234, "claude.exe");
+      const pids = await findDescendantsByName(1234, "claude.exe", "win32");
 
       expect(pids).toEqual([]);
     } finally {
@@ -569,7 +575,7 @@ describe("findDescendantsByName", () => {
     try {
       mockExecFile.mockRejectedValue(new Error("powershell unavailable"));
 
-      const pids = await findDescendantsByName(1234, "claude.exe");
+      const pids = await findDescendantsByName(1234, "claude.exe", "win32");
 
       expect(pids).toEqual([]);
     } finally {
@@ -590,7 +596,7 @@ describe("listDirectChildren", () => {
     try {
       mockExecFile.mockRejectedValue(Object.assign(new Error("no matches"), { code: 1 }));
 
-      await expect(listDirectChildren(1234)).resolves.toEqual([]);
+      await expect(listDirectChildren(1234, "linux")).resolves.toEqual([]);
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
@@ -640,7 +646,7 @@ describe("killDescendantsByName", () => {
         })
         .mockResolvedValueOnce({ stdout: "", stderr: "" });
 
-      await killDescendantsByName(1234, "claude.exe");
+      await killDescendantsByName(1234, "claude.exe", "win32");
 
       expect(mockExecFile).toHaveBeenCalledWith(
         "taskkill",
@@ -662,7 +668,7 @@ describe("killDescendantsByName", () => {
         stderr: "",
       });
 
-      await killDescendantsByName(1234, "claude.exe");
+      await killDescendantsByName(1234, "claude.exe", "win32");
 
       // Only PowerShell CIM enumeration runs when no descendants match.
       for (const call of mockExecFile.mock.calls) {

@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactElement,
+} from "react";
 import {
   Check,
   ChevronDown,
@@ -147,6 +157,17 @@ type LoadedBranchState =
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 type LocalCopyTarget = "path" | "branch";
 type CiSegmentName = "failing" | "running" | "passing" | "cancelled";
+type LoadedChangeSummary = {
+  threadId: string;
+  snapshotKey: string;
+  revision: number;
+  summary: ThreadOverviewChangeSummary;
+};
+type LoadedRepository = {
+  threadId: string;
+  status: LoadStatus;
+  repository: ThreadOverviewRepository;
+};
 
 const CI_SEGMENT_COLORS: Record<CiSegmentName, string> = {
   failing: "var(--diff-remove-strong)",
@@ -197,6 +218,135 @@ const OVERVIEW_ROW_CLASS =
 
 const EMPTY_BROWSER_PENDING_OPENS: ReadonlyMap<string, BrowserAutomationPendingAgentOpen> = new Map();
 
+/** Renders children only when an Overview row should be visible. */
+function ThreadOverviewWhen({ when, children }: { when: boolean; children: React.ReactNode }) {
+  return when ? <>{children}</> : null;
+}
+
+/** Returns the setup action only when this checkout supports manual setup. */
+function getThreadOverviewSetupMenuItem(
+  canRunManualSetup: boolean,
+  hasSetup: boolean,
+  props: React.ComponentProps<typeof ProjectSetupMenuItem>,
+): React.ReactNode {
+  if (!canRunManualSetup || !hasSetup) return null;
+  return <ProjectSetupMenuItem {...props} />;
+}
+
+/** Resolves the displayed change summary after cache identity validation. */
+function getLoadedThreadOverviewChangeSummary({
+  loaded,
+  threadId,
+  snapshotKey,
+  revision,
+  fallback,
+}: {
+  loaded: LoadedChangeSummary | null;
+  threadId: string;
+  snapshotKey: string;
+  revision: number;
+  fallback: ThreadOverviewChangeSummary;
+}): ThreadOverviewChangeSummary {
+  if (loaded?.threadId !== threadId) return fallback;
+  if (loaded.snapshotKey !== snapshotKey || loaded.revision !== revision) return fallback;
+  return loaded.summary;
+}
+
+/** Resolves the displayed repository state for the active thread. */
+function getLoadedThreadOverviewRepository(
+  loaded: LoadedRepository | null,
+  threadId: string,
+): { repository: ThreadOverviewRepository; status: LoadStatus } {
+  if (loaded?.threadId !== threadId) return { repository: EMPTY_REPOSITORY, status: "idle" };
+  return { repository: loaded.repository, status: loaded.status };
+}
+
+/** Derives the pull request identity used by the Overview. */
+function getEffectiveThreadOverviewPr(
+  pr: ThreadOverviewPr,
+  reviewLink: ReturnType<typeof usePullRequestReviewLink>,
+): ThreadOverviewPr {
+  if (pr) return pr;
+  if (!reviewLink) return null;
+  return {
+    number: reviewLink.identity.number,
+    url: reviewLink.pullRequestUrl,
+    state: reviewLink.pullRequestState,
+  };
+}
+
+/** Returns the accessible label for the Overview trigger's current CI state. */
+function getThreadOverviewTriggerStatus(ciDot: ThreadOverviewCiDot): string {
+  if (ciDot === "red") return "Thread overview, CI checks failing";
+  if (ciDot === "green") return "Thread overview, CI checks passing";
+  return "Thread overview";
+}
+
+/** Returns the trigger dot class for one Overview CI state. */
+function getThreadOverviewCiDotClass(ciDot: ThreadOverviewCiDot): string | false {
+  if (ciDot === "red") return "bg-[var(--diff-remove-strong)]";
+  if (ciDot === "green") return "bg-[var(--diff-add-strong)]";
+  return false;
+}
+
+type ThreadOverviewTriggerProps = {
+  ciDot: ThreadOverviewCiDot;
+  open: boolean;
+} & Omit<ComponentProps<typeof Button>, "children">;
+
+function ThreadOverviewTooltipButton({
+  content,
+  disabled = false,
+  children,
+}: {
+  content: string;
+  disabled?: boolean;
+  children: ReactElement;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={disabled ? <span className="inline-flex">{children}</span> : children}
+      />
+      <TooltipContent>{content}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Renders the Overview trigger with its compact CI state. */
+function ThreadOverviewTrigger({ ciDot, open, className, ...triggerProps }: ThreadOverviewTriggerProps) {
+  const status = getThreadOverviewTriggerStatus(ciDot);
+
+  return (
+    <Button
+      {...triggerProps}
+      variant="ghost"
+      size="icon-xs"
+      type="button"
+      aria-label={status}
+      aria-expanded={open}
+      data-testid="header-workspace-menu"
+      className={cn(
+        "relative cursor-pointer text-foreground/70 transition-[background-color,color,transform] duration-150 active:scale-95 motion-reduce:transform-none hover:bg-muted/40 hover:text-foreground",
+        open && "bg-muted text-foreground",
+        className,
+      )}
+    >
+      <Settings2 size={14} aria-hidden />
+      <ThreadOverviewWhen when={ciDot !== null}>
+        <span
+          data-testid={`thread-overview-ci-${ciDot}`}
+          aria-hidden
+          className={cn(
+            "absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background",
+            getThreadOverviewCiDotClass(ciDot),
+          )}
+        />
+      </ThreadOverviewWhen>
+    </Button>
+  );
+}
+
 /** One Browser tab row joined from a live target and tab chrome. */
 export interface ThreadOverviewBrowserTab {
   readonly tab: BrowserTabInfo;
@@ -213,6 +363,91 @@ function browserPendingTab(tab: BrowserTabInfo, pendingUrl: string | null): Brow
     // The Browser host remains responsible for rejecting invalid navigation URLs.
   }
   return { ...tab, title, url: pendingUrl };
+}
+
+/** Indexes lifecycle records that match the active Browser scope. */
+function getBrowserLifecycleByTarget(
+  lifecycleTabs: ReadonlyMap<string, BrowserSessionLifecycleTab>,
+  workspaceId: string,
+  threadId: string,
+): ReadonlyMap<string, BrowserSessionLifecycleTab> {
+  const lifecycleByTarget = new Map<string, BrowserSessionLifecycleTab>();
+  for (const lifecycle of lifecycleTabs.values()) {
+    if (!isThreadLifecycleTab(lifecycle, workspaceId, threadId)) continue;
+    lifecycleByTarget.set(browserAutomationTargetKey(workspaceId, threadId, lifecycle.tabId), lifecycle);
+  }
+  return lifecycleByTarget;
+}
+
+/** Returns whether a lifecycle record belongs to the active Browser scope. */
+function isThreadLifecycleTab(
+  lifecycle: BrowserSessionLifecycleTab,
+  workspaceId: string,
+  threadId: string,
+): boolean {
+  return lifecycle.workspaceId === workspaceId
+    && lifecycle.threadId === threadId
+    && lifecycle.target.threadId === threadId
+    && lifecycle.target.tabId === lifecycle.tabId;
+}
+
+/** Returns whether a Browser target is live for one tab in the active scope. */
+function isLiveThreadBrowserTarget(
+  target: BrowserAutomationLiveTarget | undefined,
+  workspaceId: string,
+  threadId: string,
+  tabId: string,
+): boolean {
+  return target?.workspaceId === workspaceId
+    && target.threadId === threadId
+    && target.tabId === tabId;
+}
+
+/** Resolves the Browser controller after lifecycle release semantics apply. */
+function getBrowserTabController(
+  lifecycle: BrowserSessionLifecycleTab | undefined,
+  controller: BrowserAutomationControllerState | undefined,
+  pendingOpen: BrowserAutomationPendingAgentOpen | null | undefined,
+): BrowserAutomationControllerState["controller"] | undefined {
+  if (lifecycle?.ownership === "released") return undefined;
+  if (controller) return controller.controller;
+  if (lifecycle?.target.controller) return lifecycle.target.controller.controller;
+  return pendingOpen ? "agent" : undefined;
+}
+
+/** Joins a scoped Browser tab with its lifecycle and controller state. */
+function getThreadOverviewBrowserTab({
+  tab,
+  workspaceId,
+  threadId,
+  lifecycleByTarget,
+  liveTargets,
+  controllers,
+  pendingAgentOpens,
+}: {
+  tab: BrowserTabInfo;
+  workspaceId: string;
+  threadId: string;
+  lifecycleByTarget: ReadonlyMap<string, BrowserSessionLifecycleTab>;
+  liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>;
+  controllers: ReadonlyMap<string, BrowserAutomationControllerState>;
+  pendingAgentOpens: ReadonlyMap<string, BrowserAutomationPendingAgentOpen>;
+}): ThreadOverviewBrowserTab | null {
+  if (tab.threadId !== threadId) return null;
+  const targetKey = browserAutomationTargetKey(workspaceId, threadId, tab.id);
+  const pendingOpen = findPendingBrowserAutomationOpen(pendingAgentOpens, workspaceId, threadId, tab.id);
+  const pendingUrl = pendingOpen?.url?.trim() || null;
+  if (isEmptyPreviewTabUrl(tab.url) && !pendingUrl) return null;
+  if (!pendingOpen && !isLiveThreadBrowserTarget(liveTargets.get(targetKey), workspaceId, threadId, tab.id)) {
+    return null;
+  }
+  const lifecycle = lifecycleByTarget.get(targetKey);
+  const controller = getBrowserTabController(lifecycle, controllers.get(targetKey), pendingOpen);
+  return {
+    tab: browserPendingTab(tab, pendingUrl),
+    ...(lifecycle ? { lifecycle } : {}),
+    controller,
+  };
 }
 
 /**
@@ -239,50 +474,21 @@ export function getThreadOverviewBrowserTabs({
 }): ThreadOverviewBrowserTab[] {
   if (!tabSet || tabSet.threadId !== threadId) return [];
 
-  const lifecycleByTarget = new Map<string, BrowserSessionLifecycleTab>();
-  for (const lifecycle of lifecycleTabs.values()) {
-    if (
-      lifecycle.workspaceId !== workspaceId ||
-      lifecycle.threadId !== threadId ||
-      lifecycle.target.threadId !== threadId ||
-      lifecycle.target.tabId !== lifecycle.tabId
-    ) continue;
-    lifecycleByTarget.set(browserAutomationTargetKey(workspaceId, threadId, lifecycle.tabId), lifecycle);
-  }
-
-  return tabSet.tabs.flatMap((tab) => {
-    if (tab.threadId !== threadId) return [];
-    const targetKey = browserAutomationTargetKey(workspaceId, threadId, tab.id);
-    const pendingOpen = findPendingBrowserAutomationOpen(
-      pendingAgentOpens,
+  const lifecycleByTarget = getBrowserLifecycleByTarget(lifecycleTabs, workspaceId, threadId);
+  const rows: ThreadOverviewBrowserTab[] = [];
+  for (const tab of tabSet.tabs) {
+    const row = getThreadOverviewBrowserTab({
+      tab,
       workspaceId,
       threadId,
-      tab.id,
-    );
-    const pendingUrl = pendingOpen?.url?.trim() || null;
-    if (isEmptyPreviewTabUrl(tab.url) && !pendingUrl) return [];
-    const liveTarget = liveTargets.get(targetKey);
-    if (
-      !pendingOpen &&
-      (!liveTarget ||
-        liveTarget.workspaceId !== workspaceId ||
-        liveTarget.threadId !== threadId ||
-        liveTarget.tabId !== tab.id)
-    ) {
-      return [];
-    }
-    const lifecycle = lifecycleByTarget.get(targetKey);
-    const controller = lifecycle?.ownership === "released"
-      ? undefined
-      : controllers.get(targetKey)?.controller ??
-        lifecycle?.target.controller?.controller ??
-        (pendingOpen ? "agent" : undefined);
-    return [{
-      tab: browserPendingTab(tab, pendingUrl),
-      ...(lifecycle ? { lifecycle } : {}),
-      controller,
-    }];
-  });
+      lifecycleByTarget,
+      liveTargets,
+      controllers,
+      pendingAgentOpens,
+    });
+    if (row) rows.push(row);
+  }
+  return rows;
 }
 
 /**
@@ -305,6 +511,17 @@ function changedFilesLabel(count: number): string {
 
 function uncommittedFilesLabel(count: number): string {
   return `Uncommitted: ${count} ${count === 1 ? "file" : "files"}`;
+}
+
+/** Formats the local-checkout row label for assistive technology. */
+function localCheckoutAriaLabel(modeLabel: string, dirPath: string | null): string {
+  return dirPath ? `${modeLabel}, ${dirPath}` : modeLabel;
+}
+
+/** Returns the label and icon for the active thread checkout mode. */
+function getThreadOverviewLocalMode(thread: Thread) {
+  if (thread.mode === "worktree") return { label: "Worktree", Icon: WorktreeModeIcon };
+  return { label: "Direct", Icon: Laptop };
 }
 
 function usageCategoryShortLabel(label: string): string {
@@ -793,25 +1010,26 @@ function ThreadOverviewRepositoryRow({
           <span className="font-mono text-xs font-medium uppercase leading-tight tracking-[0.18em] text-muted-foreground">
             REPOSITORY
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            type="button"
-            onClick={onOpen}
-            data-testid="thread-overview-repository-link"
-            aria-label={`Open ${label} on remote`}
-            title={repository.webUrl ?? label}
-            className="-mx-1.5 h-7 min-w-0 justify-start gap-1.5 rounded-md px-1.5 text-left text-primary hover:bg-muted/50 hover:text-primary focus-visible:ring-inset"
-          >
-            <SiteFavicon
-              src={repository.faviconUrl}
-              frameTestId="thread-overview-repository-favicon-frame"
-              imageTestId="thread-overview-repository-favicon"
-              fallback={<GitBranch size={14} className="shrink-0 text-muted-foreground" />}
-            />
-            <span className="truncate text-xs font-medium">{label}</span>
-            <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" />
-          </Button>
+          <ThreadOverviewTooltipButton content={repository.webUrl ?? label}>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={onOpen}
+              data-testid="thread-overview-repository-link"
+              aria-label={`Open ${label} on remote`}
+              className="-mx-1.5 h-7 min-w-0 justify-start gap-1.5 rounded-md px-1.5 text-left text-primary hover:bg-muted/50 hover:text-primary focus-visible:ring-inset"
+            >
+              <SiteFavicon
+                src={repository.faviconUrl}
+                frameTestId="thread-overview-repository-favicon-frame"
+                imageTestId="thread-overview-repository-favicon"
+                fallback={<GitBranch size={14} className="shrink-0 text-muted-foreground" />}
+              />
+              <span className="truncate text-xs font-medium">{label}</span>
+              <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" />
+            </Button>
+          </ThreadOverviewTooltipButton>
         </div>
       </div>
     </div>
@@ -835,6 +1053,92 @@ function formatThreadRecapTime(timestamp: string): string {
   }).format(new Date(timestamp));
 }
 
+/** Formats the recap coverage range when the recap trails recent activity. */
+function getThreadRecapCoverageLabel({
+  hasCoverageGap,
+  coveredThrough,
+  latestActivityAt,
+}: Pick<ThreadOverviewRecapRowProps, "hasCoverageGap" | "coveredThrough" | "latestActivityAt">): {
+  coveredThrough: string;
+  latestActivityAt: string;
+} | null {
+  if (!hasCoverageGap || !coveredThrough || !latestActivityAt) return null;
+  return {
+    coveredThrough: formatThreadRecapTime(coveredThrough),
+    latestActivityAt: formatThreadRecapTime(latestActivityAt),
+  };
+}
+
+/** Shows recap coverage and refresh controls. */
+function ThreadOverviewRecapControls({
+  coverageLabel,
+  isGenerating,
+  onRefresh,
+}: Pick<ThreadOverviewRecapRowProps, "isGenerating" | "onRefresh"> & {
+  coverageLabel: ReturnType<typeof getThreadRecapCoverageLabel>;
+}) {
+  const refreshLabel = isGenerating ? "Refreshing recap" : "Refresh recap";
+
+  return (
+    <div className="-mr-1 flex shrink-0 items-center gap-0.5">
+      {coverageLabel ? <ThreadOverviewRecapCoverage coverageLabel={coverageLabel} /> : null}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              type="button"
+              data-testid="thread-overview-recap-refresh"
+              aria-label={refreshLabel}
+              disabled={isGenerating}
+              onClick={onRefresh}
+              className={cn("group shrink-0", isGenerating && "text-muted-foreground/45")}
+            >
+              <RefreshCw
+                size={13}
+                aria-hidden
+                className="transition-transform duration-200 ease-out group-active:rotate-45 motion-reduce:transition-none"
+              />
+            </Button>
+          }
+        />
+        <TooltipContent>{refreshLabel}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
+/** Explains which thread activity the current recap covers. */
+function ThreadOverviewRecapCoverage({
+  coverageLabel,
+}: {
+  coverageLabel: NonNullable<ReturnType<typeof getThreadRecapCoverageLabel>>;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            type="button"
+            data-testid="thread-overview-recap-coverage"
+            aria-label={`Covered through ${coverageLabel.coveredThrough}. Latest activity ${coverageLabel.latestActivityAt}`}
+            className="shrink-0 text-muted-foreground/55 hover:text-muted-foreground focus-visible:text-muted-foreground"
+          >
+            <Info size={12} aria-hidden />
+          </Button>
+        }
+      />
+      <TooltipContent side="bottom" align="end" className="flex-col items-start gap-0.5">
+        <span>Covered through {coverageLabel.coveredThrough}</span>
+        <span>Latest activity {coverageLabel.latestActivityAt}</span>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function ThreadOverviewRecapRow({
   recapText,
   hasCoverageGap,
@@ -846,12 +1150,11 @@ function ThreadOverviewRecapRow({
 }: ThreadOverviewRecapRowProps) {
   const label = recapText ?? (error ? "Recap unavailable" : "No recap yet");
   const refreshLabel = isGenerating ? "Refreshing recap" : "Refresh recap";
-  const coverageLabel = hasCoverageGap && coveredThrough && latestActivityAt
-    ? {
-      coveredThrough: formatThreadRecapTime(coveredThrough),
-      latestActivityAt: formatThreadRecapTime(latestActivityAt),
-    }
-    : null;
+  const coverageLabel = getThreadRecapCoverageLabel({
+    hasCoverageGap,
+    coveredThrough,
+    latestActivityAt,
+  });
 
   return (
     <div
@@ -860,53 +1163,11 @@ function ThreadOverviewRecapRow({
     >
       <div className="flex min-w-0 items-center justify-between gap-2">
         <span className="shrink-0 text-xs font-medium text-muted-foreground">Recap</span>
-        <div className="-mr-1 flex shrink-0 items-center gap-0.5">
-          {coverageLabel ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    type="button"
-                    data-testid="thread-overview-recap-coverage"
-                    aria-label={`Covered through ${coverageLabel.coveredThrough}. Latest activity ${coverageLabel.latestActivityAt}`}
-                    className="shrink-0 text-muted-foreground/55 hover:text-muted-foreground focus-visible:text-muted-foreground"
-                  >
-                    <Info size={12} aria-hidden />
-                  </Button>
-                }
-              />
-              <TooltipContent side="bottom" align="end" className="flex-col items-start gap-0.5">
-                <span>Covered through {coverageLabel.coveredThrough}</span>
-                <span>Latest activity {coverageLabel.latestActivityAt}</span>
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  type="button"
-                  data-testid="thread-overview-recap-refresh"
-                  aria-label={refreshLabel}
-                  disabled={isGenerating}
-                  onClick={onRefresh}
-                  className={cn("group shrink-0", isGenerating && "text-muted-foreground/45")}
-                >
-                  <RefreshCw
-                    size={13}
-                    aria-hidden
-                    className="transition-transform duration-200 ease-out group-active:rotate-45 motion-reduce:transition-none"
-                  />
-                </Button>
-              }
-            />
-            <TooltipContent>{refreshLabel}</TooltipContent>
-          </Tooltip>
-        </div>
+        <ThreadOverviewRecapControls
+          coverageLabel={coverageLabel}
+          isGenerating={isGenerating}
+          onRefresh={onRefresh}
+        />
       </div>
       {isGenerating ? (
         <div
@@ -1019,16 +1280,10 @@ interface ThreadOverviewBranchMenuProps {
   hasCommitsAhead: boolean | null;
 }
 
-function ThreadOverviewBranchMenu({
-  thread,
-  open,
-  onOpenChange,
-  onCreateBranch,
-  hasCommitsAhead,
-}: ThreadOverviewBranchMenuProps) {
-  const [search, setSearch] = useState("");
+/** Loads branch and working-tree data while the branch picker is open. */
+function useThreadOverviewBranchState(thread: Thread, open: boolean): LoadedBranchState {
   const [loaded, setLoaded] = useState<LoadedBranchState>({
-    status: "idle",
+    status: "loading",
     branches: [],
     uncommittedFiles: null,
   });
@@ -1037,8 +1292,6 @@ function ThreadOverviewBranchMenu({
     if (!open) return;
 
     let cancelled = false;
-    setLoaded((previous) => ({ ...previous, status: "loading" }));
-
     const loadBranches = async () => {
       try {
         const [branches, unstaged, staged] = await Promise.all([
@@ -1054,9 +1307,7 @@ function ThreadOverviewBranchMenu({
           uncommittedFiles: new Set([...unstaged, ...staged]).size,
         });
       } catch {
-        if (!cancelled) {
-          setLoaded((previous) => ({ ...previous, status: "error" }));
-        }
+        if (!cancelled) setLoaded((previous) => ({ ...previous, status: "error" }));
       }
     };
 
@@ -1067,27 +1318,53 @@ function ThreadOverviewBranchMenu({
     };
   }, [open, thread.id, thread.workspace_id]);
 
+  return loaded;
+}
+
+/** Filters branch rows by the picker search text. */
+function getVisibleBranchRows(branches: readonly GitBranchRecord[], search: string): readonly GitBranchRecord[] {
+  const query = search.trim().toLowerCase();
+  if (!query) return branches;
+  return branches.filter((branch) => branch.name.toLowerCase().includes(query));
+}
+
+/** Returns the current branch's uncommitted-file label. */
+function getCurrentBranchUncommittedLabel(uncommittedFiles: number | null): string | null {
+  if (uncommittedFiles === null || uncommittedFiles === 0) return null;
+  return uncommittedFilesLabel(uncommittedFiles);
+}
+
+/** Returns whether this checkout can create and switch to a new branch. */
+function canCreateCheckoutBranch(
+  thread: Thread,
+  loaded: LoadedBranchState,
+  hasCommitsAhead: boolean | null,
+): boolean {
+  if (thread.checkout_state !== "named" || loaded.status !== "ready") return false;
+  if (hasCommitsAhead === true) return true;
+  return loaded.uncommittedFiles !== null && loaded.uncommittedFiles > 0;
+}
+
+function ThreadOverviewBranchMenu({
+  thread,
+  open,
+  onOpenChange,
+  onCreateBranch,
+  hasCommitsAhead,
+}: ThreadOverviewBranchMenuProps) {
+  const [search, setSearch] = useState("");
+  const loaded = useThreadOverviewBranchState(thread, open);
+
   const displayBranch = thread.checkout_state === "branchless" ? "HEAD" : thread.branch;
   const branches = useMemo(
     () => branchRows(loaded.branches, displayBranch),
     [loaded.branches, displayBranch],
   );
-  const visibleBranches = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return branches;
-    return branches.filter((branch) => branch.name.toLowerCase().includes(query));
-  }, [branches, search]);
+  const visibleBranches = useMemo(() => getVisibleBranchRows(branches, search), [branches, search]);
 
-  const currentBranchUncommittedLabel =
-    loaded.uncommittedFiles !== null && loaded.uncommittedFiles > 0
-      ? uncommittedFilesLabel(loaded.uncommittedFiles)
-      : null;
+  const currentBranchUncommittedLabel = getCurrentBranchUncommittedLabel(loaded.uncommittedFiles);
   const shouldConstrainBranchList = visibleBranches.length > 6;
-  const canCreateCheckoutBranch =
-    thread.checkout_state === "named" &&
-    loaded.status === "ready" &&
-    (hasCommitsAhead === true ||
-      (loaded.uncommittedFiles !== null && loaded.uncommittedFiles > 0));
+  const canCreateNewBranch = canCreateCheckoutBranch(thread, loaded, hasCommitsAhead);
 
   return (
     <div
@@ -1115,67 +1392,121 @@ function ThreadOverviewBranchMenu({
         data-testid="thread-overview-branch-list"
         className={cn(shouldConstrainBranchList && "h-60")}
       >
-        <div className="space-y-0.5 pr-2">
-          {loaded.status === "loading" && loaded.branches.length === 0
-            ? (
-                <div
-                  className="animate-thread-overview-loading h-8 overflow-hidden rounded-md bg-muted/35"
-                  aria-hidden
-                />
-              )
-            : null}
-
-          {loaded.status !== "loading" || loaded.branches.length > 0
-            ? visibleBranches.map((branch) => {
-                const isCurrent = thread.checkout_state === "named" && (branch.name === thread.branch || branch.isCurrent);
-                return (
-                  <Button
-                    key={branch.name}
-                    variant="ghost"
-                    size="sm"
-                    type="button"
-                    onClick={() => {
-                      if (isCurrent) onOpenChange(false);
-                    }}
-                    aria-current={isCurrent ? "true" : undefined}
-                    data-testid={isCurrent ? "thread-overview-current-branch" : undefined}
-                    className={cn(
-                      "h-auto w-full justify-between gap-3 px-2 py-1.5 text-left",
-                      isCurrent && "bg-muted text-foreground",
-                    )}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <GitBranch size={13} className="shrink-0 text-muted-foreground" />
-                      <span className="min-w-0">
-                        <span className="block truncate text-xs font-medium">{branch.name}</span>
-                        {isCurrent && currentBranchUncommittedLabel ? (
-                          <span className="block truncate text-xs font-normal text-muted-foreground">
-                            {currentBranchUncommittedLabel}
-                          </span>
-                        ) : null}
-                      </span>
-                    </span>
-                    {isCurrent ? <Check size={14} className="shrink-0 text-muted-foreground" /> : null}
-                  </Button>
-                );
-              })
-            : null}
-
-          {loaded.status !== "loading" && visibleBranches.length === 0 ? (
-            <div className="rounded-md px-2 py-2 text-xs text-muted-foreground">
-              No branches match
-            </div>
-          ) : null}
-
-          {loaded.status === "error" ? (
-            <div className="rounded-md px-2 py-2 text-xs text-muted-foreground">
-              Branches unavailable
-            </div>
-          ) : null}
-        </div>
+        <ThreadOverviewBranchRows
+          thread={thread}
+          loaded={loaded}
+          branches={visibleBranches}
+          currentBranchUncommittedLabel={currentBranchUncommittedLabel}
+          onOpenChange={onOpenChange}
+        />
       </ScrollArea>
 
       <Separator className="my-2" />
+      <ThreadOverviewBranchCreateAction
+        canCreateCheckoutBranch={canCreateNewBranch}
+        onOpenChange={onOpenChange}
+        onCreateBranch={onCreateBranch}
+      />
+    </div>
+  );
+}
+
+/** Renders loaded branches and their branch-picker states. */
+function ThreadOverviewBranchRows({
+  thread,
+  loaded,
+  branches,
+  currentBranchUncommittedLabel,
+  onOpenChange,
+}: {
+  thread: Thread;
+  loaded: LoadedBranchState;
+  branches: readonly GitBranchRecord[];
+  currentBranchUncommittedLabel: string | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const showBranches = loaded.status !== "loading" || loaded.branches.length > 0;
+  const isEmpty = loaded.status !== "loading" && branches.length === 0;
+
+  return (
+    <div className="space-y-0.5 pr-2">
+      {loaded.status === "loading" && loaded.branches.length === 0 ? <ThreadOverviewBranchLoadingRow /> : null}
+      {showBranches ? branches.map((branch) => (
+        <ThreadOverviewBranchRow
+          key={branch.name}
+          branch={branch}
+          isCurrent={thread.checkout_state === "named" && (branch.name === thread.branch || branch.isCurrent)}
+          currentBranchUncommittedLabel={currentBranchUncommittedLabel}
+          onOpenChange={onOpenChange}
+        />
+      )) : null}
+      {isEmpty ? <div className="rounded-md px-2 py-2 text-xs text-muted-foreground">No branches match</div> : null}
+      {loaded.status === "error" ? <div className="rounded-md px-2 py-2 text-xs text-muted-foreground">Branches unavailable</div> : null}
+    </div>
+  );
+}
+
+/** Renders the branch-picker loading placeholder. */
+function ThreadOverviewBranchLoadingRow() {
+  return <div className="animate-thread-overview-loading h-8 overflow-hidden rounded-md bg-muted/35" aria-hidden />;
+}
+
+/** Renders one branch row in the branch picker. */
+function ThreadOverviewBranchRow({
+  branch,
+  isCurrent,
+  currentBranchUncommittedLabel,
+  onOpenChange,
+}: {
+  branch: GitBranchRecord;
+  isCurrent: boolean;
+  currentBranchUncommittedLabel: string | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      type="button"
+      onClick={() => {
+        if (isCurrent) onOpenChange(false);
+      }}
+      aria-current={isCurrent ? "true" : undefined}
+      data-testid={isCurrent ? "thread-overview-current-branch" : undefined}
+      className={cn("h-auto w-full justify-between gap-3 px-2 py-1.5 text-left", isCurrent && "bg-muted text-foreground")}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <GitBranch size={13} className="shrink-0 text-muted-foreground" />
+        <span className="min-w-0">
+          <span className="block truncate text-xs font-medium">{branch.name}</span>
+          {isCurrent && currentBranchUncommittedLabel ? (
+            <span className="block truncate text-xs font-normal text-muted-foreground">
+              {currentBranchUncommittedLabel}
+            </span>
+          ) : null}
+        </span>
+      </span>
+      {isCurrent ? <Check size={14} className="shrink-0 text-muted-foreground" /> : null}
+    </Button>
+  );
+}
+
+/** Renders the branch-creation affordance for eligible checkouts. */
+function ThreadOverviewBranchCreateAction({
+  canCreateCheckoutBranch,
+  onOpenChange,
+  onCreateBranch,
+}: {
+  canCreateCheckoutBranch: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreateBranch: () => void;
+}) {
+  const title = canCreateCheckoutBranch
+    ? "Create and checkout a new branch"
+    : "Detected changes required";
+
+  return (
+    <ThreadOverviewTooltipButton content={title} disabled={!canCreateCheckoutBranch}>
       <Button
         variant="ghost"
         size="sm"
@@ -1183,11 +1514,6 @@ function ThreadOverviewBranchMenu({
         disabled={!canCreateCheckoutBranch}
         data-testid="thread-overview-create-checkout-branch"
         className="h-8 w-full justify-start gap-2 px-2 text-xs disabled:opacity-60"
-        title={
-          canCreateCheckoutBranch
-            ? "Create and checkout a new branch"
-            : "Detected changes required"
-        }
         onClick={() => {
           if (!canCreateCheckoutBranch) return;
           onOpenChange(false);
@@ -1197,7 +1523,7 @@ function ThreadOverviewBranchMenu({
         <Plus size={14} className="text-muted-foreground" />
         Create and checkout new branch...
       </Button>
-    </div>
+    </ThreadOverviewTooltipButton>
   );
 }
 
@@ -1321,27 +1647,36 @@ function ThreadOverviewSources({ sources, onOpen }: ThreadOverviewSourcesProps) 
 type ThreadOverviewPr = { number: number; url: string; state: string } | null;
 type PrRowTone = "positive" | "danger" | "neutral" | "muted";
 
+/** Returns the Overview status for an open pull request's CI checks. */
+function getOpenPrRowStatus(checks: ChecksStatus | null): { label: string | null; tone: PrRowTone } {
+  if (checks?.aggregate === "failing") return { label: getCiSummaryHeadline(checks), tone: "danger" };
+  if (checks?.aggregate === "passing") return { label: getCiSummaryHeadline(checks), tone: "positive" };
+  if (checks?.aggregate === "pending") return { label: getCiSummaryHeadline(checks), tone: "neutral" };
+  return { label: null, tone: "positive" };
+}
+
+/** Returns the Overview status for a non-open pull request. */
+function getClosedPrRowStatus(pr: NonNullable<ThreadOverviewPr>): { label: string; tone: PrRowTone } {
+  if (pr.state.toLowerCase() === "merged") return { label: "Merged", tone: "positive" };
+  if (pr.state.toLowerCase() === "closed") return { label: "Closed", tone: "danger" };
+  return { label: pr.state, tone: "neutral" };
+}
+
+/** Returns the Overview status before the thread has a pull request. */
+function getUnopenedPrRowStatus(hasCommitsAhead: boolean | null): { label: string; tone: PrRowTone } {
+  if (hasCommitsAhead === true) return { label: "Ready", tone: "neutral" };
+  if (hasCommitsAhead === false) return { label: "No commits ahead", tone: "muted" };
+  return { label: "Checking", tone: "muted" };
+}
+
 function getPrRowStatus(
   pr: ThreadOverviewPr,
   hasCommitsAhead: boolean | null,
   checks: ChecksStatus | null,
 ): { label: string | null; tone: PrRowTone } {
-  if (pr) {
-    const state = pr.state.toLowerCase();
-    if (state === "open") {
-      if (checks?.aggregate === "failing") return { label: getCiSummaryHeadline(checks), tone: "danger" };
-      if (checks?.aggregate === "passing") return { label: getCiSummaryHeadline(checks), tone: "positive" };
-      if (checks?.aggregate === "pending") return { label: getCiSummaryHeadline(checks), tone: "neutral" };
-      return { label: null, tone: "positive" };
-    }
-    if (state === "merged") return { label: "Merged", tone: "positive" };
-    if (state === "closed") return { label: "Closed", tone: "danger" };
-    return { label: pr.state, tone: "neutral" };
-  }
-
-  if (hasCommitsAhead === true) return { label: "Ready", tone: "neutral" };
-  if (hasCommitsAhead === false) return { label: "No commits ahead", tone: "muted" };
-  return { label: "Checking", tone: "muted" };
+  if (!pr) return getUnopenedPrRowStatus(hasCommitsAhead);
+  if (pr.state.toLowerCase() === "open") return getOpenPrRowStatus(checks);
+  return getClosedPrRowStatus(pr);
 }
 
 /**
@@ -1423,43 +1758,48 @@ function ThreadOverviewPrActionRow({
   if (hasCommitsAhead === false) {
     return (
       <div data-testid="thread-overview-pr">
-        <Button
-          variant="ghost"
-          size="sm"
-          type="button"
-          data-testid="workspace-menu-commit"
-          className={cn(
-            OVERVIEW_ROW_CLASS,
-            "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground",
-          )}
-          onClick={onCommitOrPush}
-          title="Ask the agent to commit and push the changes"
-        >
-          <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-          <span className="font-medium">Commit or push</span>
-        </Button>
+        <ThreadOverviewTooltipButton content="Ask the agent to commit and push the changes">
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            data-testid="workspace-menu-commit"
+            className={cn(
+              OVERVIEW_ROW_CLASS,
+              "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground",
+            )}
+            onClick={onCommitOrPush}
+          >
+            <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+            <span className="font-medium">Commit or push</span>
+          </Button>
+        </ThreadOverviewTooltipButton>
       </div>
     );
   }
 
   return (
     <div data-testid="thread-overview-pr">
-      <Button
-        variant="ghost"
-        size="sm"
-        type="button"
-        data-testid="workspace-menu-create-pr"
-        className={cn(
-          OVERVIEW_ROW_CLASS,
-          "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
-        )}
-        onClick={onCreatePr}
+      <ThreadOverviewTooltipButton
+        content={hasCommitsAhead ? "Create pull request" : "Waiting for commits ahead of base branch"}
         disabled={!hasCommitsAhead}
-        title={hasCommitsAhead ? "Create pull request" : "Waiting for commits ahead of base branch"}
       >
-        <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-        <span className="font-medium">Create PR</span>
-      </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          data-testid="workspace-menu-create-pr"
+          className={cn(
+            OVERVIEW_ROW_CLASS,
+            "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+          )}
+          onClick={onCreatePr}
+          disabled={!hasCommitsAhead}
+        >
+          <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+          <span className="font-medium">Create PR</span>
+        </Button>
+      </ThreadOverviewTooltipButton>
     </div>
   );
 }
@@ -1503,36 +1843,37 @@ function ThreadOverviewPrActiveRow({
         open={checksOpen}
         onOpenChange={setChecksOpen}
       >
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-testid="thread-overview-pr-status"
-          aria-label={`CI checks, ${getCiSummaryHeadline(checks)}`}
-          aria-expanded={checksOpen}
-          aria-haspopup="dialog"
-          title={getCiSummaryHeadline(checks)}
-          onClick={(event) => {
-            event.stopPropagation();
-            setChecksOpen((open) => !open);
-          }}
-          className="flex h-7 w-full cursor-pointer justify-between gap-3 border-transparent bg-transparent px-2 text-left text-muted-foreground hover:bg-muted/40 hover:text-foreground dark:hover:bg-muted/40"
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <ThreadOverviewCiStatusCircle checks={checks} />
-            <span className="truncate font-mono text-xs tabular-nums">
-              {getCiOverviewSummaryLabel(checks)}
+        <ThreadOverviewTooltipButton content={getCiSummaryHeadline(checks)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="thread-overview-pr-status"
+            aria-label={`CI checks, ${getCiSummaryHeadline(checks)}`}
+            aria-expanded={checksOpen}
+            aria-haspopup="dialog"
+            onClick={(event) => {
+              event.stopPropagation();
+              setChecksOpen((open) => !open);
+            }}
+            className="flex h-7 w-full cursor-pointer justify-between gap-3 border-transparent bg-transparent px-2 text-left text-muted-foreground hover:bg-muted/40 hover:text-foreground dark:hover:bg-muted/40"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <ThreadOverviewCiStatusCircle checks={checks} />
+              <span className="truncate font-mono text-xs tabular-nums">
+                {getCiOverviewSummaryLabel(checks)}
+              </span>
             </span>
-          </span>
-          <ChevronDown
-            size={12}
-            aria-hidden
-            className={cn(
-              "shrink-0 text-muted-foreground transition-transform duration-150",
-              checksOpen && "rotate-180",
-            )}
-          />
-        </Button>
+            <ChevronDown
+              size={12}
+              aria-hidden
+              className={cn(
+                "shrink-0 text-muted-foreground transition-transform duration-150",
+                checksOpen && "rotate-180",
+              )}
+            />
+          </Button>
+        </ThreadOverviewTooltipButton>
       </ChecksPopover>
     ) : (
       status.label ? (
@@ -1632,7 +1973,12 @@ function updateThreadToNamedBranch(threadId: string, branch: string): void {
   }));
 }
 
-function CreateThreadBranchDialog({
+function CreateThreadBranchDialog(props: CreateThreadBranchDialogProps) {
+  if (!props.open) return null;
+  return <CreateThreadBranchDialogSession {...props} />;
+}
+
+function CreateThreadBranchDialogSession({
   open,
   onOpenChange,
   thread,
@@ -1649,15 +1995,11 @@ function CreateThreadBranchDialog({
   const errorId = "create-thread-branch-error";
 
   useEffect(() => {
-    if (!open) return;
-    setBranchName("");
-    setSubmitting(false);
-    setError(null);
     const frame = requestAnimationFrame(() => {
       branchInputRef.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [open]);
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     const name = finalBranchName;
@@ -1753,6 +2095,100 @@ function CreateThreadBranchDialog({
   );
 }
 
+interface ThreadOverviewBranchCreation {
+  threadId: string;
+  open: boolean;
+  branch: string | null;
+  baseBranch: string | null;
+}
+
+function useThreadOverviewBranchCreation(threadId: string) {
+  const [creation, setCreation] = useState<ThreadOverviewBranchCreation>({
+    threadId,
+    open: false,
+    branch: null,
+    baseBranch: null,
+  });
+  const current = creation.threadId === threadId
+    ? creation
+    : { threadId, open: false, branch: null, baseBranch: null };
+  const setOpen = useCallback((open: boolean) => {
+    setCreation((previous) => ({
+      ...(previous.threadId === threadId
+        ? previous
+        : { threadId, branch: null, baseBranch: null }),
+      open,
+    }));
+  }, [threadId]);
+  const complete = useCallback((branch: string, baseBranch: string | null) => {
+    setCreation({ threadId, open: false, branch, baseBranch });
+  }, [threadId]);
+
+  return { ...current, setOpen, complete };
+}
+
+function useThreadOverviewOpenState(
+  threadId: string,
+  panelVisible: boolean,
+  hasRoom: boolean,
+  openRequested: boolean,
+) {
+  const [choice, setChoice] = useState<{ threadId: string; value: boolean | null }>({
+    threadId,
+    value: null,
+  });
+  const currentChoice = choice.threadId === threadId ? choice.value : null;
+  const open = !(panelVisible && !hasRoom) && (openRequested || (currentChoice ?? hasRoom));
+
+  useEffect(() => {
+    if (!openRequested) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- A store-driven open request becomes this thread's local interaction snapshot after consumption.
+    setChoice({ threadId, value: true });
+    useOverviewStore.getState().consumeOpenRequest(threadId);
+  }, [openRequested, threadId]);
+
+  const setOpen = useCallback((next: boolean) => {
+    setChoice({ threadId, value: next });
+  }, [threadId]);
+  const handleOpenChange = useCallback((next: boolean, eventDetails?: { reason?: string }) => {
+    if (!next && (eventDetails?.reason === "outside-press" || eventDetails?.reason === "focus-out")) {
+      return;
+    }
+    setChoice({ threadId, value: next });
+  }, [threadId]);
+
+  return { open, setOpen, handleOpenChange };
+}
+
+function hasCurrentThreadOverviewChangeSummary(
+  loaded: LoadedChangeSummary | null,
+  threadId: string,
+  snapshotKey: string,
+  revision: number,
+): boolean {
+  return loaded?.threadId === threadId
+    && loaded.snapshotKey === snapshotKey
+    && loaded.revision === revision;
+}
+
+function getThreadOverviewRepositoryDisplay(
+  loaded: LoadedRepository | null,
+  threadId: string,
+  open: boolean,
+): { repository: ThreadOverviewRepository; status: LoadStatus } {
+  const result = getLoadedThreadOverviewRepository(loaded, threadId);
+  return {
+    repository: result.repository,
+    status: open && result.status === "idle" ? "loading" : result.status,
+  };
+}
+
+function canRunManualProjectSetup(thread: Thread): boolean {
+  return thread.mode === "direct" || (
+    thread.mode === "worktree" && thread.worktree_managed === false
+  );
+}
+
 /**
  * Thread-scoped Overview popover for the chat header.
  *
@@ -1786,34 +2222,18 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       rightPanelActionTerminalId(actionId),
     );
   }, [thread.id, thread.workspace_id]);
-  const canRunManualSetup = thread.mode === "direct" || (
-    thread.mode === "worktree" && thread.worktree_managed === false
-  );
+  const canRunManualSetup = canRunManualProjectSetup(thread);
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
-  const [createBranchOpen, setCreateBranchOpen] = useState(false);
-  const [createdBranchForPr, setCreatedBranchForPr] = useState<string | null>(null);
-  const [createdBranchBaseForPr, setCreatedBranchBaseForPr] = useState<string | null>(null);
-  const [loadedChangeSummary, setLoadedChangeSummary] = useState<{
-    threadId: string;
-    snapshotKey: string;
-    revision: number;
-    summary: ThreadOverviewChangeSummary;
-  } | null>(null);
-  const [loadedRepository, setLoadedRepository] = useState<{
-    threadId: string;
-    status: LoadStatus;
-    repository: ThreadOverviewRepository;
-  } | null>(null);
+  const branchCreation = useThreadOverviewBranchCreation(thread.id);
+  const [loadedChangeSummary, setLoadedChangeSummary] = useState<LoadedChangeSummary | null>(null);
+  const [loadedRepository, setLoadedRepository] = useState<LoadedRepository | null>(null);
   const [changeSummaryStatus, setChangeSummaryStatus] = useState<LoadStatus>("idle");
 
   // Space-aware open: the Overview sits open when there is room and steps aside
   // when the right panel or a narrow viewport leaves none, until the user takes
   // manual control of it for this thread.
   const panelVisible = useDiffStore((s) => s.getRightPanelVisible(thread.workspace_id, thread.id));
-  const [open, setOpen] = useState(false);
-  const autoManagedRef = useRef(true);
-  const lastAutoValueRef = useRef<boolean | null>(null);
   const openRequested = useOverviewStore(
     (state) => state.requestedThreadId === thread.id,
   );
@@ -1850,24 +2270,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     ],
   );
 
-  useEffect(() => {
-    autoManagedRef.current = true;
-  }, [thread.id]);
-
-  useEffect(() => {
-    if (!openRequested) return;
-    autoManagedRef.current = false;
-    lastAutoValueRef.current = true;
-    setOpen(true);
-    useOverviewStore.getState().consumeOpenRequest(thread.id);
-  }, [openRequested, thread.id]);
-
-  useEffect(() => {
-    setCreatedBranchForPr(null);
-    setCreatedBranchBaseForPr(null);
-    setCreateBranchOpen(false);
-  }, [thread.id]);
-
   // Whether there is room for the Overview to open by default. The chat pane
   // width, not the surrounding split row, is the signal that matches what the
   // user sees when the right panel opens.
@@ -1878,35 +2280,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       }),
     [threadPaneWidth],
   );
-
-  // The Overview opens by default when there is room and steps aside when a
-  // narrow viewport or the right panel leaves none, until the user takes manual
-  // control of it for this thread. The echo guard ignores base-ui's onOpenChange
-  // when our own programmatic open/close round-trips.
-  useEffect(() => {
-    if (!autoManagedRef.current) return;
-    lastAutoValueRef.current = hasRoom;
-    setOpen(hasRoom);
-  }, [hasRoom]);
-
-  const handleOpenChange = useCallback((next: boolean, eventDetails?: { reason?: string }) => {
-    // Clicking elsewhere (or focus leaving) must not close the Overview; only the
-    // trigger button and Escape do. base-ui is controlled, so ignoring the change
-    // keeps it open.
-    if (!next && (eventDetails?.reason === "outside-press" || eventDetails?.reason === "focus-out")) {
-      return;
-    }
-    if (next !== lastAutoValueRef.current) autoManagedRef.current = false;
-    setOpen(next);
-  }, []);
-
-  useEffect(() => {
-    if (!panelVisible || hasRoom || !open) return;
-
-    lastAutoValueRef.current = false;
-    autoManagedRef.current = true;
-    setOpen(false);
-  }, [hasRoom, open, panelVisible]);
+  const { open, setOpen: setOverviewOpen, handleOpenChange } = useThreadOverviewOpenState(
+    thread.id,
+    panelVisible,
+    hasRoom,
+    openRequested,
+  );
 
   const setReserveSpace = useOverviewStore((s) => s.setReserveSpace);
   useEffect(() => {
@@ -1927,21 +2306,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     handleOpenPr,
   } = useThreadGitActions(thread);
   const reviewLink = usePullRequestReviewLink(thread.id, open);
-  const effectivePr = useMemo(
-    () =>
-      pr ??
-      (reviewLink
-        ? {
-            number: reviewLink.identity.number,
-            url: reviewLink.pullRequestUrl,
-            state: reviewLink.pullRequestState,
-          }
-        : null),
-    [pr, reviewLink],
-  );
+  const effectivePr = useMemo(() => getEffectiveThreadOverviewPr(pr, reviewLink), [pr, reviewLink]);
   const branchlessCreatePr = canStartBranchlessCreatePr(thread);
   const canShowPrActions = prable;
-  const createPrBranch = createdBranchForPr ?? thread.branch;
+  const createPrBranch = branchCreation.branch ?? thread.branch;
   const createBranchBaseBranch = thread.base_branch ?? thread.branch;
 
   const cachedSnapshots = useDiffStore((s) => s.snapshotsByThread[thread.id]);
@@ -1955,18 +2323,26 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     },
     [cachedSnapshots],
   );
-  const changeSummary =
-    loadedChangeSummary?.threadId === thread.id &&
-    loadedChangeSummary.snapshotKey === cachedSnapshotKey &&
-    loadedChangeSummary.revision === diffRevision
-      ? loadedChangeSummary.summary
-      : fallbackChangeSummary;
+  const changeSummary = getLoadedThreadOverviewChangeSummary({
+    loaded: loadedChangeSummary,
+    threadId: thread.id,
+    snapshotKey: cachedSnapshotKey,
+    revision: diffRevision,
+    fallback: fallbackChangeSummary,
+  });
   const showChangeSummary = hasVisibleThreadOverviewChangeSummary(changeSummary);
-  const isChangeSummaryLoading = open && changeSummaryStatus === "loading";
-  const loadedRepositoryForThread =
-    loadedRepository?.threadId === thread.id ? loadedRepository : null;
-  const repository = loadedRepositoryForThread?.repository ?? EMPTY_REPOSITORY;
-  const repositoryStatus = loadedRepositoryForThread?.status ?? "idle";
+  const hasCurrentChangeSummary = hasCurrentThreadOverviewChangeSummary(
+    loadedChangeSummary,
+    thread.id,
+    cachedSnapshotKey,
+    diffRevision,
+  );
+  const isChangeSummaryLoading = open && !hasCurrentChangeSummary && changeSummaryStatus !== "error";
+  const { repository, status: repositoryStatus } = getThreadOverviewRepositoryDisplay(
+    loadedRepository,
+    thread.id,
+    open,
+  );
   const usageInfo = useThreadRecord(
     thread.id,
     (record) => record.usageByProvider[thread.provider],
@@ -1994,8 +2370,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     if (!open) return;
 
     let cancelled = false;
-    setChangeSummaryStatus("loading");
-
     const loadChangeSummary = async () => {
       try {
         const result = await resolveThreadOverviewChangeSummary({
@@ -2029,12 +2403,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     if (!open) return;
 
     let cancelled = false;
-    setLoadedRepository({
-      threadId: thread.id,
-      status: "loading",
-      repository: EMPTY_REPOSITORY,
-    });
-
     const loadRepository = async () => {
       try {
         const repository = await resolveThreadOverviewRepository({
@@ -2066,10 +2434,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   }, []);
 
   const openProjectSettings = useCallback(() => {
-    setOpen(false);
+    setOverviewOpen(false);
     showRightPanelAdaptive(thread.workspace_id, thread.id);
     useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "environment");
-  }, [thread.id, thread.workspace_id]);
+  }, [setOverviewOpen, thread.id, thread.workspace_id]);
 
   const plans = usePlanStore((s) => s.plansByThread[thread.id] ?? EMPTY_PLANS);
   const latestPlan = useMemo(() => {
@@ -2157,45 +2525,15 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     () => getThreadOverviewCiDot(effectivePr, checks),
     [checks, effectivePr],
   );
-  const triggerStatus =
-    ciDot === "red"
-      ? "Thread overview, CI checks failing"
-      : ciDot === "green"
-        ? "Thread overview, CI checks passing"
-        : "Thread overview";
-  const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
-  const LocalModeIcon = thread.mode === "worktree" ? WorktreeModeIcon : Laptop;
+  const { label: modeLabel, Icon: LocalModeIcon } = getThreadOverviewLocalMode(thread);
   const checkoutLabel = resolveThreadCheckoutLabel(thread);
 
-  const triggerButton = (
-    <Button
-      variant="ghost"
-      size="icon-xs"
-      type="button"
-      title={triggerStatus}
-      aria-label={triggerStatus}
-      data-testid="header-workspace-menu"
-      className={cn(
-        "relative cursor-pointer text-foreground/70 transition-[background-color,color,transform] duration-150 active:scale-95 motion-reduce:transform-none hover:bg-muted/40 hover:text-foreground",
-        open && "bg-muted text-foreground",
-      )}
-    >
-      <Settings2 size={14} aria-hidden />
-      {ciDot && (
-        <span
-          data-testid={`thread-overview-ci-${ciDot}`}
-          aria-hidden
-          className={cn(
-            "absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background",
-            ciDot === "red" && "bg-[var(--diff-remove-strong)]",
-            ciDot === "green" && "bg-[var(--diff-add-strong)]",
-          )}
-        />
-      )}
-    </Button>
-  );
+  const triggerButton = <ThreadOverviewTrigger ciDot={ciDot} open={open} />;
 
-  const overviewBody = (
+  const overviewBody = renderOverviewBody();
+
+  function renderOverviewBody() {
+    return (
     <div data-testid="thread-overview-body" className="animate-overview-enter">
       <div
         data-testid="thread-overview-masthead"
@@ -2214,13 +2552,15 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             onApprove={approveProjectAction}
             onFocus={focusProjectAction}
             onEdit={openProjectSettings}
-            setupMenuItem={canRunManualSetup && projectActions.hasSetup ? (
-              <ProjectSetupMenuItem
-                attempt={projectSetup.attempt}
-                starting={projectSetup.starting}
-                onStart={projectSetup.start}
-              />
-            ) : null}
+            setupMenuItem={getThreadOverviewSetupMenuItem(
+              canRunManualSetup,
+              projectActions.hasSetup,
+              {
+                attempt: projectSetup.attempt,
+                starting: projectSetup.starting,
+                onStart: projectSetup.start,
+              },
+            )}
           />
           <Tooltip>
             <TooltipTrigger
@@ -2244,10 +2584,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
         </div>
       </div>
       <Separator />
-      {projectSetup.startError ? (
+      <ThreadOverviewWhen when={Boolean(projectSetup.startError)}>
         <p role="alert" className="mx-1.5 mt-1.5 text-xs text-destructive">{projectSetup.startError}</p>
-      ) : null}
-      {projectSetup.attempt ? <ProjectSetupAttemptCard attempt={projectSetup.attempt} onApprove={projectSetup.approve} /> : null}
+      </ThreadOverviewWhen>
+      <ThreadOverviewWhen when={Boolean(projectSetup.attempt)}>
+        <ProjectSetupAttemptCard attempt={projectSetup.attempt!} onApprove={projectSetup.approve} />
+      </ThreadOverviewWhen>
       <div className="p-1.5">
             <Button
               variant="ghost"
@@ -2264,13 +2606,14 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 />
                 <span className="truncate text-xs font-medium">Changes</span>
               </span>
-              {isChangeSummaryLoading ? (
+              <ThreadOverviewWhen when={isChangeSummaryLoading}>
                 <span
                   data-testid="thread-overview-change-loading"
                   aria-label="Loading changes"
                   className="animate-thread-overview-loading h-3 w-14 shrink-0 overflow-hidden rounded-sm bg-muted/45"
                 />
-              ) : showChangeSummary ? (
+              </ThreadOverviewWhen>
+              <ThreadOverviewWhen when={!isChangeSummaryLoading && showChangeSummary}>
                 <span
                   data-testid="thread-overview-change-summary"
                   aria-label={`${changeSummary.additions} additions, ${changeSummary.deletions} deletions`}
@@ -2283,7 +2626,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                     -{changeSummary.deletions}
                   </span>
                 </span>
-              ) : null}
+              </ThreadOverviewWhen>
             </Button>
 
             <ThreadOverviewRepositoryRow
@@ -2292,14 +2635,14 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               onOpen={openRepository}
             />
 
-            {latestPlan && (
+            <ThreadOverviewWhen when={latestPlan !== null}>
               <Button
                 variant="ghost"
                 size="sm"
                 type="button"
                 data-testid="thread-overview-plan"
                 onClick={openLatestPlan}
-                aria-label={`Plan, ${latestPlan.title}`}
+                aria-label={`Plan, ${latestPlan?.title}`}
                 className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-between")}
               >
                 <span className="flex min-w-0 items-center gap-2">
@@ -2310,10 +2653,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                   <span className="truncate text-xs font-medium">Plans</span>
                 </span>
                 <span className="min-w-0 max-w-[11rem] truncate text-xs text-muted-foreground">
-                  {latestPlan.title}
+                  {latestPlan?.title}
                 </span>
               </Button>
-            )}
+            </ThreadOverviewWhen>
 
             <Popover open={localOpen} onOpenChange={setLocalOpen}>
               <PopoverTrigger
@@ -2323,7 +2666,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                     size="sm"
                     type="button"
                     data-testid="thread-overview-local"
-                    aria-label={`${modeLabel}${dirPath ? `, ${dirPath}` : ""}`}
+                    aria-label={localCheckoutAriaLabel(modeLabel, dirPath)}
                     className={cn(
                       OVERVIEW_ROW_CLASS,
                       "justify-between",
@@ -2360,23 +2703,25 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               </PopoverContent>
             </Popover>
 
-            {branchlessCreatePr ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                data-testid="thread-overview-create-branch"
-                className={cn(
-                  OVERVIEW_ROW_CLASS,
-                  "cursor-pointer justify-start text-xs text-primary hover:bg-primary/10 hover:text-primary",
-                )}
-                onClick={() => setCreateBranchOpen(true)}
-                title="Create a branch in this worktree"
-              >
-                <GitBranch size={14} className="shrink-0 text-primary/80" />
-                <span className="font-medium">Create branch</span>
-              </Button>
-            ) : (
+            <ThreadOverviewWhen when={branchlessCreatePr}>
+              <ThreadOverviewTooltipButton content="Create a branch in this worktree">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  data-testid="thread-overview-create-branch"
+                  className={cn(
+                    OVERVIEW_ROW_CLASS,
+                    "cursor-pointer justify-start text-xs text-primary hover:bg-primary/10 hover:text-primary",
+                  )}
+                  onClick={() => branchCreation.setOpen(true)}
+                >
+                  <GitBranch size={14} className="shrink-0 text-primary/80" />
+                  <span className="font-medium">Create branch</span>
+                </Button>
+              </ThreadOverviewTooltipButton>
+            </ThreadOverviewWhen>
+            <ThreadOverviewWhen when={!branchlessCreatePr}>
               <Popover open={branchOpen} onOpenChange={setBranchOpen}>
                 <PopoverTrigger
                   render={
@@ -2419,41 +2764,45 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                     thread={thread}
                     open={branchOpen}
                     onOpenChange={setBranchOpen}
-                    onCreateBranch={() => setCreateBranchOpen(true)}
+                    onCreateBranch={() => branchCreation.setOpen(true)}
                     hasCommitsAhead={hasCommitsAhead}
                   />
                 </PopoverContent>
               </Popover>
-            )}
+            </ThreadOverviewWhen>
 
-            {branchlessCreatePr ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
+            <ThreadOverviewWhen when={branchlessCreatePr}>
+              <ThreadOverviewTooltipButton
+                content="Create a branch before committing or pushing"
                 disabled
-                data-testid="workspace-menu-commit"
-                className="h-8 w-full justify-start gap-2 px-2 text-left text-xs text-foreground/75 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Create a branch before committing or pushing"
               >
-                <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-                <span className="font-medium">Commit or push</span>
-              </Button>
-            ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  disabled
+                  data-testid="workspace-menu-commit"
+                  className="h-8 w-full justify-start gap-2 px-2 text-left text-xs text-foreground/75 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+                  <span className="font-medium">Commit or push</span>
+                </Button>
+              </ThreadOverviewTooltipButton>
+            </ThreadOverviewWhen>
 
-            {usageSummary && (
+            <ThreadOverviewWhen when={usageSummary !== null}>
               <>
                 <Separator className="my-1.5" />
                 <ThreadOverviewUsageBars
                   categories={usageCategories}
-                  summary={usageSummary}
+                  summary={usageSummary ?? ""}
                   sessionCostSummary={sessionCostSummary}
                   usageStatus={usageInfo?.usageStatus}
                 />
               </>
-            )}
+            </ThreadOverviewWhen>
 
-            {subagentTotal > 0 && (
+            <ThreadOverviewWhen when={subagentTotal > 0}>
               <>
                 <Separator className="my-1.5" />
                 <div className="px-2 pt-1 text-xs font-medium text-muted-foreground">
@@ -2485,13 +2834,13 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                   </span>
                 </Button>
               </>
-            )}
+            </ThreadOverviewWhen>
 
-            {canShowPrActions && (
+            <ThreadOverviewWhen when={canShowPrActions}>
               <>
-                {usageSummary ? (
+                <ThreadOverviewWhen when={usageSummary !== null}>
                   <Separator data-testid="thread-overview-pr-separator" className="my-1.5" />
-                ) : null}
+                </ThreadOverviewWhen>
                 <ThreadOverviewPrRow
                   pr={effectivePr}
                   hasCommitsAhead={hasCommitsAhead}
@@ -2503,18 +2852,18 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                   onOpenPr={handleOpenPr}
                 />
               </>
-            )}
+            </ThreadOverviewWhen>
 
-            {browserTabs.length > 0 && (
+            <ThreadOverviewWhen when={browserTabs.length > 0}>
               <ThreadOverviewBrowserSection rows={browserTabs} onOpen={openBrowserTab} />
-            )}
+            </ThreadOverviewWhen>
 
-            {sources.length > 0 && (
+            <ThreadOverviewWhen when={sources.length > 0}>
               <>
                 <Separator className="my-1.5" />
                 <ThreadOverviewSources sources={sources} onOpen={openSource} />
               </>
-            )}
+            </ThreadOverviewWhen>
 
             <Separator className="my-1.5" />
             <ThreadOverviewRecapRow
@@ -2528,12 +2877,16 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             />
       </div>
     </div>
-  );
+    );
+  }
 
   return (
     <>
       <Popover open={open} onOpenChange={handleOpenChange}>
-        <PopoverTrigger render={triggerButton} />
+        <Tooltip>
+          <TooltipTrigger render={<PopoverTrigger render={triggerButton} />} />
+          <TooltipContent>{getThreadOverviewTriggerStatus(ciDot)}</TooltipContent>
+        </Tooltip>
         {/*
           Pin the popover to the far right edge with a comfortable gap below the
           trigger. NOTE: base-ui's alignOffset is inverted from what you'd expect
@@ -2555,26 +2908,25 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       </Popover>
 
       <CreateThreadBranchDialog
-        open={createBranchOpen}
-        onOpenChange={setCreateBranchOpen}
+        open={branchCreation.open}
+        onOpenChange={branchCreation.setOpen}
         thread={thread}
         title="Work here"
         description="Create a branch to commit changes, push, and create a PR from this worktree."
         submitLabel="Create"
         onCreated={(branch) => {
-          setCreatedBranchForPr(branch);
-          setCreatedBranchBaseForPr(createBranchBaseBranch);
+          branchCreation.complete(branch, createBranchBaseBranch);
         }}
       />
 
-      {(prable || createdBranchForPr) && (
+      {(prable || branchCreation.branch) && (
         <CreatePrDialog
           open={createPrOpen}
           onOpenChange={setCreatePrOpen}
           threadId={thread.id}
           workspaceId={thread.workspace_id}
           branch={createPrBranch}
-          preferredBaseBranch={createdBranchBaseForPr ?? thread.base_branch}
+          preferredBaseBranch={branchCreation.baseBranch ?? thread.base_branch}
         />
       )}
     </>

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import {
   cleanupOwnedRun,
   findPackagedDesktop,
@@ -42,8 +42,8 @@ describe("packaged reliability cleanup", () => {
       "Packaged Desktop executable not found. Run the target package task first.",
     );
 
-    const scriptPath = fileURLToPath(new URL("../desktop-packaging/package-validation/desktop-reliability-test.mjs", import.meta.url));
-    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+    const scriptPath = NodeURL.fileURLToPath(new URL("../desktop-packaging/package-validation/desktop-reliability-test.mjs", import.meta.url));
+    const repoRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../../..");
     const result = await runCli("bun", [scriptPath], repoRoot);
     expect(result.code).toBe(1);
     expect(result.output).toContain("Packaged Desktop executable not found. Run the target package task first.");
@@ -124,7 +124,7 @@ describe("packaged reliability cleanup", () => {
 
 function runCli(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = NodeChildProcess.spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", (chunk) => { output += chunk.toString(); });
     child.stderr.on("data", (chunk) => { output += chunk.toString(); });

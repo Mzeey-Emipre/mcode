@@ -19,7 +19,7 @@ describe("WorkspaceRepo sort_order", () => {
 
   it("listAll returns every workspace ordered by sort_order ascending", () => {
     const a = repo.create("a", "/a", true);
-    const b = repo.create("b", "/b", true);
+    repo.create("b", "/b", true);
     repo.touchLastOpened(a.id);
     // never opened b still appears
     const list = repo.listAll();
@@ -39,16 +39,16 @@ describe("WorkspaceRepo sort_order", () => {
 
   it("reorderToIndex moves an item up with a range increment", () => {
     const a = repo.create("a", "/a", true);
-    const b = repo.create("b", "/b", true);
-    const c = repo.create("c", "/c", true);
+    repo.create("b", "/b", true);
+    repo.create("c", "/c", true);
     expect(repo.listAll().map((w) => w.name)).toEqual(["c", "b", "a"]);
     repo.reorderToIndex(a.id, 0);
     expect(repo.listAll().map((w) => w.name)).toEqual(["a", "c", "b"]);
   });
 
   it("reorderToIndex moves an item down with a range decrement", () => {
-    const a = repo.create("a", "/a", true);
-    const b = repo.create("b", "/b", true);
+    repo.create("a", "/a", true);
+    repo.create("b", "/b", true);
     const c = repo.create("c", "/c", true);
     repo.reorderToIndex(c.id, 2);
     expect(repo.listAll().map((w) => w.name)).toEqual(["b", "a", "c"]);
@@ -56,7 +56,7 @@ describe("WorkspaceRepo sort_order", () => {
 
   it("prependToSortOrder moves a workspace to the top without duplicates", () => {
     const a = repo.create("a", "/a", true);
-    const b = repo.create("b", "/b", true);
+    repo.create("b", "/b", true);
     repo.prependToSortOrder(a.id);
     const list = repo.listAll();
     expect(list.map((w) => w.name)).toEqual(["a", "b"]);
@@ -65,7 +65,7 @@ describe("WorkspaceRepo sort_order", () => {
   });
 
   it("prependToSortOrder is a no-op when the workspace is already first", () => {
-    const a = repo.create("a", "/a", true);
+    repo.create("a", "/a", true);
     const b = repo.create("b", "/b", true);
     repo.prependToSortOrder(b.id);
     const before = repo.listAll().map((w) => ({ id: w.id, sort_order: w.sort_order }));
@@ -96,12 +96,11 @@ describe("WorkspaceRepo sort_order", () => {
 
   it("reorderToIndex succeeds when all sort_order values are duplicates", () => {
     // Simulate legacy databases where schema patch gave all rows sort_order=0
-    const a = repo.create("a", "/a", true);
-    const b = repo.create("b", "/b", true);
-    const c = repo.create("c", "/c", true);
+    repo.create("a", "/a", true);
+    repo.create("b", "/b", true);
+    repo.create("c", "/c", true);
     // Force all sort_order to 0 (simulates the schema patch bug)
     db.prepare("UPDATE workspaces SET sort_order = 0").run();
-    const before = repo.listAll().map((w) => w.name);
     // Move last item to first position
     const lastId = repo.listAll().at(-1)!.id;
     repo.reorderToIndex(lastId, 0);

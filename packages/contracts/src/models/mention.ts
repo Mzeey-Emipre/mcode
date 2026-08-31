@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ProviderCapabilityIdentitySchema } from "../providers/capability-catalog.js";
+import { lazySchema } from "../utils/lazySchema.js";
 
 export const MAX_MESSAGE_MENTIONS = 50;
 export const MENTION_ID_MAX_LENGTH = 128;
@@ -37,7 +38,7 @@ const MentionBaseSchema = z.object({
 });
 
 /** Typed metadata for a selected composer mention. */
-export const MessageMentionSchema = z.discriminatedUnion("kind", [
+export const MessageMentionSchema = lazySchema(() => z.discriminatedUnion("kind", [
   MentionBaseSchema.extend({
     kind: z.literal("file"),
     path: MentionPathSchema,
@@ -60,9 +61,11 @@ export const MessageMentionSchema = z.discriminatedUnion("kind", [
     namespace: z.enum(["skill", "mcode", "plugin", "command"]),
     capabilityIdentity: ProviderCapabilityIdentitySchema().optional(),
   }),
-]);
+]));
 
 /** Bounded list of typed mention metadata stored on a message. */
-export const MessageMentionsSchema = z.array(MessageMentionSchema).max(MAX_MESSAGE_MENTIONS);
+export const MessageMentionsSchema = lazySchema(() =>
+  z.array(MessageMentionSchema()).max(MAX_MESSAGE_MENTIONS),
+);
 
-export type MessageMention = z.infer<typeof MessageMentionSchema>;
+export type MessageMention = z.infer<ReturnType<typeof MessageMentionSchema>>;

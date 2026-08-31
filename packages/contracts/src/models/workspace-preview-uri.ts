@@ -40,15 +40,24 @@ export function markdownWorkspaceRefToPreviewPath(href: string): string {
  */
 export function looksLikeWorkspaceRelativeFileRef(text: string): boolean {
   const t = text.trim();
-  if (!t || t.includes("://")) return false;
-  if (/^[A-Za-z]:[/\\]/.test(t) || t.startsWith("~")) return false;
+  if (isAbsoluteOrRemoteReference(t)) return false;
   if (!WORKSPACE_MARKDOWN_PREVIEW_EXT_RE.test(t)) return false;
-  if (t.startsWith("/")) return true;
-  if (t.startsWith("./") || t.startsWith("../")) return true;
+  if (isExplicitWorkspaceReference(t)) return true;
   const firstSeg = t.split(/[/\\]/)[0] ?? "";
   const looksDomainLike = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(firstSeg);
-  if ((t.includes("/") || t.includes("\\")) && looksDomainLike) return false;
-  if (t.includes("/") || t.includes("\\")) return true;
+  if (hasPathSeparator(t)) return !looksDomainLike;
   if (!firstSeg.includes(".")) return false;
   return WORKSPACE_MARKDOWN_PREVIEW_EXT_RE.test(firstSeg);
+}
+
+function isAbsoluteOrRemoteReference(value: string): boolean {
+  return !value || value.includes("://") || /^[A-Za-z]:[/\\]/.test(value) || value.startsWith("~");
+}
+
+function isExplicitWorkspaceReference(value: string): boolean {
+  return value.startsWith("/") || value.startsWith("./") || value.startsWith("../");
+}
+
+function hasPathSeparator(value: string): boolean {
+  return value.includes("/") || value.includes("\\");
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import type { GitCommit } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,22 @@ function relativeTime(isoDate: string): string {
   return new Date(isoDate).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+interface CommitPickerScopeProps {
+  readonly activeThreadId: string | null;
+  readonly activeWorkspaceId: string | null;
+  readonly diffScopeRevision: number;
+  readonly threadBranch: string | undefined;
+}
+
+function selectAvailableCommit(
+  commits: readonly GitCommit[],
+  setSelectedSha: (sha: string | null) => void,
+): void {
+  const selectedSha = useDiffStore.getState().selectedCommitSha;
+  if (selectedSha !== null && commits.some((commit) => commit.sha === selectedSha)) return;
+  setSelectedSha(commits[0]?.sha ?? null);
+}
+
 /**
  * The Commit view's operand picker: a searchable dropdown over the branch's own
  * commits since its base, resolving to exactly one commit's diff. Default
@@ -53,11 +69,30 @@ export function CommitPicker() {
     const thread = s.threads.find((t) => t.id === activeThreadId);
     return thread?.branch ?? undefined;
   });
-  const selectedSha = useDiffStore((s) => s.selectedCommitSha);
-  const setSelectedSha = useDiffStore((s) => s.setSelectedCommitSha);
   const diffScopeRevision = useDiffStore((s) =>
     activeWorkspaceId ? (s.diffRevisionByScope[activeThreadId ?? activeWorkspaceId] ?? 0) : 0,
   );
+
+  const scopeKey = `${activeWorkspaceId ?? ""}:${activeThreadId ?? ""}:${threadBranch ?? ""}`;
+  return (
+    <CommitPickerScope
+      key={scopeKey}
+      activeThreadId={activeThreadId}
+      activeWorkspaceId={activeWorkspaceId}
+      diffScopeRevision={diffScopeRevision}
+      threadBranch={threadBranch}
+    />
+  );
+}
+
+function CommitPickerScope({
+  activeThreadId,
+  activeWorkspaceId,
+  diffScopeRevision,
+  threadBranch,
+}: CommitPickerScopeProps) {
+  const selectedSha = useDiffStore((s) => s.selectedCommitSha);
+  const setSelectedSha = useDiffStore((s) => s.setSelectedCommitSha);
 
   const [open, setOpen] = useState(false);
   const [commits, setCommits] = useState<GitCommit[]>([]);
@@ -65,6 +100,8 @@ export function CommitPicker() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [search, setSearch] = useState("");
+  const commitsRef = useRef(commits);
+  commitsRef.current = commits;
 
   const loadCommits = useCallback(
     async (skip: number): Promise<GitCommit[]> => {
@@ -87,11 +124,7 @@ export function CommitPicker() {
   useEffect(() => {
     if (!activeWorkspaceId) return;
     let cancelled = false;
-    setCommits([]);
-    setHasMore(false);
-    setLoadingInitial(true);
-    setLoadingMore(false);
-    setSearch("");
+    // oxlint-disable-next-line react/set-state-in-effect -- The selected SHA belongs to the active workspace scope and must clear before its replacement resolves.
     setSelectedSha(null);
 
     void loadCommits(0)
@@ -100,6 +133,7 @@ export function CommitPicker() {
           setCommits(list);
           setHasMore(list.length === COMMIT_LIMIT);
           setLoadingInitial(false);
+          setSelectedSha(list[0]?.sha ?? null);
         }
       })
       .catch(() => {
@@ -107,6 +141,7 @@ export function CommitPicker() {
           setCommits([]);
           setHasMore(false);
           setLoadingInitial(false);
+          setSelectedSha(null);
         }
       });
 
@@ -122,8 +157,11 @@ export function CommitPicker() {
     void loadCommits(0)
       .then((list) => {
         if (!cancelled) {
-          setCommits((current) => mergeFirstPageCommits(current, list));
+          const merged = mergeFirstPageCommits(commitsRef.current, list);
+          commitsRef.current = merged;
+          setCommits(merged);
           setHasMore(list.length === COMMIT_LIMIT);
+          selectAvailableCommit(merged, setSelectedSha);
         }
       })
       .catch(() => {
@@ -133,7 +171,7 @@ export function CommitPicker() {
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, diffScopeRevision, loadCommits, loadingInitial]);
+  }, [activeWorkspaceId, diffScopeRevision, loadCommits, loadingInitial, setSelectedSha]);
 
   useEffect(() => {
     if (!open || !activeWorkspaceId || loadingInitial) return;
@@ -171,14 +209,6 @@ export function CommitPicker() {
       setLoadingMore(false);
     }
   }, [commits.length, hasMore, loadCommits, loadingInitial, loadingMore]);
-
-  // Default to the latest commit, and recover when the active pick falls out of
-  // the current scope's list (thread or branch switch on the same Commit view).
-  useEffect(() => {
-    if (loadingInitial) return;
-    const present = selectedSha !== null && commits.some((c) => c.sha === selectedSha);
-    if (!present) setSelectedSha(commits[0]?.sha ?? null);
-  }, [commits, loadingInitial, selectedSha, setSelectedSha]);
 
   const selected = useMemo(
     () => commits.find((c) => c.sha === selectedSha) ?? null,

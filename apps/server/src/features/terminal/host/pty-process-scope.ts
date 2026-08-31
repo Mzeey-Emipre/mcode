@@ -2,11 +2,15 @@ import { killProcessTree } from "../../../runtime/process/containment/process-ki
 import { WindowsProcessScopeFactory } from "../../../runtime/process/containment/windows-process-scope.js";
 import { createPosixProcessScope } from "./posix-process-scope.js";
 import type { PtyProcessScope } from "./pty-host-runtime.js";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 
 /** Creates an authoritative process scope for one native PTY. */
-export function createPtyProcessScope(rootPid: number): PtyProcessScope {
-  if (process.platform === "win32") {
-    const scope = new WindowsProcessScopeFactory().create();
+export function createPtyProcessScope(
+  rootPid: number,
+  hostRuntime: Pick<HostRuntime, "platform" | "architecture">,
+): PtyProcessScope {
+  if (hostRuntime.platform === "win32") {
+    const scope = new WindowsProcessScopeFactory(hostRuntime).create();
     return {
       mechanism: "job-object",
       processGroupId: `job-${rootPid}`,
@@ -27,7 +31,7 @@ export function createPtyProcessScope(rootPid: number): PtyProcessScope {
         const reconciled = await scope.reconcile(rootPid);
         if (!reconciled.ok) {
           const [fallbackResult] = await Promise.allSettled([
-            killProcessTree(rootPid),
+            killProcessTree(rootPid, { platform: hostRuntime.platform }),
           ]);
           if (fallbackResult.status === "rejected") {
             cleanupErrors.push(fallbackResult.reason);

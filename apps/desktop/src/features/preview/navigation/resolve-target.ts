@@ -38,32 +38,23 @@ export async function resolvePreviewNavigationTarget(
 ): Promise<PreviewResolveNavigationResult> {
   const trimmed = url.trim();
   if (!trimmed) return { ok: false, error: "empty-url" };
+  const target = await resolvePreviewTarget(trimmed, workspacePath?.trim() ?? null);
+  if (!target.ok) return target;
+  if (!isAllowedPreviewUrl(target.url)) return { ok: false, error: "invalid-url" };
+  return target;
+}
 
-  let target: string;
-
+async function resolvePreviewTarget(
+  trimmed: string,
+  workspacePath: string | null,
+): Promise<PreviewResolveNavigationResult> {
   if (isMcodeWorkspacePreviewUrl(trimmed)) {
-    const resolved = await resolveMcodeWorkspacePreviewUrl(
-      trimmed,
-      workspacePath?.trim() ?? null,
-    );
-    if (!resolved.ok) return resolved;
-    target = resolved.url;
-  } else if (/^https?:\/\//i.test(trimmed)) {
-    target = trimmed;
-  } else if (/^file:\/\//i.test(trimmed)) {
-    const resolved = await resolveLocalFileUrl(trimmed, workspacePath?.trim() ?? null);
-    if (!resolved.ok) return resolved;
-    target = resolved.url;
-  } else if (looksLikeFilePath(trimmed)) {
-    const resolved = await resolveLocalFileUrl(trimmed, workspacePath?.trim() ?? null);
-    if (!resolved.ok) return resolved;
-    target = resolved.url;
-  } else if (looksLikeBareDomain(trimmed)) {
-    target = `https://${trimmed}`;
-  } else {
-    target = `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+    return resolveMcodeWorkspacePreviewUrl(trimmed, workspacePath);
   }
-
-  if (!isAllowedPreviewUrl(target)) return { ok: false, error: "invalid-url" };
-  return { ok: true, url: target };
+  if (/^https?:\/\//i.test(trimmed)) return { ok: true, url: trimmed };
+  if (/^file:\/\//i.test(trimmed) || looksLikeFilePath(trimmed)) {
+    return resolveLocalFileUrl(trimmed, workspacePath);
+  }
+  if (looksLikeBareDomain(trimmed)) return { ok: true, url: `https://${trimmed}` };
+  return { ok: true, url: `https://www.google.com/search?q=${encodeURIComponent(trimmed)}` };
 }

@@ -43,39 +43,65 @@ export function pageStatusReducer(
 ): PreviewPageStatus {
   switch (event.type) {
     case "load-start":
-      return {
-        url: event.url !== undefined ? event.url : prev.url,
-        title: prev.title,
-        favicon: null,
-        phase: "loading",
-      };
+      return pageStatusForLoadStart(prev, event);
     case "navigated":
-      return {
-        ...prev,
-        url: event.url,
-        title:
-          event.title !== undefined && event.title !== null && event.title.length > 0
-            ? event.title
-            : prev.title,
-        error: undefined,
-      };
+      return pageStatusForNavigation(prev, event);
     case "title":
       return { ...prev, title: event.title };
     case "favicon":
       return { ...prev, favicon: event.favicon };
     case "load-stop":
-      return prev.phase === "error" ? prev : { ...prev, phase: "loaded" };
+      return pageStatusForLoadStop(prev);
     case "load-error":
-      return {
-        ...prev,
-        url: event.url !== undefined ? event.url : prev.url,
-        phase: "error",
-        favicon: null,
-        error: event.error,
-      };
+      return pageStatusForLoadError(prev, event);
     case "discard":
       return { ...prev, phase: "discarded" };
     case "reset":
       return event.status;
   }
+}
+
+function pageStatusForLoadStart(
+  prev: PreviewPageStatus,
+  event: Extract<PageStatusEvent, { type: "load-start" }>,
+): PreviewPageStatus {
+  return {
+    url: event.url !== undefined ? event.url : prev.url,
+    title: prev.title,
+    favicon: null,
+    phase: "loading",
+  };
+}
+
+function pageStatusForNavigation(
+  prev: PreviewPageStatus,
+  event: Extract<PageStatusEvent, { type: "navigated" }>,
+): PreviewPageStatus {
+  return {
+    ...prev,
+    url: event.url,
+    title: hasPageTitle(event.title) ? event.title : prev.title,
+    error: undefined,
+  };
+}
+
+function hasPageTitle(title: string | null | undefined): title is string {
+  return title !== undefined && title !== null && title.length > 0;
+}
+
+function pageStatusForLoadStop(prev: PreviewPageStatus): PreviewPageStatus {
+  return prev.phase === "error" ? prev : { ...prev, phase: "loaded" };
+}
+
+function pageStatusForLoadError(
+  prev: PreviewPageStatus,
+  event: Extract<PageStatusEvent, { type: "load-error" }>,
+): PreviewPageStatus {
+  return {
+    ...prev,
+    url: event.url !== undefined ? event.url : prev.url,
+    phase: "error",
+    favicon: null,
+    error: event.error,
+  };
 }

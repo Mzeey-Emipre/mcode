@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type Database from "better-sqlite3";
 import {
   CONVERSATION_HISTORY_PAGE_MAX_MESSAGES,
@@ -246,7 +246,7 @@ export class CanonicalConversationProjectionReader {
   ): void {
     const nativeItemId = payload.nativeItemId ?? row.payload_json;
     const sortOrder = state.childThoughtOrderByMessage.get(childAnchor) ?? 0;
-    state.narrativeByMessage[childAnchor]!.thoughts.push(ThoughtSegmentRecordSchema.parse({
+    state.narrativeByMessage[childAnchor]!.thoughts.push(ThoughtSegmentRecordSchema().parse({
       id: `codex-child-reasoning:${hashCodexKey(`${nativeItemId}:${row.id}`)}`,
       message_id: childAnchor,
       text: typeof payload.content === "string" ? payload.content : "",
@@ -263,22 +263,17 @@ export class CanonicalConversationProjectionReader {
     childAnchor: string,
     state: ProjectionState,
   ): void {
-    const nativeItemId = payload.nativeItemId ?? row.payload_json;
-    const childTools = state.childToolsByMessage.get(childAnchor) ?? new Map();
+    const nativeItemId = this.childToolNativeItemId(row, payload);
+    const childTools = this.childToolsForMessage(childAnchor, state);
     const existing = childTools.get(nativeItemId);
-    childTools.set(nativeItemId, ToolCallRecordSchema.parse({
-      id: existing?.id ?? `codex-child-tool:${hashCodexKey(nativeItemId)}`,
-      message_id: childAnchor,
-      parent_tool_call_id: null,
-      tool_name: typeof payload.toolName === "string" ? payload.toolName : "Tool",
-      input_summary: formatToolInput(payload.toolInput),
-      output_summary: existing?.output_summary ?? "",
-      status: existing?.status ?? "running",
-      started_at: existing?.started_at ?? row.created_at,
-      completed_at: existing?.completed_at ?? null,
-      sort_order: existing?.sort_order ?? childTools.size,
-    }));
-    state.childToolsByMessage.set(childAnchor, childTools);
+    childTools.set(nativeItemId, this.childToolCallRecord(
+      row,
+      payload,
+      childAnchor,
+      nativeItemId,
+      existing,
+      childTools.size,
+    ));
   }
 
   private projectChildToolResult(
@@ -287,22 +282,153 @@ export class CanonicalConversationProjectionReader {
     childAnchor: string,
     state: ProjectionState,
   ): void {
-    const nativeItemId = payload.nativeItemId ?? row.payload_json;
-    const childTools = state.childToolsByMessage.get(childAnchor) ?? new Map();
+    const nativeItemId = this.childToolNativeItemId(row, payload);
+    const childTools = this.childToolsForMessage(childAnchor, state);
     const existing = childTools.get(nativeItemId);
-    childTools.set(nativeItemId, ToolCallRecordSchema.parse({
-      id: existing?.id ?? `codex-child-tool:${hashCodexKey(nativeItemId)}`,
+    childTools.set(nativeItemId, this.childToolResultRecord(
+      row,
+      payload,
+      childAnchor,
+      nativeItemId,
+      existing,
+      childTools.size,
+    ));
+  }
+
+  private childToolNativeItemId(row: NarrativeRow, payload: NarrativePayload): string {
+    return payload.nativeItemId ?? row.payload_json;
+  }
+
+  private childToolsForMessage(
+    childAnchor: string,
+    state: ProjectionState,
+  ): Map<string, ConversationNarrativeBatch["tools"][number]> {
+    const existing = state.childToolsByMessage.get(childAnchor);
+    if (existing) return existing;
+    const created = new Map<string, ConversationNarrativeBatch["tools"][number]>();
+    state.childToolsByMessage.set(childAnchor, created);
+    return created;
+  }
+
+  private childToolCallRecord(
+    row: NarrativeRow,
+    payload: NarrativePayload,
+    childAnchor: string,
+    nativeItemId: string,
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    sortOrder: number,
+  ): ConversationNarrativeBatch["tools"][number] {
+    return ToolCallRecordSchema().parse({
+      ...this.childToolBase(existing, nativeItemId, childAnchor),
+      ...this.childToolCallDetails(row, payload, existing, sortOrder),
+    });
+  }
+
+  private childToolResultRecord(
+    row: NarrativeRow,
+    payload: NarrativePayload,
+    childAnchor: string,
+    nativeItemId: string,
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    sortOrder: number,
+  ): ConversationNarrativeBatch["tools"][number] {
+    return ToolCallRecordSchema().parse({
+      ...this.childToolBase(existing, nativeItemId, childAnchor),
+      ...this.childToolResultDetails(row, payload, existing, sortOrder),
+    });
+  }
+
+  private childToolBase(
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    nativeItemId: string,
+    childAnchor: string,
+  ) {
+    return {
+      id: this.childToolId(existing, nativeItemId),
       message_id: childAnchor,
       parent_tool_call_id: null,
+    };
+  }
+
+  private childToolCallDetails(
+    row: NarrativeRow,
+    payload: NarrativePayload,
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    sortOrder: number,
+  ) {
+    return {
+      tool_name: typeof payload.toolName === "string" ? payload.toolName : "Tool",
+      input_summary: formatToolInput(payload.toolInput),
+      ...this.runningChildToolDetails(row, existing, sortOrder),
+    };
+  }
+
+  private runningChildToolDetails(
+    row: NarrativeRow,
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    sortOrder: number,
+  ) {
+    return {
+      output_summary: this.childToolOutput(existing),
+      status: this.runningChildToolStatus(existing),
+      ...this.runningChildToolTiming(row, existing, sortOrder),
+    };
+  }
+
+  private childToolOutput(existing: ConversationNarrativeBatch["tools"][number] | undefined): string {
+    return existing?.output_summary ?? "";
+  }
+
+  private runningChildToolStatus(
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+  ) {
+    return existing?.status ?? "running";
+  }
+
+  private runningChildToolTiming(
+    row: NarrativeRow,
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    sortOrder: number,
+  ) {
+    return {
+      started_at: existing?.started_at ?? row.created_at,
+      completed_at: existing?.completed_at ?? null,
+      sort_order: existing?.sort_order ?? sortOrder,
+    };
+  }
+
+  private childToolResultDetails(
+    row: NarrativeRow,
+    payload: NarrativePayload,
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    sortOrder: number,
+  ) {
+    return {
       tool_name: existing?.tool_name ?? "Tool",
       input_summary: existing?.input_summary ?? "",
       output_summary: typeof payload.output === "string" ? payload.output : "",
       status: payload.isError === true ? "failed" : "completed",
+      ...this.completedChildToolDetails(row, existing, sortOrder),
+    };
+  }
+
+  private completedChildToolDetails(
+    row: NarrativeRow,
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    sortOrder: number,
+  ) {
+    return {
       started_at: existing?.started_at ?? row.created_at,
       completed_at: row.updated_at,
-      sort_order: existing?.sort_order ?? childTools.size,
-    }));
-    state.childToolsByMessage.set(childAnchor, childTools);
+      sort_order: existing?.sort_order ?? sortOrder,
+    };
+  }
+
+  private childToolId(
+    existing: ConversationNarrativeBatch["tools"][number] | undefined,
+    nativeItemId: string,
+  ): string {
+    return existing?.id ?? `codex-child-tool:${hashCodexKey(nativeItemId)}`;
   }
 
   private projectOrdinaryNarrative(
@@ -357,5 +483,5 @@ function formatToolInput(value: unknown): string {
 }
 
 function hashCodexKey(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 32);
+  return NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
 }

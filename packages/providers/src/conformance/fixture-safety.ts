@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import type {
   CursorAcpTraceEnvelope,
   CursorAcpTraceExpectedSemantics,
@@ -43,7 +43,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 
 /** Computes the deterministic SHA-256 recorded for sanitized fixture input. */
 export function providerFixtureSourceHash(input: ProviderFixtureManifest["input"]): string {
-  return createHash("sha256").update(canonicalJson(input)).digest("hex");
+  return NodeCrypto.createHash("sha256").update(canonicalJson(input)).digest("hex");
 }
 
 /** Creates a reviewed fixture manifest from structural sanitizer output. */
@@ -60,7 +60,7 @@ export function createProviderFixtureManifest(
 
 /** Loads and validates one committed Provider fixture manifest. */
 export function loadProviderFixtureManifest(filePath: string): ProviderFixtureManifest {
-  const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
+  const parsed: unknown = JSON.parse(NodeFS.readFileSync(filePath, "utf8"));
   return validateProviderFixtureManifest(parsed);
 }
 

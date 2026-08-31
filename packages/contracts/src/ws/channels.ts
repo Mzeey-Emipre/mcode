@@ -157,7 +157,7 @@ export const WS_CHANNELS = {
     executionId: z.string().nullable().optional(),
   }),
   /** Reports whether live assistant text remains recoverable or needs explicit risk acceptance. */
-  "turn.savingStatus": TurnSavingStatusSchema,
+  "turn.savingStatus": TurnSavingStatusSchema(),
   /** Live net file effects attributed to explicit agent mutation tools. */
   "turn.fileEffectsUpdated": z.object({
     threadId: z.string(),

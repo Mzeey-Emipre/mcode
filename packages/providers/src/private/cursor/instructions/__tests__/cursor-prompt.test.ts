@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { buildCursorPrompt, readCursorUserInstructions } from "../cursor-prompt.js";
 
 describe("cursor-prompt", () => {
@@ -11,7 +11,7 @@ describe("cursor-prompt", () => {
     let fakeHome: string;
 
     beforeEach(() => {
-      fakeHome = mkdtempSync(join(tmpdir(), "cursor-prompt-"));
+      fakeHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "cursor-prompt-"));
       originalHome = process.env.HOME;
       originalUserProfile = process.env.USERPROFILE;
       process.env.HOME = fakeHome;
@@ -23,7 +23,7 @@ describe("cursor-prompt", () => {
       else delete process.env.HOME;
       if (originalUserProfile !== undefined) process.env.USERPROFILE = originalUserProfile;
       else delete process.env.USERPROFILE;
-      rmSync(fakeHome, { recursive: true, force: true });
+      NodeFS.rmSync(fakeHome, { recursive: true, force: true });
     });
 
     it("returns undefined when ~/.cursor/AGENTS.md is absent", () => {
@@ -31,17 +31,17 @@ describe("cursor-prompt", () => {
     });
 
     it("returns trimmed contents when ~/.cursor/AGENTS.md exists", () => {
-      const agentsPath = join(fakeHome, ".cursor", "AGENTS.md");
-      mkdirSync(join(fakeHome, ".cursor"), { recursive: true });
-      writeFileSync(agentsPath, "  Stay concise.\n\n", "utf-8");
+      const agentsPath = NodePath.join(fakeHome, ".cursor", "AGENTS.md");
+      NodeFS.mkdirSync(NodePath.join(fakeHome, ".cursor"), { recursive: true });
+      NodeFS.writeFileSync(agentsPath, "  Stay concise.\n\n", "utf-8");
 
       expect(readCursorUserInstructions()).toBe("Stay concise.");
     });
 
     it("returns undefined when file is whitespace-only", () => {
-      const agentsPath = join(fakeHome, ".cursor", "AGENTS.md");
-      mkdirSync(join(fakeHome, ".cursor"), { recursive: true });
-      writeFileSync(agentsPath, "   \n\t\n", "utf-8");
+      const agentsPath = NodePath.join(fakeHome, ".cursor", "AGENTS.md");
+      NodeFS.mkdirSync(NodePath.join(fakeHome, ".cursor"), { recursive: true });
+      NodeFS.writeFileSync(agentsPath, "   \n\t\n", "utf-8");
 
       expect(readCursorUserInstructions()).toBeUndefined();
     });

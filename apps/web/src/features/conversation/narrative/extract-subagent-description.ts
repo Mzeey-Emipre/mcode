@@ -23,6 +23,24 @@ function firstMeaningfulLine(text: string): string {
     .find((line) => line.length > 0) ?? "";
 }
 
+function textInput(toolCall: ToolCall, key: "description" | "prompt"): string {
+  const value = toolCall.toolInput[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function specificDescription(description: string): string {
+  return isGenericDescription(description) ? "" : description;
+}
+
+function completedOutputDescription(toolCall: ToolCall): string {
+  if (!toolCall.isComplete || typeof toolCall.output !== "string") return "";
+  return truncateNarrative(firstMeaningfulLine(toolCall.output));
+}
+
+function fallbackDescription(toolCall: ToolCall, description: string): string {
+  return toolCall.isComplete ? description || "Subagent task" : "Running subagent";
+}
+
 /**
  * Primary label for a sub-agent row, aligned with Claude {@link AgentRenderer}.
  *
@@ -30,21 +48,13 @@ function firstMeaningfulLine(text: string): string {
  * label while the result renders in the expanded body.
  */
 export function extractSubagentDescription(toolCall: ToolCall): string {
-  const input = toolCall.toolInput;
-  const description =
-    typeof input.description === "string" ? input.description.trim() : "";
-  const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
-  const output = typeof toolCall.output === "string"
-    ? firstMeaningfulLine(toolCall.output)
-    : "";
+  const description = textInput(toolCall, "description");
+  const specific = specificDescription(description);
+  if (specific) return specific;
 
-  if (description && !isGenericDescription(description)) {
-    return description;
-  }
+  const prompt = textInput(toolCall, "prompt");
   if (prompt) return truncateNarrative(prompt);
-  if (toolCall.isComplete && output) {
-    return truncateNarrative(output);
-  }
-  if (!toolCall.isComplete) return "Running subagent";
-  return description || "Subagent task";
+
+  const output = completedOutputDescription(toolCall);
+  return output || fallbackDescription(toolCall, description);
 }

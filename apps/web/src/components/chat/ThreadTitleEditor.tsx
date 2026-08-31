@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 
 interface ThreadTitleEditorProps {
@@ -25,12 +25,9 @@ export function ThreadTitleEditor({
 }: ThreadTitleEditorProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const didSaveRef = useRef(false);
-  const [originalTitle, setOriginalTitle] = useState(title);
-
   useEffect(() => {
     if (isEditing) {
       didSaveRef.current = false;
-      setOriginalTitle(title);
       // Focus and select all text when entering edit mode
       if (inputRef.current) {
         inputRef.current.focus();
@@ -41,7 +38,7 @@ export function ThreadTitleEditor({
 
   const handleSave = (newTitle: string) => {
     const trimmed = newTitle.trim();
-    if (trimmed && trimmed !== originalTitle) {
+    if (trimmed && trimmed !== title) {
       onSave(trimmed);
     }
   };

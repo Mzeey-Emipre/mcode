@@ -1,8 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { lstatSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { AddressInfo } from "node:net";
+import * as NodeCrypto from "node:crypto";
+import * as NodeHTTP from "node:http";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import type * as NodeNet from "node:net";
 import { THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH } from "@mcode/contracts";
 
 /** Controls exposed by the opt-in packaged reliability harness. */
@@ -53,8 +53,26 @@ export async function readReliabilityHarnessForwardResponse(
   if (command.control === "planned-restart") {
     throw new Error("Planned restart is not a server fault");
   }
+  const parsed = await readReliabilityForwardJson(response);
+  const result = validateReliabilityForwardResult(parsed, command.control);
+  if (command.control !== "assistant-stream") {
+    return { accepted: true, control: command.control };
+  }
+  return validateReliabilityStreamResult(result, command);
+}
+
+async function readReliabilityForwardJson(response: Response): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Reliability server control returned an empty response");
+  const body = await readReliabilityResponseBody(reader);
+  try {
+    return JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw new Error("Reliability server control returned invalid JSON");
+  }
+}
+
+async function readReliabilityResponseBody(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
   try {
@@ -71,35 +89,53 @@ export async function readReliabilityHarnessForwardResponse(
     await reader.cancel().catch(() => undefined);
     throw error;
   }
+  return concatenateReliabilityResponseChunks(chunks, byteLength);
+}
+
+function concatenateReliabilityResponseChunks(chunks: Uint8Array[], byteLength: number): Uint8Array {
   const body = new Uint8Array(byteLength);
   let offset = 0;
   for (const chunk of chunks) {
     body.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(body));
-  } catch {
-    throw new Error("Reliability server control returned invalid JSON");
-  }
+  return body;
+}
+
+function validateReliabilityForwardResult(
+  parsed: unknown,
+  control: ReliabilityHarnessControl,
+): Record<string, unknown> {
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Reliability server control returned an invalid response");
   }
   const result = parsed as Record<string, unknown>;
-  if (result.accepted !== true || result.control !== command.control) {
+  if (result.accepted !== true || result.control !== control) {
     throw new Error("Reliability server control returned an invalid response");
   }
-  if (command.control !== "assistant-stream") {
-    return { accepted: true, control: command.control };
+  return result;
+}
+
+function validateReliabilityStreamResult(
+  result: Record<string, unknown>,
+  command: ReliabilityHarnessCommand,
+): ReliabilityHarnessForwardResult {
+  if (command.control !== "assistant-stream" || typeof command.threadId !== "string") {
+    throw new Error("Reliability assistant stream returned an invalid response");
   }
-  const stream = result.stream;
+  return createReliabilityStreamResult(result.stream, command.threadId);
+}
+
+function createReliabilityStreamResult(
+  stream: unknown,
+  threadId: string,
+): ReliabilityHarnessForwardResult {
   if (!stream || typeof stream !== "object") {
     throw new Error("Reliability assistant stream returned an invalid response");
   }
   const value = stream as Record<string, unknown>;
   if (
-    value.threadId !== command.threadId
+    value.threadId !== threadId
     || typeof value.executionId !== "string"
     || value.executionId.length === 0
     || value.executionId.length > THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH
@@ -111,9 +147,9 @@ export async function readReliabilityHarnessForwardResponse(
   }
   return {
     accepted: true,
-    control: command.control,
+    control: "assistant-stream",
     stream: {
-      threadId: command.threadId!,
+      threadId,
       executionId: value.executionId,
       text: value.text,
     },
@@ -138,14 +174,14 @@ export class ReliabilityHarnessControlPlane {
   private readonly capabilityPath: string;
   private readonly capability: ReliabilityHarnessCapability;
   private readonly callbacks: ReliabilityHarnessControlPlaneCallbacks;
-  private server: ReturnType<typeof createServer> | null = null;
+  private server: ReturnType<typeof NodeHTTP.createServer> | null = null;
   private rendezvousPath: string | null = null;
 
   /** Construct a control plane from a validated capability file, or remain disabled. */
   constructor(capabilityPath: string, callbacks: ReliabilityHarnessControlPlaneCallbacks) {
     const capability = readReliabilityHarnessCapability(capabilityPath);
     if (!capability) throw new Error("Invalid reliability harness capability");
-    this.capabilityPath = resolve(capabilityPath);
+    this.capabilityPath = NodePath.resolve(capabilityPath);
     this.capability = capability;
     this.callbacks = callbacks;
   }
@@ -153,7 +189,7 @@ export class ReliabilityHarnessControlPlane {
   /** Start on a loopback ephemeral port and publish token-free rendezvous data. */
   async start(): Promise<ReliabilityHarnessRendezvous> {
     if (this.server) throw new Error("Reliability harness control plane already started");
-    const server = createServer((request, response) => {
+    const server = NodeHTTP.createServer((request, response) => {
       void this.handleRequest(request, response);
     });
     this.server = server;
@@ -164,10 +200,10 @@ export class ReliabilityHarnessControlPlane {
         resolvePromise();
       });
     });
-    const address = server.address() as AddressInfo;
+    const address = server.address() as NodeNet.AddressInfo;
     const rendezvous = { version: 1 as const, port: address.port, pid: process.pid };
-    this.rendezvousPath = join(dirname(this.capabilityPath), "desktop-reliability-rendezvous.json");
-    writeFileSync(this.rendezvousPath, JSON.stringify(rendezvous), { mode: 0o600 });
+    this.rendezvousPath = NodePath.join(NodePath.dirname(this.capabilityPath), "desktop-reliability-rendezvous.json");
+    NodeFS.writeFileSync(this.rendezvousPath, JSON.stringify(rendezvous), { mode: 0o600 });
     server.unref();
     return rendezvous;
   }
@@ -181,7 +217,7 @@ export class ReliabilityHarnessControlPlane {
     }
     if (this.rendezvousPath) {
       try {
-        unlinkSync(this.rendezvousPath);
+        NodeFS.unlinkSync(this.rendezvousPath);
       } catch {
         // Cleanup is best effort when the app is exiting.
       }
@@ -189,56 +225,45 @@ export class ReliabilityHarnessControlPlane {
     }
   }
 
-  private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    if (request.method !== "POST" || new URL(request.url ?? "/", "http://127.0.0.1").pathname !== "/__mcode/reliability") {
-      response.writeHead(404);
-      response.end("Not found");
-      return;
-    }
-    if (!isLoopbackAddress(request.socket.remoteAddress)) {
-      response.writeHead(403);
-      response.end("Forbidden");
-      return;
-    }
-    const authorization = request.headers.authorization;
-    const presentedToken = typeof authorization === "string" && authorization.startsWith("Bearer ")
-      ? authorization.slice(7)
-      : "";
-    if (!safeTokenEqual(presentedToken, this.capability.token)) {
-      response.writeHead(401);
-      response.end("Unauthorized");
-      return;
-    }
+  private async handleRequest(request: NodeHTTP.IncomingMessage, response: NodeHTTP.ServerResponse): Promise<void> {
+    const rejection = this.requestRejection(request);
+    if (rejection) return sendReliabilityResponse(response, rejection.status, rejection.body);
     try {
       const command = await readCommand(request);
-      let result: ReliabilityHarnessForwardResult | void = undefined;
-      if (command.control === "planned-restart") {
-        await this.callbacks.plannedRestart();
-      } else {
-        result = await this.callbacks.serverFault(command, this.capability.token);
-        if (command.control === "assistant-stream" && (
-          !result?.stream || result.stream.threadId !== command.threadId
-        )) {
-          throw new Error("Assistant stream control did not return its requested thread");
-        }
-      }
-      response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      response.end(JSON.stringify({ accepted: true, control: command.control, ...(result?.stream ? { stream: result.stream } : {}) }));
+      const result = await this.executeCommand(command);
+      sendReliabilitySuccess(response, command, result);
     } catch (error) {
-      if (!response.headersSent) response.writeHead(400);
-      if (!response.writableEnded) response.end(error instanceof Error ? error.message : "Invalid command");
+      sendReliabilityFailure(response, error);
     }
+  }
+
+  private requestRejection(request: NodeHTTP.IncomingMessage): { status: number; body: string } | null {
+    if (!isReliabilityRequest(request)) return { status: 404, body: "Not found" };
+    if (!isLoopbackAddress(request.socket.remoteAddress)) return { status: 403, body: "Forbidden" };
+    if (!safeTokenEqual(reliabilityBearerToken(request), this.capability.token)) {
+      return { status: 401, body: "Unauthorized" };
+    }
+    return null;
+  }
+
+  private async executeCommand(command: ReliabilityHarnessCommand): Promise<ReliabilityHarnessForwardResult | void> {
+    if (command.control === "planned-restart") return this.callbacks.plannedRestart();
+    const result = await this.callbacks.serverFault(command, this.capability.token);
+    if (command.control === "assistant-stream" && result?.stream?.threadId !== command.threadId) {
+      throw new Error("Assistant stream control did not return its requested thread");
+    }
+    return result;
   }
 }
 
 /** Read and validate the opt-in capability document. */
 export function readReliabilityHarnessCapability(capabilityPath: string): ReliabilityHarnessCapability | null {
-  if (!isAbsolute(capabilityPath)) return null;
-  const normalizedPath = resolve(capabilityPath);
+  if (!NodePath.isAbsolute(capabilityPath)) return null;
+  const normalizedPath = NodePath.resolve(capabilityPath);
   try {
-    const stat = lstatSync(normalizedPath);
+    const stat = NodeFS.lstatSync(normalizedPath);
     if (!stat.isFile()) return null;
-    const value = JSON.parse(readFileSync(normalizedPath, "utf8")) as Record<string, unknown>;
+    const value = JSON.parse(NodeFS.readFileSync(normalizedPath, "utf8")) as Record<string, unknown>;
     if (
       value.version !== 1 ||
       typeof value.token !== "string" ||
@@ -252,7 +277,19 @@ export function readReliabilityHarnessCapability(capabilityPath: string): Reliab
   }
 }
 
-async function readCommand(request: IncomingMessage): Promise<ReliabilityHarnessCommand> {
+async function readCommand(request: NodeHTTP.IncomingMessage): Promise<ReliabilityHarnessCommand> {
+  const value = parseReliabilityCommand(await readReliabilityCommandBody(request));
+  const control = parseReliabilityControl(value.control);
+  const durationMs = parseReliabilityDuration(value.durationMs);
+  const threadId = parseReliabilityStreamThreadId(control, value.threadId);
+  return {
+    control,
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(threadId === undefined ? {} : { threadId }),
+  };
+}
+
+async function readReliabilityCommandBody(request: NodeHTTP.IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -261,36 +298,76 @@ async function readCommand(request: IncomingMessage): Promise<ReliabilityHarness
     if (size > 8 * 1024) throw new Error("Reliability command is too large");
     chunks.push(buffer);
   }
+  return Buffer.concat(chunks);
+}
+
+function parseReliabilityCommand(body: Buffer): Record<string, unknown> {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    parsed = JSON.parse(body.toString("utf8"));
   } catch {
     throw new Error("Reliability command must be JSON");
   }
   if (!parsed || typeof parsed !== "object") throw new Error("Reliability command must be an object");
-  const value = parsed as Record<string, unknown>;
+  return parsed as Record<string, unknown>;
+}
+
+function parseReliabilityControl(value: unknown): ReliabilityHarnessCommand["control"] {
   const allowed = [...RELIABILITY_HARNESS_CONTROLS, "planned-restart"] as const;
-  if (!(allowed as readonly string[]).includes(String(value.control))) throw new Error("Unknown reliability control");
-  if (value.durationMs !== undefined && (typeof value.durationMs !== "number" || !Number.isSafeInteger(value.durationMs) || value.durationMs < 1 || value.durationMs > 30_000)) {
+  if (!(allowed as readonly string[]).includes(String(value))) throw new Error("Unknown reliability control");
+  return value as ReliabilityHarnessCommand["control"];
+}
+
+function parseReliabilityDuration(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 30_000) {
     throw new Error("Reliability hang duration is out of bounds");
   }
-  if (value.control === "assistant-stream" && (
-    typeof value.threadId !== "string"
-    || value.threadId.trim().length === 0
-    || value.threadId.trim().length > THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH
-  )) {
+  return value;
+}
+
+function parseReliabilityStreamThreadId(
+  control: ReliabilityHarnessCommand["control"],
+  value: unknown,
+): string | undefined {
+  if (control !== "assistant-stream") return undefined;
+  if (typeof value !== "string" || value.trim().length === 0 || value.trim().length > THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH) {
     throw new Error(`Reliability assistant stream requires a thread id up to ${THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH} characters`);
   }
-  return {
-    control: value.control as ReliabilityHarnessCommand["control"],
-    ...(value.durationMs === undefined ? {} : { durationMs: value.durationMs as number }),
-    ...(value.control === "assistant-stream" ? { threadId: (value.threadId as string).trim() } : {}),
-  };
+  return value.trim();
+}
+
+function isReliabilityRequest(request: NodeHTTP.IncomingMessage): boolean {
+  return request.method === "POST" && new URL(request.url ?? "/", "http://127.0.0.1").pathname === "/__mcode/reliability";
+}
+
+function reliabilityBearerToken(request: NodeHTTP.IncomingMessage): string {
+  const authorization = request.headers.authorization;
+  return typeof authorization === "string" && authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+}
+
+function sendReliabilityResponse(response: NodeHTTP.ServerResponse, status: number, body: string): void {
+  response.writeHead(status);
+  response.end(body);
+}
+
+function sendReliabilitySuccess(
+  response: NodeHTTP.ServerResponse,
+  command: ReliabilityHarnessCommand,
+  result: ReliabilityHarnessForwardResult | void,
+): void {
+  response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  response.end(JSON.stringify({ accepted: true, control: command.control, ...(result?.stream ? { stream: result.stream } : {}) }));
+}
+
+function sendReliabilityFailure(response: NodeHTTP.ServerResponse, error: unknown): void {
+  if (!response.headersSent) response.writeHead(400);
+  if (!response.writableEnded) response.end(error instanceof Error ? error.message : "Invalid command");
 }
 
 function safeTokenEqual(left: string, right: string): boolean {
   if (left.length !== right.length) return false;
-  return timingSafeEqual(Buffer.from(left), Buffer.from(right));
+  return NodeCrypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {
