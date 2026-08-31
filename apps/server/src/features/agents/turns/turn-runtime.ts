@@ -82,6 +82,14 @@ export class TurnRuntimeRegistry {
     return true;
   }
 
+  /** Release a matching active execution without assigning it a terminal outcome. */
+  release(threadId: string, executionId: string): boolean {
+    const state = this.states.get(threadId);
+    if (!state || state.terminalized || state.turnExecutionId !== executionId) return false;
+    this.states.delete(threadId);
+    return true;
+  }
+
   /** Restore authoritative runtime state received during reconnect. */
   hydrate(snapshots: readonly TurnRuntimeSnapshot[]): void {
     for (const snapshot of snapshots) {

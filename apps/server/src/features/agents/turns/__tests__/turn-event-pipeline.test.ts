@@ -4,6 +4,7 @@ import { AgentEventType, type AgentEvent } from "@mcode/contracts";
 
 import {
   TurnEventPipeline,
+  TURN_EVENT_QUEUE_RETAINED_LIMITS,
   type TurnEventApplication,
   type TurnLifecycleControl,
 } from "../turn-event-pipeline.js";
@@ -31,6 +32,24 @@ function textDelta(delta: string): ProviderEventIngressEvent {
       threadId: "thread-1",
       turnExecutionId: EXECUTION_ID,
       delta,
+    },
+  };
+}
+
+function toolResult(output: string): ProviderEventIngressEvent {
+  return {
+    ...textDelta("tool-result"),
+    event: {
+      type: AgentEventType.ToolResult,
+      threadId: "thread-1",
+      turnExecutionId: EXECUTION_ID,
+      toolCallId: "tool-1",
+      output,
+      isError: false,
+      exitCode: 0,
+      outputTruncated: true,
+      outputTotalBytes: 1_048_607,
+      outputArtifactPath: "/artifacts/tool-1.txt",
     },
   };
 }
@@ -142,6 +161,33 @@ describe("TurnEventPipeline", () => {
 
     expect(apply).not.toHaveBeenCalled();
     expect(rejectForQueueCapacity).toHaveBeenCalledOnce();
+  });
+
+  it("compacts an oversized tool result so its completion reaches the queue", () => {
+    const applied: Array<{ input: ProviderEventIngressEvent; event: AgentEvent }> = [];
+    const { pipeline, rejectForQueueCapacity } = createPipeline((input, event) => {
+      applied.push({ input, event });
+      return true;
+    });
+
+    pipeline.handleProviderEvent(toolResult("x".repeat(PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes)));
+
+    expect(rejectForQueueCapacity).not.toHaveBeenCalled();
+    const result = applied[0]?.event as Extract<AgentEvent, { type: "toolResult" }>;
+    expect(result).toMatchObject({
+      type: AgentEventType.ToolResult,
+      toolCallId: "tool-1",
+      isError: false,
+      exitCode: 0,
+      outputTruncated: true,
+      outputTotalBytes: 1_048_607,
+      outputArtifactPath: "/artifacts/tool-1.txt",
+    });
+    expect(result.output.length).toBeLessThan(PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes);
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(
+      TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes,
+    );
+    expect(applied[0]?.input.event).toEqual(result);
   });
 
   it("replays a file-barrier-deferred event with its original publication intent and provenance", async () => {

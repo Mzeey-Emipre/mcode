@@ -61,6 +61,15 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
       return sendTurnMock(input, turnOptions);
     }
     async interruptTurn(): Promise<void> {}
+    async interruptTurnAndDrain(turnId: string): Promise<void> {
+      this.emit("notification", {
+        method: "turn/completed",
+        params: {
+          threadId: this.threadId,
+          turn: { id: turnId, status: "interrupted" },
+        },
+      });
+    }
     async kill(): Promise<void> {
       this.isAlive = false;
     }
@@ -490,6 +499,147 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await ended;
+  });
+
+  it("drains the main terminal notification before stop clears turn ownership", async () => {
+    const provider = makeProvider();
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
+
+    await provider.sendTurn({
+      turnId: "test-turn",
+      turnExecutionId: "test-execution",
+      sessionId,
+      workspaceId: "workspace-test",
+      threadId,
+      message: "stop this turn",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const runtime = (provider as unknown as {
+      runtime: {
+        get: (id: string) => { abortPendingTurnWait?: () => void } | undefined;
+      };
+    }).runtime;
+    const state = runtime.get(sessionId);
+    expect(state).toBeDefined();
+
+    try {
+      await provider.stopSession(sessionId);
+      await vi.waitFor(() => {
+        expect(events).toContainEqual({
+          event: {
+            type: AgentEventType.Ended,
+            threadId,
+            turnExecutionId: "test-execution",
+            outcome: "cancelled",
+          },
+        });
+      });
+    } finally {
+      state?.abortPendingTurnWait?.();
+    }
+  });
+
+  it("reports provider_lost without an outcome when main-turn drain fails", async () => {
+    const provider = makeProvider();
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
+
+    await provider.sendTurn({
+      turnId: "test-turn",
+      turnExecutionId: "test-execution",
+      sessionId,
+      workspaceId: "workspace-test",
+      threadId,
+      message: "stop this turn",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const server = appServers.at(-1)! as typeof appServers[number] & {
+      interruptTurnAndDrain: (turnId: string) => Promise<void>;
+    };
+    let interruptRejected = false;
+    server.interruptTurnAndDrain = vi.fn(async () => {
+      interruptRejected = true;
+      throw new Error("Main interruption timed out waiting for terminal completion.");
+    });
+    const runtime = (provider as unknown as {
+      runtime: {
+        get: (id: string) => { abortPendingTurnWait?: () => void } | undefined;
+      };
+    }).runtime;
+    const state = runtime.get(sessionId);
+
+    try {
+      await provider.stopSession(sessionId);
+      expect(interruptRejected).toBe(true);
+      expect(events).toContainEqual({
+        event: {
+          type: AgentEventType.Ended,
+          threadId,
+          turnExecutionId: "test-execution",
+          reason: "provider_lost",
+        },
+      });
+      expect(events.some((event) => event.event.type === AgentEventType.Error)).toBe(false);
+    } finally {
+      state?.abortPendingTurnWait?.();
+    }
+  });
+
+  it("reports provider_lost when stop begins before Codex assigns a native turn id", async () => {
+    const provider = makeProvider();
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
+
+    await provider.sendTurn({
+      turnId: "test-turn",
+      turnExecutionId: "test-execution",
+      sessionId,
+      workspaceId: "workspace-test",
+      threadId,
+      message: "stop before native identity",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const runtime = (provider as unknown as {
+      runtime: {
+        get: (id: string) => { currentNativeTurnId?: string; abortPendingTurnWait?: () => void } | undefined;
+      };
+    }).runtime;
+    const state = runtime.get(sessionId);
+    expect(state).toBeDefined();
+    if (state) state.currentNativeTurnId = undefined;
+
+    try {
+      await provider.stopSession(sessionId);
+      expect(events).toContainEqual({
+        event: {
+          type: AgentEventType.Ended,
+          threadId,
+          turnExecutionId: "test-execution",
+          reason: "provider_lost",
+        },
+      });
+    } finally {
+      state?.abortPendingTurnWait?.();
+    }
   });
 
   it("emits Error before Ended when CLI preflight fails before runtime acquire", async () => {

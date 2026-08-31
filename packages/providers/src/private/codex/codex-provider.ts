@@ -1855,6 +1855,32 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
         turnExecutionId ? { ...event, turnExecutionId } : event,
       ));
     }
+    const nativeTurnId = state.currentNativeTurnId;
+    if (nativeTurnId) {
+      try {
+        await state.server.interruptTurnAndDrain(nativeTurnId);
+      } catch (error) {
+        if (turnExecutionId) {
+          this.emitRuntimeEvent(providerRuntimeEvent({
+            type: AgentEventType.Ended,
+            threadId: state.threadId,
+            turnExecutionId,
+            reason: "provider_lost",
+          } satisfies AgentEvent));
+        }
+        throw error;
+      }
+    } else {
+      await state.server.interruptTurn();
+      if (turnExecutionId) {
+        this.emitRuntimeEvent(providerRuntimeEvent({
+          type: AgentEventType.Ended,
+          threadId: state.threadId,
+          turnExecutionId,
+          reason: "provider_lost",
+        } satisfies AgentEvent));
+      }
+    }
     state.pendingTurnStartNotification = undefined;
     state.turnStartResponsePending = false;
     state.turnBindingPhase = "idle";
@@ -1863,7 +1889,6 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
     state.childExecutionGenerations.clear();
     state.nativeThreadExecutionIds.clear();
     state.pendingChildEvents = [];
-    await state.server.interruptTurn();
   }
 
   /**

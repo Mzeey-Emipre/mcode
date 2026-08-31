@@ -51,11 +51,11 @@ export interface TurnEventEffects {
   finishAssistantText(executionId: string): boolean;
   /** Return whether the textual sidecar is currently unsaved. */
   isAssistantTextUnsaved(executionId: string): boolean;
-  /** Interrupt a turn whose parent text cannot remain durable. */
+  /** Stop the provider when parent text cannot remain durable. */
   interruptForAssistantTextFailure(event: AgentEvent, reason: string): void;
   /** Checkpoint renderer-facing narrative state. */
   checkpointNarrative(event: AgentEvent): void;
-  /** Interrupt a turn whose narrative checkpoint failed. */
+  /** Stop the provider when its narrative checkpoint failed. */
   interruptForNarrativeFailure(event: AgentEvent, error: unknown): void;
   /** Return whether a hook belongs to a completed turn. */
   isLateHook(event: AgentEvent): boolean;
@@ -168,7 +168,7 @@ function diagnosticProvenance(input: ProviderEventIngressEvent): TurnEventDiagno
 function isTerminal(event: AgentEvent): boolean {
   return event.type === AgentEventType.TurnComplete
     || event.type === AgentEventType.Error
-    || event.type === AgentEventType.Ended;
+    || (event.type === AgentEventType.Ended && event.outcome !== undefined);
 }
 
 function isUnsavedNarrationBoundary(event: AgentEvent, effects: TurnEventEffects): boolean {

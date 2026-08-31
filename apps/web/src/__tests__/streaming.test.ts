@@ -108,6 +108,7 @@ describe("Agent Message Flow", () => {
       type: "ended",
       threadId,
       turnExecutionId: "exec-1",
+      outcome: "completed",
     } satisfies AgentEvent);
     vi.runAllTimers();
 
@@ -117,7 +118,6 @@ describe("Agent Message Flow", () => {
   });
 
   it.each([
-    [undefined, "interrupted", "interrupted"],
     ["cancelled", "cancelled", "interrupted"],
     ["completed", "completed", "completed"],
     ["errored", "errored", "errored"],
@@ -141,13 +141,67 @@ describe("Agent Message Flow", () => {
       type: "ended",
       threadId,
       turnExecutionId: "exec-1",
-      ...(outcome === undefined ? {} : { outcome }),
+      outcome,
     } satisfies AgentEvent);
     vi.runAllTimers();
 
     expect(readThreadField(threadId, (record) => record.runtimePhase)).toBe(runtimePhase);
     expect(useWorkspaceStore.getState().threads.find((thread) => thread.id === threadId)?.status)
       .toBe(workspaceStatus);
+  });
+
+  it("leaves an outcome-less Ended unresolved", () => {
+    const threadId = "thread-1";
+    resetThreadStoreForTests({
+      runningThreadIds: new Set([threadId]),
+      records: new Map<string, ThreadRecord>([[threadId, {
+        ...createEmptyThreadRecord(),
+        runtimePhase: "running",
+        turnExecutionId: "exec-1",
+        streaming: "partial content",
+      }]]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "ended",
+      threadId,
+      turnExecutionId: "exec-1",
+    } satisfies AgentEvent);
+
+    expect(readThreadField(threadId, (record) => record.runtimePhase)).toBe("running");
+    expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+  });
+
+  it("releases a provider-lost runtime without clearing streamed content", () => {
+    const threadId = "thread-1";
+    resetThreadStoreForTests({
+      runningThreadIds: new Set([threadId]),
+      records: new Map<string, ThreadRecord>([[threadId, {
+        ...createEmptyThreadRecord(),
+        runtimePhase: "running",
+        turnExecutionId: "exec-1",
+        agentStartTime: 100,
+        savingStatus: { threadId, executionId: "exec-1", mode: "saving-delayed" },
+        streaming: "partial content",
+        streamingPreview: "partial content",
+      }]]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "ended",
+      threadId,
+      turnExecutionId: "exec-1",
+      reason: "provider_lost",
+    } satisfies AgentEvent);
+
+    expect(readThreadField(threadId, (record) => record.runtimePhase)).toBe("idle");
+    expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(false);
+    expect(readThreadField(threadId, (record) => record.agentStartTime)).toBeUndefined();
+    expect(readThreadField(threadId, (record) => record.savingStatus)).toBeNull();
+    expect(getTestThreadStreaming(threadId)).toBe("partial content");
+    expect(getTestThreadStreamingPreview(threadId)).toBe("partial content");
+    expect(useWorkspaceStore.getState().threads.find((thread) => thread.id === threadId)?.status)
+      .toBe("active");
   });
 
   it("turnComplete without streaming content clears running state", () => {

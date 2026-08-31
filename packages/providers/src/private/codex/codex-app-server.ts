@@ -373,10 +373,44 @@ const LIFECYCLE_NOTIFICATION_PREFIXES = [
   "thread/realtime/",  // realtime audio/SDP (EXPERIMENTAL)
 ] as const;
 
-  /** Maximum time to drain an exact child turn's terminal notification after interrupt acknowledgement. */
-const CHILD_INTERRUPT_DRAIN_TIMEOUT_MS = 5_000;
+/** Maximum time to drain an exact turn's terminal notification after interrupt acknowledgement. */
+const INTERRUPT_DRAIN_TIMEOUT_MS = 5_000;
+/** Stable failure returned when an acknowledged main interrupt has no terminal notification. */
+const MAIN_INTERRUPT_DRAIN_TIMEOUT_ERROR = "Main interruption timed out waiting for terminal completion.";
 /** Stable failure returned when an acknowledged child interrupt has no terminal notification. */
 const CHILD_INTERRUPT_DRAIN_TIMEOUT_ERROR = "Child interruption timed out waiting for terminal completion.";
+
+/** Match a completion to the interrupted turn, allowing Codex main-turn notifications to omit their known thread id. */
+function matchesInterruptedTurn(
+  message: {
+    method?: unknown;
+    params?: { threadId?: unknown; turnId?: unknown; turn?: { id?: unknown } };
+  },
+  nativeThreadId: string,
+  nativeTurnId: string,
+  acceptMissingThreadId: boolean,
+): boolean {
+  if (message.method !== "turn/completed") return false;
+  if (completedTurnId(message.params) !== nativeTurnId) return false;
+  return matchesInterruptThread(message.params, nativeThreadId, acceptMissingThreadId);
+}
+
+function completedTurnId(params: { turnId?: unknown; turn?: { id?: unknown } } | undefined): string | undefined {
+  if (typeof params?.turn?.id === "string") return params.turn.id;
+  return typeof params?.turnId === "string" ? params.turnId : undefined;
+}
+
+function matchesInterruptThread(
+  params: { threadId?: unknown } | undefined,
+  nativeThreadId: string,
+  acceptMissingThreadId: boolean,
+): boolean {
+  const notificationThreadId = typeof params?.threadId === "string" && params.threadId.length > 0
+    ? params.threadId
+    : undefined;
+  return notificationThreadId === nativeThreadId
+    || (acceptMissingThreadId && notificationThreadId === undefined);
+}
 
 /** Benign substrings found in stderr that are safe to ignore at debug level. */
 const BENIGN_PATTERNS = [
@@ -1314,9 +1348,38 @@ export class CodexAppServer extends NodeEvents.EventEmitter {
     }
   }
 
+  /** Interrupts one exact main turn and waits for its terminal notification. */
+  async interruptTurnAndDrain(nativeTurnId: string): Promise<void> {
+    const nativeThreadId = this.threadId;
+    if (!nativeThreadId || !this.rpc) {
+      throw new Error("Main interruption requested before codex app-server was ready");
+    }
+    await this.interruptExactTurnAndDrain(
+      nativeThreadId,
+      nativeTurnId,
+      MAIN_INTERRUPT_DRAIN_TIMEOUT_ERROR,
+      true,
+    );
+  }
+
   /** Interrupt one exact native child turn without changing this app-server session. */
   async interruptChildTurn(nativeThreadId: string, nativeTurnId: string): Promise<void> {
     if (!this.rpc) throw new Error("Child interruption requested before codex app-server was ready");
+    await this.interruptExactTurnAndDrain(
+      nativeThreadId,
+      nativeTurnId,
+      CHILD_INTERRUPT_DRAIN_TIMEOUT_ERROR,
+    );
+  }
+
+  private async interruptExactTurnAndDrain(
+    nativeThreadId: string,
+    nativeTurnId: string,
+    timeoutError: string,
+    acceptMissingThreadId = false,
+  ): Promise<void> {
+    const rpc = this.rpc;
+    if (!rpc) throw new Error("Codex interruption requested before app-server was ready");
     let finishDrain!: () => void;
     let failDrain!: (error: Error) => void;
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1329,18 +1392,16 @@ export class CodexAppServer extends NodeEvents.EventEmitter {
         method?: unknown;
         params?: { threadId?: unknown; turnId?: unknown; turn?: { id?: unknown } };
       };
-      if (message.method !== "turn/completed"
-        || message.params?.threadId !== nativeThreadId
-        || (message.params.turn?.id ?? message.params.turnId) !== nativeTurnId) return;
+      if (!matchesInterruptedTurn(message, nativeThreadId, nativeTurnId, acceptMissingThreadId)) return;
       finishDrain();
     };
     this.on("notification", onNotification);
     drainTimer = setTimeout(
-      () => failDrain(new Error(CHILD_INTERRUPT_DRAIN_TIMEOUT_ERROR)),
-      CHILD_INTERRUPT_DRAIN_TIMEOUT_MS,
+      () => failDrain(new Error(timeoutError)),
+      INTERRUPT_DRAIN_TIMEOUT_MS,
     );
     try {
-      await this.rpc.sendRequest<TurnInterruptParams, TurnInterruptResult>(
+      await rpc.sendRequest<TurnInterruptParams, TurnInterruptResult>(
         "turn/interrupt",
         { threadId: nativeThreadId, turnId: nativeTurnId },
         5_000,

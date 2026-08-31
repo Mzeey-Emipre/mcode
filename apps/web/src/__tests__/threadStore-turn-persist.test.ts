@@ -6,7 +6,9 @@ import {
   readThreadField,
   seedThreadRecord,
 } from "@/stores/thread-store-test-utils";
-import { mockTransport, createMockMessage } from "./mocks/transport";
+import { mockTransport, createMockMessage, createMockThread } from "./mocks/transport";
+import { useTaskStore } from "@/stores/taskStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -129,6 +131,101 @@ describe("handleTurnPersisted", () => {
       expect.objectContaining({ hookName: "validate", status: "running" }),
     ]);
     expect(readThreadField(THREAD_ID, (record) => record.agentStartTime)).toBe(agentStartTime);
+  });
+
+  it("closes the matching active runtime with its persisted terminal outcome", () => {
+    useThreadStore.setState({
+      records: seedThreadRecord(THREAD_ID, {
+        runtimePhase: "running",
+        turnExecutionId: "execution-1",
+        currentTurnMessageId: "assistant-1",
+        messages: [createMockMessage({
+          id: "assistant-1",
+          thread_id: THREAD_ID,
+          role: "assistant",
+          content: "partial answer",
+        })],
+      }),
+      runningThreadIds: new Set([THREAD_ID]),
+    });
+
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: THREAD_ID,
+      messageId: "assistant-1",
+      toolCallCount: 0,
+      filesChanged: [],
+      outcome: "interrupted",
+      executionId: "execution-1",
+    });
+
+    expect(readThreadField(THREAD_ID, (record) => record.runtimePhase)).toBe("interrupted");
+    expect(readThreadField(THREAD_ID, (record) => record.messages[0]?.outcome)).toBe("interrupted");
+    expect(useThreadStore.getState().runningThreadIds.has(THREAD_ID)).toBe(false);
+  });
+
+  it("cleans terminal runtime state when persistence closes the active turn", () => {
+    const otherThreadId = "thread-other";
+    useWorkspaceStore.setState({
+      activeThreadId: otherThreadId,
+      threads: [
+        createMockThread({ id: THREAD_ID, status: "active" }),
+        createMockThread({ id: otherThreadId, status: "active" }),
+      ],
+    });
+    useTaskStore.getState().setTaskGroup(THREAD_ID, "Tasks", [{
+      id: "task-1",
+      content: "Inspect terminal cleanup",
+      status: "in_progress",
+      group: "Tasks",
+    }]);
+    useTaskStore.getState().prepareTaskBubbleForNewTurn(THREAD_ID);
+    useThreadStore.setState({
+      records: seedThreadRecord(THREAD_ID, {
+        runtimePhase: "running",
+        turnExecutionId: "execution-1",
+        streaming: "partial answer",
+        streamingPreview: "partial answer",
+        toolCalls: [{
+          id: "tool-1",
+          toolName: "Read",
+          toolInput: {},
+          output: null,
+          isError: false,
+          isComplete: false,
+        }],
+        permissions: [{
+          requestId: "permission-1",
+          threadId: THREAD_ID,
+          toolName: "Bash",
+          input: { command: "bun test" },
+          settled: false,
+        }],
+        rateLimit: { retryAfterMs: 5000 },
+      }),
+      runningThreadIds: new Set([THREAD_ID]),
+    });
+
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: THREAD_ID,
+      messageId: "assistant-1",
+      toolCallCount: 0,
+      filesChanged: [],
+      outcome: "interrupted",
+      executionId: "execution-1",
+    });
+
+    expect(readThreadField(THREAD_ID, (record) => record.runtimePhase)).toBe("interrupted");
+    expect(readThreadField(THREAD_ID, (record) => record.streaming)).toBe("");
+    expect(readThreadField(THREAD_ID, (record) => record.streamingPreview)).toBe("");
+    expect(readThreadField(THREAD_ID, (record) => record.toolCalls)).toEqual([
+      expect.objectContaining({ id: "tool-1", isComplete: true }),
+    ]);
+    expect(readThreadField(THREAD_ID, (record) => record.permissions)).toEqual([]);
+    expect(readThreadField(THREAD_ID, (record) => record.rateLimit)).toBeUndefined();
+    expect(useTaskStore.getState().taskBubbleByThread[THREAD_ID]).toBeUndefined();
+    expect(useTaskStore.getState().pendingTaskBubbleReplacementByThread[THREAD_ID]).toBeUndefined();
+    expect(useWorkspaceStore.getState().threads.find((thread) => thread.id === THREAD_ID)?.status)
+      .toBe("interrupted");
   });
 
   it("materializes an empty assistant row for tools-only turns", () => {

@@ -96,6 +96,16 @@ import {
   AgentReliabilityPort,
   AgentTurnContinuationPort,
 } from "./agent-runtime-internal-ports.js";
+import {
+  idleRuntime,
+  isActiveRuntimeExecution,
+  isRunningRuntime,
+  isStoppedThread,
+  ownsStoppedExecution,
+  pipelineTerminalSource,
+  stopDispatchState,
+  toolResultMetadata,
+} from "./agent-service-helpers.js";
 
 type RetryDispatchIdentity = Readonly<{
   mutationReservationToken: string;
@@ -123,26 +133,6 @@ export interface AgentRuntimeAccess {
 
 export type { SendMessageCommand } from "../turns/turn-admission-dispatch-coordinator.js";
 export type { CreateAndSendCommand } from "../turns/thread-creation-coordinator.js";
-
-function toolResultMetadata(event: Extract<AgentEvent, { type: "toolResult" }>): {
-  outputTruncated?: true;
-  outputTotalBytes?: number;
-  outputArtifactPath?: string;
-  exitCode?: number;
-} {
-  return {
-    ...(event.outputTruncated === true ? { outputTruncated: true as const } : {}),
-    ...(event.outputTotalBytes != null ? { outputTotalBytes: event.outputTotalBytes } : {}),
-    ...(event.outputArtifactPath ? { outputArtifactPath: event.outputArtifactPath } : {}),
-    ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
-  };
-}
-
-function endedOutcome(outcome: Extract<AgentEvent, { type: "ended" }>['outcome']): TurnOutcome {
-  if (outcome === "completed") return "completed";
-  if (outcome === "errored") return "errored";
-  return "interrupted";
-}
 
 /** Orchestrates agent sessions, message sending, and event forwarding. */
 @injectable()
@@ -393,11 +383,11 @@ export class AgentService {
         this.parentAssistantText.durabilityMode(executionId) === "unsaved"
       ),
       interruptForAssistantTextFailure: (event, reason) => (
-        this.interruptForParentAssistantTextCheckpointFailure(event, reason)
+        this.stopForParentAssistantTextCheckpointFailure(event, reason)
       ),
       checkpointNarrative: (event) => this.parentNarrativeRecovery.checkpoint(event),
       interruptForNarrativeFailure: (event, error) => (
-        this.interruptForNarrativeRecoveryCheckpointFailure(event, error)
+        this.stopForNarrativeRecoveryCheckpointFailure(event, error)
       ),
       isLateHook: (event) => this.isLateHook(event),
       ownsLateHookPublication: (event) => this.ownedLateHookCompletions.delete(event as object),
@@ -415,7 +405,7 @@ export class AgentService {
       event,
       terminal: event.type === AgentEventType.TurnComplete
         || event.type === AgentEventType.Error
-        || event.type === AgentEventType.Ended,
+        || (event.type === AgentEventType.Ended && event.outcome !== undefined),
     });
   }
 
@@ -582,7 +572,7 @@ export class AgentService {
   private admitTurnStarted(threadId: string): boolean {
     const reservation = this.mutationReservations.get(threadId);
     const thread = this.runtimePersistence.load(threadId);
-    if (reservation?.state === "stopping" || this.isStoppedThread(thread?.status)) {
+    if (reservation?.state === "stopping" || isStoppedThread(thread?.status)) {
       this.stopUnadmittedTurn(threadId, thread?.provider as ProviderId | undefined, "late TurnStarted");
       return false;
     }
@@ -594,11 +584,6 @@ export class AgentService {
     }
     this.activeMutationReservations.set(threadId, token);
     return true;
-  }
-
-  /** Return whether a persisted thread status prohibits a new provider turn. */
-  private isStoppedThread(status: Thread["status"] | undefined): boolean {
-    return status === undefined || ["paused", "stopped", "completed", "errored", "failed", "interrupted"].includes(status);
   }
 
   /** Ask the owning provider to stop an event stream that the runtime did not admit. */
@@ -728,12 +713,13 @@ export class AgentService {
 
   /** Apply a provider stream end only when it still owns the active execution. */
   private applyEnded(event: Extract<AgentEvent, { type: "ended" }>): boolean {
+    if (event.outcome === undefined) return this.applyOutcomeLessEnded(event);
     if (this.shouldSuppressStoppingTerminal(event.threadId, event.turnExecutionId)) return false;
     if (this.shouldSuppressTurnEnded(event.threadId)) return false;
     const runtime = this.turnRuntime.snapshot(event.threadId);
     const executionId = runtime?.turnExecutionId;
-    if (!executionId || !this.isActiveRuntimeExecution(runtime, event.turnExecutionId)) return false;
-    const outcome = endedOutcome(event.outcome);
+    if (!executionId || !isActiveRuntimeExecution(runtime, event.turnExecutionId)) return false;
+    const outcome: TurnOutcome = event.outcome === "cancelled" ? "interrupted" : event.outcome;
     if (!this.turnRuntime.terminalize(event.threadId, executionId, outcome)) return false;
     void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
     this.trackSessionEnded(event.threadId, executionId);
@@ -742,11 +728,22 @@ export class AgentService {
     return true;
   }
 
-  /** Return whether an ended event belongs to a still-active runtime execution. */
-  private isActiveRuntimeExecution(runtime: TurnRuntimeSnapshot | null, executionId: string | undefined): boolean {
-    const phase = runtime?.phase;
-    return runtime?.turnExecutionId === executionId
-      && (phase === "running" || phase === "finalizing");
+  /** Release provider ownership for a known lost runtime, but retain its unresolved durable execution. */
+  private applyOutcomeLessEnded(event: Extract<AgentEvent, { type: "ended" }>): boolean {
+    if (event.reason !== "provider_lost") return false;
+    if (this.shouldSuppressStoppingTerminal(event.threadId, event.turnExecutionId)) return false;
+    if (this.shouldSuppressTurnEnded(event.threadId)) return false;
+    return this.releaseProviderLostRuntime(event);
+  }
+
+  /** Release a disconnected provider's matching runtime ownership without fabricating a terminal outcome. */
+  private releaseProviderLostRuntime(event: Extract<AgentEvent, { type: "ended" }>): boolean {
+    const executionId = event.turnExecutionId;
+    if (!executionId || !this.turnRuntime.release(event.threadId, executionId)) return false;
+    this.trackSessionEnded(event.threadId, executionId);
+    this.disarmTurnRetryWindow(event.threadId);
+    this.clearTurnEndedState(event.threadId);
+    return true;
   }
 
   /** Publish a renderer-facing event after converting legacy cancelled end state to interrupted. */
@@ -755,15 +752,6 @@ export class AgentService {
       ? { ...event, outcome: "interrupted" as const }
       : event;
     this.eventPublication.publish(published);
-  }
-
-  /**
-   * Admit a complete turn command, then retain only runtime-owned provider dispatch.
-   */
-  async sendMessage(command: SendMessageCommand): Promise<void> {
-    const admitted = await this.turnAdmissions.admit(command, this.runtimeAdmissionAuthority());
-    if (admitted.kind !== "dispatch") return;
-    await this.dispatchPreparedTurn(admitted);
   }
 
   /** Expose AgentService's runtime state without giving admission independent lifecycle authority. */
@@ -1037,88 +1025,21 @@ export class AgentService {
     };
   }
 
-  /** Dispatch a queued Turn that the automatic Setup lifecycle claimed after commit. */
-  async dispatchQueuedAutomaticTurn(
-    submission: WorkspaceEnvironmentQueuedTurnSubmission,
-  ): Promise<WorkspaceEnvironmentAutomaticSetupDispatch> {
-    let resolveStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      resolveStarted = resolve;
-    });
-    let resolveCompletion!: () => void;
-    const completion = new Promise<void>((resolve) => {
-      resolveCompletion = resolve;
-    });
-    const send = this.sendMessage({
-      ...this.turnAdmissions.queuedCommand(submission),
-      onTurnStarted: (runtime) => {
-        this.automaticQueuedTurnCompletionResolvers.set(runtime.turnExecutionId!, resolveCompletion);
-        resolveStarted();
-      },
-    });
-    await Promise.race([
-      started,
-      send.then(() => {
-        throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
-      }),
-    ]);
-    return { completion };
-  }
-
-  /** Provision a thread through its coordinator, then start its generic first-turn command. */
-  async createAndSend(command: CreateAndSendCommand): Promise<Thread & { runtimeSnapshot: TurnRuntimeSnapshot; warnings?: string[] }> {
-    const created = await this.threadCreation.createInitialTurn(command);
-    if (created.kind === "queued") {
-      return {
-        ...created.thread,
-        runtimeSnapshot: { threadId: created.thread.id, turnExecutionId: null, phase: "idle" },
-        ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
-      };
-    }
-    const runtimeSnapshot = await this.sendInitialMessageAndSnapshot(created.command, (err) => {
-      logger.error("createAndSend initial send failed", {
-        threadId: created.thread.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    return {
-      ...created.thread,
-      runtimeSnapshot,
-      ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
-    };
-  }
-
-  /** Stop exact active turn, sharing one in-flight operation per thread. */
-  async stopSession(threadId: string): Promise<AgentStopResult> {
-    const existing = this.stopOperationsByThread.get(threadId);
-    if (existing) return existing;
-    const operation = this.stopSessionInternal(threadId);
-    this.stopOperationsByThread.set(threadId, operation);
-    try {
-      return await operation;
-    } finally {
-      if (this.stopOperationsByThread.get(threadId) === operation) {
-        this.stopOperationsByThread.delete(threadId);
-      }
-    }
-  }
-
   /** Stop exact active turn, preserving provider failure as retryable RPC error. */
   private async stopSessionInternal(threadId: string): Promise<AgentStopResult> {
     const prepared = this.prepareStop(threadId);
-    if (!this.isRunning(prepared.runtime)) return this.alreadyTerminal(prepared);
-    const checkpointResult = this.finishStopCheckpoint(prepared);
-    if (checkpointResult) return checkpointResult;
+    if (!isRunningRuntime(prepared.runtime)) return this.alreadyTerminal(prepared);
+    this.finishStopCheckpoint(prepared);
     await this.stopProviderForTurn(prepared);
     return this.finalizeStoppedTurn(prepared);
   }
 
   private prepareStop(threadId: string): PreparedStop {
     const reservationToken = this.activeMutationReservations.get(threadId);
-    const runtime = this.turnRuntime.snapshot(threadId) ?? this.idleRuntime(threadId);
+    const runtime = this.turnRuntime.snapshot(threadId) ?? idleRuntime(threadId);
     const dispatch = this.turnRetryDispatchByThread.get(threadId);
     const reservation = reservationToken ? this.mutationReservations.get(threadId) : undefined;
-    const dispatchState = this.stopDispatchState(runtime, dispatch?.dispatchStarted, reservation?.state);
+    const dispatchState = stopDispatchState(runtime, dispatch?.dispatchStarted, reservation?.state);
     if (reservationToken) this.mutationReservations.transition(threadId, reservationToken, "activeTurn", "stopping");
     return {
       threadId,
@@ -1130,31 +1051,10 @@ export class AgentService {
     };
   }
 
-  private stopDispatchState(
-    runtime: TurnRuntimeSnapshot,
-    dispatched: boolean | undefined,
-    reservationState: string | undefined,
-  ): AgentStopResult["dispatchState"] {
-    if (!this.isRunning(runtime)) return "unknown";
-    if (dispatched) return "dispatched";
-    return reservationState === "activeTurn" || reservationState === "stopping" || reservationState === undefined
-      ? "not-dispatched"
-      : "unknown";
-  }
-
-  private finishStopCheckpoint(prepared: PreparedStop): AgentStopResult | null {
+  /** Flush text checkpoints before the user-requested cancellation finalizes the turn. */
+  private finishStopCheckpoint(prepared: PreparedStop): void {
     const executionId = prepared.runtime.turnExecutionId!;
-    if (this.parentAssistantText.finish(executionId)) return null;
-    if (!this.parentAssistantText.hasStoppedForStorageFailure(executionId)) {
-      this.interruptForParentAssistantTextCheckpointFailure({
-        type: AgentEventType.TextDelta,
-        threadId: prepared.threadId,
-        turnExecutionId: executionId,
-        delta: "",
-        isFinalResponse: true,
-      }, "Assistant text recovery remained unavailable during a user stop");
-    }
-    return this.alreadyTerminal({ ...prepared, runtime: this.turnRuntime.snapshot(prepared.threadId) ?? prepared.runtime });
+    this.parentAssistantText.finish(executionId);
   }
 
   private async stopProviderForTurn(prepared: PreparedStop): Promise<void> {
@@ -1169,7 +1069,7 @@ export class AgentService {
     try {
       await this.providerRegistry.resolve(prepared.providerId).stopSession(prepared.sessionId);
     } catch (error) {
-      if (!this.isRunning(this.turnRuntime.snapshot(prepared.threadId) ?? this.idleRuntime(prepared.threadId))) return;
+      if (!isRunningRuntime(this.turnRuntime.snapshot(prepared.threadId) ?? idleRuntime(prepared.threadId))) return;
       if (prepared.reservationToken) {
         this.mutationReservations.transition(prepared.threadId, prepared.reservationToken, "stopping", "activeTurn");
       }
@@ -1182,9 +1082,9 @@ export class AgentService {
 
   private async finalizeStoppedTurn(prepared: PreparedStop): Promise<AgentStopResult> {
     const current = this.turnRuntime.snapshot(prepared.threadId) ?? prepared.runtime;
-    if (!this.ownsStoppedExecution(current, prepared.runtime.turnExecutionId)) return this.alreadyTerminal({ ...prepared, runtime: current });
+    if (!ownsStoppedExecution(current, prepared.runtime.turnExecutionId)) return this.alreadyTerminal({ ...prepared, runtime: current });
     if (!this.turnRuntime.terminalize(prepared.threadId, prepared.runtime.turnExecutionId!, "cancelled")) {
-      return this.alreadyTerminal({ ...prepared, runtime: this.turnRuntime.snapshot(prepared.threadId) ?? this.idleRuntime(prepared.threadId) });
+      return this.alreadyTerminal({ ...prepared, runtime: this.turnRuntime.snapshot(prepared.threadId) ?? idleRuntime(prepared.threadId) });
     }
     await (this.finalizeTerminalTurn(prepared.threadId, "cancelled", "user stop") ?? Promise.resolve());
     this.disarmTurnRetryWindow(prepared.threadId);
@@ -1195,7 +1095,7 @@ export class AgentService {
     return {
       threadId: prepared.threadId,
       turnExecutionId: prepared.runtime.turnExecutionId,
-      snapshot: this.turnRuntime.snapshot(prepared.threadId) ?? this.idleRuntime(prepared.threadId),
+      snapshot: this.turnRuntime.snapshot(prepared.threadId) ?? idleRuntime(prepared.threadId),
       status: "cancelled",
       dispatchState: prepared.dispatchState,
     };
@@ -1210,48 +1110,6 @@ export class AgentService {
       status: "already-terminal",
       dispatchState: prepared.dispatchState,
     };
-  }
-
-  private idleRuntime(threadId: string): TurnRuntimeSnapshot {
-    return { threadId, turnExecutionId: null, phase: "idle" };
-  }
-
-  private isRunning(runtime: TurnRuntimeSnapshot): boolean {
-    return runtime.turnExecutionId !== null && (runtime.phase === "running" || runtime.phase === "finalizing");
-  }
-
-  private ownsStoppedExecution(runtime: TurnRuntimeSnapshot, executionId: string | null): boolean {
-    return this.isRunning(runtime) && runtime.turnExecutionId === executionId;
-  }
-
-  /** Stop the active turn and discard any pooled provider session for a deleted thread. */
-  async teardownSession(threadId: string): Promise<void> {
-    const sessionId = `mcode-${threadId}`;
-    const thread = this.runtimePersistence.load(threadId);
-    const providerId = thread?.provider as ProviderId | undefined;
-    const wasActive = this.activeSessionIds.has(threadId);
-
-    if (wasActive) {
-      await this.stopSession(threadId);
-    }
-
-    if (!providerId) return;
-    let provider: import("@mcode/contracts").IAgentProvider;
-    try {
-      provider = this.providerRegistry.resolve(providerId);
-    } catch (err) {
-      logger.warn("Provider unavailable during thread teardown", {
-        threadId,
-        providerId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-    if (isSessionEvictable(provider)) {
-      await this.evictPooledSession(provider, sessionId);
-    } else if (!wasActive) {
-      await provider.stopSession(sessionId);
-    }
   }
 
   /** Number of currently active sessions. */
@@ -1511,21 +1369,13 @@ export class AgentService {
       threadId,
       executionId,
       outcome,
-      source: this.pipelineTerminalSource(source),
+      source: pipelineTerminalSource(source),
     });
   }
 
   /** Materialize a fenced terminal command without allowing the pipeline to reach AgentService internals. */
   private finalizePipelineTurn(command: FinalizeTurnCommand): Promise<boolean> | null {
     return this.finalizeMaterializedTurn(command.threadId, command.outcome, command.source);
-  }
-
-  /** Collapse legacy terminal labels into the pipeline's explicit source vocabulary. */
-  private pipelineTerminalSource(source: string): FinalizeTurnCommand["source"] {
-    if (source === "user stop") return "user-stop";
-    if (source === "shutdown") return "shutdown";
-    if (source.includes("checkpoint failure")) return "checkpoint-failure";
-    return "provider";
   }
 
   /**
@@ -1727,7 +1577,7 @@ export class AgentService {
     // only here, after the retry budget is spent; transient retries keep it.
     await this.turnAdmissions.rollbackCommandEffect(commandEffect);
     const rawMessage = err instanceof Error ? err.message : String(err);
-    const errorMessage = this.normalizeProviderError(rawMessage, effectiveProvider);
+    const errorMessage = normalizeAgentProviderError(effectiveProvider, rawMessage);
     const turnExecutionId = dispatch.turnRequest.turnExecutionId;
     logger.error("Provider send failed", { threadId, error: rawMessage });
 
@@ -1777,10 +1627,7 @@ export class AgentService {
       observeFileMutation: (event) => {
         this.turnFileEffects.observeProviderMutation(event);
       },
-      rejectForQueueCapacity: (event) => this.interruptForParentAssistantTextCheckpointFailure(
-        event,
-        "Assistant text event retention capacity reached",
-      ),
+      rejectForQueueCapacity: (event) => this.stopForProviderEventQueueCapacity(event),
       previousFileFinalization: (threadId) => this.turnFileEffects.previousFinalization(threadId),
       beginResumedFileTracking: (threadId) => this.turnFileEffects.beginResumed(threadId),
       observeToolUse: (event) => this.turnFileEffects.observeToolUse(event),
@@ -1813,15 +1660,6 @@ export class AgentService {
     });
     if (queued === "blocked") return false;
     return queued;
-  }
-
-  /** Return narrow runtime capabilities for server-owned diagnostics and recovery infrastructure. */
-  runtimeAccess(): AgentRuntimeAccess {
-    return {
-      activeCount: () => this.activeCount(),
-      activeThreadIds: () => this.activeThreadIds(),
-      runtimeSnapshots: () => this.runtimeSnapshots(),
-    };
   }
 
   /** Publish one unfinished deterministic assistant prefix for the private reliability harness. */
@@ -1866,7 +1704,7 @@ export class AgentService {
     return this.parentAssistantText.queueText(
       event,
       publish,
-      (reason) => this.interruptForParentAssistantTextCheckpointFailure(event, reason),
+      (reason) => this.stopForParentAssistantTextCheckpointFailure(event, reason),
     );
   }
 
@@ -1936,7 +1774,7 @@ export class AgentService {
         confirmRecoveryCheckpoint = recoveryCheckpoint?.confirm;
       })();
     } catch (error) {
-      this.interruptForNarrativeRecoveryCheckpointFailure(event, error);
+      this.stopForNarrativeRecoveryCheckpointFailure(event, error);
       return false;
     }
     this.parentAssistantText.checkpoints.discardRecoveryJournal(executionId);
@@ -1956,43 +1794,62 @@ export class AgentService {
     this.lateHookCompletions.schedule(threadId, hook, this.turnFileEffects.previousFinalization(threadId));
   }
 
-  /** Stop a turn whose visible assistant text cannot be made durable. */
-  private interruptForParentAssistantTextCheckpointFailure(event: AgentEvent, reason: string): void {
+  /** Stop the provider when visible assistant text cannot be made durable. */
+  private stopForParentAssistantTextCheckpointFailure(event: AgentEvent, reason: string): void {
     const executionId = event.turnExecutionId;
-    if (!executionId || !this.turnRuntime.terminalize(event.threadId, executionId, "interrupted")) return;
+    if (!executionId || !isActiveRuntimeExecution(this.turnRuntime.snapshot(event.threadId) ?? null, executionId)) return;
     logger.error("Parent assistant text checkpoint failed", {
       threadId: event.threadId,
       turnExecutionId: executionId,
       reason,
     });
-    const providerId = this.runtimePersistence.load(event.threadId)?.provider as ProviderId | undefined;
-    if (providerId) {
-      const provider = this.providerRegistry.resolve(providerId);
-      void Promise.resolve(provider.stopSession(`mcode-${event.threadId}`)).catch((error) => {
-        logger.warn("Provider stop failed after assistant text checkpoint failure", {
-          threadId: event.threadId,
-          turnExecutionId: executionId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }
-    void this.finalizeTerminalTurn(event.threadId, "interrupted", "assistant text checkpoint failure");
-    this.trackSessionEnded(event.threadId, executionId);
+    this.requestProviderStopAfterCheckpointFailure(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);
   }
 
-  /** Stop publication when a visible structured narrative record cannot commit. */
-  private interruptForNarrativeRecoveryCheckpointFailure(event: AgentEvent, error: unknown): void {
+  /** Stop only when a provider event cannot be represented within the bounded ingress queue. */
+  private stopForProviderEventQueueCapacity(event: AgentEvent): void {
     const executionId = event.turnExecutionId;
-    if (!executionId || !this.turnRuntime.terminalize(event.threadId, executionId, "interrupted")) return;
+    if (!executionId || !isActiveRuntimeExecution(this.turnRuntime.snapshot(event.threadId) ?? null, executionId)) return;
+    logger.error("Provider event queue capacity reached", {
+      threadId: event.threadId,
+      turnExecutionId: executionId,
+      eventType: event.type,
+    });
+    this.requestProviderStopAfterCheckpointFailure(event.threadId, executionId);
+    this.disarmTurnRetryWindow(event.threadId);
+  }
+
+  /** Stop the provider when a visible structured narrative record cannot commit. */
+  private stopForNarrativeRecoveryCheckpointFailure(event: AgentEvent, error: unknown): void {
+    const executionId = event.turnExecutionId;
+    if (!executionId || !isActiveRuntimeExecution(this.turnRuntime.snapshot(event.threadId) ?? null, executionId)) return;
     logger.error("Parent narrative recovery checkpoint failed", {
       threadId: event.threadId,
       turnExecutionId: executionId,
       error: error instanceof Error ? error.message : String(error),
     });
-    void this.finalizeTerminalTurn(event.threadId, "interrupted", "narrative recovery checkpoint failure");
-    this.trackSessionEnded(event.threadId, executionId);
+    this.requestProviderStopAfterCheckpointFailure(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);
+  }
+
+  /** Request a provider stop, then wait for its terminal event to state the outcome. */
+  private requestProviderStopAfterCheckpointFailure(threadId: string, executionId: string): void {
+    const logFailure = (error: unknown) => {
+      logger.warn("Provider stop failed after checkpoint failure", {
+        threadId,
+        turnExecutionId: executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    };
+    try {
+      const providerId = this.runtimePersistence.load(threadId)?.provider as ProviderId | undefined;
+      if (!providerId) return;
+      const provider = this.providerRegistry.resolve(providerId);
+      void Promise.resolve(provider.stopSession(`mcode-${threadId}`)).catch(logFailure);
+    } catch (error) {
+      logFailure(error);
+    }
   }
 
   private handleMemoryPressure(snapshot: MemoryPressureSnapshot): void {
@@ -2017,14 +1874,6 @@ export class AgentService {
   }
 
   /**
-   * Normalize a raw provider error into clearer user-facing strings (CLI ENOENT,
-   * opaque upstream 5xx payloads, etc.).
-   */
-  private normalizeProviderError(message: string, provider: string): string {
-    return normalizeAgentProviderError(provider, message);
-  }
-
-  /**
    * Buffer a tool call event into the narrative write seam, then perform the
    * non-narrative side effect AgentService still owns: persisting task state
    * for reconnect hydration. The narrative buffer + agentCallStack
@@ -2045,35 +1894,138 @@ export class AgentService {
     this.featureEffects?.onToolUse(threadId, { ...event, parentToolCallId });
   }
 
+  /**
+   * Admit a complete turn command, then retain only runtime-owned provider dispatch.
+   */
+  async sendMessage(command: SendMessageCommand): Promise<void> {
+    const admitted = await this.turnAdmissions.admit(command, this.runtimeAdmissionAuthority());
+    if (admitted.kind !== "dispatch") return;
+    await this.dispatchPreparedTurn(admitted);
+  }
+
+  /** Provision a thread through its coordinator, then start its generic first-turn command. */
+  async createAndSend(command: CreateAndSendCommand): Promise<Thread & { runtimeSnapshot: TurnRuntimeSnapshot; warnings?: string[] }> {
+    const created = await this.threadCreation.createInitialTurn(command);
+    if (created.kind === "queued") {
+      return {
+        ...created.thread,
+        runtimeSnapshot: { threadId: created.thread.id, turnExecutionId: null, phase: "idle" },
+        ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
+      };
+    }
+    const runtimeSnapshot = await this.sendInitialMessageAndSnapshot(created.command, (err) => {
+      logger.error("createAndSend initial send failed", {
+        threadId: created.thread.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    return {
+      ...created.thread,
+      runtimeSnapshot,
+      ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
+    };
+  }
+
+  /** Dispatch a queued Turn that the automatic Setup lifecycle claimed after commit. */
+  async dispatchQueuedAutomaticTurn(
+    submission: WorkspaceEnvironmentQueuedTurnSubmission,
+  ): Promise<WorkspaceEnvironmentAutomaticSetupDispatch> {
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const send = this.sendMessage({
+      ...this.turnAdmissions.queuedCommand(submission),
+      onTurnStarted: (runtime) => {
+        this.automaticQueuedTurnCompletionResolvers.set(runtime.turnExecutionId!, resolveCompletion);
+        resolveStarted();
+      },
+    });
+    await Promise.race([
+      started,
+      send.then(() => {
+        throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
+      }),
+    ]);
+    return { completion };
+  }
+
+  /** Stop exact active turn, sharing one in-flight operation per thread. */
+  async stopSession(threadId: string): Promise<AgentStopResult> {
+    const existing = this.stopOperationsByThread.get(threadId);
+    if (existing) return existing;
+    const operation = this.stopSessionInternal(threadId);
+    this.stopOperationsByThread.set(threadId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.stopOperationsByThread.get(threadId) === operation) {
+        this.stopOperationsByThread.delete(threadId);
+      }
+    }
+  }
+
+  /** Stop the active turn and discard any pooled provider session for a deleted thread. */
+  async teardownSession(threadId: string): Promise<void> {
+    const sessionId = `mcode-${threadId}`;
+    const thread = this.runtimePersistence.load(threadId);
+    const providerId = thread?.provider as ProviderId | undefined;
+    const wasActive = this.activeSessionIds.has(threadId);
+
+    if (wasActive) {
+      await this.stopSession(threadId);
+    }
+
+    if (!providerId) return;
+    let provider: import("@mcode/contracts").IAgentProvider;
+    try {
+      provider = this.providerRegistry.resolve(providerId);
+    } catch (err) {
+      logger.warn("Provider unavailable during thread teardown", {
+        threadId,
+        providerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    if (isSessionEvictable(provider)) {
+      await this.evictPooledSession(provider, sessionId);
+    } else if (!wasActive) {
+      await provider.stopSession(sessionId);
+    }
+  }
+
+  /** Return narrow runtime capabilities for server-owned diagnostics and recovery infrastructure. */
+  runtimeAccess(): AgentRuntimeAccess {
+    return {
+      activeCount: () => this.activeCount(),
+      activeThreadIds: () => this.activeThreadIds(),
+      runtimeSnapshots: () => this.runtimeSnapshots(),
+    };
+  }
+
   /** Stop all active agent sessions (for graceful shutdown). */
   async stopAll(): Promise<void> {
     const ids = [...this.activeSessionIds];
     await Promise.all(
       ids.map(async (threadId) => {
         await this.featureEffects?.stopDescendants(threadId);
-        const runtime = this.turnRuntime.snapshot(threadId);
-        const terminalized = runtime?.turnExecutionId
-          ? this.turnRuntime.terminalize(threadId, runtime.turnExecutionId, "interrupted")
-          : false;
-        if (!terminalized && runtime?.phase !== "interrupted") return;
-        await (this.finalizeTerminalTurn(threadId, "interrupted", "shutdown") ?? Promise.resolve());
-        this.trackSessionEnded(threadId, runtime?.turnExecutionId);
-        this.runtimePersistence.setRuntimeStatus(threadId, "interrupted");
-        broadcast("thread.status", { threadId, status: "interrupted" });
+        const sessionId = `mcode-${threadId}`;
+        const thread = this.runtimePersistence.load(threadId);
+        const providerId = thread?.provider as ProviderId | undefined;
+        if (!providerId) return;
+        try {
+          const provider = this.providerRegistry.resolve(providerId);
+          await provider.stopSession(sessionId);
+        } catch {
+          // best-effort
+        }
       }),
     );
-    for (const threadId of ids) {
-      const sessionId = `mcode-${threadId}`;
-      const thread = this.runtimePersistence.load(threadId);
-      const providerId = thread?.provider as ProviderId | undefined;
-      if (!providerId) continue;
-      try {
-        const provider = this.providerRegistry.resolve(providerId);
-        void Promise.resolve(provider.stopSession(sessionId)).catch(() => {});
-      } catch {
-        // best-effort
-      }
-    }
     this.activeSessionIds.clear();
     for (const [threadId, token] of this.activeMutationReservations) {
       this.mutationReservations.release(threadId, token);

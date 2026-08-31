@@ -1741,8 +1741,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
   const terminalPhaseFor = (
     event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
-  ): ThreadRecord["runtimePhase"] => {
+  ): ThreadRecord["runtimePhase"] | undefined => {
     if (event.type === "turnComplete" || event.outcome === "completed") return "completed";
+    if (event.outcome === undefined) return undefined;
     if (event.outcome === "errored") return "errored";
     return event.outcome === "cancelled" ? "cancelled" : "interrupted";
   };
@@ -1765,7 +1766,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     return toolCalls.map((toolCall) => toolCall.isComplete ? toolCall : { ...toolCall, isComplete: true });
   };
 
-  const terminalPatch = (
+  const terminalRuntimePatch = (
     record: ThreadRecord,
     phase: ThreadRecord["runtimePhase"],
   ): Partial<ThreadRecord> => ({
@@ -1783,7 +1784,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     phase: ThreadRecord["runtimePhase"],
     guardrailMessage: Message | null,
   ): Partial<ThreadRecord> => {
-    const base = terminalPatch(record, phase);
+    const base = terminalRuntimePatch(record, phase);
     const guardrail = guardrailMessage
       && !record.messages.some((message) => message.role === "system" && message.content.startsWith("Agent stopped:"))
       ? guardrailMessage
@@ -1885,20 +1886,54 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     }));
   };
 
+  const cleanupTerminalRuntime = (
+    threadId: string,
+    phase: ThreadRecord["runtimePhase"],
+  ): void => {
+    clearStreamingTextUsage(threadId);
+    useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(threadId);
+    synchronizeTerminalStatus(threadId, terminalStatusFor(phase));
+  };
+
+  const releaseProviderLostRuntime = (threadId: string): void => {
+    clearStreamingTextUsage(threadId);
+    patchRec(threadId, {
+      agentStartTime: undefined,
+      runtimePhase: "idle",
+      savingStatus: null,
+    });
+  };
+
+  const runtimeOwnsTerminalEvent = (
+    runtime: { incomingExecutionId: string | undefined; runtimeActive: boolean; runtimeRecord: ThreadRecord },
+  ): boolean => runtime.runtimeActive
+    && (!runtime.incomingExecutionId || runtime.runtimeRecord.turnExecutionId === runtime.incomingExecutionId);
+
   const handleTerminalEvent = (
     event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
     runtime: { incomingExecutionId: string | undefined; runtimeActive: boolean; runtimeRecord: ThreadRecord },
   ): void => {
-    if (!runtime.runtimeActive || (runtime.incomingExecutionId && runtime.runtimeRecord.turnExecutionId !== runtime.incomingExecutionId)) return;
-    clearStreamingTextUsage(event.threadId);
-    useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(event.threadId);
+    if (releaseProviderLostTerminal(event, runtime)) return;
+    if (event.type === "ended" && event.outcome === undefined) return;
+    if (!runtimeOwnsTerminalEvent(runtime)) return;
     const phase = terminalPhaseFor(event);
+    if (!phase) return;
     const guardrail = guardrailMessageFor(event);
     patchRec(event.threadId, (record) => appendTerminalMessages(record, event, phase, guardrail));
     conversationResidency.retainInactiveConversation(event.threadId);
     if (event.type === "turnComplete") updateTurnContext(event);
-    synchronizeTerminalStatus(event.threadId, terminalStatusFor(phase));
+    cleanupTerminalRuntime(event.threadId, phase);
     if (event.type === "turnComplete" && !guardrail) scheduleDrainAfterEdit(event.threadId);
+  };
+
+  const releaseProviderLostTerminal = (
+    event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
+    runtime: { incomingExecutionId: string | undefined; runtimeActive: boolean; runtimeRecord: ThreadRecord },
+  ): boolean => {
+    if (event.type !== "ended" || event.outcome !== undefined || event.reason !== "provider_lost") return false;
+    if (!runtimeOwnsTerminalEvent(runtime)) return true;
+    releaseProviderLostRuntime(event.threadId);
+    return true;
   };
 
   const updateUsageSnapshot = (threadId: string, providerId: string, incoming: ProviderUsageInfo): void => {
@@ -2200,10 +2235,23 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     return { fileEffectSummary: payload.fileEffects };
   };
 
+  const persistedTerminalPhase = (
+    record: ThreadRecord,
+    payload: TurnPersistedPayload,
+  ): ThreadRecord["runtimePhase"] | undefined => {
+    if (payload.outcome === undefined
+      || payload.executionId !== record.turnExecutionId
+      || (record.runtimePhase !== "running" && record.runtimePhase !== "finalizing")) return undefined;
+    if (payload.outcome === "completed") return "completed";
+    if (payload.outcome === "errored") return "errored";
+    return payload.outcome === "cancelled" ? "cancelled" : "interrupted";
+  };
+
   const projectPersistedTurn = (
     record: ThreadRecord,
     payload: TurnPersistedPayload,
     currentThreadId: string | null,
+    terminalPhase: ThreadRecord["runtimePhase"] | undefined,
   ): Partial<ThreadRecord> => {
     const localMessageId = resolveTurnPersistLocalMessageId(record, payload.messageId);
     const messages = persistedTurnMessages(record, payload, localMessageId);
@@ -2218,6 +2266,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       serverMessageIds: { ...record.serverMessageIds, [localMessageId]: payload.messageId },
       ...clearPendingTurnPersistMessage(record, localMessageId),
       ...stopState,
+      ...(terminalPhase ? terminalRuntimePatch(record, terminalPhase) : {}),
       ...persistedTurnFileEffects(record, payload, localMessageId),
     };
   };
@@ -3451,16 +3500,24 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   handleTurnPersisted: (payload) => {
     flushPendingTextDeltas();
     conversationResidency.invalidateConversation(payload.threadId);
+    const terminalPhase = persistedTerminalPhase(getRec(payload.threadId), payload);
 
     set((state) => {
       return {
         records: patchThreadRecord(
           state.records,
           payload.threadId,
-          projectPersistedTurn(getThreadRecord(state.records, payload.threadId), payload, state.currentThreadId),
+          projectPersistedTurn(
+            getThreadRecord(state.records, payload.threadId),
+            payload,
+            state.currentThreadId,
+            terminalPhase,
+          ),
         ),
       };
     });
+
+    if (terminalPhase) cleanupTerminalRuntime(payload.threadId, terminalPhase);
 
     if (payload.filesChanged.length > 0) {
       useWorkspaceStore.setState((ws) => ({

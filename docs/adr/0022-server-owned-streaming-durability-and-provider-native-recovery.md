@@ -18,7 +18,7 @@ Final-response classification can arrive after text publication. The sidecar the
 
 Terminal finalization writes the canonical assistant projection before it retires the sidecar. After restart, an existing canonical projection takes precedence over stale sidecar text. Otherwise, recovery restores the exact durable sidecar prefix and records the unfinished turn as Interrupted.
 
-The current text checkpoint path stops publication and interrupts the turn when normal checkpoint storage cannot accept more text. [Issue #1524](https://github.com/Mzeey-Empire/mcode/issues/1524) owns the retry, recovery-journal, bounded-memory, and explicit saving-risk ladder. Those later tiers must preserve the rule that the frontend cannot advance beyond acknowledged durable text unless the user explicitly chooses otherwise.
+The text checkpoint path stops publication and requests a provider stop when normal checkpoint storage cannot accept more text. It does not write a terminal outcome. The provider's terminal event determines the outcome; an `Ended` event without one remains unresolved. [Issue #1524](https://github.com/Mzeey-Empire/mcode/issues/1524) owns the retry, recovery-journal, bounded-memory, and explicit saving-risk ladder. Those later tiers must preserve the rule that the frontend cannot advance beyond acknowledged durable text unless the user explicitly chooses otherwise.
 
 Production-mode SQLite measurements selected the 16 KiB and 250 ms policy. Packaged visual continuity and supported-platform performance remain release gates under [issue #1532](https://github.com/Mzeey-Empire/mcode/issues/1532).
 

@@ -623,7 +623,7 @@ describe("AgentService narrative persistence", () => {
     }
   });
 
-  it("stops before a queued non-text provider payload exceeds the FIFO byte limit", async () => {
+  it("keeps the provider running when a queued tool completion needs output compaction", async () => {
     const db = openMemoryDatabase();
     const now = "2026-08-24T10:00:00.000Z";
     db.prepare(
@@ -667,11 +667,14 @@ describe("AgentService narrative persistence", () => {
         toolCallId: "oversized-result",
         output: "x".repeat(PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes),
         isError: false,
+        outputTruncated: true,
+        outputTotalBytes: 1_048_607,
+        outputArtifactPath: "/artifacts/oversized-result.txt",
       });
 
       expect((providerEmitter as unknown as { stopSession: ReturnType<typeof vi.fn> }).stopSession)
-        .toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
-      expect(service.runtimeSnapshots()).toContainEqual(expect.objectContaining({
+        .not.toHaveBeenCalled();
+      expect(service.runtimeSnapshots()).not.toContainEqual(expect.objectContaining({
         threadId: THREAD_ID,
         turnExecutionId: executionId,
         phase: "interrupted",
@@ -741,7 +744,7 @@ describe("AgentService narrative persistence", () => {
       expect(service.runtimeSnapshots()).toContainEqual(expect.objectContaining({
         threadId: THREAD_ID,
         turnExecutionId: executionId,
-        phase: "interrupted",
+        phase: "running",
       }));
     } finally {
       restoreChunksSpy.mockRestore();

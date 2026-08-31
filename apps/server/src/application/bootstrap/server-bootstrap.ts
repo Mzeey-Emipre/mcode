@@ -896,23 +896,17 @@ async function shutdown(): Promise<void> {
 
   removeIpcSocket(ipcPath, hostRuntime.platform);
 
-  // 1. Capture active thread IDs before stopAll() clears them
-  const activeThreadIds = agentService.runtimeAccess().activeThreadIds();
-
-  // 2. Stop all agent sessions
+  // 1. Stop all agent sessions. The provider owns the terminal outcome.
   shutdownCoordinator.setPhase("stop agent sessions");
   await agentService.stopAll();
 
-  // 3. Shutdown provider registry
+  // 2. Shutdown provider registry
   shutdownCoordinator.setPhase("shutdown providers");
   providerRegistry.shutdown();
   browserAutomationBroker.shutdown();
   browserAutomationSessionLease.shutdown();
 
-  // 4. Mark active threads as interrupted
-  threadService.markActiveThreadsInterrupted(activeThreadIds);
-
-  // 5. Dispose settings file watcher
+  // 3. Dispose settings file watcher
   settingsService.dispose();
 
   let shutdownFailure: unknown = null;

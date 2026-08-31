@@ -40,7 +40,7 @@ export interface TurnEventApplication {
   apply(input: ProviderEventIngressEvent, event: AgentEvent, publish: boolean): boolean;
   /** Record a provider file mutation before its corresponding public event arrives. */
   observeFileMutation(event: ProviderFileMutationStart): void;
-  /** Abort one turn when bounded event ordering cannot retain another event. */
+  /** Abort one turn only when its completion cannot be compacted into the bounded queue. */
   rejectForQueueCapacity(event: AgentEvent): void;
   /** Return the previous turn's outstanding durable file-effects work, if any. */
   previousFileFinalization(threadId: string): Promise<boolean> | undefined;
@@ -131,15 +131,19 @@ export class TurnEventPipeline implements ProviderEventIngressConsumer {
 
   private enqueue(input: ProviderEventIngressEvent, event: AgentEvent, publish: boolean): boolean {
     const queue = this.queues.get(event.threadId) ?? [];
-    const byteLength = eventByteLength(event, TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes);
     const queuedBytes = this.queuedBytesByThread.get(event.threadId) ?? 0;
-    if (queue.length >= TURN_EVENT_QUEUE_RETAINED_LIMITS.maxEvents
-      || queuedBytes + byteLength > TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes) {
+    const availableBytes = TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes - queuedBytes;
+    const queuedEvent = compactToolResultForQueue(event, availableBytes);
+    if (!queuedEvent
+      || queue.length >= TURN_EVENT_QUEUE_RETAINED_LIMITS.maxEvents
+      || queuedBytes + eventByteLength(queuedEvent, TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes)
+        > TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes) {
       this.application.rejectForQueueCapacity(event);
       this.discard(event.threadId);
       return false;
     }
-    queue.push({ input, event, byteLength, publish });
+    const byteLength = eventByteLength(queuedEvent, TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes);
+    queue.push({ input: { ...input, event: queuedEvent }, event: queuedEvent, byteLength, publish });
     this.queues.set(event.threadId, queue);
     this.queuedBytesByThread.set(event.threadId, queuedBytes + byteLength);
     return true;
@@ -258,12 +262,51 @@ export class TurnEventPipeline implements ProviderEventIngressConsumer {
 }
 
 function eventByteLength(event: AgentEvent, maximumBytes: number): number {
+  const byteLength = serializedEventByteLength(event);
+  return byteLength === undefined ? maximumBytes + 1 : Math.min(byteLength, maximumBytes + 1);
+}
+
+function serializedEventByteLength(event: AgentEvent): number | undefined {
   try {
     const serialized = JSON.stringify(event);
-    return serialized ? Math.min(Buffer.byteLength(serialized, "utf8"), maximumBytes + 1) : maximumBytes + 1;
+    return serialized ? Buffer.byteLength(serialized, "utf8") : undefined;
   } catch {
-    return maximumBytes + 1;
+    return undefined;
   }
+}
+
+/**
+ * Preserve tool completion first: drop late metadata, retain artifact evidence,
+ * then shorten inline output. Reject only when the lifecycle event itself cannot fit.
+ */
+function compactToolResultForQueue(event: AgentEvent, maximumBytes: number): AgentEvent | undefined {
+  if (eventByteLength(event, maximumBytes) <= maximumBytes) return event;
+  if (event.type !== "toolResult") return undefined;
+
+  const { toolInput: _toolInput, subagentPresentation: _subagentPresentation, ...completion } = event;
+  if (eventByteLength(completion, maximumBytes) <= maximumBytes) return completion;
+
+  const outputTotalBytes = event.outputTotalBytes ?? Buffer.byteLength(event.output, "utf8");
+  const truncated = {
+    ...completion,
+    output: "",
+    outputTruncated: true as const,
+    outputTotalBytes,
+  };
+  if (eventByteLength(truncated, maximumBytes) > maximumBytes) return undefined;
+
+  let low = 0;
+  let high = event.output.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = { ...truncated, output: event.output.slice(0, middle) };
+    if (eventByteLength(candidate, maximumBytes) <= maximumBytes) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return { ...truncated, output: event.output.slice(0, low) };
 }
 
 function cancelsDeferredWork(source: TurnTerminalSource): boolean {
