@@ -20,6 +20,7 @@ import { useFileAutocomplete } from "@/components/chat/useFileAutocomplete";
 import { ComposerEditor } from "@/components/chat/lexical";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePreviewAnnotationStore } from "@/features/preview/state/previewAnnotationStore";
 import { getModelContextWindow } from "@mcode/shared/model-context";
 import type {
@@ -308,15 +309,21 @@ function ComposerQueueEditNotice({
           Send to save - changes return to the same slot.
         </span>
       </span>
-      <button
-        type="button"
-        onClick={actions.onCancelEdit}
-        aria-label="Discard edits and restore the original queued message"
-        title="Discard changes (restores the original message at its slot)"
-        className="rounded-sm p-1 text-primary/55 transition-colors hover:bg-primary/10 hover:text-primary"
-      >
-        <X size={11} strokeWidth={1.75} />
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={actions.onCancelEdit}
+              aria-label="Discard edits and restore the original queued message"
+              className="rounded-sm p-1 text-primary/55 transition-colors hover:bg-primary/10 hover:text-primary"
+            >
+              <X size={11} strokeWidth={1.75} />
+            </button>
+          }
+        />
+        <TooltipContent>Discard changes (restores the original message at its slot)</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
@@ -421,16 +428,22 @@ function ComposerInlineStopButton({
   if (!model.isAgentRunning || !model.hasContent || model.planPending) return null;
 
   return (
-    <Button
-      variant="ghost"
-      size="icon-xs"
-      onClick={actions.onStop}
-      className="text-destructive/60 hover:bg-destructive/10 hover:text-destructive"
-      title="Stop agent"
-      aria-label="Stop agent"
-    >
-      <div className="h-2.5 w-2.5 rounded-sm bg-current" />
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={actions.onStop}
+            className="text-destructive/60 hover:bg-destructive/10 hover:text-destructive"
+            aria-label="Stop agent"
+          >
+            <div className="h-2.5 w-2.5 rounded-sm bg-current" />
+          </Button>
+        }
+      />
+      <TooltipContent>Stop agent</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -551,15 +564,13 @@ function ComposerSendButton({
     : model.isAgentRunning && !model.hasContent
       ? actions.onStop
       : actions.onSubmit;
-
-  return (
+  const sendButton = (
     <Button
       type="button"
       size="icon-sm"
       onClick={onClick}
       disabled={disabled}
       className={cn("rounded-full transition-colors", SEND_BUTTON_CLASS_NAMES[visualState])}
-      title={SEND_BUTTON_COPY[copy]}
       aria-label={SEND_BUTTON_COPY[copy]}
     >
       {visualState === "scaffold" ? (
@@ -570,6 +581,15 @@ function ComposerSendButton({
         <ArrowUp />
       )}
     </Button>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={disabled ? <span className="inline-flex">{sendButton}</span> : sendButton}
+      />
+      <TooltipContent>{SEND_BUTTON_COPY[copy]}</TooltipContent>
+    </Tooltip>
   );
 }
 

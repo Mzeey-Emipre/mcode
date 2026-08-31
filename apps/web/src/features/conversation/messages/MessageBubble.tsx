@@ -251,17 +251,23 @@ function GoalPill({ label, condition, hint }: { label: string; condition?: strin
         {iconEl}
         {labelEl}
         {condition && (
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            aria-expanded="false"
-            aria-label="Expand full goal condition"
-            title={condition}
-            dir="auto"
-            className="min-w-0 cursor-pointer truncate text-left font-serif text-sm italic leading-snug text-foreground hover:text-foreground/80"
-          >
-            &ldquo;{condition}&rdquo;
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => setExpanded(true)}
+                  aria-expanded="false"
+                  aria-label="Expand full goal condition"
+                  dir="auto"
+                  className="min-w-0 cursor-pointer truncate text-left font-serif text-sm italic leading-snug text-foreground hover:text-foreground/80"
+                >
+                  &ldquo;{condition}&rdquo;
+                </button>
+              }
+            />
+            <TooltipContent>{condition}</TooltipContent>
+          </Tooltip>
         )}
         {hintEl}
       </div>
@@ -537,10 +543,13 @@ function useMessageAttachments(message: Message) {
     [message.attachments],
   );
   const imageSlides = useMemo(
-    () => imageAttachments.map((image) => ({
-      src: buildStoredAttachmentImageSrc(message.thread_id, image.id, image.mimeType),
-      title: image.name,
-    })),
+    () => {
+      void attachmentTransportUrl;
+      return imageAttachments.map((image) => ({
+        src: buildStoredAttachmentImageSrc(message.thread_id, image.id, image.mimeType),
+        title: image.name,
+      }));
+    },
     [attachmentTransportUrl, imageAttachments, message.thread_id],
   );
   return { imageAttachments, fileAttachments, imageSlides };
@@ -732,7 +741,12 @@ function UserMessageFeedback({
       )}
       {showParentAgentProvenance && provenance && (
         <div className="flex justify-end" role="note" aria-label={`Parent agent provenance: ${provenanceDetails}`} data-testid="parent-agent-provenance">
-          <span className="font-mono text-xs text-muted-foreground/70" title={provenanceDetails}>Parent agent</span>
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="font-mono text-xs text-muted-foreground/70">Parent agent</span>}
+            />
+            <TooltipContent>{provenanceDetails}</TooltipContent>
+          </Tooltip>
         </div>
       )}
     </>

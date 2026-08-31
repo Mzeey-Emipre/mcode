@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -29,7 +29,7 @@ import { WebBrowserSessionAdapter } from "../webBrowserSessionAdapter";
 const replayRoots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(replayRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(replayRoots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
 });
 
 const TARGET = {
@@ -83,7 +83,7 @@ describe("BrowserSessionDriver deterministic races", () => {
 });
 
 async function createReplayRoot(): Promise<string> {
-  const replayRoot = await mkdtemp(join(tmpdir(), "mcode-web-browser-races-"));
+  const replayRoot = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-web-browser-races-"));
   replayRoots.push(replayRoot);
   return replayRoot;
 }

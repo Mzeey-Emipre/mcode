@@ -1,6 +1,7 @@
 import { ListChecks, X } from "lucide-react";
 import type { PlanRecord } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePlanStore } from "@/stores/planStore";
@@ -30,9 +31,14 @@ export function PlanPreview({ workspaceId, threadId, preview }: PlanPreviewProps
       className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-card/75 px-3 py-2 shadow-sm"
     >
       <ListChecks size={16} className="shrink-0 text-muted-foreground" aria-hidden />
-      <span className="min-w-0 flex-1 truncate text-sm text-foreground" title={preview.title}>
-        {preview.title}
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className="min-w-0 flex-1 truncate text-sm text-foreground" />}
+        >
+          {preview.title}
+        </TooltipTrigger>
+        <TooltipContent>{preview.title}</TooltipContent>
+      </Tooltip>
       <Button
         type="button"
         variant="outline"
@@ -42,17 +48,23 @@ export function PlanPreview({ workspaceId, threadId, preview }: PlanPreviewProps
       >
         View plan
       </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Dismiss plan preview"
-        title="Dismiss plan preview"
-        onClick={() => usePlanStore.getState().dismissLivePreview(threadId, preview.version)}
-        className="shrink-0 text-muted-foreground"
-      >
-        <X size={14} />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Dismiss plan preview"
+              onClick={() => usePlanStore.getState().dismissLivePreview(threadId, preview.version)}
+              className="shrink-0 text-muted-foreground"
+            >
+              <X size={14} />
+            </Button>
+          }
+        />
+        <TooltipContent>Dismiss plan preview</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

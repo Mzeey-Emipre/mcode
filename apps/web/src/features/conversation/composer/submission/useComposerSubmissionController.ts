@@ -195,7 +195,7 @@ export function useComposerSubmissionController({
     if (checkoutPending) return "checkout-pending";
     await executePreparedDispatch(submission, target);
     return "complete";
-  }, [annotationScopeId, branchFromMessageId, completeQueued, executePreparedDispatch, execution, form, isAgentRunning, isNewThread, isThreadScaffold, queue.discardEmptyEdit, queue.queueIfGenerating, queue.resolvePreviewAnnotations, queuePrepared, replyContext, threadId, workspaceId]);
+  }, [annotationScopeId, branchFromMessageId, completeQueued, executePreparedDispatch, execution, form, isAgentRunning, isNewThread, isThreadScaffold, queue, queuePrepared, replyContext, threadId, workspaceId]);
 
   const submit = useCallback(async () => {
     if (submitInFlightRef.current) return;

@@ -62,6 +62,7 @@ export function StickyUserMessage({
 
   useEffect(() => {
     if (!visible) {
+      // oxlint-disable-next-line react/set-state-in-effect -- Hiding the sticky message must clear its expanded snapshot before its height is reported as zero.
       setExpanded(false);
       clearExpandClickTimer();
       onHeightChange?.(0);

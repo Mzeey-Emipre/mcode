@@ -22,6 +22,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useShallow } from "zustand/shallow";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ChecksStatus } from "@mcode/contracts";
 import type { RecentThread, Thread } from "@/transport/types";
 
@@ -112,13 +113,30 @@ function ThreadSearchResult({
         {thread.title}
       </span>
       <div className="flex min-w-0 shrink items-center justify-end gap-2 whitespace-nowrap text-xs text-muted-foreground">
-        <span className="max-w-44 truncate text-right" title={row.workspacePath} aria-label={`Project, ${row.workspaceName}`}>
-          {row.workspaceName}
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className="max-w-44 truncate text-right"
+                aria-label={`Project, ${row.workspaceName}`}
+              >
+                {row.workspaceName}
+              </span>
+            }
+          />
+          <TooltipContent>{row.workspacePath}</TooltipContent>
+        </Tooltip>
         <span aria-hidden className="text-muted-foreground/35">·</span>
-        <span className="max-w-40 truncate font-mono" title={thread.branch} aria-label={`Branch, ${thread.branch}`}>
-          {thread.branch}
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="max-w-40 truncate font-mono" aria-label={`Branch, ${thread.branch}`}>
+                {thread.branch}
+              </span>
+            }
+          />
+          <TooltipContent>{thread.branch}</TooltipContent>
+        </Tooltip>
         <span className={cn(isUserCompleted && "grayscale opacity-45")}>
           <ThreadStateMarker marker={marker} />
         </span>

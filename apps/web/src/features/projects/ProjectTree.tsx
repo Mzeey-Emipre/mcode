@@ -1644,22 +1644,28 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
   const { icon: Icon, chromeClass } = getCiVisual(rollup.aggregate);
 
   return (
-    <span
-      title={rollup.label}
-      aria-label={rollup.label}
-      className={cn(
-        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none",
-        "text-[10px] font-medium tabular-nums leading-none",
-        chromeClass,
-      )}
-    >
-      {rollup.aggregate === "pending" ? (
-        <Spinner size={9} className="text-current" />
-      ) : (
-        <Icon size={9} strokeWidth={CI_ICON_STROKE} className="shrink-0" />
-      )}
-      <span>{rollup.count}</span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={rollup.label}
+            className={cn(
+              "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none",
+              "text-[10px] font-medium tabular-nums leading-none",
+              chromeClass,
+            )}
+          >
+            {rollup.aggregate === "pending" ? (
+              <Spinner size={9} className="text-current" />
+            ) : (
+              <Icon size={9} strokeWidth={CI_ICON_STROKE} className="shrink-0" />
+            )}
+            <span>{rollup.count}</span>
+          </span>
+        }
+      />
+      <TooltipContent>{rollup.label}</TooltipContent>
+    </Tooltip>
   );
 });
 
@@ -1822,34 +1828,40 @@ const ThreadPrIndicator = memo(function ThreadPrIndicator({
   const label = `PR #${prNumber}, ${prStatus ?? "open"}${ciVisual ? `. ${ciVisual.label}` : ""}`;
 
   return (
-    <span
-      title={label}
-      aria-label={label}
-      data-testid={`thread-pr-indicator-${threadId}`}
-      className={cn(
-        "-mt-px flex h-4 w-4 items-center justify-center",
-        muted && "grayscale opacity-45",
-      )}
-    >
-      <span className="relative flex size-4 items-center justify-center">
-        <PrIcon
-          size={13}
-          aria-hidden
-          className={cn("shrink-0", prColor)}
-        />
-        {ciVisual ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
           <span
-            data-testid={`thread-pr-ci-${threadId}`}
-            aria-hidden
+            aria-label={label}
+            data-testid={`thread-pr-indicator-${threadId}`}
             className={cn(
-              "absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-current ring-1 ring-page",
-              ciVisual.color,
-              checks?.aggregate === "pending" && "status-pulse",
+              "-mt-px flex h-4 w-4 items-center justify-center",
+              muted && "grayscale opacity-45",
             )}
-          />
-        ) : null}
-      </span>
-    </span>
+          >
+            <span className="relative flex size-4 items-center justify-center">
+              <PrIcon
+                size={13}
+                aria-hidden
+                className={cn("shrink-0", prColor)}
+              />
+              {ciVisual ? (
+                <span
+                  data-testid={`thread-pr-ci-${threadId}`}
+                  aria-hidden
+                  className={cn(
+                    "absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-current ring-1 ring-page",
+                    ciVisual.color,
+                    checks?.aggregate === "pending" && "status-pulse",
+                  )}
+                />
+              ) : null}
+            </span>
+          </span>
+        }
+      />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 });
 
@@ -2398,7 +2410,12 @@ function ProjectRowActions({
           <DropdownMenuItem onClick={onDelete} className="flex cursor-pointer items-center gap-2 text-destructive focus:text-destructive"><Trash2 size={13} />Delete project</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Button variant="ghost" size="icon-xs" aria-label={`New thread in ${workspace.name}`} title={`New thread in ${workspace.name}`} onKeyDown={(event) => event.stopPropagation()} onClick={onCreateThread} className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"><SquarePen className="size-[1.4rem]" /></Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={<Button variant="ghost" size="icon-xs" aria-label={`New thread in ${workspace.name}`} onKeyDown={(event) => event.stopPropagation()} onClick={onCreateThread} className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"><SquarePen className="size-[1.4rem]" /></Button>}
+        />
+        <TooltipContent>{`New thread in ${workspace.name}`}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

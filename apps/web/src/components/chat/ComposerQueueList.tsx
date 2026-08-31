@@ -23,6 +23,7 @@ import { providerSupportsSendNow } from "@/lib/model-registry";
 import { stripPreviewAnnotationFence } from "@/features/preview/capture/preview-annotation-append";
 import { cn } from "@/lib/utils";
 import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
@@ -252,17 +253,23 @@ function QueueRowPreview({ msg, onEdit }: Pick<QueueRowProps, "msg" | "onEdit">)
     : "Empty queued message";
 
   return (
-    <button
-      type="button"
-      onClick={onEdit}
-      aria-label={previewText ? undefined : "Edit queued annotation"}
-      title="Edit in composer"
-      className="min-w-0 flex-1 cursor-text text-left"
-    >
-      {previewText
-        ? <span className="block truncate text-xs leading-snug text-foreground/90">{previewText}</span>
-        : <span className="sr-only">{emptyMessageLabel}</span>}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onEdit}
+            aria-label={previewText ? undefined : "Edit queued annotation"}
+            className="min-w-0 flex-1 cursor-text text-left"
+          >
+            {previewText
+              ? <span className="block truncate text-xs leading-snug text-foreground/90">{previewText}</span>
+              : <span className="sr-only">{emptyMessageLabel}</span>}
+          </button>
+        }
+      />
+      <TooltipContent>Edit in composer</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -366,17 +373,23 @@ function RowAction({ label, hint, tone, onClick, children }: RowActionProps) {
         ? "hover:bg-destructive/10 hover:text-destructive"
         : "hover:bg-muted hover:text-foreground";
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={hint}
-      className={cn(
-        "rounded-sm p-1 text-muted-foreground/60 transition-colors",
-        toneClass,
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onClick}
+            aria-label={label}
+            className={cn(
+              "rounded-sm p-1 text-muted-foreground/60 transition-colors",
+              toneClass,
+            )}
+          >
+            {children}
+          </button>
+        }
+      />
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
   );
 }

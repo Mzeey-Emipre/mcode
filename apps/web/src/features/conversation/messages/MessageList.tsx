@@ -437,7 +437,7 @@ export function MessageList({
     }
 
     prevScrollTopRef.current = el.scrollTop;
-  }, [historyAnchorTrailingSpace, renderedThreadId, loadNewerHistoryWhenRequested, loadOlderHistoryWhenRequested, transcriptThreadId, syncStickyUserMessageVisibility]);
+  }, [renderedThreadId, loadNewerHistoryWhenRequested, loadOlderHistoryWhenRequested, transcriptThreadId, syncStickyUserMessageVisibility]);
 
   useEffect(() => {
     for (const message of messages) {
@@ -943,7 +943,7 @@ export function MessageList({
         if (addedHeight > 0 && el) el.scrollTop += addedHeight;
       },
     });
-  }, [isLoadingMore, isLoadingNewer, messages]);
+  }, [isLoadingMore, isLoadingNewer, messages, renderedThreadId, virtualizer]);
 
   // Empty thread: reveal without a tail jump. Non-empty initial tail positioning
   // runs in the active-thread useLayoutEffect so cache-miss completion (same

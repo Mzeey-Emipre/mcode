@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ShikiTheme } from "./useTheme";
 import {
   chatHighlightCoordinator,
@@ -162,31 +162,30 @@ export function useHighlighter(
   enabled: boolean = true,
   options: UseHighlighterOptions = {},
 ): { html: string | null; measurementId?: string | null } {
-  const [html, setHtml] = useState<string | null>(null);
+  const inputKey = enabled ? `${code}\0${language}` : null;
+  const [result, setResult] = useState<{ key: string; html: string | null } | null>(null);
   const measurementIdRef = useRef<string | null>(null);
   const currentRequestRef = useRef<ChatHighlightRequestHandle | null>(null);
   const currentRequestTokenRef = useRef<symbol | null>(null);
   const currentRequestIdRef = useRef<string | null>(null);
-  const prevCode = useRef(code);
-  const prevLanguage = useRef(language);
+  const previousInputKeyRef = useRef(inputKey);
+  const setHighlightedHtml = useCallback((html: string | null) => {
+    if (inputKey) setResult({ key: inputKey, html });
+  }, [inputKey]);
 
   // Send a highlight request whenever code, language, or theme changes.
   useEffect(() => {
-    // When disabled, skip posting to the Worker entirely and clear any stale result.
+    // When disabled, skip posting to the Worker entirely.
     if (!enabled) {
-      setHtml(null);
       measurementIdRef.current = null;
       return;
     }
 
-    // Only reset html when content changed (stale HTML would be misleading).
-    // For theme-only changes, keep the old highlighted HTML visible during the transition.
-    if (prevCode.current !== code || prevLanguage.current !== language) {
-      setHtml(null);
+    // The render key hides stale HTML while a replacement request is pending.
+    if (previousInputKeyRef.current !== inputKey) {
       measurementIdRef.current = null;
     }
-    prevCode.current = code;
-    prevLanguage.current = language;
+    previousInputKeyRef.current = inputKey;
 
     const input = {
       code,
@@ -194,7 +193,7 @@ export function useHighlighter(
       theme,
       measurePerformance: shouldMeasureShiki(),
       measurementIdRef,
-      setHtml,
+      setHtml: setHighlightedHtml,
     };
     if (!options.coordinator) {
       return requestDirectHighlight({ ...input, requestIdRef: currentRequestIdRef });
@@ -205,12 +204,15 @@ export function useHighlighter(
       requestHandleRef: currentRequestRef,
       requestTokenRef: currentRequestTokenRef,
     });
-  }, [code, language, theme, enabled, options.coordinator, options.threadId]);
+  }, [code, language, theme, enabled, inputKey, options.coordinator, options.threadId, options.visible, setHighlightedHtml]);
 
   useEffect(() => {
     if (!enabled || !options.coordinator) return;
     currentRequestRef.current?.setVisible(options.visible ?? true);
   }, [enabled, options.coordinator, options.visible]);
 
-  return { html, measurementId: measurementIdRef.current };
+  return {
+    html: result?.key === inputKey ? result.html : null,
+    measurementId: result?.key === inputKey ? measurementIdRef.current : null,
+  };
 }

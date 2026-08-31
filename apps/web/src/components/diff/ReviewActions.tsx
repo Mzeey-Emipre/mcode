@@ -71,18 +71,44 @@ export function ReviewActions({ thread }: ReviewActionsProps) {
           <span>PR #{pr.number}</span>
         </Button>
       ) : (
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={() => setCreatePrOpen(true)}
-          disabled={!hasCommitsAhead}
-          title={hasCommitsAhead === false ? "No commits ahead of base branch" : undefined}
-          data-testid="review-create-pr"
-          className={`${ACTION_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
-        >
-          <GitPullRequest size={12} />
-          <span>Create PR</span>
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              hasCommitsAhead === false ? (
+                <span className="inline-flex">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setCreatePrOpen(true)}
+                    disabled
+                    data-testid="review-create-pr"
+                    className={`${ACTION_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
+                  >
+                    <GitPullRequest size={12} />
+                    <span>Create PR</span>
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setCreatePrOpen(true)}
+                  disabled={!hasCommitsAhead}
+                  data-testid="review-create-pr"
+                  className={`${ACTION_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
+                >
+                  <GitPullRequest size={12} />
+                  <span>Create PR</span>
+                </Button>
+              )
+            }
+          />
+          {hasCommitsAhead === false ? (
+            <TooltipContent side="bottom" className="text-xs">
+              No commits ahead of base branch
+            </TooltipContent>
+          ) : null}
+        </Tooltip>
       )}
 
       <CreatePrDialog

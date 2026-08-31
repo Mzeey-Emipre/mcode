@@ -275,30 +275,36 @@ function MarkdownLinkAnchor({
   label,
 }: MarkdownLinkAnchorProps) {
   return (
-    <a
-      href={safeHref}
-      className="inline-flex max-w-full items-center gap-1 align-baseline text-primary no-underline transition-colors hover:underline"
-      target="_blank"
-      rel="noopener noreferrer"
-      data-testid="markdown-link"
-      title={safeHref}
-      onClick={(event) => handleMarkdownAnchorClick(event, safeHref, isPreviewable)}
-    >
-      {fileIconPath ? (
-        <span data-testid="markdown-link-file-icon" className="inline-flex shrink-0">
-          <FileTypeIcon filePath={fileIconPath} size={13} />
-        </span>
-      ) : (
-        <SiteFavicon
-          src={faviconUrl}
-          fallback={<Globe size={12} aria-hidden className="shrink-0 text-muted-foreground" />}
-          frameTestId="markdown-link-favicon-frame"
-          imageTestId="markdown-link-favicon"
-        />
-      )}
-      <span className="min-w-0 truncate">{label}</span>
-      {safeHref ? <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" /> : null}
-    </a>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <a
+            href={safeHref}
+            className="inline-flex max-w-full items-center gap-1 align-baseline text-primary no-underline transition-colors hover:underline"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="markdown-link"
+            onClick={(event) => handleMarkdownAnchorClick(event, safeHref, isPreviewable)}
+          >
+            {fileIconPath ? (
+              <span data-testid="markdown-link-file-icon" className="inline-flex shrink-0">
+                <FileTypeIcon filePath={fileIconPath} size={13} />
+              </span>
+            ) : (
+              <SiteFavicon
+                src={faviconUrl}
+                fallback={<Globe size={12} aria-hidden className="shrink-0 text-muted-foreground" />}
+                frameTestId="markdown-link-favicon-frame"
+                imageTestId="markdown-link-favicon"
+              />
+            )}
+            <span className="min-w-0 truncate">{label}</span>
+            {safeHref ? <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" /> : null}
+          </a>
+        }
+      />
+      <TooltipContent>{safeHref}</TooltipContent>
+    </Tooltip>
   );
 }
 

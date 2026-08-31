@@ -14,12 +14,15 @@ export function useHasCommitsAhead(
   branch: string | null,
   threadId?: string,
 ): boolean | null {
-  const [hasCommits, setHasCommits] = useState<boolean | null>(null);
+  const [state, setState] = useState<{
+    workspaceId: string;
+    branch: string | null;
+    threadId: string | undefined;
+    hasCommits: boolean | null;
+  }>({ workspaceId: "", branch: null, threadId: undefined, hasCommits: null });
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    setHasCommits(null);
-
     if (!workspaceId || !branch) {
       return;
     }
@@ -30,7 +33,14 @@ export function useHasCommitsAhead(
       getTransport()
         .getGitLog(workspaceId, branch, 1, undefined, threadId)
         .then((commits) => {
-          if (!cancelled) setHasCommits(commits.length > 0);
+          if (!cancelled) {
+            setState({
+              workspaceId,
+              branch,
+              threadId,
+              hasCommits: commits.length > 0,
+            });
+          }
         })
         .catch((err: unknown) => {
           // Keep last known value on transient errors
@@ -47,5 +57,9 @@ export function useHasCommitsAhead(
     };
   }, [workspaceId, branch, threadId]);
 
-  return hasCommits;
+  return state.workspaceId === workspaceId
+    && state.branch === branch
+    && state.threadId === threadId
+    ? state.hasCommits
+    : null;
 }

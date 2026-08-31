@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { usePreviewAnnotationStore } from "@/features/preview/state/previewAnnotationStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
@@ -78,12 +77,9 @@ export function useComposerSurfaceState(input: ComposerSurfaceStateInput) {
   );
   const annotationCount =
     (annotationRows?.length ?? 0) + (diffAnnotationRows?.length ?? 0);
-  const annotationBundleForDisplay = useMemo(
-    () => annotationScopeId
-      ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
-      : undefined,
-    [annotationRows, annotationScopeId, diffAnnotationRows],
-  );
+  const annotationBundleForDisplay = annotationScopeId
+    ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
+    : undefined;
   const effectiveProviderId = input.provider as ProviderId;
   const providerSurfaceState = useProviderSurfaceState(effectiveProviderId);
   const catalogScope = useCatalogScope(input);

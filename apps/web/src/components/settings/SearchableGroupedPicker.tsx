@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tokenizeSearch, matchesAllTokens } from "@/lib/searchTokens";
@@ -63,9 +63,10 @@ export function SearchableGroupedPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    if (!open) setQuery("");
-  }, [open]);
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen) setQuery("");
+  };
 
   const selectedLabel = useMemo(() => {
     const row = options.find((o) => o.value === value && !o.disabled);
@@ -95,7 +96,7 @@ export function SearchableGroupedPicker({
   }, [filtered]);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
         render={
           <Button
@@ -145,7 +146,7 @@ export function SearchableGroupedPicker({
                     onSelect={() => {
                       if (o.disabled) return;
                       onChange(o.value);
-                      setOpen(false);
+                      handleOpenChange(false);
                     }}
                     className="text-xs"
                   >

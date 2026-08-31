@@ -1,6 +1,11 @@
 import { SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useLocalPorts } from "./useLocalPorts";
 
 /** Props for the empty-browser localhost quick-open list. */
@@ -31,17 +36,25 @@ export function LocalPortsEmptyState({
     >
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground">Local</span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          disabled
-          aria-label="Sort and filter (coming soon)"
-          title="Sort & filter (coming soon)"
-          className="text-muted-foreground opacity-40"
-        >
-          <SlidersHorizontal size={13} aria-hidden />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="inline-flex">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled
+                  aria-label="Sort and filter (coming soon)"
+                  className="text-muted-foreground opacity-40"
+                >
+                  <SlidersHorizontal size={13} aria-hidden />
+                </Button>
+              </span>
+            }
+          />
+          <TooltipContent>Sort & filter (coming soon)</TooltipContent>
+        </Tooltip>
       </div>
 
       {ports.length > 0 ? (
@@ -72,16 +85,24 @@ export function LocalPortsEmptyState({
                     localhost:{p.port}
                   </span>
                 </span>
-                <span
-                  data-testid="browser-local-port-status"
-                  data-online={p.online ? "true" : "false"}
-                  className={cn(
-                    "size-2 shrink-0 rounded-full",
-                    p.online ? "bg-emerald-500" : "bg-muted-foreground/40",
-                  )}
-                  title={p.online ? "Online" : "Offline"}
-                  aria-label={p.online ? "Online" : "Offline"}
-                />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        data-testid="browser-local-port-status"
+                        data-online={p.online ? "true" : "false"}
+                        className={cn(
+                          "size-2 shrink-0 rounded-full",
+                          p.online ? "bg-emerald-500" : "bg-muted-foreground/40",
+                        )}
+                        aria-label={p.online ? "Online" : "Offline"}
+                      />
+                    }
+                  />
+                  <TooltipContent side="top">
+                    {p.online ? "Online" : "Offline"}
+                  </TooltipContent>
+                </Tooltip>
               </button>
             </li>
           ))}

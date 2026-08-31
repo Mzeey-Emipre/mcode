@@ -198,9 +198,8 @@ function BrowserUrlBar({
   const { displayValue, showFavicon, showAsTitle, inputRef, placeholder, onFocus, onBlur, onChange, onSubmit } = useOmniboxState({ url, pageTitle, faviconUrl });
   const [focused, setFocused] = useState(false);
   const [barHover, setBarHover] = useState(false);
-  const [faviconError, setFaviconError] = useState(false);
-
-  useEffect(() => setFaviconError(false), [faviconUrl]);
+  const [failedFaviconUrl, setFailedFaviconUrl] = useState<string | null>(null);
+  const faviconError = faviconUrl !== null && failedFaviconUrl === faviconUrl;
   useEffect(() => {
     if (!focusRequest) return;
     const handle = requestAnimationFrame(() => {
@@ -235,22 +234,28 @@ function BrowserUrlBar({
         onPointerLeave={() => setBarHover(false)}
         className={cn("flex w-full max-w-xl items-center gap-1.5 rounded-full px-3.5 py-1.5 transition-all", urlBarClass(focused, state.revealActions))}
       >
-        {state.faviconVisible ? <img src={faviconUrl!} alt="" width={14} height={14} loading="eager" className="pointer-events-none size-3.5 shrink-0 rounded-sm" onError={() => setFaviconError(true)} /> : null}
-        <input
-          ref={inputRef}
-          value={displayValue}
-          onChange={(event) => onChange(event.target.value)}
-          onFocus={handleFocus}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          aria-label="Preview URL"
-          title={url || undefined}
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          className={urlInputClass(state.showTitle, focused)}
-        />
+        {state.faviconVisible ? <img src={faviconUrl!} alt="" width={14} height={14} loading="eager" className="pointer-events-none size-3.5 shrink-0 rounded-sm" onError={() => setFailedFaviconUrl(faviconUrl)} /> : null}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <input
+                ref={inputRef}
+                value={displayValue}
+                onChange={(event) => onChange(event.target.value)}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                aria-label="Preview URL"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                className={urlInputClass(state.showTitle, focused)}
+              />
+            }
+          />
+          {url ? <TooltipContent side="top" sideOffset={6}>{url}</TooltipContent> : null}
+        </Tooltip>
         {state.canOpenExternal ? (
           <Tooltip>
             <TooltipTrigger

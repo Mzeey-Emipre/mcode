@@ -1278,7 +1278,7 @@ export const TerminalView = memo(function TerminalView({
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", repaint);
     };
-  }, []);
+  }, [ptyId]);
 
   // Apply safe Terminal presentation and behavior changes to the open xterm.
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { Pin, GitBranch, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PathLabel } from "./PathLabel";
 import { useProjectSelectorStore } from "./state/projectSelectorStore";
 
@@ -99,19 +100,25 @@ function ProjectRowIdentity({
     <div className="min-w-0 flex-1">
       <div className="flex items-center gap-1.5">
         <span className="truncate font-medium">{workspace.name}</span>
-        <button
-          data-testid="project-row-pin"
-          className="ml-1 inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 text-primary/80 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[pinned=true]:opacity-100"
-          data-pinned={workspace.pinned}
-          onClick={(event) => {
-            event.stopPropagation();
-            onPin(workspace.id, !workspace.pinned);
-          }}
-          aria-label={pinLabel}
-          title={`${pinLabel} project`}
-        >
-          <Pin size={11} strokeWidth={2} className={workspace.pinned ? "fill-primary/80" : ""} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                data-testid="project-row-pin"
+                className="ml-1 inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 text-primary/80 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[pinned=true]:opacity-100"
+                data-pinned={workspace.pinned}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPin(workspace.id, !workspace.pinned);
+                }}
+                aria-label={pinLabel}
+              >
+                <Pin size={11} strokeWidth={2} className={workspace.pinned ? "fill-primary/80" : ""} />
+              </button>
+            }
+          />
+          <TooltipContent>{`${pinLabel} project`}</TooltipContent>
+        </Tooltip>
       </div>
       <PathLabel path={workspace.path} home={home} />
     </div>
@@ -145,13 +152,22 @@ function ProjectRowEnrichment({
   const workingTreeLabel = enrichment.isClean ? "Clean working tree" : "Uncommitted changes";
   return (
     <div className="grid w-full min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-1.5">
-      <span
-        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", enrichment.isClean ? "bg-green-600/70" : "bg-amber-600/70")}
-        aria-label={workingTreeLabel}
-        title={workingTreeLabel}
-      />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              className={cn("h-1.5 w-1.5 shrink-0 rounded-full", enrichment.isClean ? "bg-green-600/70" : "bg-amber-600/70")}
+              aria-label={workingTreeLabel}
+            />
+          }
+        />
+        <TooltipContent>{workingTreeLabel}</TooltipContent>
+      </Tooltip>
       <GitBranch size={10} strokeWidth={2} className="shrink-0 opacity-70" aria-hidden />
-      <span className="min-w-0 truncate text-right" title={branch}>{branch}</span>
+      <Tooltip>
+        <TooltipTrigger render={<span className="min-w-0 truncate text-right">{branch}</span>} />
+        <TooltipContent>{branch}</TooltipContent>
+      </Tooltip>
       <ProjectRowThreadCount count={enrichment.threadCount} />
     </div>
   );
@@ -159,24 +175,35 @@ function ProjectRowEnrichment({
 
 function ProjectRowThreadCount({ count }: { count: number }) {
   if (count === 0) return null;
-  const title = `${count} thread${count === 1 ? "" : "s"}`;
-  return <span className="shrink-0 tabular-nums" title={title}>· {count}</span>;
+  const label = `${count} thread${count === 1 ? "" : "s"}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="shrink-0 tabular-nums">· {count}</span>} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function ProjectRowRemoveAction({ workspaceId, onRemove }: Pick<Props, "onRemove"> & { workspaceId: string }) {
   if (!onRemove) return null;
   return (
-    <button
-      data-testid="project-row-remove"
-      className="inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 text-muted-foreground/40 opacity-0 transition-opacity hover:bg-accent/60 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-      onClick={(event) => {
-        event.stopPropagation();
-        onRemove(workspaceId);
-      }}
-      aria-label="Remove from recents"
-      title="Remove from recents (Ctrl+Backspace)"
-    >
-      <X size={11} strokeWidth={2.25} aria-hidden />
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            data-testid="project-row-remove"
+            className="inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 text-muted-foreground/40 opacity-0 transition-opacity hover:bg-accent/60 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove(workspaceId);
+            }}
+            aria-label="Remove from recents"
+          >
+            <X size={11} strokeWidth={2.25} aria-hidden />
+          </button>
+        }
+      />
+      <TooltipContent>Remove from recents (Ctrl+Backspace)</TooltipContent>
+    </Tooltip>
   );
 }

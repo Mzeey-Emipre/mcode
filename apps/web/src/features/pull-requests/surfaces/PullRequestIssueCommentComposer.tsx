@@ -17,7 +17,6 @@ import {
   selectPullRequestOutcomeUnknownLane,
 } from "@/features/pull-requests/state/pull-request-mutation-selectors";
 import {
-  getPullRequestMutationIdentityKey,
   usePullRequestMutationStore,
 } from "@/features/pull-requests/state/pullRequestMutationStore";
 import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
@@ -110,18 +109,17 @@ function useIssueCommentComposer({
   replyTo,
   onPosted,
 }: IssueCommentComposerOptions) {
-  const identityKey = getPullRequestMutationIdentityKey(identity);
   const selectDraft = useMemo(
     () => selectPullRequestCommentDraft(identity),
-    [identityKey],
+    [identity],
   );
   const selectLane = useMemo(
     () => selectPullRequestMutationLane(identity, "comment"),
-    [identityKey],
+    [identity],
   );
   const selectUnknown = useMemo(
     () => selectPullRequestOutcomeUnknownLane(identity),
-    [identityKey],
+    [identity],
   );
   const body = usePullRequestMutationStore(selectDraft);
   const lane = usePullRequestMutationStore(selectLane);

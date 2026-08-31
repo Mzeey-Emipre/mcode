@@ -135,7 +135,7 @@ export function useDiffHighlighter(
   theme: ShikiTheme,
   enabled: boolean = true,
 ): { getLineTokens: (index: number) => TokenSpan[] | null } {
-  const [tokenMap, setTokenMap] = useState<Map<number, TokenSpan[]>>(new Map());
+  const [result, setResult] = useState<{ key: string; tokenMap: Map<number, TokenSpan[]> } | null>(null);
   const currentRequestId = useRef<string | null>(null);
 
   // Segment the diff into per-hunk old/new fragments in one pass, recording for
@@ -191,15 +191,15 @@ export function useDiffHighlighter(
     () => diffBlocks.blocks.map((block) => `${block.blockId} ${block.code}`).join(""),
     [diffBlocks],
   );
+  const requestKey = enabled && language !== "text" && diffBlocks.blocks.length > 0
+    ? `${blocksSignature}\0${language}\0${theme}`
+    : null;
+  const setTokenMap = useCallback((tokenMap: Map<number, TokenSpan[]>) => {
+    if (requestKey) setResult({ key: requestKey, tokenMap });
+  }, [requestKey]);
 
   useEffect(() => {
-    if (!enabled || language === "text" || diffBlocks.blocks.length === 0) {
-      setTokenMap(new Map());
-      return;
-    }
-
-    // Clear previous results so stale tokens don't show for a different file
-    setTokenMap(new Map());
+    if (!requestKey) return;
 
     return requestDiffTokens({
       blocks: diffBlocks,
@@ -209,13 +209,13 @@ export function useDiffHighlighter(
       currentRequestId,
       setTokenMap,
     });
-    // blocks, oldIndexMap and newIndexMap all derive from the same memo as
-    // blocksSignature, so the signature alone captures every block-related change.
-  }, [blocksSignature, language, theme, enabled]);
+  }, [diffBlocks, language, lines, requestKey, setTokenMap, theme]);
 
   const getLineTokens = useCallback(
-    (index: number) => tokenMap.get(index) ?? null,
-    [tokenMap],
+    (index: number) => result?.key === requestKey
+      ? result.tokenMap.get(index) ?? null
+      : null,
+    [requestKey, result],
   );
 
   return { getLineTokens };

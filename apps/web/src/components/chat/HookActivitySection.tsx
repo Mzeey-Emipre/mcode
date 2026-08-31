@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo } from "react";
+import { useEffect, useState, useMemo, memo } from "react";
 import { ChevronRight } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
@@ -9,12 +9,27 @@ import { HOOK_OUTPUT_LINE_CAP, getHookOutputLines } from "./hook-output";
 export function HookActivitySection({ hooks }: { hooks: readonly HookExecution[] }) {
   const hasError = hooks.some((h) => h.status === "completed" && (h.exitCode !== 0 || h.didBlock));
   const hasRunning = hooks.some((h) => h.status === "running");
-  const [expanded, setExpanded] = useState(hasError || hasRunning);
 
-  // Auto-expand on error/running, auto-collapse when all hooks pass
-  useEffect(() => {
-    setExpanded(hasError || hasRunning);
-  }, [hasError, hasRunning]);
+  return (
+    <HookActivityContent
+      key={hasError ? "error" : hasRunning ? "running" : "complete"}
+      hooks={hooks}
+      hasError={hasError}
+      hasRunning={hasRunning}
+    />
+  );
+}
+
+function HookActivityContent({
+  hooks,
+  hasError,
+  hasRunning,
+}: {
+  hooks: readonly HookExecution[];
+  hasError: boolean;
+  hasRunning: boolean;
+}) {
+  const [expanded, setExpanded] = useState(hasError || hasRunning);
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded} asChild>

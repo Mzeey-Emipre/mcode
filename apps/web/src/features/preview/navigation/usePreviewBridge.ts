@@ -103,9 +103,6 @@ export function usePreviewBridge({
     favicon: null,
     phase: "loaded",
   }));
-  const previewLoading = pageStatus.phase === "loading";
-  const pageTitle = pageStatus.title;
-  const faviconUrl = pageStatus.favicon;
 
   // Relative file paths typed in the omnibox resolve against the scope's local
   // checkout: the workspace root when threadless or a direct thread, the
@@ -119,6 +116,9 @@ export function usePreviewBridge({
   const storedUrl = useDiffStore(
     (s) => s.previewUrlByThread[threadId] ?? "",
   );
+  const previewLoading = pageStatus.phase === "loading";
+  const pageTitle = pageStatus.title;
+  const faviconUrl = pageStatus.favicon;
 
   /** Stable ref to the current storedUrl, read inside pushSync to avoid
    *  adding storedUrl to pushSync's dependency array. */
@@ -126,8 +126,11 @@ export function usePreviewBridge({
   storedUrlRef.current = storedUrl;
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A store-selected Preview session must discard the previous session's local browser chrome.
     setInputUrl(storedUrl);
+    // oxlint-disable-next-line react/set-state-in-effect -- A store-selected Preview session must discard the previous session's local browser chrome.
     setPageStatus({ url: null, title: null, favicon: null, phase: "loaded" });
+    // oxlint-disable-next-line react/set-state-in-effect -- A store-selected Preview session must discard the previous session's local browser chrome.
     setNavError(null);
   }, [threadId, storedUrl]);
 
@@ -272,7 +275,7 @@ export function usePreviewBridge({
       if (raf) cancelAnimationFrame(raf);
       void pushSync(false);
     };
-  }, [automationOnly, threadId, workspaceId]);
+  }, [automationOnly, pushSync, surfaceRef, threadId, workspaceId]);
 
   const onGoBack = useCallback(async () => {
     const preview = window.desktopBridge?.preview;
@@ -353,7 +356,7 @@ export function usePreviewBridge({
   const onRetry = useCallback(async () => {
     setNavError(null);
     await onReload();
-  }, [onReload]);
+  }, [onReload, setNavError]);
 
   const onNavigate = useCallback(
     (url: string) => {
@@ -367,7 +370,7 @@ export function usePreviewBridge({
         setNavError("Navigation failed.");
       });
     },
-    [basePath, pushSync],
+    [basePath, pushSync, setInputUrl, setNavError],
   );
 
   return {

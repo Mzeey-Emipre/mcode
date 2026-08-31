@@ -170,21 +170,49 @@ export function DiffToolbar({ filesVisible, onToggleFiles }: DiffToolbarProps) {
 }
 
 function useReviewViewSynchronization(input: ReviewViewSynchronizationInput): void {
+  const {
+    activeThreadId,
+    branchAvailability,
+    commitAvailability,
+    getReviewView,
+    hasTurnChanges,
+    pinnedReviewView,
+    reviewViewManuallySelected,
+    scope,
+    setViewMode,
+    viewMode,
+    viewModes,
+    workingTreeDirty,
+  } = input;
+
   useEffect(() => {
-    synchronizeReviewView(input);
+    synchronizeReviewView({
+      activeThreadId,
+      branchAvailability,
+      commitAvailability,
+      getReviewView,
+      hasTurnChanges,
+      pinnedReviewView,
+      reviewViewManuallySelected,
+      scope,
+      setViewMode,
+      viewMode,
+      viewModes,
+      workingTreeDirty,
+    });
   }, [
-    input.activeThreadId,
-    input.branchAvailability,
-    input.commitAvailability,
-    input.getReviewView,
-    input.hasTurnChanges,
-    input.pinnedReviewView,
-    input.reviewViewManuallySelected,
-    input.scope,
-    input.setViewMode,
-    input.viewMode,
-    input.viewModes,
-    input.workingTreeDirty,
+    activeThreadId,
+    branchAvailability,
+    commitAvailability,
+    getReviewView,
+    hasTurnChanges,
+    pinnedReviewView,
+    reviewViewManuallySelected,
+    scope,
+    setViewMode,
+    viewMode,
+    viewModes,
+    workingTreeDirty,
   ]);
 }
 
@@ -616,16 +644,20 @@ function useCommitAvailability({
   diffScopeRevision: number;
   commitProbeNonce: number;
 }): CommitAvailability {
-  const [availability, setAvailability] = useState<CommitAvailability>("loading");
+  const [result, setResult] = useState<{ key: string; value: CommitAvailability } | null>(null);
+  const canProbe = activeWorkspaceId !== null && isGitRepo;
+  const key = JSON.stringify([
+    activeWorkspaceId,
+    activeThreadId,
+    threadBranch,
+    diffScopeRevision,
+    commitProbeNonce,
+  ]);
 
   useEffect(() => {
-    if (!activeWorkspaceId || !isGitRepo) {
-      setAvailability("empty");
-      return;
-    }
+    if (!canProbe || !activeWorkspaceId) return;
 
     let cancelled = false;
-    setAvailability("loading");
 
     void (async () => {
       try {
@@ -641,9 +673,9 @@ function useCommitAvailability({
           activeThreadId ?? undefined,
           { skip: 0, includeStats: false },
         );
-        if (!cancelled) setAvailability(commits.length > 0 ? "available" : "empty");
+        if (!cancelled) setResult({ key, value: commits.length > 0 ? "available" : "empty" });
       } catch {
-        if (!cancelled) setAvailability("empty");
+        if (!cancelled) setResult({ key, value: "empty" });
       }
     })();
 
@@ -654,12 +686,12 @@ function useCommitAvailability({
     activeWorkspaceId,
     activeThreadId,
     threadBranch,
-    isGitRepo,
-    diffScopeRevision,
-    commitProbeNonce,
+    canProbe,
+    key,
   ]);
 
-  return availability;
+  if (!canProbe) return "empty";
+  return result?.key === key ? result.value : "loading";
 }
 
 /** Probe whether the Branch view has a resolvable comparison for the active scope. */
@@ -676,16 +708,19 @@ function useBranchAvailability({
   diffScopeRevision: number;
   branchProbeNonce: number;
 }): BranchAvailability {
-  const [availability, setAvailability] = useState<BranchAvailability>("loading");
+  const [result, setResult] = useState<{ key: string; value: BranchAvailability } | null>(null);
+  const canProbe = activeWorkspaceId !== null && isGitRepo;
+  const key = JSON.stringify([
+    activeWorkspaceId,
+    activeThreadId,
+    diffScopeRevision,
+    branchProbeNonce,
+  ]);
 
   useEffect(() => {
-    if (!activeWorkspaceId || !isGitRepo) {
-      setAvailability("empty");
-      return;
-    }
+    if (!canProbe || !activeWorkspaceId) return;
 
     let cancelled = false;
-    setAvailability("loading");
 
     void getTransport()
       .getBranchComparison(activeWorkspaceId, activeThreadId ?? undefined)
@@ -694,18 +729,19 @@ function useBranchAvailability({
         // Treat a missing flag as available for older servers; only explicit false
         // disables the view (local-only default branch, unborn repo, etc.).
         const available = !result.isUnborn && result.isComparisonAvailable !== false;
-        setAvailability(available ? "available" : "empty");
+        setResult({ key, value: available ? "available" : "empty" });
       })
       .catch(() => {
-        if (!cancelled) setAvailability("empty");
+        if (!cancelled) setResult({ key, value: "empty" });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, activeThreadId, isGitRepo, diffScopeRevision, branchProbeNonce]);
+  }, [activeWorkspaceId, activeThreadId, canProbe, key]);
 
-  return availability;
+  if (!canProbe) return "empty";
+  return result?.key === key ? result.value : "loading";
 }
 
 /**
@@ -724,13 +760,12 @@ function useWorkingTreeDirty({
   isGitRepo: boolean;
   diffScopeRevision: number;
 }): boolean {
-  const [dirty, setDirty] = useState(false);
+  const [result, setResult] = useState<{ key: string; value: boolean } | null>(null);
+  const canProbe = activeWorkspaceId !== null && isGitRepo;
+  const key = JSON.stringify([activeWorkspaceId, activeThreadId, diffScopeRevision]);
 
   useEffect(() => {
-    if (!activeWorkspaceId || !isGitRepo) {
-      setDirty(false);
-      return;
-    }
+    if (!canProbe || !activeWorkspaceId) return;
 
     let cancelled = false;
     void (async () => {
@@ -740,16 +775,16 @@ function useWorkingTreeDirty({
           false,
           activeThreadId ?? undefined,
         );
-        if (!cancelled) setDirty(files.length > 0);
+        if (!cancelled) setResult({ key, value: files.length > 0 });
       } catch {
-        if (!cancelled) setDirty(false);
+        if (!cancelled) setResult({ key, value: false });
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspaceId, activeThreadId, isGitRepo, diffScopeRevision]);
+  }, [activeWorkspaceId, activeThreadId, canProbe, key]);
 
-  return dirty;
+  return canProbe && result?.key === key ? result.value : false;
 }

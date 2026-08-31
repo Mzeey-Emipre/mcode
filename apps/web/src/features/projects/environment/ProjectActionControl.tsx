@@ -390,6 +390,7 @@ export function ProjectActionTerminalView({ threadId, actionId }: ProjectActionT
 
   useEffect(() => {
     if (run) {
+      // oxlint-disable-next-line react/set-state-in-effect -- A store update supplies the action transcript, so any stale load error must clear.
       setLoadError(null);
       return;
     }
@@ -513,6 +514,7 @@ export function useProjectActions(workspaceId: string, threadId: string): {
     const requestEpoch = stateAtRequest.updateEpochByThread[threadId] ?? 0;
     const hydrationGeneration = beginHydration(threadId);
     let active = true;
+    // oxlint-disable-next-line react/set-state-in-effect -- A new transport hydration must hide data from the previous Project Action context.
     setActions([]);
     setSetupAvailability(null);
     setLoadError(null);
@@ -637,6 +639,7 @@ function ActionStatus({
   const [showRecentResult, setShowRecentResult] = useState(() => isRecentResult(status, finishedAt));
   useEffect(() => {
     const remaining = resultDisplayRemaining(status, finishedAt);
+    // oxlint-disable-next-line react/set-state-in-effect -- This timer synchronizes the transient result indicator with wall-clock time.
     setShowRecentResult(remaining > 0);
     if (remaining === 0) return;
     const timer = window.setTimeout(() => setShowRecentResult(false), remaining);

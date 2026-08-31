@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Check, ChevronDown } from "lucide-react";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   Command,
@@ -47,11 +48,13 @@ function useResolveBranchComparison(
       state.branchComparison &&
       state.branchResolvedRevisionByScope[key] === diffScopeRevision
     ) {
+      // oxlint-disable-next-line react/set-state-in-effect -- The store cache is the external source of truth for this request lifecycle.
       setLoading(false);
       return;
     }
 
     let cancelled = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- Starting the branch-comparison request must synchronize its pending indicator.
     setLoading(true);
     void getTransport()
       .getBranchComparison(workspaceId, threadId)
@@ -151,16 +154,22 @@ function RefName({
   const prefix = slash >= 0 ? name.slice(0, slash + 1) : null;
   const rest = slash >= 0 ? name.slice(slash + 1) : name;
   return (
-    <span
-      className={cn(
-        "min-w-0 flex-1 truncate whitespace-nowrap font-mono text-[11px]",
-        active ? "text-foreground" : "text-foreground/80",
-      )}
-      title={name}
-    >
-      {prefix && <span className="text-muted-foreground/50">{prefix}</span>}
-      {middleTruncate(rest, prefix ? 22 : 29)}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate whitespace-nowrap font-mono text-[11px]",
+              active ? "text-foreground" : "text-foreground/80",
+            )}
+          />
+        }
+      >
+        {prefix && <span className="text-muted-foreground/50">{prefix}</span>}
+        {middleTruncate(rest, prefix ? 22 : 29)}
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">{name}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -260,19 +269,25 @@ function RefCombobox({
 /** Read-only chip for the current branch on the left side of the comparison. */
 function CurrentRefChip({ value }: { value: string | null }) {
   return (
-    <span
-      data-testid="branch-current-ref"
-      aria-label={`Current branch: ${value ?? "unknown"}`}
-      title={value ?? "Current branch"}
-      className={cn(
-        "flex h-6 min-w-0 shrink items-center rounded-md px-2 font-mono text-xs font-medium",
-        "text-muted-foreground",
-      )}
-    >
-      <span className={cn("max-w-[142px] truncate", !value && "text-muted-foreground")}>
-        {value ?? "current"}
-      </span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            data-testid="branch-current-ref"
+            aria-label={`Current branch: ${value ?? "unknown"}`}
+            className={cn(
+              "flex h-6 min-w-0 shrink items-center rounded-md px-2 font-mono text-xs font-medium",
+              "text-muted-foreground",
+            )}
+          />
+        }
+      >
+        <span className={cn("max-w-[142px] truncate", !value && "text-muted-foreground")}>
+          {value ?? "current"}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">{value ?? "Current branch"}</TooltipContent>
+    </Tooltip>
   );
 }
 

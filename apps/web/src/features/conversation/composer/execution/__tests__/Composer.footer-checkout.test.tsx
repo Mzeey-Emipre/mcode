@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, resolve } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
+import * as NodePath from "node:path";
 
 describe("Composer footer visibility", () => {
   it("reserves the footer strip for branch mode", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const composerSource = readFileSync(resolve(here, "../../Composer.tsx"), "utf8");
-    const statusStripSource = readFileSync(resolve(here, "../../ComposerStatusStrip.tsx"), "utf8");
+    const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+    const composerSource = NodeFS.readFileSync(NodePath.resolve(here, "../../Composer.tsx"), "utf8");
+    const statusStripSource = NodeFS.readFileSync(NodePath.resolve(here, "../../ComposerStatusStrip.tsx"), "utf8");
 
     expect(composerSource).toContain("const showComposerStatusBar = !!branchFromMessageId;");
     expect(statusStripSource).toContain("aria-hidden={!props.visible}");

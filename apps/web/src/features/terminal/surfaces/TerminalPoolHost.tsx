@@ -91,11 +91,14 @@ function useWarmTarget(
     if (visibleTerm && terminalScopeId) {
       const nextTarget = { scopeId: terminalScopeId, ptyId: visibleTerm.id };
       if (warmTarget?.scopeId !== nextTarget.scopeId || warmTarget?.ptyId !== nextTarget.ptyId) {
+        // Keep xterm mounted while the terminal tab hides so its scrollback remains attached.
+        // oxlint-disable-next-line react/set-state-in-effect -- This synchronizes the xterm mount target with the terminal store.
         setWarmTarget(nextTarget);
       }
       return;
     }
     if (warmTarget && !terminals[warmTarget.scopeId]?.some((terminal) => terminal.id === warmTarget.ptyId)) {
+      // oxlint-disable-next-line react/set-state-in-effect -- Removing a closed terminal must detach its xterm mount target before paint.
       setWarmTarget(null);
     }
   }, [visibleTerm, terminalScopeId, terminals, warmTarget]);
@@ -126,9 +129,11 @@ function useMountedTarget(target: TerminalTarget | null) {
     if (mountedTarget) {
       pendingTargetRef.current = target;
       handoffPendingRef.current = true;
+      // oxlint-disable-next-line react/set-state-in-effect -- The portal handoff unmounts the old xterm before attaching the next one.
       setMountedTarget(null);
       return;
     }
+    // oxlint-disable-next-line react/set-state-in-effect -- The portal handoff attaches the next xterm only after the old mount clears.
     setMountedTarget(target);
   }, [mountedTarget, target]);
 

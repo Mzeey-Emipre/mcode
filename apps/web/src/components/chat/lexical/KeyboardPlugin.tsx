@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getSelection,
@@ -158,12 +158,12 @@ export function KeyboardPlugin({
   const disabledRef = useRef(disabled);
   disabledRef.current = disabled;
 
-  const refs: KeyboardRefs = {
+  const refs = useMemo<KeyboardRefs>(() => ({
     isPopupOpen: isPopupOpenRef,
     onPopupKeyDown: onPopupKeyDownRef,
     onSubmit: onSubmitRef,
     disabled: disabledRef,
-  };
+  }), []);
 
   // Register all keyboard handlers once, using refs for latest values
   useEffect(() => {
@@ -226,7 +226,7 @@ export function KeyboardPlugin({
       unregisterBackspace();
       unregisterDelete();
     };
-  }, [editor]);
+  }, [editor, refs]);
 
   return null;
 }

@@ -18,7 +18,7 @@ function mergeRuntimeList<T>(persisted: T[], placeholder: T[]): T[] {
   return persisted.length > 0 ? persisted : placeholder;
 }
 
-function useFallback<T>(value: T, fallback: T, isEmpty: (candidate: T) => boolean): T {
+function fallbackWhenEmpty<T>(value: T, fallback: T, isEmpty: (candidate: T) => boolean): T {
   return isEmpty(value) ? fallback : value;
 }
 
@@ -63,14 +63,14 @@ function runtimeIdentityPatch(
     runtimePhase: resolveRuntimePhase(persisted, placeholder, placeholderRunning),
     turnExecutionId: persisted.turnExecutionId ?? placeholder.turnExecutionId,
     agentStartTime: persisted.agentStartTime ?? placeholder.agentStartTime,
-    currentTurnMessageId: useFallback(persisted.currentTurnMessageId, placeholder.currentTurnMessageId, (value) => value.length === 0),
+    currentTurnMessageId: fallbackWhenEmpty(persisted.currentTurnMessageId, placeholder.currentTurnMessageId, (value) => value.length === 0),
     pendingTurnPersistMessageIds: mergePendingPersistMessageIds(placeholder, persisted),
     assistantResponseKeys: { ...placeholder.assistantResponseKeys, ...persisted.assistantResponseKeys },
     isCompacting: persisted.isCompacting || placeholder.isCompacting,
     fileEffectSummary: persisted.fileEffectSummary.effects.length > 0
       ? persisted.fileEffectSummary
       : placeholder.fileEffectSummary,
-    fileEffectTurnId: useFallback(persisted.fileEffectTurnId, placeholder.fileEffectTurnId, (value) => value.length === 0),
+    fileEffectTurnId: fallbackWhenEmpty(persisted.fileEffectTurnId, placeholder.fileEffectTurnId, (value) => value.length === 0),
     awaitingUserStopPersist: persisted.awaitingUserStopPersist ?? placeholder.awaitingUserStopPersist,
     rateLimit: persisted.rateLimit ?? placeholder.rateLimit,
     apiRetry: persisted.apiRetry ?? placeholder.apiRetry,
@@ -84,12 +84,12 @@ function runtimeNarrativePatch(
   createTurnResponseKey: (threadId: string) => string,
 ): Partial<ThreadRecord> {
   return {
-    streaming: useFallback(persisted.streaming, placeholder.streaming, (value) => value.length === 0),
-    streamingPreview: useFallback(persisted.streamingPreview, placeholder.streamingPreview, (value) => value.length === 0),
+    streaming: fallbackWhenEmpty(persisted.streaming, placeholder.streaming, (value) => value.length === 0),
+    streamingPreview: fallbackWhenEmpty(persisted.streamingPreview, placeholder.streamingPreview, (value) => value.length === 0),
     toolCalls: mergeRuntimeList(persisted.toolCalls, placeholder.toolCalls),
     thoughtSegments: mergeRuntimeList(persisted.thoughtSegments, placeholder.thoughtSegments),
     hooks: mergeRuntimeList(persisted.hooks, placeholder.hooks),
-    currentTurnResponseKey: useFallback(
+    currentTurnResponseKey: fallbackWhenEmpty(
       persisted.currentTurnResponseKey,
       placeholder.currentTurnResponseKey,
       (value) => value.length === 0,

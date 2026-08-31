@@ -417,33 +417,39 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
       );
     }
     return (
-      <Button
-        type="button"
-        role="treeitem"
-        variant="ghost"
-        size="sm"
-        tabIndex={focusedId === row.node.id ? 0 : -1}
-        aria-label={row.node.path}
-        aria-level={row.depth}
-        aria-posinset={row.positionInSet}
-        aria-setsize={row.setSize}
-        aria-selected={row.node.path === activePath}
-        ref={(node) => setRowRef(row.node.id, node)}
-        title={row.node.path}
-        className={cn(
-          "mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1.5 rounded-md px-2 font-mono text-xs font-normal",
-          row.node.path === activePath
-            ? "bg-muted/70 text-foreground"
-            : "text-foreground/75 hover:bg-muted/40",
-        )}
-        style={{ paddingLeft: `${Math.max(8, row.depth * 12 - 4)}px` }}
-        onClick={() => onActivate(row.node.path)}
-        onFocus={() => setFocusedId(row.node.id)}
-        onKeyDown={(event) => handleKeyDown(event, row, index)}
-      >
-        <FileTypeIcon filePath={row.node.path} size={14} />
-        <OverflowPathLabel label={row.node.name} path={row.node.path} />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              role="treeitem"
+              variant="ghost"
+              size="sm"
+              tabIndex={focusedId === row.node.id ? 0 : -1}
+              aria-label={row.node.path}
+              aria-level={row.depth}
+              aria-posinset={row.positionInSet}
+              aria-setsize={row.setSize}
+              aria-selected={row.node.path === activePath}
+              ref={(node) => setRowRef(row.node.id, node)}
+              className={cn(
+                "mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1.5 rounded-md px-2 font-mono text-xs font-normal",
+                row.node.path === activePath
+                  ? "bg-muted/70 text-foreground"
+                  : "text-foreground/75 hover:bg-muted/40",
+              )}
+              style={{ paddingLeft: `${Math.max(8, row.depth * 12 - 4)}px` }}
+              onClick={() => onActivate(row.node.path)}
+              onFocus={() => setFocusedId(row.node.id)}
+              onKeyDown={(event) => handleKeyDown(event, row, index)}
+            >
+              <FileTypeIcon filePath={row.node.path} size={14} />
+              <OverflowPathLabel label={row.node.name} path={row.node.path} />
+            </Button>
+          }
+        />
+        <TooltipContent>{row.node.path}</TooltipContent>
+      </Tooltip>
     );
   };
 

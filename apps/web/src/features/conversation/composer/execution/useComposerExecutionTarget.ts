@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { ALL_MODE_OPTIONS, type ComposerMode, type ModeOption } from "@/components/chat/ModeSelector";
 import type { Thread } from "@/transport";
 import { getTransport } from "@/transport";
@@ -73,7 +73,6 @@ export function useComposerExecutionTarget({
   isNewThread,
   workspaceId,
 }: UseComposerExecutionTargetOptions): ComposerExecutionTargetController {
-  const [composerMode, setComposerModeLocal] = useState<ComposerMode>("direct");
   const activeWorkspace = useWorkspaceStore((state) =>
     state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId),
   );
@@ -99,6 +98,9 @@ export function useComposerExecutionTarget({
   const setNewThreadBranchFromPr = useWorkspaceStore((state) => state.setNewThreadBranchFromPr);
   const isGitRepo = activeWorkspace?.is_git_repo ?? false;
   const needsWorkspace = isNewThread && !workspaceId;
+  const composerMode = isNewThread
+    ? (isGitRepo ? newThreadMode : "direct")
+    : (activeThread?.mode === "worktree" ? "worktree" : "direct");
   const lookupPullRequest = useCallback((url: string) => getTransport().getPrByUrl(url), []);
   const {
     detectedPr,
@@ -127,7 +129,6 @@ export function useComposerExecutionTarget({
 
   const setMode = useCallback(
     (mode: ComposerMode) => {
-      setComposerModeLocal(mode);
       setNewThreadMode(mode);
       rememberComposerMode(mode);
       if (mode === "existing-worktree" && workspaceId) {
@@ -143,13 +144,6 @@ export function useComposerExecutionTarget({
     loadBranches(workspaceId);
     loadWorktrees(workspaceId);
   }, [activeThread, branchFromMessageId, initBranchMode, loadBranches, loadWorktrees, workspaceId]);
-
-  useEffect(() => {
-    const targetMode = isNewThread
-      ? (isGitRepo ? newThreadMode : "direct")
-      : (activeThread?.mode === "worktree" ? "worktree" : "direct");
-    if (composerMode !== targetMode) setComposerModeLocal(targetMode);
-  }, [activeThread?.mode, composerMode, isGitRepo, isNewThread, newThreadMode]);
 
   useEffect(() => {
     if (isNewThread && workspaceId && isGitRepo) loadBranches(workspaceId);

@@ -38,7 +38,6 @@ import {
   selectPullRequestMutationLane,
   selectPullRequestOutcomeUnknownLane,
 } from "@/features/pull-requests/state/pull-request-mutation-selectors";
-import { getPullRequestDetailKey } from "@/features/pull-requests/state/pullRequestDetailStore";
 import {
   usePullRequestMutationStore,
   type PullRequestMutationEffect,
@@ -522,15 +521,14 @@ export function PullRequestLifecycleDialog({
   readTransport,
   onRefresh,
 }: PullRequestLifecycleDialogProps) {
-  const identityKey = getPullRequestDetailKey(detail.identity);
   const laneSelector = useMemo(
     () => selectPullRequestMutationLane(detail.identity, effect),
-    [effect, identityKey],
+    [detail.identity, effect],
   );
   const lane = usePullRequestMutationStore(laneSelector);
   const unknownSelector = useMemo(
     () => selectPullRequestOutcomeUnknownLane(detail.identity),
-    [identityKey],
+    [detail.identity],
   );
   const outcomeUnknownLane = usePullRequestMutationStore(unknownSelector);
   const displayedError = outcomeUnknownLane?.error ?? lane.error;
@@ -554,6 +552,7 @@ export function PullRequestLifecycleDialog({
 
   useEffect(() => {
     if (!open) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Opening a lifecycle dialog synchronizes its form with the selected pull request snapshot.
     setMergeMethod(
       initialMergeMethod && detail.mergeMethods.includes(initialMergeMethod)
         ? initialMergeMethod
@@ -568,7 +567,7 @@ export function PullRequestLifecycleDialog({
     detail.defaultMergeMethod,
     detail.mergeMethods,
     effect,
-    identityKey,
+    detail.identity,
     initialMergeMethod,
     open,
   ]);

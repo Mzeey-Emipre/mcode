@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useRef, useState, type MutableRefObject } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useToastStore } from "@/stores/toastStore";
 
@@ -6,6 +6,28 @@ interface GoalActionScope {
   threadId: string;
   refreshRequestId: number;
   clearRequestId: number;
+}
+
+interface GoalActionState {
+  threadId: string;
+  detailsOpen: boolean;
+  refreshError: boolean;
+  isRefreshingGoal: boolean;
+  isClearingGoal: boolean;
+  lookupSource: string | null;
+  lookupReason: string | null;
+}
+
+function createGoalActionState(threadId: string): GoalActionState {
+  return {
+    threadId,
+    detailsOpen: false,
+    refreshError: false,
+    isRefreshingGoal: false,
+    isClearingGoal: false,
+    lookupSource: null,
+    lookupReason: null,
+  };
 }
 
 function normalizeGoalActionError(error: unknown): string {
@@ -54,63 +76,58 @@ export interface ActiveGoalActions {
 
 /** Manages active-goal refresh and clear requests for one thread. */
 export function useActiveGoalActions(threadId: string): ActiveGoalActions {
-  const [detailsOpen, setDetailsOpenState] = useState(false);
-  const [refreshError, setRefreshError] = useState(false);
-  const [isRefreshingGoal, setIsRefreshingGoal] = useState(false);
-  const [isClearingGoal, setIsClearingGoal] = useState(false);
-  const [lookupSource, setLookupSource] = useState<string | null>(null);
-  const [lookupReason, setLookupReason] = useState<string | null>(null);
+  const [actionState, setActionState] = useState(() => createGoalActionState(threadId));
   const actionScopeRef = useRef<GoalActionScope>({ threadId, refreshRequestId: 0, clearRequestId: 0 });
   const refreshThreadGoal = useThreadStore((state) => state.refreshThreadGoal);
   const clearThreadGoal = useThreadStore((state) => state.clearThreadGoal);
 
-  useEffect(() => {
+  if (actionScopeRef.current.threadId !== threadId) {
     actionScopeRef.current = {
       threadId,
       refreshRequestId: actionScopeRef.current.refreshRequestId + 1,
       clearRequestId: actionScopeRef.current.clearRequestId + 1,
     };
-    setDetailsOpenState(false);
-    setRefreshError(false);
-    setIsRefreshingGoal(false);
-    setIsClearingGoal(false);
-    setLookupSource(null);
-    setLookupReason(null);
+  }
+
+  const state = actionState.threadId === threadId
+    ? actionState
+    : createGoalActionState(threadId);
+  const updateState = useCallback((patch: Partial<Omit<GoalActionState, "threadId">>) => {
+    setActionState((current) => ({
+      ...createGoalActionState(threadId),
+      ...(current.threadId === threadId ? current : {}),
+      ...patch,
+    }));
   }, [threadId]);
 
   const setDetailsOpen = useCallback((open: boolean) => {
-    setDetailsOpenState(open);
+    updateState({ detailsOpen: open });
     if (!open) return;
     const refreshRequestId = beginRefresh(actionScopeRef, threadId);
-    setIsRefreshingGoal(true);
-    setRefreshError(false);
+    updateState({ isRefreshingGoal: true, refreshError: false });
     void refreshThreadGoal(threadId)
       .then((lookup) => {
         if (!isCurrentAction(actionScopeRef.current, threadId, "refreshRequestId", refreshRequestId)) return;
-        setLookupSource(lookup.source);
-        setLookupReason(lookup.reason ?? null);
+        updateState({ lookupSource: lookup.source, lookupReason: lookup.reason ?? null });
       })
       .catch(() => {
         if (!isCurrentAction(actionScopeRef.current, threadId, "refreshRequestId", refreshRequestId)) return;
-        setRefreshError(true);
+        updateState({ refreshError: true });
       })
       .finally(() => {
         if (!isCurrentAction(actionScopeRef.current, threadId, "refreshRequestId", refreshRequestId)) return;
-        setIsRefreshingGoal(false);
+        updateState({ isRefreshingGoal: false });
       });
-  }, [refreshThreadGoal, threadId]);
+  }, [refreshThreadGoal, threadId, updateState]);
 
   const clearGoal = useCallback(() => {
-    if (isClearingGoal) return;
+    if (state.isClearingGoal) return;
     const scope = beginClear(actionScopeRef, threadId);
-    setIsRefreshingGoal(false);
-    setRefreshError(false);
-    setIsClearingGoal(true);
+    updateState({ isRefreshingGoal: false, refreshError: false, isClearingGoal: true });
     void clearThreadGoal(threadId)
       .then((lookup) => {
         if (!isCurrentAction(actionScopeRef.current, threadId, "clearRequestId", scope.clearRequestId)) return;
-        setLookupSource(lookup.source);
-        setLookupReason(lookup.reason ?? null);
+        updateState({ lookupSource: lookup.source, lookupReason: lookup.reason ?? null });
         if (lookup.source === "unsupported") {
           useToastStore.getState().show(
             "error",
@@ -137,17 +154,17 @@ export function useActiveGoalActions(threadId: string): ActiveGoalActions {
       })
       .finally(() => {
         if (!isCurrentAction(actionScopeRef.current, threadId, "clearRequestId", scope.clearRequestId)) return;
-        setIsClearingGoal(false);
+        updateState({ isClearingGoal: false });
       });
-  }, [clearThreadGoal, isClearingGoal, threadId]);
+  }, [clearThreadGoal, state.isClearingGoal, threadId, updateState]);
 
   return {
-    detailsOpen,
-    isRefreshingGoal,
-    isClearingGoal,
-    lookupSource,
-    lookupReason,
-    refreshError,
+    detailsOpen: state.detailsOpen,
+    isRefreshingGoal: state.isRefreshingGoal,
+    isClearingGoal: state.isClearingGoal,
+    lookupSource: state.lookupSource,
+    lookupReason: state.lookupReason,
+    refreshError: state.refreshError,
     setDetailsOpen,
     clearGoal,
   };

@@ -414,6 +414,7 @@ export function TerminalSearchShelf({
 
   useEffect(() => {
     if (!open || !active) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- The xterm search add-on reports the current result into local UI state.
     runSearch("next");
   }, [active, open, runSearch]);
 

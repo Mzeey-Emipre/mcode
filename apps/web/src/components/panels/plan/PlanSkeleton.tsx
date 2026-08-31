@@ -1,3 +1,5 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
 interface PlanSkeletonProps {
   title?: string | null;
 }
@@ -14,12 +16,16 @@ export function PlanSkeleton({ title }: PlanSkeletonProps) {
       </div>
 
       {title && (
-        <h1
-          className="truncate px-4 pt-4 text-[15px] font-semibold leading-snug opacity-35"
-          title={title}
-        >
-          {title}
-        </h1>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <h1 className="truncate px-4 pt-4 text-[15px] font-semibold leading-snug opacity-35">
+                {title}
+              </h1>
+            }
+          />
+          <TooltipContent>{title}</TooltipContent>
+        </Tooltip>
       )}
 
       <div className="flex items-center gap-2 px-4 pb-2 pt-4">

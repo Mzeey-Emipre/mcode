@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { TriangleAlert, Copy, Check, X, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Substrings that identify a provider CLI setup error from any backend. */
 const CLI_NOT_FOUND_MARKERS = [
@@ -85,18 +86,25 @@ export function CliErrorBanner({ error, onDismiss, onOpenSettings }: CliErrorBan
               <code className="flex-1 rounded bg-muted/60 px-2.5 py-1 font-mono text-xs text-foreground/80 border border-border/40">
                 {installCmd}
               </code>
-              <button
-                type="button"
-                onClick={handleCopy}
-                title="Copy command"
-                className={cn(
-                  "flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border/40",
-                  "text-muted-foreground/60 transition-colors hover:border-amber-500/40",
-                  "hover:bg-amber-500/10 hover:text-amber-500/80",
-                )}
-              >
-                {copied ? <Check size={12} /> : <Copy size={12} />}
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      aria-label="Copy command"
+                      className={cn(
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border/40",
+                        "text-muted-foreground/60 transition-colors hover:border-amber-500/40",
+                        "hover:bg-amber-500/10 hover:text-amber-500/80",
+                      )}
+                    >
+                      {copied ? <Check size={12} /> : <Copy size={12} />}
+                    </button>
+                  }
+                />
+                <TooltipContent>Copy command</TooltipContent>
+              </Tooltip>
             </div>
           )}
 

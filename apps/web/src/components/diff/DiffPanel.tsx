@@ -296,7 +296,14 @@ function useFilesPanelController({
 }): FilesPanelController {
   const panelWidth = useElementWidth(panelRootRef, diffScopeId ?? undefined);
   const [filesPanelWidth, setFilesPanelWidth] = useState(FILES_PANEL_DEFAULT_WIDTH);
-  const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null);
+  const filesScopeKey = `${viewMode}:${diffScopeId ?? ""}`;
+  const [activeWorktreeFile, setActiveWorktreeFile] = useState<{
+    readonly path: string | null;
+    readonly scopeKey: string;
+  } | null>(null);
+  const activeWorktreePath = activeWorktreeFile?.scopeKey === filesScopeKey
+    ? activeWorktreeFile.path
+    : null;
   const floatingFilesPanelMaxWidth = getInitialFloatingFilesPanelMaxWidth(panelWidth);
   const floatingFilesPanelMinWidth = Math.min(FILES_PANEL_MIN_WIDTH, floatingFilesPanelMaxWidth);
   const setFilesVisible = useCallback((visible: boolean) => {
@@ -318,7 +325,9 @@ function useFilesPanelController({
     [floatingFilesPanelMinWidth],
   );
 
-  useEffect(() => setActiveWorktreePath(null), [viewMode, diffScopeId]);
+  const setActiveWorktreePath = useCallback((path: string | null) => {
+    setActiveWorktreeFile({ path, scopeKey: filesScopeKey });
+  }, [filesScopeKey]);
 
   return {
     activeWorktreePath,
@@ -356,6 +365,15 @@ function useComparisonController(store: DiffPanelStore): ComparisonController {
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const [comparisonErrorIdentity, setComparisonErrorIdentity] = useState<string | null>(null);
   const [snapshotRefreshRevision, setSnapshotRefreshRevision] = useState(0);
+  const {
+    activeThreadId,
+    bumpDiffRevision,
+    diffScopeId,
+    setReviewDiffStat,
+    setSnapshots,
+    snapshotsLoading,
+    viewMode,
+  } = store;
   const comparisonIdentityRef = useRef("");
   const refreshRequestRef = useRef(0);
   const mutableComparisonRevision = getMutableComparisonRevision(store.viewMode, store.diffRevision);
@@ -408,13 +426,15 @@ function useComparisonController(store: DiffPanelStore): ComparisonController {
   comparisonIdentityRef.current = comparisonIdentity;
 
   useEffect(() => {
-    store.setReviewDiffStat(toReviewDiffStat(visibleComparison));
-  }, [store.setReviewDiffStat, visibleComparison]);
+    // oxlint-disable-next-line react/set-state-in-effect -- The toolbar-owned store must synchronize with the comparison rendered by this panel.
+    setReviewDiffStat(toReviewDiffStat(visibleComparison));
+  }, [setReviewDiffStat, visibleComparison]);
 
   useEffect(() => {
-    if (!store.diffScopeId || !canLoadComparison(comparisonLoadInput, store.snapshotsLoading)) return;
+    if (!diffScopeId || !canLoadComparison(comparisonLoadInput, snapshotsLoading)) return;
 
     let cancelled = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- A comparison request synchronizes pending UI state with the external transport lifecycle.
     setComparisonLoading(true);
     setComparisonErrorIdentity(null);
     void loadComparison(comparisonLoadInput).then((next) => {
@@ -431,35 +451,35 @@ function useComparisonController(store: DiffPanelStore): ComparisonController {
   }, [
     comparisonIdentity,
     comparisonLoadInput,
+    diffScopeId,
     snapshotRefreshRevision,
-    store.diffScopeId,
-    store.snapshotsLoading,
+    snapshotsLoading,
   ]);
 
   const onRefreshComparison = useCallback(() => {
-    if (cannotRefreshComparison(store.diffScopeId, comparisonLoading, store.viewMode)) return;
-    if (isGitView(store.viewMode)) {
-      store.bumpDiffRevision(store.diffScopeId!);
+    if (cannotRefreshComparison(diffScopeId, comparisonLoading, viewMode)) return;
+    if (isGitView(viewMode)) {
+      bumpDiffRevision(diffScopeId!);
       return;
     }
-    if (!store.activeThreadId) return;
+    if (!activeThreadId) return;
     refreshSnapshots({
-      activeThreadId: store.activeThreadId,
+      activeThreadId,
       comparisonIdentity,
       comparisonIdentityRef,
       refreshRequestRef,
       setComparisonLoading,
       setSnapshotRefreshRevision,
-      setSnapshots: store.setSnapshots,
+      setSnapshots,
     });
   }, [
+    activeThreadId,
+    bumpDiffRevision,
     comparisonIdentity,
     comparisonLoading,
-    store.activeThreadId,
-    store.bumpDiffRevision,
-    store.diffScopeId,
-    store.setSnapshots,
-    store.viewMode,
+    diffScopeId,
+    setSnapshots,
+    viewMode,
   ]);
 
   useEffect(() => () => {

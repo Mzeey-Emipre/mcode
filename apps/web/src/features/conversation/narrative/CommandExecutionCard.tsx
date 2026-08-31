@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronRight, Terminal } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ToolCall } from "@/transport/types";
 import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
 import { extractNarrativeCommand } from "./extract-narrative-command";
@@ -74,14 +75,16 @@ function CommandExecutionHeader({
 }) {
   const commandPreview = open
     ? <span className="min-w-0 flex-1" />
-    : (
-      <span
-        className="min-w-0 flex-1 truncate font-mono text-xs font-normal text-muted-foreground/70"
-        title={command || undefined}
-      >
-        {preview}
-      </span>
-    );
+    : command
+    ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className="min-w-0 flex-1 truncate font-mono text-xs font-normal text-muted-foreground/70">{preview}</span>}
+        />
+        <TooltipContent>{command}</TooltipContent>
+      </Tooltip>
+    )
+    : <span className="min-w-0 flex-1 truncate font-mono text-xs font-normal text-muted-foreground/70">{preview}</span>;
 
   return (
     <Button

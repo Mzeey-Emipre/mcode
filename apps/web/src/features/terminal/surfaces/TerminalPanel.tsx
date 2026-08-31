@@ -63,6 +63,7 @@ export function TerminalPanel() {
 
   // Dismiss any pending kill confirmation when the user switches threads.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A global thread change invalidates the confirmation's terminal target.
     setPendingKill(null);
   }, [activeThreadId]);
 

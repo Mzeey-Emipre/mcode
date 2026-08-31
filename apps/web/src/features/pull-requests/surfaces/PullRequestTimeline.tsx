@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format-relative";
 import { cn } from "@/lib/utils";
 import { RemoteMarkdown } from "./RemoteMarkdown";
@@ -362,20 +363,26 @@ const TimelineRow = memo(
                 </time>
               </div>
               {eventUrl && (
-                <a
-                  href={eventUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Open event"
-                  title="Open event"
-                  className="-mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] duration-150 hover:bg-muted/50 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
-                  onClick={(event) => {
-                    if (!item.url || !safePullRequestHttpUrl(item.url))
-                      event.preventDefault();
-                  }}
-                >
-                  <ExternalLink aria-hidden className="size-3.5" />
-                </a>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <a
+                        href={eventUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Open event"
+                        className="-mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] duration-150 hover:bg-muted/50 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
+                        onClick={(event) => {
+                          if (!item.url || !safePullRequestHttpUrl(item.url))
+                            event.preventDefault();
+                        }}
+                      >
+                        <ExternalLink aria-hidden className="size-3.5" />
+                      </a>
+                    }
+                  />
+                  <TooltipContent>Open event</TooltipContent>
+                </Tooltip>
               )}
             </div>
             <TimelineEventBody item={item} />

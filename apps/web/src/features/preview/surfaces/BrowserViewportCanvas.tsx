@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
 import {
@@ -11,6 +11,7 @@ import {
   type ViewportCanvasBounds,
   type ViewportSize,
 } from "../automation/services/viewportCoordinator";
+import { useViewportCoordinatorState } from "./useViewportCoordinatorState";
 
 type DragAxis = "width" | "height" | "both";
 type DragHandlePosition =
@@ -402,11 +403,8 @@ export function BrowserViewportCanvas({
   onUserViewportChange,
 }: BrowserViewportCanvasProps) {
   const resolvedState = state ?? INACTIVE_VIEWPORT_STATE;
-  const [currentState, setCurrentState] = useState(resolvedState);
+  const currentState = useViewportCoordinatorState(coordinator, resolvedState);
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-
-  useEffect(() => setCurrentState(resolvedState), [resolvedState]);
-  useEffect(() => coordinator?.subscribe(setCurrentState), [coordinator]);
 
   return (
     <BrowserViewportStage

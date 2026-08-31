@@ -69,16 +69,24 @@ export function ComposerOptionsMenu({
           Permissions
         </div>
         {permissionLocked ? (
-          <div
-            className={cn(
-              "flex items-center gap-1.5 rounded-md bg-muted/40 px-2 py-1.5 text-xs font-medium text-muted-foreground",
-              hasPlans && "mb-2",
-            )}
-            title="Cursor on Windows runs in full access — supervised mode is unavailable because cursor-agent's OS sandbox requires macOS or Linux."
-          >
-            <Unlock size={12} />
-            Full access (Cursor on Windows)
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md bg-muted/40 px-2 py-1.5 text-xs font-medium text-muted-foreground",
+                    hasPlans && "mb-2",
+                  )}
+                >
+                  <Unlock size={12} />
+                  Full access (Cursor on Windows)
+                </div>
+              }
+            />
+            <TooltipContent>
+              Cursor on Windows runs in full access. Supervised mode is unavailable because cursor-agent's OS sandbox requires macOS or Linux.
+            </TooltipContent>
+          </Tooltip>
         ) : (
           <div className={cn("flex rounded-md bg-muted/40 p-0.5", hasPlans && "mb-2")}>
             <Button

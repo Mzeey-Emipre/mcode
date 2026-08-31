@@ -2,6 +2,7 @@ import { FileText, File } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import {
   attachmentIconKindFromMime,
@@ -48,31 +49,37 @@ export function FileAttachmentTile({
   const isComposer = variant === "composer";
 
   return (
-    <div
-      className={cn(
-        "relative overflow-hidden rounded-xl",
-        "border border-border/60 bg-muted/45 ring-1 ring-primary/15",
-        "shadow-sm shadow-black/5 dark:shadow-black/20",
-        isComposer ? "h-[72px] w-[140px]" : "min-h-[72px] w-full max-w-[260px]",
-        className,
-      )}
-      title={name}
-    >
-      {accessory}
-      <div
-        className={cn(
-          "flex h-full flex-col justify-center gap-1",
-          isComposer ? "px-3 py-2" : "px-3 py-2.5",
-        )}
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          {icon}
-          <span className="truncate text-xs font-medium text-foreground">{name}</span>
-        </div>
-        <span className="pl-[26px] text-xs tabular-nums text-muted-foreground">
-          {formatAttachmentByteSize(sizeBytes)}
-        </span>
-      </div>
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            className={cn(
+              "relative overflow-hidden rounded-xl",
+              "border border-border/60 bg-muted/45 ring-1 ring-primary/15",
+              "shadow-sm shadow-black/5 dark:shadow-black/20",
+              isComposer ? "h-[72px] w-[140px]" : "min-h-[72px] w-full max-w-[260px]",
+              className,
+            )}
+          >
+            {accessory}
+            <div
+              className={cn(
+                "flex h-full flex-col justify-center gap-1",
+                isComposer ? "px-3 py-2" : "px-3 py-2.5",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                {icon}
+                <span className="truncate text-xs font-medium text-foreground">{name}</span>
+              </div>
+              <span className="pl-[26px] text-xs tabular-nums text-muted-foreground">
+                {formatAttachmentByteSize(sizeBytes)}
+              </span>
+            </div>
+          </div>
+        }
+      />
+      <TooltipContent>{name}</TooltipContent>
+    </Tooltip>
   );
 }

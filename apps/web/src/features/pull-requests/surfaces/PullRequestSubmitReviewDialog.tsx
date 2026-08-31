@@ -28,7 +28,6 @@ import {
   selectPullRequestMutationLane,
   selectPullRequestOutcomeUnknownLane,
 } from "@/features/pull-requests/state/pull-request-mutation-selectors";
-import { getPullRequestDetailKey } from "@/features/pull-requests/state/pullRequestDetailStore";
 import { usePullRequestMutationStore } from "@/features/pull-requests/state/pullRequestMutationStore";
 import {
   getPullRequestReviewDraftSnapshotKey,
@@ -127,11 +126,10 @@ function useReviewSubmission({
   readTransport,
   onRefresh,
 }: PullRequestSubmitReviewDialogProps) {
-  const mutationIdentityKey = getPullRequestDetailKey(detail.identity);
   const snapshot = useReviewSnapshot(detail, draftIdentityKey);
   const snapshotKey = getPullRequestReviewDraftSnapshotKey(snapshot);
-  const lane = usePullRequestMutationLane(detail, mutationIdentityKey);
-  const outcomeUnknownLane = usePullRequestOutcomeUnknownLane(detail, mutationIdentityKey);
+  const lane = usePullRequestMutationLane(detail);
+  const outcomeUnknownLane = usePullRequestOutcomeUnknownLane(detail);
   const displayedError = outcomeUnknownLane?.error ?? lane.error;
   const reviewDraftState = useReviewDraftState(draftIdentityKey);
   const reviewDrafts = deriveReviewDrafts(reviewDraftState, snapshotKey);
@@ -157,9 +155,10 @@ function useReviewSubmission({
 
   useEffect(() => {
     if (!open) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Opening the review dialog clears errors from the prior mutation attempt.
     setLocalError(null);
     usePullRequestMutationStore.getState().clearLane(detail.identity, "review");
-  }, [mutationIdentityKey, open]);
+  }, [detail.identity, open]);
 
   const updateSummary = (
     nextEvent: PullRequestReviewSubmissionEvent,
@@ -262,35 +261,37 @@ function useReviewSnapshot(
   );
 }
 
-function usePullRequestMutationLane(detail: PullRequestDetail, identityKey: string) {
+function usePullRequestMutationLane(detail: PullRequestDetail) {
   const selector = useMemo(
     () => selectPullRequestMutationLane(detail.identity, "review"),
-    [identityKey],
+    [detail.identity],
   );
   return usePullRequestMutationStore(selector);
 }
 
-function usePullRequestOutcomeUnknownLane(detail: PullRequestDetail, identityKey: string) {
+function usePullRequestOutcomeUnknownLane(detail: PullRequestDetail) {
   const selector = useMemo(
     () => selectPullRequestOutcomeUnknownLane(detail.identity),
-    [identityKey],
+    [detail.identity],
   );
   return usePullRequestMutationStore(selector);
 }
 
 function useReviewDraftState(draftIdentityKey: string) {
-  const placementRevision = usePullRequestReviewDraftStore((state) => state.placementRevision);
-  const contentRevision = usePullRequestReviewDraftStore((state) => state.contentRevision);
+  const draftOrder = usePullRequestReviewDraftStore((state) => state.order);
+  const draftsById = usePullRequestReviewDraftStore((state) => state.drafts);
+  const summaryDraft = usePullRequestReviewDraftStore(
+    (state) => state.summaryDrafts[draftIdentityKey] ?? null,
+  );
   return useMemo(() => {
-    const state = usePullRequestReviewDraftStore.getState();
     return {
-      drafts: state.order.flatMap((localId) => {
-        const draft = state.drafts[localId];
+      drafts: draftOrder.flatMap((localId) => {
+        const draft = draftsById[localId];
         return draft?.identityKey === draftIdentityKey ? [draft] : [];
       }),
-      summary: state.summaryDrafts[draftIdentityKey] ?? null,
+      summary: summaryDraft,
     };
-  }, [contentRevision, draftIdentityKey, placementRevision]);
+  }, [draftIdentityKey, draftOrder, draftsById, summaryDraft]);
 }
 
 function deriveReviewDrafts(

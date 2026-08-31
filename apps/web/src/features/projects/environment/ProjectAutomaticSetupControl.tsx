@@ -62,6 +62,7 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
   }, [threadId]);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A thread change starts a new authoritative automatic Setup snapshot.
     setSnapshot({ gate: "not-required", attempt: null, queuedTurns: [] });
     setBusy(null);
     setError(null);
@@ -225,6 +226,7 @@ export function ProjectAutomaticSetupCard({
   const contentId = useId();
   const headingId = useId();
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Server lifecycle state controls whether its approval dialog opens.
     setApprovalOpen(snapshot.attempt?.state === "awaiting-approval");
   }, [snapshot.attempt?.id, snapshot.attempt?.state]);
   const openApproval = useCallback(() => setApprovalOpen(true), []);

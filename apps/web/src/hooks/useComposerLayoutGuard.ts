@@ -173,20 +173,33 @@ export function useComposerLayoutGuard(
   contentRowRef: RefObject<HTMLElement | null>,
   opts: ComposerLayoutGuardOptions,
 ): void {
+  const {
+    settingsOpen,
+    showLanding,
+    showPullRequests,
+    activeWorkspaceId,
+    activeThreadId,
+  } = opts;
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const sidebarFloating = useUiStore((s) => s.sidebarFloating);
   const rightPanelMaximized = useUiStore((s) => s.rightPanelMaximized);
   const rightPanelMaximizedByLayout = useUiStore((s) => s.rightPanelMaximizedByLayout);
 
   useEffect(() => {
-    if (opts.settingsOpen) return;
+    if (settingsOpen) return;
 
     const outer = outerRowRef.current;
     const content = contentRowRef.current;
     if (!outer || !content) return;
 
     const enforce = () => {
-      enforceComposerLayout(outer.clientWidth, content.clientWidth, opts);
+      enforceComposerLayout(outer.clientWidth, content.clientWidth, {
+        settingsOpen,
+        showLanding,
+        showPullRequests,
+        activeWorkspaceId,
+        activeThreadId,
+      });
     };
 
     enforce();
@@ -210,11 +223,11 @@ export function useComposerLayoutGuard(
   }, [
     outerRowRef,
     contentRowRef,
-    opts.settingsOpen,
-    opts.showLanding,
-    opts.showPullRequests,
-    opts.activeWorkspaceId,
-    opts.activeThreadId,
+    settingsOpen,
+    showLanding,
+    showPullRequests,
+    activeWorkspaceId,
+    activeThreadId,
     sidebarCollapsed,
     sidebarFloating,
     rightPanelMaximized,

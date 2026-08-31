@@ -21,39 +21,37 @@ export function useRetriableAttachmentImage(src: string): {
   readonly onError: () => void;
   readonly onLoad: () => void;
 } {
-  const [attempt, setAttempt] = useState(0);
-  const [failed, setFailed] = useState(false);
-  const [retrying, setRetrying] = useState(false);
+  const [state, setState] = useState({ src, attempt: 0, failed: false, retrying: false });
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    setAttempt(0);
-    setFailed(false);
-    setRetrying(false);
-    clearTimeout(timerRef.current);
     return () => clearTimeout(timerRef.current);
   }, [src]);
 
+  const attempt = state.src === src ? state.attempt : 0;
+  const failed = state.src === src && state.failed;
+  const retrying = state.src === src && state.retrying;
   const renderedSrc = useMemo(() => appendRetryParam(src, attempt), [attempt, src]);
 
   const onLoad = useCallback(() => {
     clearTimeout(timerRef.current);
-    setRetrying(false);
-  }, []);
+    setState((current) => current.src === src ? { ...current, retrying: false } : current);
+  }, [src]);
 
   const onError = useCallback(() => {
     clearTimeout(timerRef.current);
     if (attempt >= ATTACHMENT_IMAGE_RETRY_DELAYS_MS.length) {
-      setRetrying(false);
-      setFailed(true);
+      setState({ src, attempt, retrying: false, failed: true });
       return;
     }
 
-    setRetrying(true);
+    setState({ src, attempt, retrying: true, failed: false });
     timerRef.current = setTimeout(() => {
-      setAttempt((current) => current + 1);
+      setState((current) => current.src === src
+        ? { ...current, attempt: current.attempt + 1, retrying: false }
+        : current);
     }, ATTACHMENT_IMAGE_RETRY_DELAYS_MS[attempt]);
-  }, [attempt]);
+  }, [attempt, src]);
 
   return { src: renderedSrc, failed, retrying, onError, onLoad };
 }

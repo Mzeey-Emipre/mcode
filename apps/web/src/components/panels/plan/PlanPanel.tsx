@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, type RefObject } from "react";
 import { usePlanStore } from "@/stores/planStore";
 import { PlanChrome } from "./PlanChrome";
 import { PlanDocument, type PlanComment } from "./PlanDocument";
@@ -6,12 +6,37 @@ import { PlanSkeleton } from "./PlanSkeleton";
 import type { PlanRecord } from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Stable empty array to avoid new-reference-per-render in Zustand selectors. */
 const EMPTY_PLANS: readonly PlanRecord[] = [];
 
 interface PlanPanelProps {
   threadId: string;
+}
+
+type PlanCommentsAction =
+  | { type: "reset" }
+  | { type: "save"; sectionTitle: string; text: string }
+  | { type: "discard"; sectionTitle: string };
+
+function planCommentsReducer(
+  comments: PlanComment[],
+  action: PlanCommentsAction,
+): PlanComment[] {
+  if (action.type === "reset") return comments.length === 0 ? comments : [];
+  if (action.type === "discard") {
+    return comments.filter(
+      (comment) => comment.sectionTitle.toLowerCase() !== action.sectionTitle.toLowerCase(),
+    );
+  }
+  const index = comments.findIndex(
+    (comment) => comment.sectionTitle.toLowerCase() === action.sectionTitle.toLowerCase(),
+  );
+  if (index < 0) return [...comments, { sectionTitle: action.sectionTitle, text: action.text }];
+  const next = [...comments];
+  next[index] = { sectionTitle: action.sectionTitle, text: action.text };
+  return next;
 }
 
 function PlanVersionBanner({ plan, latestVersion, threadId, onShowLatest }: { plan: PlanRecord; latestVersion: number; threadId: string; onShowLatest: (threadId: string, version: null) => void }) {
@@ -39,7 +64,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
   const isGenerating = usePlanStore((s) => s.generatingThreads.has(threadId));
   const setActiveVersion = usePlanStore((s) => s.setActiveVersion);
 
-  const [comments, setComments] = useState<PlanComment[]>([]);
+  const [comments, dispatchComments] = useReducer(planCommentsReducer, []);
   const planScrollRef = useRef<HTMLDivElement>(null);
   const feedbackBarRef = useRef<HTMLDivElement>(null);
   const prevNoteCountRef = useRef(0);
@@ -57,7 +82,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
 
   // Reset before paint so version switches never flash a stale scroll position.
   useLayoutEffect(() => {
-    setComments((prev) => (prev.length === 0 ? prev : []));
+    dispatchComments({ type: "reset" });
     const el = planScrollRef.current;
     if (el) {
       el.scrollTop = 0;
@@ -66,21 +91,11 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
   }, [activePlan?.id]);
 
   const handleCommentChange = useCallback((sectionTitle: string, text: string) => {
-    setComments((prev) => {
-      const idx = prev.findIndex((c) => c.sectionTitle.toLowerCase() === sectionTitle.toLowerCase());
-      if (idx >= 0) {
-        const updated = [...prev];
-        updated[idx] = { sectionTitle, text };
-        return updated;
-      }
-      return [...prev, { sectionTitle, text }];
-    });
+    dispatchComments({ type: "save", sectionTitle, text });
   }, []);
 
   const handleCommentDiscard = useCallback((sectionTitle: string) => {
-    setComments((prev) =>
-      prev.filter((c) => c.sectionTitle.toLowerCase() !== sectionTitle.toLowerCase()),
-    );
+    dispatchComments({ type: "discard", sectionTitle });
   }, []);
 
   const nonEmptyComments = useMemo(
@@ -114,7 +129,7 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
 
     try {
       await useThreadStore.getState().sendPlanAction(threadId, lines.join("\n"), "revise");
-      setComments([]);
+      dispatchComments({ type: "reset" });
     } catch (err) {
       usePlanStore.getState().setGenerating(threadId, false);
       console.error("[plan] send feedback failed:", err);
@@ -182,18 +197,23 @@ export function PlanPanel({ threadId }: PlanPanelProps) {
         className="plan-panel-viewport min-h-0 min-w-0 flex-1 basis-0"
       >
         <header className="border-b border-border/40 px-4 pb-3 pt-4">
-          <h1
-            className="truncate text-[15px] font-semibold leading-snug tracking-tight text-foreground"
-            title={activePlan.title}
-          >
-            {activePlan.title}
-          </h1>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <h1 className="truncate text-[15px] font-semibold leading-snug tracking-tight text-foreground">
+                  {activePlan.title}
+                </h1>
+              }
+            />
+            <TooltipContent>{activePlan.title}</TooltipContent>
+          </Tooltip>
           <p className="mt-1.5 font-mono text-[10px] leading-relaxed tracking-[0.14em] text-muted-foreground/70">
             Click a heading to annotate. Stash by clicking away, or save to close.
           </p>
         </header>
 
         <PlanDocument
+          key={activePlan.id}
           plan={activePlan}
           comments={comments}
           onCommentChange={handleCommentChange}

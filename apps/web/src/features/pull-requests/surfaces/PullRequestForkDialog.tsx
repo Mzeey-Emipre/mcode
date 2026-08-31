@@ -308,7 +308,7 @@ export function PullRequestForkDialog({
         setPreparing(false);
       }
     },
-    [configureComposer, detail.identity, transport],
+    [configureComposer, detail, transport],
   );
 
   useEffect(() => {
@@ -322,6 +322,7 @@ export function PullRequestForkDialog({
       threadId: workspace.activeThreadId,
     };
     completedRef.current = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- Opening the dialog starts a new fork-preparation transport request.
     setSelectedWorkspaceId(null);
     void prepare();
   }, [open, prepare]);

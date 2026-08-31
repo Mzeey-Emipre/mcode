@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import path from "path";
 
 const analyze = process.env.ANALYZE === "true" || process.env.ANALYZE === "1";
 const performanceMode = process.env.VITE_MCODE_PERFORMANCE_MODE;
@@ -29,7 +29,7 @@ function mcodeRuntimeContractPlugin(): Plugin {
         return;
       }
       try {
-        const contract = readFileSync(contractPath, "utf8");
+        const contract = NodeFS.readFileSync(contractPath, "utf8");
         res.setHeader("Content-Type", "application/json");
         res.setHeader("Cache-Control", "no-store");
         res.end(contract);
@@ -73,7 +73,7 @@ export default defineConfig({
       ...(performanceMode === "profiling"
         ? [{ find: "react-dom/client", replacement: "react-dom/profiling" }]
         : []),
-      { find: "@", replacement: path.resolve(__dirname, "./src") },
+      { find: "@", replacement: NodePath.resolve(__dirname, "./src") },
     ],
   },
   optimizeDeps: {

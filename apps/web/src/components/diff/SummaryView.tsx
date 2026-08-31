@@ -74,7 +74,7 @@ export function SummaryView() {
   const setSummaryRecord = useDiffStore((s) => s.setSummaryRecord);
   const setSummaryLoading = useDiffStore((s) => s.setSummaryLoading);
 
-  const [error, setError] = useState<string | null>(null);
+  const [errorForThread, setErrorForThread] = useState<{ threadId: string | null; message: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -91,9 +91,10 @@ export function SummaryView() {
       .filter((s) => s.files_changed.length > 0).length;
   })();
 
+  const error = errorForThread?.threadId === activeThreadId ? errorForThread.message : null;
+
   // Load persisted summary on mount or when the thread changes
   useEffect(() => {
-    setError(null);
     if (!activeThreadId) return;
     if (summaryRecord?.threadId === activeThreadId) return;
 
@@ -106,7 +107,10 @@ export function SummaryView() {
       } catch (err) {
         if (cancelled) return;
         setSummaryRecord(null);
-        setError(err instanceof Error ? err.message : "Failed to load summary");
+        setErrorForThread({
+          threadId: activeThreadId,
+          message: err instanceof Error ? err.message : "Failed to load summary",
+        });
       }
     };
 
@@ -119,7 +123,7 @@ export function SummaryView() {
   const handleGenerate = useCallback(async () => {
     if (!activeThreadId) return;
     const requestThreadId = activeThreadId;
-    setError(null);
+    setErrorForThread(null);
     setSummaryLoading(true);
 
     // Cancel any in-flight request (client-side only — the server will
@@ -138,7 +142,7 @@ export function SummaryView() {
       if (controller.signal.aborted) return;
       if (useWorkspaceStore.getState().activeThreadId !== requestThreadId) return;
       const message = err instanceof Error ? err.message : "Failed to generate summary";
-      setError(message);
+      setErrorForThread({ threadId: requestThreadId, message });
     } finally {
       if (!controller.signal.aborted) {
         setSummaryLoading(false);
@@ -304,9 +308,7 @@ function RegeneratingSummary({
         <MarkdownContent content={summary.content} />
       </div>
       <div className="flex items-center justify-between border-t border-border/30 pt-3">
-        <span className="text-[11px] text-muted-foreground truncate max-w-[200px]" title={summary.model}>
-          {summary.model}
-        </span>
+        <SummaryModel className="text-[11px] text-muted-foreground truncate max-w-[200px]" model={summary.model} />
         <SummaryTiming summary={summary} />
       </div>
     </div>
@@ -347,9 +349,27 @@ function CancelSummaryButton({ onCancel }: { readonly onCancel: () => void }) {
 function SummaryTiming({ summary }: { readonly summary: SummaryRecord }) {
   return (
     <span className="text-[11px] text-muted-foreground">
-      <span title={absoluteTime(summary.createdAt)}>{relativeTime(summary.createdAt)}</span>
+      <SummaryTimestamp createdAt={summary.createdAt} />
       {" · "}{summary.turnCount} {summary.turnCount === 1 ? "turn" : "turns"}
     </span>
+  );
+}
+
+function SummaryModel({ className, model }: { readonly className: string; readonly model: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className={className} />}>{model}</TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">{model}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function SummaryTimestamp({ createdAt }: { readonly createdAt: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span />}>{relativeTime(createdAt)}</TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">{absoluteTime(createdAt)}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -375,10 +395,10 @@ function RenderedSummary({
       </div>
       <div className="flex items-center justify-between border-t border-border/30 pt-3">
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground min-w-0">
-          <span className="truncate max-w-[140px]" title={summary.model}>{summary.model}</span>
+          <SummaryModel className="truncate max-w-[140px]" model={summary.model} />
           <span className="shrink-0">
             {" · "}
-            <span title={absoluteTime(summary.createdAt)}>{relativeTime(summary.createdAt)}</span>
+            <SummaryTimestamp createdAt={summary.createdAt} />
             {" · "}{summary.turnCount} {summary.turnCount === 1 ? "turn" : "turns"}
           </span>
         </span>

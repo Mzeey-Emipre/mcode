@@ -4,6 +4,7 @@ import { Command as CommandPrimitive } from "cmdk";
 import { Plus, SearchIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Command } from "@/components/ui/command";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { setContext } from "@/lib/context-tracker";
 import { RootView } from "./views/RootView";
@@ -195,23 +196,33 @@ function PaletteInput({
         )}
       />
       {browseMode && (
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          data-testid="palette-add-folder"
-          disabled={!canAdd}
-          onMouseDown={(e) => {
-            // Prevent the input from losing focus, which would dismiss cmdk highlight.
-            e.preventDefault();
-          }}
-          onClick={onAddClick}
-          title={canAdd ? "Add this folder as a project" : "Choose a folder before adding a project"}
-          className="absolute end-[16px] top-1/2 h-[36px] min-w-[132px] -translate-y-1/2 gap-[8px] px-[16px] text-[14px] leading-none"
-        >
-          <Plus size={14} />
-          Add project
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="absolute end-[16px] top-1/2 inline-flex -translate-y-1/2">
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  data-testid="palette-add-folder"
+                  disabled={!canAdd}
+                  onMouseDown={(e) => {
+                    // Prevent the input from losing focus, which would dismiss cmdk highlight.
+                    e.preventDefault();
+                  }}
+                  onClick={onAddClick}
+                  className="h-[36px] min-w-[132px] gap-[8px] px-[16px] text-[14px] leading-none"
+                >
+                  <Plus size={14} />
+                  Add project
+                </Button>
+              </span>
+            }
+          />
+          <TooltipContent>
+            {canAdd ? "Add this folder as a project" : "Choose a folder before adding a project"}
+          </TooltipContent>
+        </Tooltip>
       )}
     </div>
   );

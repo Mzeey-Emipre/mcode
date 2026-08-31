@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useReducer,
   useState,
   useRef,
   lazy,
@@ -98,6 +99,63 @@ type AppLayoutProps = {
   setPullRequestTab: (tab: PullRequestHistoryTab) => void;
   closeSettings: () => void;
 };
+
+type FloatingSidebarTransition = "hidden" | "visible" | "exiting";
+
+function floatingSidebarTransitionReducer(
+  _state: FloatingSidebarTransition,
+  transition: FloatingSidebarTransition,
+): FloatingSidebarTransition {
+  return transition;
+}
+
+function blurFloatingSidebarFocus(
+  backdropRef: RefObject<HTMLButtonElement | null>,
+  sidebarRef: RefObject<HTMLDivElement | null>,
+): void {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLElement)) return;
+  if (!backdropRef.current?.contains(activeElement) && !sidebarRef.current?.contains(activeElement)) {
+    return;
+  }
+  activeElement.blur();
+}
+
+function useFloatingSidebarTransition(
+  open: boolean,
+  backdropRef: RefObject<HTMLButtonElement | null>,
+  sidebarRef: RefObject<HTMLDivElement | null>,
+) {
+  const [transition, dispatchTransition] = useReducer(
+    floatingSidebarTransitionReducer,
+    open ? "visible" : "hidden",
+  );
+
+  useEffect(() => {
+    if (open) {
+      if (transition !== "visible") dispatchTransition("visible");
+      return;
+    }
+    if (transition === "hidden") return;
+    if (transition === "exiting") {
+      const exitTimer = window.setTimeout(() => dispatchTransition("hidden"), 200);
+      return () => window.clearTimeout(exitTimer);
+    }
+
+    blurFloatingSidebarFocus(backdropRef, sidebarRef);
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      dispatchTransition("hidden");
+      return;
+    }
+    dispatchTransition("exiting");
+  }, [backdropRef, open, sidebarRef, transition]);
+
+  return {
+    rendered: transition !== "hidden",
+    exiting: transition === "exiting",
+  };
+}
 
 function DockedSidebar({
   visible,
@@ -355,42 +413,15 @@ export function App() {
     !sidebarCollapsed || (settingsOpen && !isDesktop);
   const floatingSidebarOpen =
     sidebarFloating && !sidebarCollapsed && !settingsOpen;
-  const [floatingSidebarRendered, setFloatingSidebarRendered] =
-    useState(floatingSidebarOpen);
-  const [floatingSidebarExiting, setFloatingSidebarExiting] = useState(false);
+  const {
+    rendered: floatingSidebarRendered,
+    exiting: floatingSidebarExiting,
+  } = useFloatingSidebarTransition(
+    floatingSidebarOpen,
+    floatingBackdropRef,
+    floatingSidebarRef,
+  );
   useIdleReclamation();
-
-  useEffect(() => {
-    if (floatingSidebarOpen) {
-      setFloatingSidebarRendered(true);
-      setFloatingSidebarExiting(false);
-      return;
-    }
-
-    if (!floatingSidebarRendered) return;
-
-    const activeElement = document.activeElement;
-    if (
-      activeElement instanceof HTMLElement &&
-      (floatingBackdropRef.current?.contains(activeElement) ||
-        floatingSidebarRef.current?.contains(activeElement))
-    ) {
-      activeElement.blur();
-    }
-
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setFloatingSidebarRendered(false);
-      setFloatingSidebarExiting(false);
-      return;
-    }
-
-    setFloatingSidebarExiting(true);
-    const exitTimer = window.setTimeout(() => {
-      setFloatingSidebarRendered(false);
-      setFloatingSidebarExiting(false);
-    }, 200);
-    return () => window.clearTimeout(exitTimer);
-  }, [floatingSidebarOpen, floatingSidebarRendered]);
 
   useComposerLayoutGuard(outerRowRef, contentRowRef, {
     settingsOpen,

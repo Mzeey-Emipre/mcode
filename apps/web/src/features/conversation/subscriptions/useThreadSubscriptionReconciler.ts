@@ -456,19 +456,23 @@ export function useThreadSubscriptionReconciler({
   ]);
 
   useEffect(() => {
+    const confirmedThreadIds = confirmedThreadIdsRef.current;
+    const desiredThreadIds = desiredThreadIdsRef.current;
+    const pendingThreadChanges = pendingThreadChangesRef.current;
+    const pendingAtomicThreadIds = pendingAtomicThreadIdsRef.current;
     subscriptionMountedRef.current = true;
     return () => {
       subscriptionMountedRef.current = false;
-      const pendingAtomicThreadIds = Array.from(pendingAtomicThreadIdsRef.current.values()).flat();
+      const pendingAtomicIds = Array.from(pendingAtomicThreadIds.values()).flat();
       subscriptionEpochRef.current += 1;
       if (subscriptionRetryTimerRef.current !== null) {
         clearTimeout(subscriptionRetryTimerRef.current);
         subscriptionRetryTimerRef.current = null;
       }
       const threadIds = new Set([
-        ...confirmedThreadIdsRef.current,
-        ...desiredThreadIdsRef.current,
-        ...pendingAtomicThreadIds,
+        ...confirmedThreadIds,
+        ...desiredThreadIds,
+        ...pendingAtomicIds,
       ]);
       if (threadIds.size > 0) {
         const setThreadSubscriptions = getTransport().setThreadSubscriptions;
@@ -480,10 +484,10 @@ export function useThreadSubscriptionReconciler({
           }
         }
       }
-      confirmedThreadIdsRef.current.clear();
-      desiredThreadIdsRef.current.clear();
-      pendingThreadChangesRef.current.clear();
-      pendingAtomicThreadIdsRef.current.clear();
+      confirmedThreadIds.clear();
+      desiredThreadIds.clear();
+      pendingThreadChanges.clear();
+      pendingAtomicThreadIds.clear();
     };
   }, []);
 }

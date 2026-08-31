@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { useUpdateStore } from "@/stores/updateStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SettingRow } from "../SettingRow";
@@ -16,6 +16,10 @@ const RELEASE_LINE_OPTIONS: { value: UpdateReleaseLine; label: string }[] = [
   { value: "stable", label: "Stable" },
   { value: "nightly", label: "Nightly" },
 ];
+
+function upToDateLabelReducer(_visible: boolean, visible: boolean): boolean {
+  return visible;
+}
 
 /** Segmented control options for update check frequency. */
 const INTERVAL_OPTIONS = [
@@ -71,7 +75,7 @@ export function AboutSection() {
   /** True while a manually-triggered check is in flight. */
   const [checking, setChecking] = useState(false);
   /** Transient label shown for UP_TO_DATE_HOLD_MS after "no update" resolves. */
-  const [upToDateLabel, setUpToDateLabel] = useState(false);
+  const [upToDateLabel, setUpToDateLabel] = useReducer(upToDateLabelReducer, false);
   const upToDateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Latest stable version on GitHub, used to decide if nightly→stable is a downgrade. */
   const [latestStable, setLatestStable] = useState<string | null>(null);

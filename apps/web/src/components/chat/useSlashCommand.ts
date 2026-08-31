@@ -280,38 +280,33 @@ export function useSlashCommand({
     return sortCommands(commands);
   }, [snapshot, providerId, modelId, includeBuiltins, includePlugins]);
 
+  const reconciledOpenCommands = useMemo(
+    () => openCommands === null ? allCommands : reconcileOpenCommands(openCommands, allCommands),
+    [allCommands, openCommands],
+  );
+
   const filtered = useMemo(() => {
     const f = filter.toLowerCase();
     const matches = f
-      ? (openCommands ?? allCommands).filter((c) => c.name.toLowerCase().includes(f))
-      : (openCommands ?? allCommands);
+      ? reconciledOpenCommands.filter((c) => c.name.toLowerCase().includes(f))
+      : reconciledOpenCommands;
     return matches.slice(0, MAX_SLASH_COMMAND_ITEMS);
-  }, [allCommands, filter, openCommands]);
+  }, [filter, reconciledOpenCommands]);
+
+  const displayedSelectedIndex = useMemo(() => {
+    const selectedIdentity = selectedCommandIdentityRef.current;
+    const retainedIndex = selectedIdentity
+      ? filtered.findIndex((command) => commandIdentity(command) === selectedIdentity)
+      : -1;
+    if (retainedIndex >= 0) return retainedIndex;
+    return filtered.length === 0 ? 0 : Math.min(selectedIndex, filtered.length - 1);
+  }, [filtered, selectedIndex]);
 
   useEffect(() => {
-    if (!isOpen || openCommands === null) return;
-    setOpenCommands((current) => (
-      current === null ? null : reconcileOpenCommands(current, allCommands)
-    ));
-  }, [allCommands, isOpen, openCommands === null]);
-
-  useEffect(() => {
-    setSelectedIndex((current) => {
-      const selectedIdentity = selectedCommandIdentityRef.current;
-      const retainedIndex = selectedIdentity
-        ? filtered.findIndex((command) => commandIdentity(command) === selectedIdentity)
-        : -1;
-      const next = retainedIndex >= 0
-        ? retainedIndex
-        : filtered.length === 0
-          ? 0
-          : Math.min(current, filtered.length - 1);
-      selectedCommandIdentityRef.current = filtered[next]
-        ? commandIdentity(filtered[next])
-        : null;
-      return next;
-    });
-  }, [filtered]);
+    selectedCommandIdentityRef.current = filtered[displayedSelectedIndex]
+      ? commandIdentity(filtered[displayedSelectedIndex])
+      : null;
+  }, [displayedSelectedIndex, filtered]);
 
   // Derive the typed popup state. Order encodes the stale-while-revalidate
   // priority that previously lived in a comment in SlashCommandPopup:
@@ -386,30 +381,30 @@ export function useSlashCommand({
     (e: React.KeyboardEvent) => {
       if (!isOpen) return;
       switch (e.key) {
-        case "ArrowDown":
+        case "ArrowDown": {
           e.preventDefault();
           e.stopPropagation();
           // Clamp to 0 when filtered is empty; otherwise `length - 1` would
           // be `-1`, leaking an invalid index into ARIA / keyboard handling.
-          setSelectedIndex((i) => {
-            const next = filtered.length === 0 ? 0 : Math.min(i + 1, filtered.length - 1);
-            selectedCommandIdentityRef.current = filtered[next]
-              ? commandIdentity(filtered[next])
-              : null;
-            return next;
-          });
+          const nextIndex = filtered.length === 0
+            ? 0
+            : Math.min(displayedSelectedIndex + 1, filtered.length - 1);
+          selectedCommandIdentityRef.current = filtered[nextIndex]
+            ? commandIdentity(filtered[nextIndex])
+            : null;
+          setSelectedIndex(nextIndex);
           break;
-        case "ArrowUp":
+        }
+        case "ArrowUp": {
           e.preventDefault();
           e.stopPropagation();
-          setSelectedIndex((i) => {
-            const next = Math.max(i - 1, 0);
-            selectedCommandIdentityRef.current = filtered[next]
-              ? commandIdentity(filtered[next])
-              : null;
-            return next;
-          });
+          const previousIndex = Math.max(displayedSelectedIndex - 1, 0);
+          selectedCommandIdentityRef.current = filtered[previousIndex]
+            ? commandIdentity(filtered[previousIndex])
+            : null;
+          setSelectedIndex(previousIndex);
           break;
+        }
         case "Escape":
           e.preventDefault();
           e.stopPropagation();
@@ -419,7 +414,7 @@ export function useSlashCommand({
           break;
       }
     },
-    [isOpen, filtered.length],
+    [displayedSelectedIndex, filtered, isOpen],
   );
 
   const onSelect = useCallback(
@@ -468,7 +463,7 @@ export function useSlashCommand({
     state,
     items: filtered,
     allCommands,
-    selectedIndex,
+    selectedIndex: displayedSelectedIndex,
     anchorRect,
     onInputChange,
     onKeyDown,

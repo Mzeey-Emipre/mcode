@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { formatDuration } from "../../lib/time";
 import type { ToolCall } from "@/transport/types";
 import { TOOL_PHASE_LABELS } from "./tool-renderers/constants";
@@ -20,21 +20,23 @@ function derivePhaseLabel(toolCalls?: readonly ToolCall[]): string {
   return "Pulling the next step together...";
 }
 
-/** Renders an animated gradient sweep bar with a phase label and elapsed timer during agent work. */
-export function StreamingIndicator({ startTime, activeToolCalls }: StreamingIndicatorProps) {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    if (!startTime) return;
-
-    setElapsed(Math.floor((Date.now() - startTime) / 1000));
-
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
-
+function useElapsedSeconds(startTime?: number): number {
+  const subscribe = useCallback((notify: () => void) => {
+    if (!startTime) return () => {};
+    const interval = setInterval(notify, 1000);
     return () => clearInterval(interval);
   }, [startTime]);
+  const getSnapshot = useCallback(
+    () => startTime ? Math.floor((Date.now() - startTime) / 1000) : 0,
+    [startTime],
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot, () => 0);
+}
+
+/** Renders an animated gradient sweep bar with a phase label and elapsed timer during agent work. */
+export function StreamingIndicator({ startTime, activeToolCalls }: StreamingIndicatorProps) {
+  const elapsed = useElapsedSeconds(startTime);
 
   const phaseLabel = useMemo(() => derivePhaseLabel(activeToolCalls), [activeToolCalls]);
 

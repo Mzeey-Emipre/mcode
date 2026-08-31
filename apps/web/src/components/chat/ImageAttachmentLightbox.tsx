@@ -10,6 +10,7 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /** One slide in the image attachment lightbox. */
@@ -91,13 +92,13 @@ function useLightboxControls(
   items: ImageLightboxSlide[],
   initialIndex: number,
 ): LightboxControls {
-  const [failed, setFailed] = useState(false);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
   const { activeIndex, setActiveIndex } = useLightboxActiveIndex(open, items.length, initialIndex);
   const carousel = items.length > 1;
   const activeSource = items[clampLightboxIndex(activeIndex, items.length)]?.src;
-
-  useEffect(() => {
-    setFailed(false);
+  const failed = failedSource === activeSource;
+  const setFailed = useCallback((nextFailed: boolean) => {
+    setFailedSource(nextFailed ? activeSource ?? null : null);
   }, [activeSource]);
 
   useLightboxKeyboard(open, carousel, items.length, setActiveIndex);
@@ -105,7 +106,7 @@ function useLightboxControls(
   const handleOpenChange = useCallback((next: boolean) => {
     if (!next) setFailed(false);
     onOpenChange(next);
-  }, [onOpenChange]);
+  }, [onOpenChange, setFailed]);
   const goPrev = useCallback((event: MouseEvent) => {
     event.stopPropagation();
     if (items.length > 0) setActiveIndex((index) => (index - 1 + items.length) % items.length);
@@ -202,7 +203,14 @@ function LightboxCaption({ carousel, items, activeIndex, rawTitle, displayTitle,
     <div className="pointer-events-auto relative z-20 mx-auto flex w-full max-w-[min(94vw,42rem)] min-w-0 flex-col items-center gap-2.5 px-4 pb-6 pt-1" id={captionId}>
       {children}
       <div className="flex w-full min-w-0 flex-col items-center gap-1 border-t border-white/[0.08] pt-3 text-center">
-        <p className="line-clamp-2 max-w-full min-w-0 break-words px-1 text-sm font-medium leading-snug tracking-tight text-white/[0.94]" title={rawTitle.trim() ? rawTitle : undefined}>{displayTitle}</p>
+        <Tooltip>
+          <TooltipTrigger
+            render={<p className="line-clamp-2 max-w-full min-w-0 break-words px-1 text-sm font-medium leading-snug tracking-tight text-white/[0.94]" />}
+          >
+            {displayTitle}
+          </TooltipTrigger>
+          {rawTitle.trim() ? <TooltipContent>{rawTitle}</TooltipContent> : null}
+        </Tooltip>
         {carousel ? <p className="text-xs tabular-nums tracking-wide text-white/48">{activeIndex + 1} / {items.length}</p> : null}
       </div>
     </div>

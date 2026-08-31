@@ -17,6 +17,11 @@ type RenderState =
   | { status: "success"; svg: string }
   | { status: "error" };
 
+interface RenderResult {
+  key: string;
+  state: RenderState;
+}
+
 // Module-level mermaid loader - cached across all instances
 let mermaidPromise: Promise<typeof import("mermaid")> | null = null;
 let lastInitTheme: string | null = null;
@@ -158,7 +163,8 @@ function useMermaidRendering(
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renderAttemptRef = useRef(0);
-  const [state, setState] = useState<RenderState>({ status: "loading" });
+  const renderKey = `${code}\0${mermaidTheme}\0${mermaidId}`;
+  const [result, setResult] = useState<RenderResult | null>(null);
 
   useEffect(() => {
     if (isStreaming || !code.trim()) return;
@@ -167,8 +173,6 @@ function useMermaidRendering(
     const renderId = `${mermaidId}-${attempt}`;
     let cancelled = false;
     const isCancelled = () => cancelled || attempt !== renderAttemptRef.current;
-    setState({ status: "loading" });
-
     void renderMermaidDiagram({
       code,
       mermaidTheme,
@@ -177,13 +181,13 @@ function useMermaidRendering(
       isCancelled,
     }).then(
       (nextState) => {
-        if (nextState && !isCancelled()) setState(nextState);
+        if (nextState && !isCancelled()) setResult({ key: renderKey, state: nextState });
       },
       (error: unknown) => {
         removeMermaidArtifacts(renderId);
         if (isCancelled()) return;
         console.error("[MermaidBlock] render failed:", error);
-        setState({ status: "error" });
+        setResult({ key: renderKey, state: { status: "error" } });
       },
     );
 
@@ -191,9 +195,12 @@ function useMermaidRendering(
       cancelled = true;
       removeMermaidArtifacts(renderId);
     };
-  }, [code, mermaidTheme, isStreaming, mermaidId]);
+  }, [code, mermaidTheme, isStreaming, mermaidId, renderKey]);
 
-  return { containerRef, state };
+  return {
+    containerRef,
+    state: result?.key === renderKey ? result.state : { status: "loading" } as RenderState,
+  };
 }
 
 interface MermaidToolbarProps {

@@ -1,5 +1,5 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   BrowserAutomationResponseSchema,
@@ -26,7 +26,7 @@ import {
 import { WebBrowserSessionAdapter } from "../webBrowserSessionAdapter";
 import { executeWebBrowserDispatch } from "../../browserAutomationWebExecutor";
 
-const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
+const workspaceRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../../../../../");
 const OBSERVATION_OPERATIONS = new Set(["inspect", "snapshot", "screenshot"]);
 const AGENT_OWNED_OPERATIONS = new Set(["open", "navigate", "click", "type", "act", "tabs"]);
 

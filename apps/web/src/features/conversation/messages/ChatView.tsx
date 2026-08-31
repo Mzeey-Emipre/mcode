@@ -12,6 +12,16 @@ import { useChatViewState } from "./chat-view/useChatViewState";
 
 const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024;
 
+interface DismissedSessionError {
+  error: string | null;
+  threadEpoch: number;
+}
+
+interface ThreadScopedState<T> {
+  threadEpoch: number;
+  value: T;
+}
+
 /** Props for the composed Conversation chat surface. */
 export interface ChatViewProps {
   /** Opens a selected canonical child through the composition root. */
@@ -23,21 +33,50 @@ export interface ChatViewProps {
 /** Renders the main chat UI for sending and receiving messages within a thread. */
 export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = {}) {
   const state = useChatViewState();
-  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
-  const [pendingSelectedTextComment, setPendingSelectedTextComment] = useState<SelectedTextComment | null>(null);
-  const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [editingThreadState, setEditingThreadState] = useState<ThreadScopedState<string | null>>({
+    threadEpoch: 0,
+    value: null,
+  });
+  const [pendingSelectedTextCommentState, setPendingSelectedTextCommentState] = useState<ThreadScopedState<SelectedTextComment | null>>({
+    threadEpoch: 0,
+    value: null,
+  });
+  const [dismissedErrorState, setDismissedErrorState] = useState<DismissedSessionError | null>(null);
   const [turnRecoveries, setTurnRecoveries] = useState<TurnRecovery[]>([]);
-  const [bannerDismissed, setBannerDismissed] = useState(false);
-
-  useEffect(() => {
-    setDismissedError(null);
-    setEditingThreadId(null);
-    setPendingSelectedTextComment((comment) => comment?.source.threadId === state.activeThreadId ? comment : null);
-  }, [state.activeThreadId]);
-
-  useEffect(() => {
-    if (state.connectionStatus !== "connected") setBannerDismissed(false);
-  }, [state.connectionStatus]);
+  const [dismissedBannerEpoch, setDismissedBannerEpoch] = useState<number | null>(null);
+  const threadEpochRef = useRef({ epoch: 0, threadId: state.activeThreadId });
+  if (threadEpochRef.current.threadId !== state.activeThreadId) {
+    threadEpochRef.current = {
+      epoch: threadEpochRef.current.epoch + 1,
+      threadId: state.activeThreadId,
+    };
+  }
+  const threadEpoch = threadEpochRef.current.epoch;
+  const connectionEpochRef = useRef({ epoch: 0, status: state.connectionStatus });
+  if (connectionEpochRef.current.status !== state.connectionStatus) {
+    connectionEpochRef.current = {
+      epoch: connectionEpochRef.current.epoch + 1,
+      status: state.connectionStatus,
+    };
+  }
+  const connectionEpoch = connectionEpochRef.current.epoch;
+  const bannerDismissed = dismissedBannerEpoch === connectionEpoch;
+  const visibleEditingThreadId = editingThreadState.threadEpoch === threadEpoch
+    ? editingThreadState.value
+    : null;
+  const visiblePendingSelectedTextComment = pendingSelectedTextCommentState.threadEpoch === threadEpoch
+    ? pendingSelectedTextCommentState.value
+    : null;
+  const dismissedError = dismissedErrorState?.threadEpoch === threadEpoch
+    ? dismissedErrorState.error
+    : null;
+  const {
+    activeThread,
+    activeThreadId,
+    setForkMode,
+    setPendingPrefill,
+    updateThreadTitle,
+  } = state;
 
   useEffect(() => {
     if (state.connectionStatus !== "connected" || bannerDismissed) return;
@@ -82,7 +121,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   }, [state.activeThreadId]);
 
   const handleRetryRecoveries = useCallback(async (threadIds: string[]) => {
-    setBannerDismissed(true);
+    setDismissedBannerEpoch(connectionEpoch);
     const failedIds: string[] = [];
     for (const threadId of threadIds) {
       try {
@@ -97,8 +136,8 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     const remainingRecoveries = turnRecoveries.filter((recovery) =>
       !threadIds.includes(recovery.threadId) || failedIds.includes(recovery.threadId));
     setTurnRecoveries(remainingRecoveries);
-    setBannerDismissed(remainingRecoveries.length === 0);
-  }, [turnRecoveries]);
+    setDismissedBannerEpoch(remainingRecoveries.length === 0 ? connectionEpoch : null);
+  }, [connectionEpoch, turnRecoveries]);
 
   const handleBranch = useCallback((messageId: string) => {
     const activeThreadId = useWorkspaceStore.getState().activeThreadId;
@@ -106,12 +145,12 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
       ? readThreadRecord(activeThreadId).messages.find((candidate) => candidate.id === messageId)
       : undefined;
     if (!activeThreadId || !message) return;
-    state.setForkMode(activeThreadId, {
+    setForkMode(activeThreadId, {
       messageId,
       content: message.role === "user" ? message.content : null,
       role: message.role as "user" | "assistant",
     });
-  }, [state.setForkMode]);
+  }, [setForkMode]);
 
   const handleReply = useCallback((messageId: string, content: string, role: "user" | "assistant") => {
     const activeThreadId = useWorkspaceStore.getState().activeThreadId;
@@ -120,14 +159,14 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   }, []);
 
   const handleSelectedTextComment = useCallback((comment: SelectedTextComment) => {
-    setPendingSelectedTextComment(comment);
-  }, []);
+    setPendingSelectedTextCommentState({ threadEpoch, value: comment });
+  }, [threadEpoch]);
   const consumeSelectedTextComment = useCallback(() => {
-    setPendingSelectedTextComment(null);
-  }, []);
+    setPendingSelectedTextCommentState({ threadEpoch, value: null });
+  }, [threadEpoch]);
   const handleContinue = useCallback(() => {
-    state.setPendingPrefill("Continue");
-  }, [state.setPendingPrefill]);
+    setPendingPrefill("Continue");
+  }, [setPendingPrefill]);
   const handleRetry = useCallback((executionId: string) => {
     void getTransport().retryTurn(executionId);
   }, []);
@@ -138,24 +177,24 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     if (state.savingStatus?.mode === "saving-delayed") await getTransport().continueWithoutSaving(state.savingStatus.executionId);
   }, [state.savingStatus]);
   const handleDismissCliError = useCallback(() => {
-    setDismissedError(state.sessionError);
-  }, [state.sessionError]);
+    setDismissedErrorState({ error: state.sessionError, threadEpoch });
+  }, [state.sessionError, threadEpoch]);
   const handleOpenSettings = useCallback(() => {
     window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
   }, []);
   const handleSaveTitle = useCallback((title: string) => {
-    if (state.activeThread) state.updateThreadTitle(state.activeThread.id, title);
-    setEditingThreadId(null);
-  }, [state.activeThread, state.updateThreadTitle]);
+    if (activeThread) updateThreadTitle(activeThread.id, title);
+    setEditingThreadState({ threadEpoch, value: null });
+  }, [activeThread, threadEpoch, updateThreadTitle]);
   const handleExitForkMode = useCallback(() => {
-    if (state.activeThreadId) state.setForkMode(state.activeThreadId, null);
-  }, [state.activeThreadId, state.setForkMode]);
+    if (activeThreadId) setForkMode(activeThreadId, null);
+  }, [activeThreadId, setForkMode]);
   const interactions = useMemo<ChatViewInteractions>(() => ({
     onBranch: handleBranch,
     onReply: handleReply,
     onSelectedTextComment: handleSelectedTextComment,
     onSelectedTextCommentConsumed: consumeSelectedTextComment,
-    onPromptSelect: state.setPendingPrefill,
+    onPromptSelect: setPendingPrefill,
     onContinue: handleContinue,
     onRetry: handleRetry,
     onStopSafely: handleStopSafely,
@@ -177,14 +216,14 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     handleSaveTitle,
     handleSelectedTextComment,
     handleStopSafely,
-    state.setPendingPrefill,
+    setPendingPrefill,
   ]);
   const recovery: ChatRecoveryBannerState = {
     turnRecoveries,
     bannerDismissed,
     onRetry: handleRetryRecoveries,
     onDismiss: () => {
-      setBannerDismissed(true);
+      setDismissedBannerEpoch(connectionEpoch);
       setTurnRecoveries([]);
     },
   };
@@ -195,9 +234,11 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
       state={state}
       interactions={interactions}
       recovery={recovery}
-      editingThreadId={editingThreadId}
-      onEditingThreadIdChange={setEditingThreadId}
-      pendingSelectedTextComment={pendingSelectedTextComment}
+      editingThreadId={visibleEditingThreadId}
+      onEditingThreadIdChange={(threadId) =>
+        setEditingThreadState({ threadEpoch, value: threadId })
+      }
+      pendingSelectedTextComment={visiblePendingSelectedTextComment}
       onSubagentSelect={onSubagentSelect}
       onOpenSubagents={onOpenSubagents}
       dismissedError={dismissedError}

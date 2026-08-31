@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
-import { gzipSync } from "node:zlib";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 const EAGER_CHUNK_MAX_GZIP_BYTES = 500 * 1_024;
-const DIST_DIRECTORY = path.resolve(import.meta.dirname, "../dist");
-const MANIFEST_PATH = path.join(DIST_DIRECTORY, ".vite/manifest.json");
+const DIST_DIRECTORY = NodePath.resolve(import.meta.dirname, "../dist");
+const MANIFEST_PATH = NodePath.join(DIST_DIRECTORY, ".vite/manifest.json");
 const REQUIRED_DYNAMIC_ENTRIES = [
   "src/components/pull-requests/PullRequestSurface.tsx",
   "src/components/pull-requests/PullRequestCode.tsx",
@@ -28,10 +28,10 @@ function fail(message: string): never {
 }
 
 function readManifest(): ViteManifest {
-  if (!existsSync(MANIFEST_PATH)) {
+  if (!NodeFS.existsSync(MANIFEST_PATH)) {
     fail(`Vite manifest is missing at ${MANIFEST_PATH}. Run the web build first.`);
   }
-  return JSON.parse(readFileSync(MANIFEST_PATH, "utf8")) as ViteManifest;
+  return JSON.parse(NodeFS.readFileSync(MANIFEST_PATH, "utf8")) as ViteManifest;
 }
 
 function collectStaticGraph(manifest: ViteManifest): Set<string> {
@@ -53,9 +53,9 @@ function collectStaticGraph(manifest: ViteManifest): Set<string> {
 }
 
 function gzipBytes(file: string): number {
-  const filePath = path.join(DIST_DIRECTORY, file);
-  if (!existsSync(filePath)) fail(`Built chunk is missing at ${filePath}`);
-  return gzipSync(readFileSync(filePath), { level: 9 }).byteLength;
+  const filePath = NodePath.join(DIST_DIRECTORY, file);
+  if (!NodeFS.existsSync(filePath)) fail(`Built chunk is missing at ${filePath}`);
+  return NodeZlib.gzipSync(NodeFS.readFileSync(filePath), { level: 9 }).byteLength;
 }
 
 const manifest = readManifest();

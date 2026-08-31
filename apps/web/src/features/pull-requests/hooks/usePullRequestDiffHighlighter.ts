@@ -197,7 +197,7 @@ export function usePullRequestDiffHighlighter(
   const enabled = options.enabled ?? true;
   const blocks = useMemo(
     () => buildPullRequestHighlightWindow(rows, range, theme),
-    [range.endIndex, range.startIndex, rows, theme],
+    [range, rows, theme],
   );
   const signature = useMemo(() => blockSignature(blocks), [blocks]);
   const blocksRef = useRef(blocks);
@@ -221,6 +221,7 @@ export function usePullRequestDiffHighlighter(
     };
 
     if (!enabled || requestBlocks.length === 0) {
+      // oxlint-disable-next-line react/set-state-in-effect -- A disabled worker window must immediately clear its rendered highlight result.
       setTokenMap(new Map());
       setTruncatedLineKeys(new Set());
       setTokenBytes(0);
@@ -233,6 +234,7 @@ export function usePullRequestDiffHighlighter(
     try {
       worker = getWorker();
     } catch {
+      // oxlint-disable-next-line react/set-state-in-effect -- Worker availability controls whether the visible highlighting request remains pending.
       setIsPending(false);
       return;
     }

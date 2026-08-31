@@ -1,7 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Check, ChevronDown, RotateCw, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -139,16 +144,21 @@ export function BrowserViewportToolbar({
   scale = 1,
 }: BrowserViewportToolbarProps) {
   const requested = state.pending?.requested ?? state.confirmed;
-  const [width, setWidth] = useState(String(requested.width));
-  const [height, setHeight] = useState(String(requested.height));
+  const [dimensionDraft, setDimensionDraft] = useState(() => ({
+    requested,
+    width: String(requested.width),
+    height: String(requested.height),
+  }));
   const [presetOpen, setPresetOpen] = useState(false);
   const [scaleOpen, setScaleOpen] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setWidth(String(requested.width));
-    setHeight(String(requested.height));
-  }, [requested.height, requested.width]);
+  const dimensions = sameSize(dimensionDraft.requested, requested)
+    ? dimensionDraft
+    : {
+        requested,
+        width: String(requested.width),
+        height: String(requested.height),
+      };
 
   const selectedPreset = state.mode === "responsive"
     ? VIEWPORT_PRESETS.find((preset) => preset.id === selectedPresetId && sameSize(preset, requested))
@@ -165,11 +175,14 @@ export function BrowserViewportToolbar({
   };
 
   const submitInputs = () => {
-    const nextWidth = parseDimension(width);
-    const nextHeight = parseDimension(height);
+    const nextWidth = parseDimension(dimensions.width);
+    const nextHeight = parseDimension(dimensions.height);
     if (nextWidth === null || nextHeight === null) {
-      setWidth(String(requested.width));
-      setHeight(String(requested.height));
+      setDimensionDraft({
+        requested,
+        width: String(requested.width),
+        height: String(requested.height),
+      });
       return;
     }
     submitSize({ width: nextWidth, height: nextHeight });
@@ -194,39 +207,77 @@ export function BrowserViewportToolbar({
       aria-label="Browser viewport controls"
     >
       <ViewportPresetMenu open={presetOpen} selected={selectedPreset} onOpenChange={setPresetOpen} onResponsive={selectResponsive} onPreset={(preset) => submitSize(preset, preset.id)} />
-      <ViewportDimensionInputs width={width} height={height} onWidthChange={setWidth} onHeightChange={setHeight} onSubmit={submitInputs} />
+      <ViewportDimensionInputs
+        width={dimensions.width}
+        height={dimensions.height}
+        onWidthChange={(width) => {
+          setDimensionDraft((current) => ({
+            ...(sameSize(current.requested, requested) ? current : {
+              requested,
+              width: String(requested.width),
+              height: String(requested.height),
+            }),
+            width,
+          }));
+        }}
+        onHeightChange={(height) => {
+          setDimensionDraft((current) => ({
+            ...(sameSize(current.requested, requested) ? current : {
+              requested,
+              width: String(requested.width),
+              height: String(requested.height),
+            }),
+            height,
+          }));
+        }}
+        onSubmit={submitInputs}
+      />
 
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        className="@max-[520px]:size-7"
-        onClick={() => submitSize({ width: requested.height, height: requested.width })}
-        aria-label={isLandscape ? "Rotate viewport to portrait" : "Rotate viewport to landscape"}
-        title={isLandscape ? "Rotate viewport to portrait" : "Rotate viewport to landscape"}
-      >
-        <span className="relative inline-flex size-4 items-center justify-center">
-          <Smartphone className={cn("size-3.5 transition-transform", isLandscape && "rotate-90")} aria-hidden />
-          <RotateCw className="absolute -right-1 -bottom-1 size-2.5" aria-hidden />
-        </span>
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="@max-[520px]:size-7"
+              onClick={() => submitSize({ width: requested.height, height: requested.width })}
+              aria-label={isLandscape ? "Rotate viewport to portrait" : "Rotate viewport to landscape"}
+            >
+              <span className="relative inline-flex size-4 items-center justify-center">
+                <Smartphone className={cn("size-3.5 transition-transform", isLandscape && "rotate-90")} aria-hidden />
+                <RotateCw className="absolute -right-1 -bottom-1 size-2.5" aria-hidden />
+              </span>
+            </Button>
+          }
+        />
+        <TooltipContent>
+          {isLandscape ? "Rotate viewport to portrait" : "Rotate viewport to landscape"}
+        </TooltipContent>
+      </Tooltip>
 
       <ViewportPresentationMenu open={scaleOpen} scaleLabel={scaleLabel} presentation={state.presentation} onOpenChange={setScaleOpen} onPresentation={setPresentation} />
 
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        className="ml-auto shrink-0 @max-[520px]:size-7"
-        onClick={() => {
-          onUserViewportChange?.();
-          onClose();
-        }}
-        aria-label="Close viewport toolbar"
-        title="Close viewport toolbar"
-      >
-        <X size={14} aria-hidden />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="ml-auto shrink-0 @max-[520px]:size-7"
+              onClick={() => {
+                onUserViewportChange?.();
+                onClose();
+              }}
+              aria-label="Close viewport toolbar"
+            >
+              <X size={14} aria-hidden />
+            </Button>
+          }
+        />
+        <TooltipContent>Close viewport toolbar</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

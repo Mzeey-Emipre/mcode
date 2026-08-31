@@ -254,22 +254,36 @@ export function PullRequestDiffViewport({
   const patchPresentationRevision = usePullRequestCodeStore(
     (state) => state.patchPresentationRevision,
   );
+  const patchPresentationSnapshot = useMemo(
+    () => ({
+      revision: patchPresentationRevision,
+      patches: usePullRequestCodeStore.getState().patches,
+    }),
+    [patchPresentationRevision],
+  );
   const patchLanes = useMemo(() => {
-    const state = usePullRequestCodeStore.getState();
-    return patchKeys.map((key) => (key ? (state.patches[key] ?? null) : null));
-  }, [patchKeys, patchPresentationRevision]);
+    return patchKeys.map((key) =>
+      key ? (patchPresentationSnapshot.patches[key] ?? null) : null,
+    );
+  }, [patchKeys, patchPresentationSnapshot]);
   const draftIdentityKey = activeEntry?.identityKey ?? identityKey;
   const draftPlacementRevision = usePullRequestReviewDraftStore(
     (state) => state.placementRevision,
   );
+  const draftPlacementSnapshot = useMemo(
+    () => ({
+      revision: draftPlacementRevision,
+      ...usePullRequestReviewDraftStore.getState(),
+    }),
+    [draftPlacementRevision],
+  );
   const drafts = useMemo(() => {
-    const state = usePullRequestReviewDraftStore.getState();
-    return state.order
-      .map((localId) => state.drafts[localId])
+    return draftPlacementSnapshot.order
+      .map((localId) => draftPlacementSnapshot.drafts[localId])
       .filter((draft): draft is PullRequestReviewDraft =>
         Boolean(draft && draft.identityKey === draftIdentityKey),
       );
-  }, [draftIdentityKey, draftPlacementRevision]);
+  }, [draftIdentityKey, draftPlacementSnapshot]);
   const [memoryPausedPaths, setMemoryPausedPaths] = useState<
     ReadonlySet<string>
   >(new Set());
@@ -283,6 +297,7 @@ export function PullRequestDiffViewport({
   const [draftError, setDraftError] = useState<string | null>(null);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A pull request snapshot change resets patch-resource state before the new rows render.
     setMemoryPausedPaths(new Set());
     setEvictedPatchPaths(new Set());
     setParsedRejectedPaths(new Set());
@@ -290,6 +305,7 @@ export function PullRequestDiffViewport({
   }, [activeSnapshotKey]);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Patch eviction from the shared cache must synchronize its rendered row state.
     setEvictedPatchPaths((current) => {
       const next = new Set(current);
       for (let index = 0; index < files.length; index += 1) {
@@ -365,8 +381,7 @@ export function PullRequestDiffViewport({
     ],
   );
   const rowModel = useMemo(() => {
-    const codeState = usePullRequestCodeStore.getState();
-    const retainedBytes = Object.values(codeState.patches).reduce(
+    const retainedBytes = Object.values(patchPresentationSnapshot.patches).reduce(
       (total, lane) => total + lane.estimatedBytes,
       0,
     );
@@ -374,7 +389,7 @@ export function PullRequestDiffViewport({
     const intrinsicParsedBytesByLocator = new Map<string, number>();
     for (let index = 0; index < files.length; index += 1) {
       const patchKey = patchKeys[index];
-      const lane = patchKey ? codeState.patches[patchKey] : null;
+      const lane = patchKey ? patchPresentationSnapshot.patches[patchKey] : null;
       if (lane) {
         reservedParsedBytesByLocator.set(
           files[index].locator,
@@ -423,11 +438,13 @@ export function PullRequestDiffViewport({
     headOid,
     identityKey,
     patchKeys,
+    patchPresentationSnapshot,
     reviewThreads,
     rowDrafts,
   ]);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Parsed patch limits come from the shared patch cache and must update the row guard state.
     setParsedRejectedPaths((current) =>
       synchronizeParsedPatchRejections({
         files,

@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { ChevronRight, Terminal } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatDuration } from "@/lib/time";
 import type { ToolCall } from "@/transport/types";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
@@ -98,7 +99,14 @@ function ShellToolCallHeader({
           in {duration}
         </span>
       )}
-      <span className={narrativeToolDetailClass("md")} title={command || undefined}>{detail}</span>
+      {command ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className={narrativeToolDetailClass("md")}>{detail}</span>}
+          />
+          <TooltipContent>{command}</TooltipContent>
+        </Tooltip>
+      ) : <span className={narrativeToolDetailClass("md")}>{detail}</span>}
       <ChevronRight
         className={`h-3 w-3 shrink-0 text-muted-foreground/45 transition-transform duration-150 motion-reduce:transition-none ${
           open ? "rotate-90" : ""

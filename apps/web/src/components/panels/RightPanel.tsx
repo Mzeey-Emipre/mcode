@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type RefObject } from "react";
 import { useShallow } from "zustand/shallow";
 import type { BrowserTabSet } from "@mcode/contracts";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
@@ -99,6 +99,54 @@ interface AgentPageSelectorState {
   readonly lifecycleTabs: ReadonlyMap<string, BrowserSessionLifecycleTab>;
   readonly liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>;
   readonly pendingAgentOpens: ReadonlyMap<string, BrowserAutomationPendingAgentOpen>;
+}
+
+type WarmPreviewScopesAction =
+  | {
+      readonly type: "activate";
+      readonly scope: Pick<WarmPreviewScope, "scopeId" | "workspaceId">;
+      readonly busyScopeIds: ReadonlySet<string>;
+      readonly becameActive: boolean;
+    }
+  | {
+      readonly type: "reconcile";
+      readonly activeWorkspaceId: string | null;
+      readonly browserScopePresent: boolean;
+      readonly busyScopeIds: ReadonlySet<string>;
+      readonly panelScopeId: string | null;
+      readonly previewActive: boolean;
+    };
+
+function warmPreviewScopesReducer(
+  previous: readonly WarmPreviewScope[],
+  action: WarmPreviewScopesAction,
+): readonly WarmPreviewScope[] {
+  if (action.type === "activate") {
+    const existing = previous.find(
+      (scope) =>
+        scope.scopeId === action.scope.scopeId && scope.workspaceId === action.scope.workspaceId,
+    );
+    const next = !existing || action.becameActive
+      ? { ...action.scope, lastUsedAt: Date.now() }
+      : existing;
+    return reconcileWarmPreviewScopes(previous, next, action.busyScopeIds);
+  }
+
+  const retained =
+    !action.previewActive &&
+    !action.browserScopePresent &&
+    action.panelScopeId &&
+    action.activeWorkspaceId &&
+    !action.busyScopeIds.has(
+      browserAutomationScopeKey(action.activeWorkspaceId, action.panelScopeId),
+    )
+      ? previous.filter(
+          (scope) =>
+            scope.scopeId !== action.panelScopeId ||
+            scope.workspaceId !== action.activeWorkspaceId,
+        )
+      : previous;
+  return reconcileWarmPreviewScopes(retained, null, action.busyScopeIds);
 }
 
 function latestPendingAgentPageId(
@@ -492,21 +540,19 @@ function useChangesFreshness(
   isChangesActive: boolean,
 ): boolean {
   const seenByThread = useRef<Map<string, number>>(new Map());
-  const [fresh, setFresh] = useState(false);
+  const baseline = threadId ? seenByThread.current.get(threadId) : undefined;
+  const fresh =
+    threadId !== null &&
+    baseline !== undefined &&
+    !isChangesActive &&
+    fileCount > baseline;
 
   useEffect(() => {
-    if (!threadId) {
-      setFresh(false);
-      return;
-    }
+    if (!threadId) return;
     const seen = seenByThread.current;
-    const baseline = seen.get(threadId);
-    if (baseline === undefined || isChangesActive) {
+    if (seen.get(threadId) === undefined || isChangesActive) {
       seen.set(threadId, fileCount);
-      setFresh(false);
-      return;
     }
-    setFresh(fileCount > baseline);
   }, [threadId, fileCount, isChangesActive]);
 
   return fresh;
@@ -1033,7 +1079,10 @@ export function RightPanel() {
   // workspace itself in the threadless new-thread view (where they run against
   // the local workspace root). Their stores treat this as an opaque scope key.
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
-  const [warmPreviewScopes, setWarmPreviewScopes] = useState<readonly WarmPreviewScope[]>([]);
+  const [warmPreviewScopes, dispatchWarmPreviewScopes] = useReducer(
+    warmPreviewScopesReducer,
+    [],
+  );
   const [activityRailExpanded, setActivityRailExpanded] = useState(false);
 
   useEffect(() => () => {
@@ -1193,31 +1242,23 @@ export function RightPanel() {
     }
     const becameActive = previousActivePreviewScopeKeyRef.current !== activePreviewScopeKey;
     previousActivePreviewScopeKeyRef.current = activePreviewScopeKey;
-    setWarmPreviewScopes((previous) => {
-      const existing = previous.find((scope) =>
-        scope.scopeId === panelScopeId && scope.workspaceId === activeWorkspaceId
-      );
-      const next = !existing || becameActive
-        ? { scopeId: panelScopeId, workspaceId: activeWorkspaceId, lastUsedAt: Date.now() }
-        : existing;
-      return reconcileWarmPreviewScopes(previous, next, busyPreviewScopeIds);
+    dispatchWarmPreviewScopes({
+      type: "activate",
+      scope: { scopeId: panelScopeId, workspaceId: activeWorkspaceId },
+      busyScopeIds: busyPreviewScopeIds,
+      becameActive,
     });
   }, [activePreviewScopeKey, activeWorkspaceId, busyPreviewScopeIds, panelScopeId]);
 
   const browserScopePresent = browserTabSet !== null;
   useEffect(() => {
-    setWarmPreviewScopes((previous) => {
-      const retained =
-        !previewActive &&
-        !browserScopePresent &&
-        panelScopeId &&
-        activeWorkspaceId &&
-        !busyPreviewScopeIds.has(browserAutomationScopeKey(activeWorkspaceId, panelScopeId))
-        ? previous.filter((scope) =>
-            scope.scopeId !== panelScopeId || scope.workspaceId !== activeWorkspaceId
-          )
-        : previous;
-      return reconcileWarmPreviewScopes(retained, null, busyPreviewScopeIds);
+    dispatchWarmPreviewScopes({
+      type: "reconcile",
+      activeWorkspaceId,
+      browserScopePresent,
+      busyScopeIds: busyPreviewScopeIds,
+      panelScopeId,
+      previewActive,
     });
   }, [activeWorkspaceId, browserScopePresent, busyPreviewScopeIds, panelScopeId, previewActive]);
 

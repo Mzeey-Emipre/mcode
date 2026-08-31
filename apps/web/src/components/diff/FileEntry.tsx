@@ -15,6 +15,7 @@ import { SideBySideDiff } from "./SideBySideDiff";
 import { DiffPreview } from "./DiffPreview";
 import { FileActionBar } from "./FileActionBar";
 import { DiffStat } from "./DiffStat";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Props for FileEntry. */
 interface FileEntryProps {
@@ -66,13 +67,17 @@ type DiffState = null | { loading: true } | { loading: false; data: string };
  * Diff is loaded lazily on the first expand, or immediately for auto-opened views.
  * Large diffs (>200 lines) are truncated with a "Show all N lines" button.
  */
-export const FileEntry = memo(function FileEntry({
+export const FileEntry = memo(function FileEntry(props: FileEntryProps) {
+  const entryKey = `${props.threadId}:${props.source}:${props.id}:${props.filePath}:${props.cacheVersion ?? 0}`;
+  return <FileEntryContent key={entryKey} {...props} />;
+});
+
+function FileEntryContent({
   filePath,
   source,
   id,
   threadId,
   defaultExpanded: defaultExpandedProp = false,
-  cacheVersion = 0,
   jumpToken,
   onJumpSettled,
   highlightToken,
@@ -109,27 +114,16 @@ export const FileEntry = memo(function FileEntry({
   // last nonce we applied so we react only to new commands, never on mount.
   const appliedBulkRef = useRef(bulkDiffExpand?.nonce);
 
-  // Reset local state when the cache identity changes so a reused component
-  // instance doesn't show stale content from a previous identity.
-  useEffect(() => {
-    const cached = useDiffStore.getState().inlineDiffCache[cacheKey];
-    setDiffState(cached !== undefined ? { loading: false, data: cached } : null);
-    setShowAllLines(false);
-    setPreviewMode(false);
-    loadStartedRef.current = false;
-  }, [cacheKey, cacheVersion]);
-
-  useEffect(() => {
-    if (defaultExpandedProp) setExpanded(true);
-  }, [cacheKey, cacheVersion, defaultExpandedProp]);
-
   // Apply a bulk expand/collapse command once per nonce.
   useEffect(() => {
     if (!bulkDiffExpand || appliedBulkRef.current === bulkDiffExpand.nonce) return;
     appliedBulkRef.current = bulkDiffExpand.nonce;
+    // oxlint-disable-next-line react/set-state-in-effect -- The global bulk command is external state that virtualized rows must apply after they mount.
     setExpanded(bulkDiffExpand.expand);
     if (!bulkDiffExpand.expand) {
+      // oxlint-disable-next-line react/set-state-in-effect -- The same external collapse command must clear row-only display state.
       setShowAllLines(false);
+      // oxlint-disable-next-line react/set-state-in-effect -- The same external collapse command must clear row-only display state.
       setPreviewMode(false);
     }
   }, [bulkDiffExpand]);
@@ -142,6 +136,7 @@ export const FileEntry = memo(function FileEntry({
   useEffect(() => {
     if (jumpToken === undefined) return;
     // Expand first, but defer the scroll until the diff has loaded and laid out.
+    // oxlint-disable-next-line react/set-state-in-effect -- A parent-owned jump request must mount this virtualized row before the scroll can target it.
     setExpanded(true);
     // Scrolling before the async diff loads measures the file at its pre-load
     // (short) height, which lands a file near the bottom of the list at the
@@ -174,6 +169,7 @@ export const FileEntry = memo(function FileEntry({
 
   useEffect(() => {
     if (highlightToken === undefined) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- The timeout synchronizes the transient jump highlight with wall-clock time.
     setJumpHighlight(true);
     const timeout = setTimeout(() => setJumpHighlight(false), 1500);
     return () => clearTimeout(timeout);
@@ -189,19 +185,13 @@ export const FileEntry = memo(function FileEntry({
     };
   }, [filePath]);
 
-  // Load diff lazily on first expand. Reads the cache at effect time so a reused
-  // row with a new comparison id does not miss its fresh load.
+  // Load a diff lazily on first expand. The keyed row starts from the matching
+  // cache snapshot, so this request only starts when that snapshot is absent.
   useEffect(() => {
-    if (!expanded || loadStartedRef.current) return;
-    const cached = useDiffStore.getState().inlineDiffCache[cacheKey];
-    if (cached !== undefined) {
-      setDiffState({ loading: false, data: cached });
-      return;
-    }
+    if (!expanded || diffState !== null || loadStartedRef.current) return;
     loadStartedRef.current = true;
 
     let cancelled = false;
-    setDiffState({ loading: true });
 
     const load = async () => {
       try {
@@ -221,7 +211,7 @@ export const FileEntry = memo(function FileEntry({
       cancelled = true;
       loadStartedRef.current = false;
     };
-  }, [expanded, source, id, filePath, threadId, cacheKey, cacheVersion]);
+  }, [diffState, expanded, filePath, id, source, threadId]);
 
   const lines = useMemo(
     () =>
@@ -348,7 +338,7 @@ export const FileEntry = memo(function FileEntry({
       ) : null}
     </div>
   );
-});
+}
 
 /** Props for a file entry's sticky header. */
 interface FileEntryHeaderProps {
@@ -400,35 +390,41 @@ function FileEntryHeader({
         "data-[jump-highlight=true]:bg-primary/10",
       )}
     >
-      <button
-        type="button"
-        aria-expanded={expanded}
-        aria-controls={expanded ? contentId : undefined}
-        onClick={onToggleExpanded}
-        className={cn(
-          "group flex min-h-9 min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition-colors",
-          "hover:bg-foreground/[0.05]",
-          "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring/55",
-        )}
-        title={filePath}
-      >
-        <ChevronRight
-          aria-hidden="true"
-          size={14}
-          className={cn(
-            "shrink-0 text-muted-foreground/55 transition-transform duration-150",
-            expanded && "rotate-90",
-          )}
-        />
-        <FileTypeIcon filePath={filePath} size={16} />
-        <span className="flex min-w-0 flex-1 items-baseline gap-0.5 overflow-hidden font-mono text-xs">
-          {parentPath ? (
-            <span className="min-w-0 shrink-[100] truncate text-muted-foreground">{parentPath}</span>
-          ) : null}
-          <span className="min-w-0 truncate font-medium text-foreground/90">{basename}</span>
-        </span>
-        {isLoaded && hasChanges ? <DiffStat additions={additions} deletions={deletions} /> : null}
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-controls={expanded ? contentId : undefined}
+              onClick={onToggleExpanded}
+              className={cn(
+                "group flex min-h-9 min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition-colors",
+                "hover:bg-foreground/[0.05]",
+                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring/55",
+              )}
+            />
+          }
+        >
+          <ChevronRight
+            aria-hidden="true"
+            size={14}
+            className={cn(
+              "shrink-0 text-muted-foreground/55 transition-transform duration-150",
+              expanded && "rotate-90",
+            )}
+          />
+          <FileTypeIcon filePath={filePath} size={16} />
+          <span className="flex min-w-0 flex-1 items-baseline gap-0.5 overflow-hidden font-mono text-xs">
+            {parentPath ? (
+              <span className="min-w-0 shrink-[100] truncate text-muted-foreground">{parentPath}</span>
+            ) : null}
+            <span className="min-w-0 truncate font-medium text-foreground/90">{basename}</span>
+          </span>
+          {isLoaded && hasChanges ? <DiffStat additions={additions} deletions={deletions} /> : null}
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">{filePath}</TooltipContent>
+      </Tooltip>
       {expanded ? (
         <FileActionBar
           filePath={filePath}

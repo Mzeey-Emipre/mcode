@@ -109,6 +109,28 @@ describe("BrowserViewportToolbar", () => {
     expect(screen.getByRole("button", { name: "Viewport preset" })).toHaveTextContent("Responsive");
   });
 
+  it("rotates the viewport through the coordinator", async () => {
+    const user = userEvent.setup();
+    const apply = vi.fn(async (operation: ViewportHostOperation) => ({
+      status: "applied" as const,
+      applied: operation.requested,
+    }));
+    const coordinator = createCoordinator(apply);
+    render(
+      <BrowserViewportToolbar
+        coordinator={coordinator}
+        state={coordinator.snapshot()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Rotate viewport to landscape" }));
+
+    await waitFor(() => expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({ requested: { width: 800, height: 1280 } }),
+    ));
+  });
+
   it("submits presets and bounded custom dimensions through the coordinator", async () => {
     const user = userEvent.setup();
     const apply = vi.fn(async (operation: ViewportHostOperation) => ({

@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -213,7 +214,12 @@ function CanonicalRosterTimestamp({
     <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums text-muted-foreground">
       {status !== "Completed" && <span>{status}</span>}
       {status !== "Completed" && lastActiveLabel && <span aria-hidden>·</span>}
-      {lastActiveAt && lastActiveLabel && <time dateTime={lastActiveAt} title={new Date(lastActiveAt).toLocaleString()}>{lastActiveLabel}</time>}
+      {lastActiveAt && lastActiveLabel && (
+        <Tooltip>
+          <TooltipTrigger render={<time dateTime={lastActiveAt}>{lastActiveLabel}</time>} />
+          <TooltipContent>{new Date(lastActiveAt).toLocaleString()}</TooltipContent>
+        </Tooltip>
+      )}
     </span>
   );
 }
@@ -239,6 +245,7 @@ function CanonicalDetailView({
   useEffect(() => {
     const residency = getConversationResidency();
     residency.mountDisplayConversation(row.id);
+    // oxlint-disable-next-line react/set-state-in-effect -- The conversation residency lease controls when its transcript can render.
     setDisplayLeaseAcquired(true);
     return () => residency.unmountDisplayConversation(row.id);
   }, [row.id]);
@@ -404,6 +411,7 @@ function useCanonicalRoster(threadId: string): {
   const acceptedGenerationRef = useRef(0);
   useEffect(() => {
     let cancelled = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- A new parent thread starts a new polled roster transport snapshot.
     setState({ threadId, status: "pending", roster: null });
     const load = async () => {
       const requestGeneration = ++requestGenerationRef.current;
@@ -466,6 +474,7 @@ function useStopAllControl(
   useEffect(() => {
     lifecycleGenerationRef.current += 1;
     stopAllBatchRef.current = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- Switching the parent thread invalidates all pending stop-all targets.
     setStopAllOpen(false);
     setStopAllTargets(null);
     setStopAllStatuses(new Map());

@@ -33,6 +33,7 @@ import {
 import {
   getPullRequestPatchKey,
   usePullRequestCodeStore,
+  type PullRequestCodeStoreState,
 } from "@/features/pull-requests/state/pullRequestCodeStore";
 import { usePullRequestDetailStore } from "@/features/pull-requests/state/pullRequestDetailStore";
 import { usePullRequestReviewDraftStore } from "@/features/pull-requests/state/pullRequestReviewDraftStore";
@@ -656,7 +657,10 @@ function PullRequestCodeFilesPane({
 function usePullRequestCodeReviewContext(
   code: PullRequestCodeState,
   comments: PullRequestCodeComments,
-  patchPresentationRevision: number,
+  patchPresentationSnapshot: {
+    readonly revision: number;
+    readonly patches: PullRequestCodeStoreState["patches"];
+  },
 ) {
   const reviewThreads = useMemo(
     () =>
@@ -668,7 +672,6 @@ function usePullRequestCodeReviewContext(
   const displayedFiles = useMemo(() => {
     const entry = code.entry;
     if (!entry) return code.files;
-    const patches = usePullRequestCodeStore.getState().patches;
     return code.files.map((file) => {
       const patchKey = getPullRequestPatchKey(
         entry.viewerNodeId,
@@ -677,12 +680,12 @@ function usePullRequestCodeReviewContext(
         entry.headOid,
         file.locator,
       );
-      const patchStatus = patches[patchKey]?.result?.status;
+      const patchStatus = patchPresentationSnapshot.patches[patchKey]?.result?.status;
       return patchStatus && patchStatus !== file.patchStatus
         ? { ...file, patchStatus }
         : file;
     });
-  }, [code.entry, code.files, patchPresentationRevision]);
+  }, [code.entry, code.files, patchPresentationSnapshot]);
   const activeDraftIdentityKey = code.entry?.identityKey ?? null;
   const hasOutdatedDrafts = usePullRequestReviewDraftStore((state) => {
     if (activeDraftIdentityKey === null) return false;
@@ -791,18 +794,19 @@ export function PullRequestCode({
   );
   const snapshotIdentity = useMemo<PullRequestIdentity>(
     () => ({ ...identity }),
-    [
-      identity.number,
-      identity.owner,
-      identity.provider,
-      identity.repository,
-      identity.repositoryNodeId,
-    ],
+    [identity],
   );
   const code = usePullRequestCodeStore(useShallow(selectPullRequestCodeCore));
   const view = usePullRequestCodeStore(useShallow(selectPullRequestCodeView));
   const patchPresentationRevision = usePullRequestCodeStore(
     (state) => state.patchPresentationRevision,
+  );
+  const patchPresentationSnapshot = useMemo(
+    () => ({
+      revision: patchPresentationRevision,
+      patches: usePullRequestCodeStore.getState().patches,
+    }),
+    [patchPresentationRevision],
   );
   const comments = usePullRequestDetailStore(
     useShallow(selectPullRequestCodeComments(identityKey)),
@@ -820,7 +824,7 @@ export function PullRequestCode({
   const reviewContext = usePullRequestCodeReviewContext(
     code,
     comments,
-    patchPresentationRevision,
+    patchPresentationSnapshot,
   );
 
   useEffect(() => {

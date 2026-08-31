@@ -7,6 +7,7 @@ import {
   type ComponentProps,
   type CSSProperties,
   type MouseEvent,
+  type ReactElement,
 } from "react";
 import {
   Check,
@@ -293,6 +294,25 @@ type ThreadOverviewTriggerProps = {
   open: boolean;
 } & Omit<ComponentProps<typeof Button>, "children">;
 
+function ThreadOverviewTooltipButton({
+  content,
+  disabled = false,
+  children,
+}: {
+  content: string;
+  disabled?: boolean;
+  children: ReactElement;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={disabled ? <span className="inline-flex">{children}</span> : children}
+      />
+      <TooltipContent>{content}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** Renders the Overview trigger with its compact CI state. */
 function ThreadOverviewTrigger({ ciDot, open, className, ...triggerProps }: ThreadOverviewTriggerProps) {
   const status = getThreadOverviewTriggerStatus(ciDot);
@@ -303,7 +323,6 @@ function ThreadOverviewTrigger({ ciDot, open, className, ...triggerProps }: Thre
       variant="ghost"
       size="icon-xs"
       type="button"
-      title={status}
       aria-label={status}
       aria-expanded={open}
       data-testid="header-workspace-menu"
@@ -991,25 +1010,26 @@ function ThreadOverviewRepositoryRow({
           <span className="font-mono text-xs font-medium uppercase leading-tight tracking-[0.18em] text-muted-foreground">
             REPOSITORY
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            type="button"
-            onClick={onOpen}
-            data-testid="thread-overview-repository-link"
-            aria-label={`Open ${label} on remote`}
-            title={repository.webUrl ?? label}
-            className="-mx-1.5 h-7 min-w-0 justify-start gap-1.5 rounded-md px-1.5 text-left text-primary hover:bg-muted/50 hover:text-primary focus-visible:ring-inset"
-          >
-            <SiteFavicon
-              src={repository.faviconUrl}
-              frameTestId="thread-overview-repository-favicon-frame"
-              imageTestId="thread-overview-repository-favicon"
-              fallback={<GitBranch size={14} className="shrink-0 text-muted-foreground" />}
-            />
-            <span className="truncate text-xs font-medium">{label}</span>
-            <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" />
-          </Button>
+          <ThreadOverviewTooltipButton content={repository.webUrl ?? label}>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={onOpen}
+              data-testid="thread-overview-repository-link"
+              aria-label={`Open ${label} on remote`}
+              className="-mx-1.5 h-7 min-w-0 justify-start gap-1.5 rounded-md px-1.5 text-left text-primary hover:bg-muted/50 hover:text-primary focus-visible:ring-inset"
+            >
+              <SiteFavicon
+                src={repository.faviconUrl}
+                frameTestId="thread-overview-repository-favicon-frame"
+                imageTestId="thread-overview-repository-favicon"
+                fallback={<GitBranch size={14} className="shrink-0 text-muted-foreground" />}
+              />
+              <span className="truncate text-xs font-medium">{label}</span>
+              <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" />
+            </Button>
+          </ThreadOverviewTooltipButton>
         </div>
       </div>
     </div>
@@ -1263,7 +1283,7 @@ interface ThreadOverviewBranchMenuProps {
 /** Loads branch and working-tree data while the branch picker is open. */
 function useThreadOverviewBranchState(thread: Thread, open: boolean): LoadedBranchState {
   const [loaded, setLoaded] = useState<LoadedBranchState>({
-    status: "idle",
+    status: "loading",
     branches: [],
     uncommittedFiles: null,
   });
@@ -1272,8 +1292,6 @@ function useThreadOverviewBranchState(thread: Thread, open: boolean): LoadedBran
     if (!open) return;
 
     let cancelled = false;
-    setLoaded((previous) => ({ ...previous, status: "loading" }));
-
     const loadBranches = async () => {
       try {
         const [branches, unstaged, staged] = await Promise.all([
@@ -1488,23 +1506,24 @@ function ThreadOverviewBranchCreateAction({
     : "Detected changes required";
 
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      type="button"
-      disabled={!canCreateCheckoutBranch}
-      data-testid="thread-overview-create-checkout-branch"
-      className="h-8 w-full justify-start gap-2 px-2 text-xs disabled:opacity-60"
-      title={title}
-      onClick={() => {
-        if (!canCreateCheckoutBranch) return;
-        onOpenChange(false);
-        onCreateBranch();
-      }}
-    >
-      <Plus size={14} className="text-muted-foreground" />
-      Create and checkout new branch...
-    </Button>
+    <ThreadOverviewTooltipButton content={title} disabled={!canCreateCheckoutBranch}>
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        disabled={!canCreateCheckoutBranch}
+        data-testid="thread-overview-create-checkout-branch"
+        className="h-8 w-full justify-start gap-2 px-2 text-xs disabled:opacity-60"
+        onClick={() => {
+          if (!canCreateCheckoutBranch) return;
+          onOpenChange(false);
+          onCreateBranch();
+        }}
+      >
+        <Plus size={14} className="text-muted-foreground" />
+        Create and checkout new branch...
+      </Button>
+    </ThreadOverviewTooltipButton>
   );
 }
 
@@ -1739,43 +1758,48 @@ function ThreadOverviewPrActionRow({
   if (hasCommitsAhead === false) {
     return (
       <div data-testid="thread-overview-pr">
-        <Button
-          variant="ghost"
-          size="sm"
-          type="button"
-          data-testid="workspace-menu-commit"
-          className={cn(
-            OVERVIEW_ROW_CLASS,
-            "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground",
-          )}
-          onClick={onCommitOrPush}
-          title="Ask the agent to commit and push the changes"
-        >
-          <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-          <span className="font-medium">Commit or push</span>
-        </Button>
+        <ThreadOverviewTooltipButton content="Ask the agent to commit and push the changes">
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            data-testid="workspace-menu-commit"
+            className={cn(
+              OVERVIEW_ROW_CLASS,
+              "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground",
+            )}
+            onClick={onCommitOrPush}
+          >
+            <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+            <span className="font-medium">Commit or push</span>
+          </Button>
+        </ThreadOverviewTooltipButton>
       </div>
     );
   }
 
   return (
     <div data-testid="thread-overview-pr">
-      <Button
-        variant="ghost"
-        size="sm"
-        type="button"
-        data-testid="workspace-menu-create-pr"
-        className={cn(
-          OVERVIEW_ROW_CLASS,
-          "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
-        )}
-        onClick={onCreatePr}
+      <ThreadOverviewTooltipButton
+        content={hasCommitsAhead ? "Create pull request" : "Waiting for commits ahead of base branch"}
         disabled={!hasCommitsAhead}
-        title={hasCommitsAhead ? "Create pull request" : "Waiting for commits ahead of base branch"}
       >
-        <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-        <span className="font-medium">Create PR</span>
-      </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          data-testid="workspace-menu-create-pr"
+          className={cn(
+            OVERVIEW_ROW_CLASS,
+            "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+          )}
+          onClick={onCreatePr}
+          disabled={!hasCommitsAhead}
+        >
+          <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+          <span className="font-medium">Create PR</span>
+        </Button>
+      </ThreadOverviewTooltipButton>
     </div>
   );
 }
@@ -1819,36 +1843,37 @@ function ThreadOverviewPrActiveRow({
         open={checksOpen}
         onOpenChange={setChecksOpen}
       >
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-testid="thread-overview-pr-status"
-          aria-label={`CI checks, ${getCiSummaryHeadline(checks)}`}
-          aria-expanded={checksOpen}
-          aria-haspopup="dialog"
-          title={getCiSummaryHeadline(checks)}
-          onClick={(event) => {
-            event.stopPropagation();
-            setChecksOpen((open) => !open);
-          }}
-          className="flex h-7 w-full cursor-pointer justify-between gap-3 border-transparent bg-transparent px-2 text-left text-muted-foreground hover:bg-muted/40 hover:text-foreground dark:hover:bg-muted/40"
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <ThreadOverviewCiStatusCircle checks={checks} />
-            <span className="truncate font-mono text-xs tabular-nums">
-              {getCiOverviewSummaryLabel(checks)}
+        <ThreadOverviewTooltipButton content={getCiSummaryHeadline(checks)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="thread-overview-pr-status"
+            aria-label={`CI checks, ${getCiSummaryHeadline(checks)}`}
+            aria-expanded={checksOpen}
+            aria-haspopup="dialog"
+            onClick={(event) => {
+              event.stopPropagation();
+              setChecksOpen((open) => !open);
+            }}
+            className="flex h-7 w-full cursor-pointer justify-between gap-3 border-transparent bg-transparent px-2 text-left text-muted-foreground hover:bg-muted/40 hover:text-foreground dark:hover:bg-muted/40"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <ThreadOverviewCiStatusCircle checks={checks} />
+              <span className="truncate font-mono text-xs tabular-nums">
+                {getCiOverviewSummaryLabel(checks)}
+              </span>
             </span>
-          </span>
-          <ChevronDown
-            size={12}
-            aria-hidden
-            className={cn(
-              "shrink-0 text-muted-foreground transition-transform duration-150",
-              checksOpen && "rotate-180",
-            )}
-          />
-        </Button>
+            <ChevronDown
+              size={12}
+              aria-hidden
+              className={cn(
+                "shrink-0 text-muted-foreground transition-transform duration-150",
+                checksOpen && "rotate-180",
+              )}
+            />
+          </Button>
+        </ThreadOverviewTooltipButton>
       </ChecksPopover>
     ) : (
       status.label ? (
@@ -1948,7 +1973,12 @@ function updateThreadToNamedBranch(threadId: string, branch: string): void {
   }));
 }
 
-function CreateThreadBranchDialog({
+function CreateThreadBranchDialog(props: CreateThreadBranchDialogProps) {
+  if (!props.open) return null;
+  return <CreateThreadBranchDialogSession {...props} />;
+}
+
+function CreateThreadBranchDialogSession({
   open,
   onOpenChange,
   thread,
@@ -1965,15 +1995,11 @@ function CreateThreadBranchDialog({
   const errorId = "create-thread-branch-error";
 
   useEffect(() => {
-    if (!open) return;
-    setBranchName("");
-    setSubmitting(false);
-    setError(null);
     const frame = requestAnimationFrame(() => {
       branchInputRef.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [open]);
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     const name = finalBranchName;
@@ -2069,6 +2095,100 @@ function CreateThreadBranchDialog({
   );
 }
 
+interface ThreadOverviewBranchCreation {
+  threadId: string;
+  open: boolean;
+  branch: string | null;
+  baseBranch: string | null;
+}
+
+function useThreadOverviewBranchCreation(threadId: string) {
+  const [creation, setCreation] = useState<ThreadOverviewBranchCreation>({
+    threadId,
+    open: false,
+    branch: null,
+    baseBranch: null,
+  });
+  const current = creation.threadId === threadId
+    ? creation
+    : { threadId, open: false, branch: null, baseBranch: null };
+  const setOpen = useCallback((open: boolean) => {
+    setCreation((previous) => ({
+      ...(previous.threadId === threadId
+        ? previous
+        : { threadId, branch: null, baseBranch: null }),
+      open,
+    }));
+  }, [threadId]);
+  const complete = useCallback((branch: string, baseBranch: string | null) => {
+    setCreation({ threadId, open: false, branch, baseBranch });
+  }, [threadId]);
+
+  return { ...current, setOpen, complete };
+}
+
+function useThreadOverviewOpenState(
+  threadId: string,
+  panelVisible: boolean,
+  hasRoom: boolean,
+  openRequested: boolean,
+) {
+  const [choice, setChoice] = useState<{ threadId: string; value: boolean | null }>({
+    threadId,
+    value: null,
+  });
+  const currentChoice = choice.threadId === threadId ? choice.value : null;
+  const open = !(panelVisible && !hasRoom) && (openRequested || (currentChoice ?? hasRoom));
+
+  useEffect(() => {
+    if (!openRequested) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- A store-driven open request becomes this thread's local interaction snapshot after consumption.
+    setChoice({ threadId, value: true });
+    useOverviewStore.getState().consumeOpenRequest(threadId);
+  }, [openRequested, threadId]);
+
+  const setOpen = useCallback((next: boolean) => {
+    setChoice({ threadId, value: next });
+  }, [threadId]);
+  const handleOpenChange = useCallback((next: boolean, eventDetails?: { reason?: string }) => {
+    if (!next && (eventDetails?.reason === "outside-press" || eventDetails?.reason === "focus-out")) {
+      return;
+    }
+    setChoice({ threadId, value: next });
+  }, [threadId]);
+
+  return { open, setOpen, handleOpenChange };
+}
+
+function hasCurrentThreadOverviewChangeSummary(
+  loaded: LoadedChangeSummary | null,
+  threadId: string,
+  snapshotKey: string,
+  revision: number,
+): boolean {
+  return loaded?.threadId === threadId
+    && loaded.snapshotKey === snapshotKey
+    && loaded.revision === revision;
+}
+
+function getThreadOverviewRepositoryDisplay(
+  loaded: LoadedRepository | null,
+  threadId: string,
+  open: boolean,
+): { repository: ThreadOverviewRepository; status: LoadStatus } {
+  const result = getLoadedThreadOverviewRepository(loaded, threadId);
+  return {
+    repository: result.repository,
+    status: open && result.status === "idle" ? "loading" : result.status,
+  };
+}
+
+function canRunManualProjectSetup(thread: Thread): boolean {
+  return thread.mode === "direct" || (
+    thread.mode === "worktree" && thread.worktree_managed === false
+  );
+}
+
 /**
  * Thread-scoped Overview popover for the chat header.
  *
@@ -2102,14 +2222,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       rightPanelActionTerminalId(actionId),
     );
   }, [thread.id, thread.workspace_id]);
-  const canRunManualSetup = thread.mode === "direct" || (
-    thread.mode === "worktree" && thread.worktree_managed === false
-  );
+  const canRunManualSetup = canRunManualProjectSetup(thread);
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
-  const [createBranchOpen, setCreateBranchOpen] = useState(false);
-  const [createdBranchForPr, setCreatedBranchForPr] = useState<string | null>(null);
-  const [createdBranchBaseForPr, setCreatedBranchBaseForPr] = useState<string | null>(null);
+  const branchCreation = useThreadOverviewBranchCreation(thread.id);
   const [loadedChangeSummary, setLoadedChangeSummary] = useState<LoadedChangeSummary | null>(null);
   const [loadedRepository, setLoadedRepository] = useState<LoadedRepository | null>(null);
   const [changeSummaryStatus, setChangeSummaryStatus] = useState<LoadStatus>("idle");
@@ -2118,9 +2234,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   // when the right panel or a narrow viewport leaves none, until the user takes
   // manual control of it for this thread.
   const panelVisible = useDiffStore((s) => s.getRightPanelVisible(thread.workspace_id, thread.id));
-  const [open, setOpen] = useState(false);
-  const autoManagedRef = useRef(true);
-  const lastAutoValueRef = useRef<boolean | null>(null);
   const openRequested = useOverviewStore(
     (state) => state.requestedThreadId === thread.id,
   );
@@ -2157,24 +2270,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     ],
   );
 
-  useEffect(() => {
-    autoManagedRef.current = true;
-  }, [thread.id]);
-
-  useEffect(() => {
-    if (!openRequested) return;
-    autoManagedRef.current = false;
-    lastAutoValueRef.current = true;
-    setOpen(true);
-    useOverviewStore.getState().consumeOpenRequest(thread.id);
-  }, [openRequested, thread.id]);
-
-  useEffect(() => {
-    setCreatedBranchForPr(null);
-    setCreatedBranchBaseForPr(null);
-    setCreateBranchOpen(false);
-  }, [thread.id]);
-
   // Whether there is room for the Overview to open by default. The chat pane
   // width, not the surrounding split row, is the signal that matches what the
   // user sees when the right panel opens.
@@ -2185,35 +2280,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       }),
     [threadPaneWidth],
   );
-
-  // The Overview opens by default when there is room and steps aside when a
-  // narrow viewport or the right panel leaves none, until the user takes manual
-  // control of it for this thread. The echo guard ignores base-ui's onOpenChange
-  // when our own programmatic open/close round-trips.
-  useEffect(() => {
-    if (!autoManagedRef.current) return;
-    lastAutoValueRef.current = hasRoom;
-    setOpen(hasRoom);
-  }, [hasRoom]);
-
-  const handleOpenChange = useCallback((next: boolean, eventDetails?: { reason?: string }) => {
-    // Clicking elsewhere (or focus leaving) must not close the Overview; only the
-    // trigger button and Escape do. base-ui is controlled, so ignoring the change
-    // keeps it open.
-    if (!next && (eventDetails?.reason === "outside-press" || eventDetails?.reason === "focus-out")) {
-      return;
-    }
-    if (next !== lastAutoValueRef.current) autoManagedRef.current = false;
-    setOpen(next);
-  }, []);
-
-  useEffect(() => {
-    if (!panelVisible || hasRoom || !open) return;
-
-    lastAutoValueRef.current = false;
-    autoManagedRef.current = true;
-    setOpen(false);
-  }, [hasRoom, open, panelVisible]);
+  const { open, setOpen: setOverviewOpen, handleOpenChange } = useThreadOverviewOpenState(
+    thread.id,
+    panelVisible,
+    hasRoom,
+    openRequested,
+  );
 
   const setReserveSpace = useOverviewStore((s) => s.setReserveSpace);
   useEffect(() => {
@@ -2237,7 +2309,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const effectivePr = useMemo(() => getEffectiveThreadOverviewPr(pr, reviewLink), [pr, reviewLink]);
   const branchlessCreatePr = canStartBranchlessCreatePr(thread);
   const canShowPrActions = prable;
-  const createPrBranch = createdBranchForPr ?? thread.branch;
+  const createPrBranch = branchCreation.branch ?? thread.branch;
   const createBranchBaseBranch = thread.base_branch ?? thread.branch;
 
   const cachedSnapshots = useDiffStore((s) => s.snapshotsByThread[thread.id]);
@@ -2259,8 +2331,18 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     fallback: fallbackChangeSummary,
   });
   const showChangeSummary = hasVisibleThreadOverviewChangeSummary(changeSummary);
-  const isChangeSummaryLoading = open && changeSummaryStatus === "loading";
-  const { repository, status: repositoryStatus } = getLoadedThreadOverviewRepository(loadedRepository, thread.id);
+  const hasCurrentChangeSummary = hasCurrentThreadOverviewChangeSummary(
+    loadedChangeSummary,
+    thread.id,
+    cachedSnapshotKey,
+    diffRevision,
+  );
+  const isChangeSummaryLoading = open && !hasCurrentChangeSummary && changeSummaryStatus !== "error";
+  const { repository, status: repositoryStatus } = getThreadOverviewRepositoryDisplay(
+    loadedRepository,
+    thread.id,
+    open,
+  );
   const usageInfo = useThreadRecord(
     thread.id,
     (record) => record.usageByProvider[thread.provider],
@@ -2288,8 +2370,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     if (!open) return;
 
     let cancelled = false;
-    setChangeSummaryStatus("loading");
-
     const loadChangeSummary = async () => {
       try {
         const result = await resolveThreadOverviewChangeSummary({
@@ -2323,12 +2403,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     if (!open) return;
 
     let cancelled = false;
-    setLoadedRepository({
-      threadId: thread.id,
-      status: "loading",
-      repository: EMPTY_REPOSITORY,
-    });
-
     const loadRepository = async () => {
       try {
         const repository = await resolveThreadOverviewRepository({
@@ -2360,10 +2434,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   }, []);
 
   const openProjectSettings = useCallback(() => {
-    setOpen(false);
+    setOverviewOpen(false);
     showRightPanelAdaptive(thread.workspace_id, thread.id);
     useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "environment");
-  }, [thread.id, thread.workspace_id]);
+  }, [setOverviewOpen, thread.id, thread.workspace_id]);
 
   const plans = usePlanStore((s) => s.plansByThread[thread.id] ?? EMPTY_PLANS);
   const latestPlan = useMemo(() => {
@@ -2630,21 +2704,22 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             </Popover>
 
             <ThreadOverviewWhen when={branchlessCreatePr}>
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                data-testid="thread-overview-create-branch"
-                className={cn(
-                  OVERVIEW_ROW_CLASS,
-                  "cursor-pointer justify-start text-xs text-primary hover:bg-primary/10 hover:text-primary",
-                )}
-                onClick={() => setCreateBranchOpen(true)}
-                title="Create a branch in this worktree"
-              >
-                <GitBranch size={14} className="shrink-0 text-primary/80" />
-                <span className="font-medium">Create branch</span>
-              </Button>
+              <ThreadOverviewTooltipButton content="Create a branch in this worktree">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  data-testid="thread-overview-create-branch"
+                  className={cn(
+                    OVERVIEW_ROW_CLASS,
+                    "cursor-pointer justify-start text-xs text-primary hover:bg-primary/10 hover:text-primary",
+                  )}
+                  onClick={() => branchCreation.setOpen(true)}
+                >
+                  <GitBranch size={14} className="shrink-0 text-primary/80" />
+                  <span className="font-medium">Create branch</span>
+                </Button>
+              </ThreadOverviewTooltipButton>
             </ThreadOverviewWhen>
             <ThreadOverviewWhen when={!branchlessCreatePr}>
               <Popover open={branchOpen} onOpenChange={setBranchOpen}>
@@ -2689,7 +2764,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                     thread={thread}
                     open={branchOpen}
                     onOpenChange={setBranchOpen}
-                    onCreateBranch={() => setCreateBranchOpen(true)}
+                    onCreateBranch={() => branchCreation.setOpen(true)}
                     hasCommitsAhead={hasCommitsAhead}
                   />
                 </PopoverContent>
@@ -2697,18 +2772,22 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             </ThreadOverviewWhen>
 
             <ThreadOverviewWhen when={branchlessCreatePr}>
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
+              <ThreadOverviewTooltipButton
+                content="Create a branch before committing or pushing"
                 disabled
-                data-testid="workspace-menu-commit"
-                className="h-8 w-full justify-start gap-2 px-2 text-left text-xs text-foreground/75 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Create a branch before committing or pushing"
               >
-                <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-                <span className="font-medium">Commit or push</span>
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  disabled
+                  data-testid="workspace-menu-commit"
+                  className="h-8 w-full justify-start gap-2 px-2 text-left text-xs text-foreground/75 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+                  <span className="font-medium">Commit or push</span>
+                </Button>
+              </ThreadOverviewTooltipButton>
             </ThreadOverviewWhen>
 
             <ThreadOverviewWhen when={usageSummary !== null}>
@@ -2804,7 +2883,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   return (
     <>
       <Popover open={open} onOpenChange={handleOpenChange}>
-        <PopoverTrigger render={triggerButton} />
+        <Tooltip>
+          <TooltipTrigger render={<PopoverTrigger render={triggerButton} />} />
+          <TooltipContent>{getThreadOverviewTriggerStatus(ciDot)}</TooltipContent>
+        </Tooltip>
         {/*
           Pin the popover to the far right edge with a comfortable gap below the
           trigger. NOTE: base-ui's alignOffset is inverted from what you'd expect
@@ -2826,26 +2908,25 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       </Popover>
 
       <CreateThreadBranchDialog
-        open={createBranchOpen}
-        onOpenChange={setCreateBranchOpen}
+        open={branchCreation.open}
+        onOpenChange={branchCreation.setOpen}
         thread={thread}
         title="Work here"
         description="Create a branch to commit changes, push, and create a PR from this worktree."
         submitLabel="Create"
         onCreated={(branch) => {
-          setCreatedBranchForPr(branch);
-          setCreatedBranchBaseForPr(createBranchBaseBranch);
+          branchCreation.complete(branch, createBranchBaseBranch);
         }}
       />
 
-      {(prable || createdBranchForPr) && (
+      {(prable || branchCreation.branch) && (
         <CreatePrDialog
           open={createPrOpen}
           onOpenChange={setCreatePrOpen}
           threadId={thread.id}
           workspaceId={thread.workspace_id}
           branch={createPrBranch}
-          preferredBaseBranch={createdBranchBaseForPr ?? thread.base_branch}
+          preferredBaseBranch={branchCreation.baseBranch ?? thread.base_branch}
         />
       )}
     </>

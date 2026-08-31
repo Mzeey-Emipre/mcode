@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { ModeSelector, ALL_MODE_OPTIONS, type ComposerMode, type ModeOption } from "@/components/chat/ModeSelector";
 import { NewThreadProjectPicker } from "@/components/chat/NewThreadProjectPicker";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { Folder, FolderOpen, X } from "lucide-react";
 import { ComposerTargetSelection } from "./ComposerTargetSelection";
@@ -41,20 +42,29 @@ export function ComposerNewThreadContext({
         <>
           <div className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md pl-[10px] text-xs font-medium leading-none text-foreground/90">
             <Folder size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-            <span className="max-w-40 truncate" title={activeWorkspace.path}>
-              {activeWorkspace.name}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={`Clear ${activeWorkspace.name} project`}
-              title="Clear project"
-              onClick={() => setActiveWorkspace(null)}
-              className="-mr-0.5 size-7 rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
-            >
-              <X className="size-3.5" aria-hidden />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="max-w-40 truncate">{activeWorkspace.name}</span>}
+              />
+              <TooltipContent>{activeWorkspace.path}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Clear ${activeWorkspace.name} project`}
+                    onClick={() => setActiveWorkspace(null)}
+                    className="-mr-0.5 size-7 rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
+                  >
+                    <X className="size-3.5" aria-hidden />
+                  </Button>
+                }
+              />
+              <TooltipContent>Clear project</TooltipContent>
+            </Tooltip>
           </div>
           {isGitRepo ? (
             <ModeSelector

@@ -88,15 +88,21 @@ export function PreviewAnnotationHeader({
             <TooltipContent side="top">Discard current page annotations</TooltipContent>
           </Tooltip>
         ) : null}
-        <div
-          className="flex min-w-0 flex-1 items-center"
-          data-testid="preview-annotation-title"
-          title={titleLabel}
-        >
-          <span className="min-w-0 truncate text-sm text-muted-foreground">
-            {titleLabel}
-          </span>
-        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div
+                className="flex min-w-0 flex-1 items-center"
+                data-testid="preview-annotation-title"
+              >
+                <span className="min-w-0 truncate text-sm text-muted-foreground">
+                  {titleLabel}
+                </span>
+              </div>
+            }
+          />
+          <TooltipContent side="top">{titleLabel}</TooltipContent>
+        </Tooltip>
         <Button
           type="button"
           variant="default"

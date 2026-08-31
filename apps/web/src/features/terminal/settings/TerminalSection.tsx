@@ -52,6 +52,7 @@ function ProfileDialog({ open, profile, pending, onOpenChange, onSubmit }: Profi
 
   useEffect(() => {
     if (!open) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Opening a profile from the settings store starts a fresh editable form.
     setName(profile?.name ?? "");
     setExecutable(profile?.executable ?? "");
     setArgumentsText(profile?.arguments.join("\n") ?? "");
@@ -280,6 +281,7 @@ function useTerminalSectionModel(): TerminalSectionModel {
     || terminalProfileUnavailable(globalDefault, certifiedOptions, customProfiles);
   const presentation = settings.terminal.presentation;
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A persisted preference update must replace the unsaved draft.
     setFontFamilyDraft(presentation.fontFamily);
   }, [presentation.fontFamily]);
   const update = (input: Parameters<typeof updatePreferences>[0]) => { void updatePreferences(input); };

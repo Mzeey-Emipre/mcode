@@ -172,8 +172,6 @@ function LiveAgentGroup({
 /** Renders tool calls as compact log lines with left-accent gutters.
  *  When all calls are complete, collapses into a summary view in-place. */
 export function ToolCallCard({ toolCalls, isLive = true, _depth = 0 }: ToolCallCardProps) {
-  if (toolCalls.length === 0 || _depth > MAX_DEPTH) return null;
-
   // Build render items: Agent calls become LiveAgentGroup, others group consecutively.
   // Memoized to avoid recalculating grouping on every render.
   type RenderItem =
@@ -222,6 +220,8 @@ export function ToolCallCard({ toolCalls, isLive = true, _depth = 0 }: ToolCallC
 
     return { topLevel, renderItems };
   }, [toolCalls]);
+
+  if (toolCalls.length === 0 || _depth > MAX_DEPTH) return null;
 
   const lastTopLevelId = isLive ? topLevel[topLevel.length - 1]?.id : undefined;
 

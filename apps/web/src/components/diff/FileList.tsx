@@ -38,6 +38,40 @@ const FILE_ROW_ESTIMATE_PX = 260;
 const FILE_ROW_OVERSCAN = 4;
 const FILE_LIST_VIRTUALIZE_THRESHOLD = 30;
 
+function getFileVirtualItems({
+  fallbackAnchorIndex,
+  scrollElement,
+  shouldVirtualize,
+  sortedFiles,
+  virtualItems,
+}: {
+  fallbackAnchorIndex: number;
+  scrollElement: HTMLElement | null;
+  shouldVirtualize: boolean;
+  sortedFiles: string[];
+  virtualItems: VirtualItem[];
+}): VirtualItem[] {
+  if (!shouldVirtualize) return [];
+  if (virtualItems.length > 0) return virtualItems;
+
+  const visibleCount = Math.min(
+    sortedFiles.length,
+    Math.max(1, Math.ceil((scrollElement?.clientHeight ?? 0) / FILE_ROW_ESTIMATE_PX) + FILE_ROW_OVERSCAN * 2),
+  );
+  const firstIndex = Math.min(fallbackAnchorIndex, Math.max(0, sortedFiles.length - visibleCount));
+  return Array.from({ length: visibleCount }, (_, offset) => {
+    const index = firstIndex + offset;
+    return {
+      index,
+      key: sortedFiles[index] ?? String(index),
+      start: index * FILE_ROW_ESTIMATE_PX,
+      size: FILE_ROW_ESTIMATE_PX,
+      end: (index + 1) * FILE_ROW_ESTIMATE_PX,
+      lane: 0,
+    };
+  });
+}
+
 /** Props for FileList. */
 interface FileListProps {
   files: string[];
@@ -134,30 +168,13 @@ export function FileList({
     useFlushSync: false,
   });
   const virtualItems: VirtualItem[] = shouldVirtualize ? virtualizer.getVirtualItems() : [];
-  const fileVirtualItems = useMemo<VirtualItem[]>(() => {
-    if (!shouldVirtualize) return [];
-    if (virtualItems.length > 0) return virtualItems;
-
-    const visibleCount = Math.min(
-      sortedFiles.length,
-      Math.max(1, Math.ceil((scrollElement?.clientHeight ?? 0) / FILE_ROW_ESTIMATE_PX) + FILE_ROW_OVERSCAN * 2),
-    );
-    const firstIndex = Math.min(
-      fallbackAnchorIndex,
-      Math.max(0, sortedFiles.length - visibleCount),
-    );
-    return Array.from({ length: visibleCount }, (_, offset) => {
-      const index = firstIndex + offset;
-      return {
-        index,
-        key: sortedFiles[index] ?? String(index),
-        start: index * FILE_ROW_ESTIMATE_PX,
-        size: FILE_ROW_ESTIMATE_PX,
-        end: (index + 1) * FILE_ROW_ESTIMATE_PX,
-        lane: 0,
-      };
-    });
-  }, [fallbackAnchorIndex, scrollElement?.clientHeight, shouldVirtualize, sortedFiles, virtualItems]);
+  const fileVirtualItems = getFileVirtualItems({
+    fallbackAnchorIndex,
+    scrollElement,
+    shouldVirtualize,
+    sortedFiles,
+    virtualItems,
+  });
 
   // The parent lifecycle owns refresh so the diff and Files publish together.
   const refreshInProgress = refreshing;

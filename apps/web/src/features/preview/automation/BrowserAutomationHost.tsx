@@ -1098,6 +1098,10 @@ export function BrowserAutomationHost() {
     liveTargets.values(),
   ), [activeWorkspaceId, liveTargets, workspaces]);
   const workspaceSignature = JSON.stringify([...workspaceIds].sort());
+  const workspaceIdsRef = useRef(workspaceIds);
+  workspaceIdsRef.current = workspaceIds;
+  const activeWorkspaceIdRef = useRef(activeWorkspaceId);
+  activeWorkspaceIdRef.current = activeWorkspaceId;
 
   const shouldInterruptViewport = (dispatch: BrowserAutomationHostDispatch): boolean => {
     const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
@@ -1151,6 +1155,8 @@ export function BrowserAutomationHost() {
   }, []);
 
   useEffect(() => {
+    const registrationWorkspaceIds = workspaceIdsRef.current;
+    const registrationActiveWorkspaceId = activeWorkspaceIdRef.current;
     const desktopAutomation = window.desktopBridge?.preview?.automation;
     const webAutomationEnabled = isBrowserAutomationWebRuntimeEnabled();
     if (!desktopAutomation && !webAutomationEnabled) {
@@ -1162,7 +1168,7 @@ export function BrowserAutomationHost() {
       useBrowserAutomationStore.getState().setStatus("unavailable");
       return;
     }
-    if (connectionStatus !== "connected" || workspaceIds.length === 0) {
+    if (connectionStatus !== "connected" || registrationWorkspaceIds.length === 0) {
       leaseRef.current = null;
       useBrowserAutomationStore.getState().setRegistered(false);
       useBrowserAutomationStore.getState().setStatus("unavailable");
@@ -1171,8 +1177,13 @@ export function BrowserAutomationHost() {
     useBrowserAutomationStore.getState().setLifecycleTabs([]);
     const transport = getTransport();
     const liveTargetSnapshot = useBrowserAutomationStore.getState().liveTargets;
-    const activeTarget = [...liveTargetSnapshot.values()].find((target) => target.workspaceId === activeWorkspaceId);
+    const activeTarget = [...liveTargetSnapshot.values()].find((target) => target.workspaceId === registrationActiveWorkspaceId);
     const worktreeIdentity = import.meta.env.VITE_MCODE_WORKTREE_IDENTITY?.trim() || "web-runtime";
+    const registeredInFlight = inFlightRef.current;
+    const registeredBootstrapRequests = bootstrapRequestRef.current;
+    const registeredBootstrapAbort = bootstrapAbortRef.current;
+    const registeredSessionDriver = sessionDriverRef.current;
+    const registeredAgentOpenTabs = agentOpenTabsRef.current;
     const supervisor = new BrowserAutomationHostSupervisor({
       register: async () => {
         const result = await transport.registerBrowserAutomationHost({
@@ -1181,7 +1192,7 @@ export function BrowserAutomationHost() {
           runtime: executorDescriptor.runtime,
           desktopInstanceId: "pending-desktop",
           worktreeIdentity: desktopAutomation ? "pending-worktree" : worktreeIdentity,
-          workspaceIds,
+          workspaceIds: registrationWorkspaceIds,
           ...(activeTarget && !desktopAutomation && webAutomationEnabled ? {
             targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
           } : {}),
@@ -1235,11 +1246,11 @@ export function BrowserAutomationHost() {
     void supervisor.start();
     return () => {
       const previousLease = leaseRef.current;
-      for (const [key, dispatch] of inFlightRef.current) {
+      for (const [key, dispatch] of registeredInFlight) {
         cancelHostedRequest(key, dispatch, "host-shutdown", previousLease);
       }
-      for (const [key, request] of bootstrapRequestRef.current) {
-        bootstrapAbortRef.current.get(key)?.abort(new Error("Browser host registration was replaced"));
+      for (const [key, request] of registeredBootstrapRequests) {
+        registeredBootstrapAbort.get(key)?.abort(new Error("Browser host registration was replaced"));
         if (previousLease) {
           void transport.cancelBrowserAutomationRequest(
             previousLease.hostId,
@@ -1253,13 +1264,19 @@ export function BrowserAutomationHost() {
       supervisor.stop();
       if (supervisorRef.current === supervisor) supervisorRef.current = null;
       leaseRef.current = null;
-      sessionDriverRef.current?.clearIdempotency();
+      registeredSessionDriver?.clearIdempotency();
       useBrowserAutomationStore.getState().setLifecycleTabs([]);
-      agentOpenTabsRef.current.clear();
+      registeredAgentOpenTabs.clear();
       useBrowserAutomationStore.getState().setRegistered(false);
       useBrowserAutomationStore.getState().setStatus("unavailable");
     };
-  }, [cancelHostedRequest, connectionStatus, stableHostId, workspaceSignature]);
+  }, [
+    cancelHostedRequest,
+    connectionStatus,
+    executorDescriptor,
+    stableHostId,
+    workspaceSignature,
+  ]);
 
   useEffect(() => {
     const lease = leaseRef.current;
@@ -1355,16 +1372,15 @@ export function BrowserAutomationHost() {
     }
   };
 
-  const cancelRequestsForDetachedTarget = (workspaceId: string, threadId: string, tabId: string): void => {
-    for (const [key, dispatch] of inFlightRef.current) {
-      if (dispatch.scope.workspaceId !== workspaceId || dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
-      if (!requestRemovesBrowserTarget(dispatch)) cancelHostedRequest(key, dispatch, "host-shutdown");
-    }
-  };
-
   useEffect(() => {
     const next = new Set(liveTargets.keys());
     const priorRevisions = priorLiveTargetRevisionsRef.current;
+    const cancelRequestsForDetachedTarget = (workspaceId: string, threadId: string, tabId: string): void => {
+      for (const [key, dispatch] of inFlightRef.current) {
+        if (dispatch.scope.workspaceId !== workspaceId || dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
+        if (!requestRemovesBrowserTarget(dispatch)) cancelHostedRequest(key, dispatch, "host-shutdown");
+      }
+    };
     for (const [key, target] of liveTargets) {
       const previousRevision = priorRevisions.get(key);
       if (previousRevision === undefined || previousRevision === target.revision) continue;
@@ -1623,9 +1639,11 @@ export function BrowserAutomationHost() {
     cancelReleasedHostedRequests(release);
   };
 
+  const handleScopeReleaseRef = useRef(handleScopeRelease);
+  handleScopeReleaseRef.current = handleScopeRelease;
   useEffect(() => onBrowserAutomationScopeRelease((release) => {
-    handleScopeRelease(release);
-  }), [cancelHostedRequest]);
+    handleScopeReleaseRef.current(release);
+  }), []);
 
   useEffect(() => pushEmitter.on("browserAutomation.sessionRelease", (input) => {
     const payload = input as { hostId?: unknown; generation?: unknown; providerSessionId?: unknown };
@@ -1674,7 +1692,7 @@ export function BrowserAutomationHost() {
     sessionDriverRef.current?.clearIdempotency();
     useBrowserAutomationStore.getState().setLifecycleTabs([]);
     agentOpenTabsRef.current.clear();
-  }, []);
+  }, [cancelHostedRequest]);
 
   return backgroundScopes.map((scope) => (
     <PersistentAutomationPreviewSurface

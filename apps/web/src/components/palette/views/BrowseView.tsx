@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useReducer } from "react";
 import { Folder, ArrowUp } from "lucide-react";
 import { CommandGroup, CommandItem, CommandList, CommandEmpty } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,24 @@ interface BrowseResult {
   parent: string | null;
   entries: { name: string; isDir: boolean }[];
   isExactDirectory: boolean;
+}
+
+type BrowseDirectoryState =
+  | { readonly requestKey: string; readonly result: BrowseResult; readonly error: null }
+  | { readonly requestKey: string; readonly result: null; readonly error: string };
+
+type BrowseDirectoryAction =
+  | { readonly type: "loaded"; readonly requestKey: string; readonly result: BrowseResult }
+  | { readonly type: "failed"; readonly requestKey: string };
+
+function browseDirectoryReducer(
+  _state: BrowseDirectoryState | null,
+  action: BrowseDirectoryAction,
+): BrowseDirectoryState {
+  if (action.type === "loaded") {
+    return { requestKey: action.requestKey, result: action.result, error: null };
+  }
+  return { requestKey: action.requestKey, result: null, error: "Could not browse this path." };
 }
 
 interface BrowseCapabilities {
@@ -116,31 +134,28 @@ function getBrowseQueryParts(query: string, isDrivesMode: boolean) {
 }
 
 function useBrowseDirectory(directoryPath: string, browseAttempt: number) {
-  const [result, setResult] = useState<BrowseResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const inflightRef = useRef("");
+  const requestKey = `${directoryPath}\u0000${browseAttempt}`;
+  const [state, dispatch] = useReducer(browseDirectoryReducer, null);
 
   useEffect(() => {
-    const requestKey = directoryPath;
-    inflightRef.current = requestKey;
-    setResult(null);
-    setLoading(true);
-    setError(null);
-
+    let cancelled = false;
     void (async () => {
       try {
         const data = await getTransport().filesystemBrowse(directoryPath);
-        if (inflightRef.current === requestKey) setResult(data);
+        if (!cancelled) dispatch({ type: "loaded", requestKey, result: data });
       } catch {
-        if (inflightRef.current === requestKey) setError("Could not browse this path.");
-      } finally {
-        if (inflightRef.current === requestKey) setLoading(false);
+        if (!cancelled) dispatch({ type: "failed", requestKey });
       }
     })();
-  }, [directoryPath, browseAttempt]);
+    return () => {
+      cancelled = true;
+    };
+  }, [directoryPath, requestKey]);
 
-  return { result, loading, error };
+  if (!state || state.requestKey !== requestKey) {
+    return { result: null, loading: true, error: null };
+  }
+  return { result: state.result, loading: false, error: state.error };
 }
 
 function getFilteredEntries(result: BrowseResult | null, leafFilter: string) {
@@ -229,7 +244,10 @@ function useBrowseAddAction({
   beginNewThread: (workspaceId?: string | null) => void;
   close: () => void;
 }) {
-  const [addError, setAddError] = useState<string | null>(null);
+  const [addErrorState, setAddErrorState] = useState<{
+    readonly query: string;
+    readonly message: string;
+  } | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const isCurrentDirectoryAddable = canAddCurrentDirectory({
     query,
@@ -241,26 +259,24 @@ function useBrowseAddAction({
     isAdding,
   });
 
-  useEffect(() => {
-    setAddError(null);
-  }, [query]);
+  const addError = addErrorState?.query === query ? addErrorState.message : null;
 
   const handleAdd = useCallback(async () => {
     if (!isCurrentDirectoryAddable || !result) return;
     const target = result.path;
     const name = target.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Untitled";
-    setAddError(null);
+    setAddErrorState(null);
     setIsAdding(true);
     try {
       const workspace = await createWorkspace(name, target);
       beginNewThread(workspace.id);
       close();
     } catch {
-      setAddError("Could not add this folder. Try again.");
+      setAddErrorState({ query, message: "Could not add this folder. Try again." });
     } finally {
       setIsAdding(false);
     }
-  }, [beginNewThread, close, createWorkspace, isCurrentDirectoryAddable, result]);
+  }, [beginNewThread, close, createWorkspace, isCurrentDirectoryAddable, query, result]);
 
   return { addError, isAdding, handleAdd };
 }

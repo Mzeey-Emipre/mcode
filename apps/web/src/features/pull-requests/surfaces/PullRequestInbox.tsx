@@ -40,6 +40,10 @@ function estimateListItemSize(item: PullRequestInboxListItem): number {
   return item.type === "header" ? GROUP_HEADER_ESTIMATE_PX : ROW_ESTIMATE_PX;
 }
 
+function fallbackViewportHeight(viewport: HTMLDivElement | null): number {
+  return viewport?.clientHeight ?? ROW_ESTIMATE_PX;
+}
+
 function nextRowKey(
   key: string,
   selectedKey: string | null,
@@ -530,6 +534,7 @@ export function PullRequestInbox({
     useFlushSync: false,
   });
   const virtualItems = virtualizer.getVirtualItems();
+  const viewportHeight = fallbackViewportHeight(viewportRef.current);
   const visibleItems = useMemo(() => {
     if (!shouldVirtualize) return [];
     if (virtualItems.length > 0) return virtualItems;
@@ -538,8 +543,7 @@ export function PullRequestInbox({
       Math.max(
         1,
         Math.ceil(
-          (viewportRef.current?.clientHeight ?? ROW_ESTIMATE_PX) /
-            ROW_ESTIMATE_PX,
+          viewportHeight / ROW_ESTIMATE_PX,
         ) +
           OVERSCAN * 2,
       ),
@@ -558,7 +562,7 @@ export function PullRequestInbox({
           : ROW_ESTIMATE_PX),
       lane: 0,
     }));
-  }, [estimatedOffsets, listItems, shouldVirtualize, virtualItems]);
+  }, [estimatedOffsets, listItems, shouldVirtualize, viewportHeight, virtualItems]);
   const mountedRowKeys = useMemo(() => {
     if (!shouldVirtualize) return new Set(rowKeys);
     return new Set(

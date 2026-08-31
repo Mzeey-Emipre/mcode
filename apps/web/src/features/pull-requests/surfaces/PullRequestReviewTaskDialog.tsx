@@ -588,6 +588,7 @@ export function PullRequestReviewTaskDialog({
       generationRef.current += 1;
       return;
     }
+    // oxlint-disable-next-line react/set-state-in-effect -- Opening the dialog starts a new Review task preparation request.
     setSelectedWorkspaceId(null);
     setWorktreeName("");
     setIntent("");
@@ -598,9 +599,11 @@ export function PullRequestReviewTaskDialog({
     if (!open || !prepared || currentHeadOid === prepared.source.expectedHeadOid) return;
     if (!currentHeadOid) {
       generationRef.current += 1;
+      // oxlint-disable-next-line react/set-state-in-effect -- The source pull request disappeared while the dialog synchronized its prepared task.
       onOpenChange(false);
       return;
     }
+    // oxlint-disable-next-line react/set-state-in-effect -- A changed source head requires the active transport preparation to refresh its dialog state.
     void prepare(prepared.workspace.id);
   }, [currentHeadOid, onOpenChange, open, prepare, prepared]);
 

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useCallback, useState, useLayoutEffect, lazy, Suspense } from "react";
+import { useMemo, useRef, useCallback, useState, lazy, Suspense } from "react";
 import type { Components } from "react-markdown";
 import type { PlanRecord, PlanSectionNav } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
@@ -64,10 +64,6 @@ export function PlanDocument({
 }: PlanDocumentProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeHeading, setActiveHeading] = useState<string | null>(null);
-
-  useLayoutEffect(() => {
-    setActiveHeading((prev) => (prev === null ? prev : null));
-  }, [plan.id]);
 
   const sectionMap = useMemo(() => {
     if (!plan.sectionsJson) return new Map<string, string>();

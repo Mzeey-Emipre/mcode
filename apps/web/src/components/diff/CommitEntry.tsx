@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import type { GitCommit } from "@mcode/contracts";
 import { FileList } from "./FileList";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Props for CommitEntry. */
 interface CommitEntryProps {
@@ -52,11 +53,11 @@ export function CommitEntry({ commit, threadId }: CommitEntryProps) {
     }
   }, [commit.sha, activeWorkspaceId, files]);
 
-  useEffect(() => {
-    if (expanded && files === null) {
-      loadFiles();
-    }
-  }, [expanded, files, loadFiles]);
+  const toggleExpanded = (): void => {
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+    if (nextExpanded) void loadFiles();
+  };
 
   const initials = getInitials(commit.author);
 
@@ -64,7 +65,7 @@ export function CommitEntry({ commit, threadId }: CommitEntryProps) {
     <div className={`border-b border-border/15 ${expanded ? "bg-muted/[0.04]" : ""}`}>
       <button
         type="button"
-        onClick={() => setExpanded((prev) => !prev)}
+        onClick={toggleExpanded}
         className="group flex w-full items-baseline gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/[0.08]"
       >
         {/* Leading SHA — typographic anchor */}
@@ -78,12 +79,16 @@ export function CommitEntry({ commit, threadId }: CommitEntryProps) {
         </span>
 
         {/* Author initials — quiet square */}
-        <span
-          className="shrink-0 inline-flex h-[15px] min-w-[15px] items-center justify-center rounded-[2px] bg-muted/60 px-1 font-mono text-[8.5px] tracking-tight text-muted-foreground/75"
-          title={commit.author}
-        >
-          {initials}
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="shrink-0 inline-flex h-[15px] min-w-[15px] items-center justify-center rounded-[2px] bg-muted/60 px-1 font-mono text-[8.5px] tracking-tight text-muted-foreground/75" />
+            }
+          >
+            {initials}
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">{commit.author}</TooltipContent>
+        </Tooltip>
 
         {/* File count — quiet typographic label */}
         {files !== null && files.length > 0 && (

@@ -133,7 +133,7 @@ export function RootView() {
     }
 
     return filterCommandPaletteGroups(result, effectiveQuery);
-  }, [query, effectiveQuery, actionOnly, recentThreads, workspaces]);
+  }, [effectiveQuery, actionOnly, recentThreads, workspaces]);
 
   const handleSelect = (value: string) => {
     if (value.startsWith("cmd:")) {

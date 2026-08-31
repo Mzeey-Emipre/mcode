@@ -115,12 +115,16 @@ export function PlanChrome({
       </Popover>
 
       {plan.changeSummary && (
-        <span
-          className="min-w-0 truncate text-[11px] leading-snug text-muted-foreground"
-          title={plan.changeSummary}
-        >
-          {plan.changeSummary}
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="min-w-0 truncate text-[11px] leading-snug text-muted-foreground">
+                {plan.changeSummary}
+              </span>
+            }
+          />
+          <TooltipContent>{plan.changeSummary}</TooltipContent>
+        </Tooltip>
       )}
 
       <span className="min-w-0 flex-1" aria-hidden />

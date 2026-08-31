@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { FileList } from "./FileList";
 
@@ -20,13 +20,6 @@ interface TurnEntryProps {
  */
 export function TurnEntry({ snapshot, turnNumber, defaultExpanded = false }: TurnEntryProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-
-  // Sync when defaultExpanded transitions to true (e.g. a new turn arrives
-  // and this entry becomes the latest, or snapshots load after mount).
-  // useState only reads its initializer on first mount.
-  useEffect(() => {
-    if (defaultExpanded) setExpanded(true);
-  }, [defaultExpanded]);
 
   const fileCount = snapshot.files_changed.length;
   const ordinal = String(turnNumber).padStart(2, "0");

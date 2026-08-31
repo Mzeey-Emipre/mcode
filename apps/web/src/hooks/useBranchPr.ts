@@ -26,8 +26,6 @@ export function useBranchPr(
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    setState({ branch, cwd, pr: null });
-
     if (!branch || !cwd) {
       return;
     }

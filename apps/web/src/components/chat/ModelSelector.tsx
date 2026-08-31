@@ -485,18 +485,19 @@ function useResetModelSelectorPanel(
   setRightPanelSearch: (searchQuery: string) => void,
 ): void {
   const previouslyOpen = useRef(false);
+  const displayProviderId = displayProvider?.id;
 
   useEffect(() => {
     const opened = open && !previouslyOpen.current;
     if (opened) {
-      const nextSelection = providerLocked && displayProvider
-        ? displayProvider.id
+      const nextSelection = providerLocked && displayProviderId
+        ? displayProviderId
         : defaultProviderId;
       setLeftRailSelection(nextSelection);
       setRightPanelSearch("");
     }
     previouslyOpen.current = open;
-  }, [open, providerLocked, displayProvider?.id, defaultProviderId, setLeftRailSelection, setRightPanelSearch]);
+  }, [open, providerLocked, displayProviderId, defaultProviderId, setLeftRailSelection, setRightPanelSearch]);
 }
 
 function useFetchProviderModelsWhenOpen(

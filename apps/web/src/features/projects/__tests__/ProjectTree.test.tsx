@@ -165,7 +165,7 @@ vi.mock("@tanstack/react-virtual", () => ({
           : (initialOffset ?? 0);
       scrollElement.scrollTop = offset;
       if (!hasMounted) setHasMounted(true);
-    });
+    }, [getScrollElement, hasMounted, initialOffset]);
 
     return {
       getTotalSize: () => count * 32,
@@ -1438,7 +1438,7 @@ describe("ProjectTree action-required indicator", () => {
     const titleCluster = screen.getByTestId("thread-title").parentElement;
     expect(titleCluster?.className).toContain("opacity-[0.72]");
 
-    const prIcon = screen.getByTitle(/PR #42/);
+    const prIcon = screen.getByLabelText(/PR #42/);
     expect(prIcon.className).not.toContain("opacity-[0.72]");
   });
 });
@@ -1519,7 +1519,7 @@ describe("ProjectTree PR-ability gating by mode", () => {
     renderWithThread(
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "merged" }),
     );
-    expect(screen.getByTitle("PR #42, merged")).toBeInTheDocument();
+    expect(screen.getByLabelText("PR #42, merged")).toBeInTheDocument();
   });
 
   it.each([

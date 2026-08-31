@@ -126,8 +126,9 @@ function NewThreadWelcome({ projectName, onPromptSelect }: { projectName?: strin
               What should we build in{" "}
               <NewThreadProjectPicker
                 placement="bottom"
+                triggerTooltip="Change project"
                 trigger={
-                  <Button type="button" variant="link" size="sm" data-testid="new-thread-active-project-picker" title="Change project" className="h-auto min-h-0 gap-0 rounded-sm px-0 py-0 align-baseline !text-2xl font-[inherit] leading-[inherit] text-primary no-underline hover:bg-transparent hover:text-primary/80 hover:no-underline focus-visible:ring-2 focus-visible:ring-ring/60 sm:!text-[28px]">
+                  <Button type="button" variant="link" size="sm" data-testid="new-thread-active-project-picker" className="h-auto min-h-0 gap-0 rounded-sm px-0 py-0 align-baseline !text-2xl font-[inherit] leading-[inherit] text-primary no-underline hover:bg-transparent hover:text-primary/80 hover:no-underline focus-visible:ring-2 focus-visible:ring-ring/60 sm:!text-[28px]">
                     {projectName}<span className="text-foreground">?</span>
                   </Button>
                 }

@@ -8,10 +8,12 @@ import {
   useState,
   type CSSProperties,
   type ChangeEvent,
+  type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import {
   Check,
@@ -43,6 +45,7 @@ import { BrowserViewportToolbar } from "./BrowserViewportToolbar";
 import {
   BrowserViewportCanvas,
 } from "./BrowserViewportCanvas";
+import { useViewportCoordinatorState } from "./useViewportCoordinatorState";
 import { PreviewAnnotationHeader } from "./PreviewAnnotationHeader";
 import { LocalPortsEmptyState } from "./LocalPortsEmptyState";
 import { PreviewErrorPanel } from "./PreviewErrorPanel";
@@ -1668,6 +1671,130 @@ function annotationFocusKey(
   return editingAnnotationId ? `edit:${editingAnnotationId}` : null;
 }
 
+type AnnotationBubbleSource = PreviewDraftAnnotation | SavedPreviewAnnotation | undefined;
+
+interface AnnotationBubbleEditorState {
+  readonly source: AnnotationBubbleSource;
+  readonly note: string;
+  readonly visuals: PreviewAnnotationVisualProposal;
+  readonly advancedOpen: boolean;
+  readonly outsideWarned: boolean;
+}
+
+function newAnnotationBubbleEditorState(
+  draftAnnotation: PreviewDraftAnnotation | undefined,
+  editingSavedAnnotation: SavedPreviewAnnotation | undefined,
+): AnnotationBubbleEditorState {
+  if (draftAnnotation) {
+    return {
+      source: draftAnnotation,
+      note: draftAnnotation.note,
+      visuals: initialVisualControls(
+        draftAnnotation.elementStyle,
+        draftAnnotation.proposedChanges,
+      ),
+      advancedOpen: false,
+      outsideWarned: false,
+    };
+  }
+  if (editingSavedAnnotation) {
+    const elementStyle =
+      editingSavedAnnotation.pageContext.elementStyle ??
+      editingSavedAnnotation.snapshot.capture.elementStyle;
+    return {
+      source: editingSavedAnnotation,
+      note: editingSavedAnnotation.note ?? "",
+      visuals: initialVisualControls(
+        elementStyle,
+        editingSavedAnnotation.proposedChanges,
+      ),
+      advancedOpen: false,
+      outsideWarned: false,
+    };
+  }
+  return {
+    source: undefined,
+    note: "",
+    visuals: {},
+    advancedOpen: false,
+    outsideWarned: false,
+  };
+}
+
+/** Keeps annotation edits local until the draft or saved annotation changes. */
+function useAnnotationBubbleEditor(
+  draftAnnotation: PreviewDraftAnnotation | undefined,
+  editingSavedAnnotation: SavedPreviewAnnotation | undefined,
+): {
+  readonly bubbleNote: string;
+  readonly setBubbleNote: (note: string) => void;
+  readonly bubbleVisuals: PreviewAnnotationVisualProposal;
+  readonly setBubbleVisuals: Dispatch<SetStateAction<PreviewAnnotationVisualProposal>>;
+  readonly bubbleAdvancedOpen: boolean;
+  readonly setBubbleAdvancedOpen: Dispatch<SetStateAction<boolean>>;
+  readonly outsideWarned: boolean;
+  readonly setOutsideWarned: (outsideWarned: boolean) => void;
+} {
+  const [state, setState] = useState(() =>
+    newAnnotationBubbleEditorState(draftAnnotation, editingSavedAnnotation),
+  );
+  const source = draftAnnotation ?? editingSavedAnnotation;
+  const current = state.source === source
+    ? state
+    : newAnnotationBubbleEditorState(draftAnnotation, editingSavedAnnotation);
+  const update = useCallback(
+    (updateState: (current: AnnotationBubbleEditorState) => AnnotationBubbleEditorState): void => {
+      setState((state) => updateState(
+        state.source === source
+          ? state
+          : newAnnotationBubbleEditorState(draftAnnotation, editingSavedAnnotation),
+      ));
+    },
+    [draftAnnotation, editingSavedAnnotation, source],
+  );
+  const setBubbleNote = useCallback(
+    (note: string): void => update((state) => ({ ...state, note })),
+    [update],
+  );
+  const setBubbleVisuals = useCallback(
+    (visuals: SetStateAction<PreviewAnnotationVisualProposal>): void => {
+      update((state) => ({
+        ...state,
+        visuals: typeof visuals === "function"
+          ? visuals(state.visuals)
+          : visuals,
+      }));
+    },
+    [update],
+  );
+  const setBubbleAdvancedOpen = useCallback(
+    (advancedOpen: SetStateAction<boolean>): void => {
+      update((state) => ({
+        ...state,
+        advancedOpen: typeof advancedOpen === "function"
+          ? advancedOpen(state.advancedOpen)
+          : advancedOpen,
+      }));
+    },
+    [update],
+  );
+  const setOutsideWarned = useCallback(
+    (outsideWarned: boolean): void => update((state) => ({ ...state, outsideWarned })),
+    [update],
+  );
+
+  return {
+    bubbleNote: current.note,
+    setBubbleNote,
+    bubbleVisuals: current.visuals,
+    setBubbleVisuals,
+    bubbleAdvancedOpen: current.advancedOpen,
+    setBubbleAdvancedOpen,
+    outsideWarned: current.outsideWarned,
+    setOutsideWarned,
+  };
+}
+
 function annotationPageLabel(
   pageIdentity: string,
   inputUrl: string,
@@ -2052,6 +2179,18 @@ export const PREVIEW_WEBVIEW_FALLBACK_TAB_ID =
 /** Stable tab id used by the single web-runtime preview target. */
 export const WEB_RUNTIME_PREVIEW_TAB_ID = "web-preview";
 const WEB_AUTOMATION_FIXTURE_URL = "/browser-automation-fixture.html";
+const INACTIVE_VIEWPORT_STATE: ViewportCoordinatorState = {
+  mode: "regular",
+  presentation: "fit",
+  confirmed: DEFAULT_VIEWPORT_SIZE,
+  userConfirmed: DEFAULT_VIEWPORT_SIZE,
+  targetGeneration: 0,
+  pending: null,
+  pendingReset: null,
+  pendingPresentation: null,
+  presentationError: null,
+  agentActive: false,
+};
 
 export interface PreviewPanelProps {
   /** Thread that owns preview state (URL memory and future captures). */
@@ -2070,19 +2209,9 @@ function useLiveViewportCoordinatorState(
   coordinator: ViewportCoordinator | undefined,
   projectedState: ViewportCoordinatorState | undefined,
 ): ViewportCoordinatorState | undefined {
-  const [state, setState] = useState(projectedState);
-
-  useEffect(() => {
-    if (!coordinator) return;
-    setState(coordinator.snapshot());
-    return coordinator.subscribe(setState);
-  }, [coordinator]);
-
-  useEffect(() => {
-    if (!coordinator) setState(projectedState);
-  }, [coordinator, projectedState]);
-
-  return state;
+  const fallback = projectedState ?? INACTIVE_VIEWPORT_STATE;
+  const state = useViewportCoordinatorState(coordinator, fallback);
+  return coordinator || projectedState ? state : undefined;
 }
 
 /** Visible same-origin iframe surface used by the worktree-local web runtime. */
@@ -2200,8 +2329,11 @@ function WebRuntimePreview({
   }, [automationOnly, fixtureUrl, identity, presentationSource, publishPresentation, surfaceAvailable, threadId]);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A stored URL change is an external BrowserSurface session switch that must replace stale local navigation state.
     setInputUrl(storedUrl);
+    // oxlint-disable-next-line react/set-state-in-effect -- A stored URL change is an external BrowserSurface session switch that must replace stale local navigation state.
     setRequestedAddress(normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
+    // oxlint-disable-next-line react/set-state-in-effect -- A stored URL change is an external BrowserSurface session switch that must replace stale local navigation state.
     setCrossOriginObserved(false);
   }, [fixtureUrl, storedUrl]);
 
@@ -2401,10 +2533,6 @@ export function PreviewPanel({
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(
     null,
   );
-  const [bubbleNote, setBubbleNote] = useState("");
-  const [bubbleVisuals, setBubbleVisuals] =
-    useState<PreviewAnnotationVisualProposal>({});
-  const [bubbleAdvancedOpen, setBubbleAdvancedOpen] = useState(false);
   const [expandedVisualGroups, setExpandedVisualGroups] = useState<
     Partial<Record<ExpandableVisualGroupId, boolean>>
   >({});
@@ -2414,7 +2542,6 @@ export function PreviewPanel({
   const [colorFormats, setColorFormats] = useState<
     Partial<Record<ColorVisualProposalKey, ColorFormat>>
   >({});
-  const [outsideWarned, setOutsideWarned] = useState(false);
   // Tracks whether the note input inside the bubble has focus so we can show
   // a subtle ring on the bubble container itself instead of an inner ring on
   // the input (which would conflict with the dark background).
@@ -2466,43 +2593,6 @@ export function PreviewPanel({
     selectSuggestion: selectBubbleFileSuggestion,
     dismiss: dismissBubbleFile,
   } = bubbleFileAutocomplete;
-
-  const handleBubbleMentionSelect = useCallback(
-    (item: MentionSuggestion) => {
-      selectBubbleFileSuggestion(item);
-      const input = bubbleNoteInputRef.current;
-      if (!input) return;
-      const cursor = input.selectionStart ?? bubbleNote.length;
-      const text = bubbleNote;
-      // Insert `@<label> ` replacing the typed fragment from the @ trigger to
-      // the cursor. This matches the text form Lexical serializes for MentionNode
-      // (`@${label}`) so the agent-side parser sees identical content.
-      const before = text.slice(0, bubbleFileTriggerStart);
-      const after = text.slice(cursor);
-      const inserted = `@${item.label} `;
-      const next = before + inserted + after;
-      // Enforce the maxLength cap before updating state.
-      if (next.length <= 4000) {
-        setBubbleNote(next);
-        setOutsideWarned(false);
-        // Restore cursor after state update (one frame later via rAF).
-        const nextCursor = before.length + inserted.length;
-        window.requestAnimationFrame(() => {
-          if (!bubbleNoteInputRef.current) return;
-          bubbleNoteInputRef.current.setSelectionRange(nextCursor, nextCursor);
-        });
-      }
-    },
-    [bubbleFileTriggerStart, bubbleNote, selectBubbleFileSuggestion],
-  );
-
-  const bubbleFilePopup = useFileTagPopup({
-    items: bubbleFileSuggestions,
-    query: bubbleFileQuery,
-    isOpen: bubbleFileOpen,
-    onSelect: handleBubbleMentionSelect,
-    onDismiss: dismissBubbleFile,
-  });
 
   // Capture the anchor rect when the file popup opens rather than reading it
   // on every render. The bubble can shift (advanced panel expand, scroll) after
@@ -2660,6 +2750,7 @@ export function PreviewPanel({
   }, []);
   useEffect(() => {
     const visibleTabs = tabs.tabSet?.tabs ?? [];
+    // oxlint-disable-next-line react/set-state-in-effect -- A tab's first host URL must remain fixed while its resident webview follows redirects.
     setWebviewRequestedUrlByTab((current) => {
       let next: Record<string, string | null> | null = null;
       for (const tab of visibleTabs) {
@@ -2747,7 +2838,6 @@ export function PreviewPanel({
   }, [
     activeWebviewSrc,
     activeWebviewTabId,
-    automationActiveRequests,
     tabs.tabSet,
     threadId,
     browserWorkspaceId,
@@ -2785,7 +2875,9 @@ export function PreviewPanel({
     const active = activeWebviewRef();
     const nextCanBack = active?.canGoBack() ?? false;
     const nextCanFwd = active?.canGoForward() ?? false;
+    // oxlint-disable-next-line react/set-state-in-effect -- A newly active native webview has no navigation event to seed its browser chrome.
     setWebviewCanBack((value) => (value === nextCanBack ? value : nextCanBack));
+    // oxlint-disable-next-line react/set-state-in-effect -- A newly active native webview has no navigation event to seed its browser chrome.
     setWebviewCanFwd((value) => (value === nextCanFwd ? value : nextCanFwd));
   }, [
     activeWebviewRef,
@@ -2793,7 +2885,7 @@ export function PreviewPanel({
     showWebviewPreview,
   ]);
 
-  const hydrateHostTabStatus = (): boolean => {
+  const hydrateHostTabStatus = useCallback((): boolean => {
     if (!tabs.tabSet) return false;
     if (hydratedWebviewTargetRef.current === activeBrowserTargetKey) return true;
     hydratedWebviewTargetRef.current = activeBrowserTargetKey;
@@ -2815,9 +2907,14 @@ export function PreviewPanel({
         : nextStatus
     ));
     return true;
-  };
+  }, [
+    activeBrowserTargetKey,
+    activeWebviewTab,
+    activeWebviewTabUrl,
+    tabs.tabSet,
+  ]);
 
-  const hydrateStoredWebviewStatus = (): void => {
+  const hydrateStoredWebviewStatus = useCallback((): void => {
     hydratedWebviewTargetRef.current = null;
     const stored = bridge.storedUrl.trim();
     if (!stored) {
@@ -2833,22 +2930,22 @@ export function PreviewPanel({
     if (activeWebviewRef()?.getUrl() === stored) return;
     if (webviewRequestedUrlRef.current === stored) return;
     setWebviewRequestedUrl(activeWebviewTabId, stored);
-  };
+  }, [
+    activeWebviewRef,
+    activeWebviewTabId,
+    bridge.storedUrl,
+    setWebviewRequestedUrl,
+  ]);
 
   useEffect(() => {
     if (!showWebviewPreview) return;
     if (hydrateHostTabStatus()) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Host tab hydration must synchronously replace stale browser chrome before a resident webview becomes visible.
     hydrateStoredWebviewStatus();
   }, [
-    activeWebviewRef,
-    activeWebviewTab,
-    activeWebviewTabUrl,
-    activeWebviewTabId,
-    bridge.storedUrl,
-    setWebviewRequestedUrl,
+    hydrateHostTabStatus,
+    hydrateStoredWebviewStatus,
     showWebviewPreview,
-    tabs.tabSet,
-    threadId,
   ]);
 
   const onWebviewPageStatus = useCallback(
@@ -2994,6 +3091,57 @@ export function PreviewPanel({
     pageAnnotations,
     editingAnnotationId,
   );
+  const {
+    bubbleNote,
+    setBubbleNote,
+    bubbleVisuals,
+    setBubbleVisuals,
+    bubbleAdvancedOpen,
+    setBubbleAdvancedOpen,
+    outsideWarned,
+    setOutsideWarned,
+  } = useAnnotationBubbleEditor(draftAnnotation, editingSavedAnnotation);
+  const handleBubbleMentionSelect = useCallback(
+    (item: MentionSuggestion) => {
+      selectBubbleFileSuggestion(item);
+      const input = bubbleNoteInputRef.current;
+      if (!input) return;
+      const cursor = input.selectionStart ?? bubbleNote.length;
+      const text = bubbleNote;
+      // Insert `@<label> ` replacing the typed fragment from the @ trigger to
+      // the cursor. This matches the text form Lexical serializes for MentionNode
+      // (`@${label}`) so the agent-side parser sees identical content.
+      const before = text.slice(0, bubbleFileTriggerStart);
+      const after = text.slice(cursor);
+      const inserted = `@${item.label} `;
+      const next = before + inserted + after;
+      // Enforce the maxLength cap before updating state.
+      if (next.length <= 4000) {
+        setBubbleNote(next);
+        setOutsideWarned(false);
+        // Restore cursor after state update (one frame later via rAF).
+        const nextCursor = before.length + inserted.length;
+        window.requestAnimationFrame(() => {
+          if (!bubbleNoteInputRef.current) return;
+          bubbleNoteInputRef.current.setSelectionRange(nextCursor, nextCursor);
+        });
+      }
+    },
+    [
+      bubbleFileTriggerStart,
+      bubbleNote,
+      selectBubbleFileSuggestion,
+      setBubbleNote,
+      setOutsideWarned,
+    ],
+  );
+  const bubbleFilePopup = useFileTagPopup({
+    items: bubbleFileSuggestions,
+    query: bubbleFileQuery,
+    isOpen: bubbleFileOpen,
+    onSelect: handleBubbleMentionSelect,
+    onDismiss: dismissBubbleFile,
+  });
   const openBubbleBase = openAnnotationBase(
     threadId,
     draftAnnotation,
@@ -3038,36 +3186,6 @@ export function PreviewPanel({
   }, [browserWorkspaceId, threadId]);
 
   useEffect(() => {
-    if (!draftAnnotation) return;
-    setEditingAnnotationId(null);
-    setBubbleNote(draftAnnotation.note);
-    setBubbleVisuals(
-      initialVisualControls(
-        draftAnnotation.elementStyle,
-        draftAnnotation.proposedChanges,
-      ),
-    );
-    setBubbleAdvancedOpen(false);
-    setOutsideWarned(false);
-  }, [draftAnnotation]);
-
-  useEffect(() => {
-    if (!editingSavedAnnotation) return;
-    const elementStyle =
-      editingSavedAnnotation.pageContext.elementStyle ??
-      editingSavedAnnotation.snapshot.capture.elementStyle;
-    setBubbleNote(editingSavedAnnotation.note ?? "");
-    setBubbleVisuals(
-      initialVisualControls(
-        elementStyle,
-        editingSavedAnnotation.proposedChanges,
-      ),
-    );
-    setBubbleAdvancedOpen(false);
-    setOutsideWarned(false);
-  }, [editingSavedAnnotation]);
-
-  useEffect(() => {
     if (!openBubbleFocusKey) return;
     const frame = window.requestAnimationFrame(() => {
       bubbleNoteInputRef.current?.focus();
@@ -3100,7 +3218,13 @@ export function PreviewPanel({
     // has focus, which it loses when the bubble unmounts).
     dismissBubbleSlash();
     dismissBubbleFile();
-  }, [threadId, dismissBubbleSlash, dismissBubbleFile]);
+  }, [
+    dismissBubbleFile,
+    dismissBubbleSlash,
+    setBubbleAdvancedOpen,
+    setOutsideWarned,
+    threadId,
+  ]);
 
   const requestOutsideBubbleDiscard = useCallback((): void => {
     if (!openBubbleBase) return;
@@ -3118,6 +3242,7 @@ export function PreviewPanel({
     closeOpenAnnotationBubble,
     openBubbleBase,
     outsideWarned,
+    setOutsideWarned,
   ]);
 
   const linkedPeersForKey = useCallback(
@@ -3145,7 +3270,7 @@ export function PreviewPanel({
       });
       setOutsideWarned(false);
     },
-    [linkedPeersForKey],
+    [linkedPeersForKey, setBubbleVisuals, setOutsideWarned],
   );
 
   const toggleVisualLinkPair = useCallback(
@@ -3165,7 +3290,7 @@ export function PreviewPanel({
       });
       setOutsideWarned(false);
     },
-    [linkedVisualPairs],
+    [linkedVisualPairs, setBubbleVisuals, setOutsideWarned],
   );
 
   const updateColorFormat = useCallback(
@@ -3257,7 +3382,7 @@ export function PreviewPanel({
     designModeActive,
     hasOpenBubble,
     threadId,
-    capture.onAddElementAnnotation,
+    capture,
     clearTransientAnnotationState,
     designModeSetActive,
   ]);

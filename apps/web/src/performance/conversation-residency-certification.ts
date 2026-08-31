@@ -70,18 +70,21 @@ export interface ConversationRevisionCertification {
   appliedGuard: "numeric";
 }
 
+/** Node-runner facts reported for the runtime that produced this certification. */
+export interface ConversationCertificationRuntime {
+  platform: string;
+  architecture: string;
+  nodeVersion: string;
+  electronVersion: string | null;
+}
+
 /** Release-equivalent long-history certification report. */
 export interface ConversationResidencyCertificationReport {
   schemaVersion: 1;
   createdAt: string;
   status: "pass" | "fail";
   failures: string[];
-  runtime: {
-    platform: string;
-    architecture: string;
-    nodeVersion: string;
-    electronVersion: string | null;
-  };
+  runtime: ConversationCertificationRuntime;
   budgets: typeof CONVERSATION_MEMORY_BUDGETS;
   histories: ConversationHistoryCertification[];
   revision: ConversationRevisionCertification;
@@ -110,6 +113,7 @@ export function createRepresentativeConversation(
 
 /** Profile representative histories and the former full-state revision guard. */
 export function runConversationResidencyCertification(
+  runtime: ConversationCertificationRuntime,
   samples = 10,
 ): ConversationResidencyCertificationReport {
   if (!Number.isInteger(samples) || samples < 3 || samples > 50) {
@@ -119,19 +123,14 @@ export function runConversationResidencyCertification(
   const revisionRecord = createRepresentativeRecord("revision-profile", 1_000);
   revisionRecord.conversationRevision = 7;
   const revision = profileRevision(revisionRecord, samples);
-  const failures = collectFailures(histories, revision, process.versions.electron ?? null);
+  const failures = collectFailures(histories, revision, runtime.electronVersion);
   clearRecordCache();
   return {
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
     status: failures.length === 0 ? "pass" : "fail",
     failures,
-    runtime: {
-      platform: process.platform,
-      architecture: process.arch,
-      nodeVersion: process.version,
-      electronVersion: process.versions.electron ?? null,
-    },
+    runtime,
     budgets: CONVERSATION_MEMORY_BUDGETS,
     histories,
     revision,

@@ -148,6 +148,13 @@ export function useComposerFormController({
   const { selection, setSelection, updateSelection } = useComposerSelectionState();
   const editorRef = useRef<LexicalEditor | null>(null);
   const attachments = useComposerAttachments({ isNewThread, threadId, workspaceId });
+  const {
+    appendAttachments,
+    collectAndClearAttachments,
+    detachAttachments,
+    releaseAttachments,
+    replaceAttachments,
+  } = attachments;
   const previousThreadIdRef = useRef<string | undefined>(threadId);
   const draftRef = useRef({
     input,
@@ -209,10 +216,10 @@ export function useComposerFormController({
   const updateDraft = useCallback((text: string, nextMentions: readonly MessageMention[]) => {
     const submittedDraftClear = submittedDraftClearRef.current;
     submittedDraftClearRef.current = null;
-    if (submittedDraftClear) attachments.releaseAttachments(submittedDraftClear.attachments);
+    if (submittedDraftClear) releaseAttachments(submittedDraftClear.attachments);
     setInput(text);
     setMentions([...nextMentions]);
-  }, [attachments.releaseAttachments]);
+  }, [releaseAttachments]);
 
   const replaceDraft = useCallback(
     (text: string, nextMentions: readonly MessageMention[] = [], italic = false) => {
@@ -227,7 +234,7 @@ export function useComposerFormController({
   const setSelectedTextCommentDraft = useCallback((comments: readonly SelectedTextComment[]) => {
     const submittedDraftClear = submittedDraftClearRef.current;
     submittedDraftClearRef.current = null;
-    if (submittedDraftClear) attachments.releaseAttachments(submittedDraftClear.attachments);
+    if (submittedDraftClear) releaseAttachments(submittedDraftClear.attachments);
     const nextComments = [...comments];
     setSelectedTextComments(nextComments);
     if (!threadId) return;
@@ -235,7 +242,7 @@ export function useComposerFormController({
       ...draftRef.current,
       selectedTextComments: nextComments,
     }));
-  }, [attachments.releaseAttachments, saveDraft, threadId]);
+  }, [releaseAttachments, saveDraft, threadId]);
 
   const setGoalPendingValue = useCallback((value: boolean) => {
     setGoalPending(value);
@@ -276,34 +283,34 @@ export function useComposerFormController({
     (message: QueuedMessage) => {
       const restored = createQueuedComposerRestoreState(message);
       replaceDraft(restored.text, restored.mentions);
-      attachments.replaceAttachments(restored.attachments);
+      replaceAttachments(restored.attachments);
       updateSelection(restored.selection);
       setGoalPending(restored.goalPending);
       focus();
     },
-    [attachments.replaceAttachments, focus, replaceDraft, updateSelection],
+    [focus, replaceAttachments, replaceDraft, updateSelection],
   );
 
   const clear = useCallback(
     (reason: "dispatch" | "queue-cancel") => {
-      const currentAttachments = attachments.collectAndClearAttachments();
+      const currentAttachments = collectAndClearAttachments();
       replaceDraft("");
       setSelectedTextComments([]);
       if (reason === "dispatch" && threadId) clearDraft(threadId);
       return currentAttachments;
     },
-    [attachments.collectAndClearAttachments, clearDraft, replaceDraft, threadId],
+    [clearDraft, collectAndClearAttachments, replaceDraft, threadId],
   );
 
   const discardSubmittedDraftClear = useCallback(() => {
     const submittedDraftClear = submittedDraftClearRef.current;
     submittedDraftClearRef.current = null;
-    if (submittedDraftClear) attachments.releaseAttachments(submittedDraftClear.attachments);
-  }, [attachments.releaseAttachments]);
+    if (submittedDraftClear) releaseAttachments(submittedDraftClear.attachments);
+  }, [releaseAttachments]);
 
   const clearSubmittedDraft = useCallback((submission: ComposerFormSubmission): boolean => {
     if (submissionRevisionRef.current !== submission.revision) return false;
-    const dispatchedAttachments = attachments.detachAttachments();
+    const dispatchedAttachments = detachAttachments();
     replaceDraft("");
     setSelectedTextComments([]);
     if (threadId) clearDraft(threadId);
@@ -313,32 +320,32 @@ export function useComposerFormController({
       attachments: dispatchedAttachments,
     };
     return true;
-  }, [attachments.detachAttachments, clearDraft, replaceDraft, threadId]);
+  }, [clearDraft, detachAttachments, replaceDraft, threadId]);
 
   const restoreFailedDispatch = useCallback(() => {
     const submittedDraftClear = submittedDraftClearRef.current;
     submittedDraftClearRef.current = null;
     if (!submittedDraftClear) return;
     if (submittedDraftClear.ownerThreadId !== currentThreadIdRef.current) {
-      attachments.releaseAttachments(submittedDraftClear.attachments);
+      releaseAttachments(submittedDraftClear.attachments);
       return;
     }
     replaceDraft(
       submittedDraftClear.submission.rawInput,
       submittedDraftClear.submission.mentions,
     );
-    attachments.replaceAttachments(submittedDraftClear.attachments);
+    replaceAttachments(submittedDraftClear.attachments);
     setSelectedTextCommentDraft(submittedDraftClear.submission.selectedTextComments);
     focus();
-  }, [attachments.releaseAttachments, attachments.replaceAttachments, focus, replaceDraft, setSelectedTextCommentDraft]);
+  }, [focus, releaseAttachments, replaceAttachments, replaceDraft, setSelectedTextCommentDraft]);
 
   const confirmSubmittedDispatch = useCallback((): boolean => {
     const submittedDraftClear = submittedDraftClearRef.current;
     submittedDraftClearRef.current = null;
     if (!submittedDraftClear) return false;
-    attachments.releaseAttachments(submittedDraftClear.attachments);
+    releaseAttachments(submittedDraftClear.attachments);
     return true;
-  }, [attachments.releaseAttachments]);
+  }, [releaseAttachments]);
 
   useEffect(() => {
     draftRef.current = {
@@ -385,7 +392,7 @@ export function useComposerFormController({
       .drainPreviewReferences(previewReferenceScopeId);
     if (incoming.length === 0) return;
 
-    const { acceptedCount, droppedCount } = attachments.appendAttachments(incoming);
+    const { acceptedCount, droppedCount } = appendAttachments(incoming);
     if (acceptedCount === 0) {
       queueMicrotask(() =>
         useToastStore.getState().show(
@@ -405,7 +412,7 @@ export function useComposerFormController({
         ),
       );
     }
-  }, [attachments.appendAttachments, previewReferenceQueueSignal, previewReferenceScopeId]);
+  }, [appendAttachments, previewReferenceQueueSignal, previewReferenceScopeId]);
 
   useEffect(() => {
     if (!settingsLoaded || threadId) return;
@@ -445,10 +452,11 @@ export function useComposerFormController({
     });
     const session = resolveComposerSessionForOwner({ threadId, getDraft });
 
+    // oxlint-disable-next-line react/set-state-in-effect -- The persisted draft session is the source of truth when its owner changes.
     setInput(session.input);
     setMentions(session.mentions);
     setSelectedTextComments(session.selectedTextComments);
-    attachments.replaceAttachments(session.attachments);
+    replaceAttachments(session.attachments);
     setSelection((current) => ({
       ...current,
       modelId: session.modelId,
@@ -474,7 +482,7 @@ export function useComposerFormController({
     }
     threadSwitchRef.current = true;
     previousThreadIdRef.current = threadId;
-  }, [attachments.replaceAttachments, getDraft, isNewThread, saveDraft, setSelection, threadId]);
+  }, [getDraft, isNewThread, replaceAttachments, saveDraft, setSelection, threadId]);
 
   useEffect(() => {
     setSelection((current) => {
@@ -506,10 +514,11 @@ export function useComposerFormController({
     setInput(branchFromMessageContent);
     setMentions([]);
     editorRef.current.focus();
-  }, [branchFromMessageId]);
+  }, [branchFromMessageContent, branchFromMessageId]);
 
   useEffect(() => {
     if (!pendingPrefill) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- The prefill store supplies this external editor update.
     setInput(pendingPrefill);
     setMentions([]);
     if (!editorRef.current) return;
@@ -522,6 +531,7 @@ export function useComposerFormController({
     if (!composerRecallFromStop || !threadId) return;
     const text = composerRecallFromStop.text;
     clearComposerRecallFromStop(threadId);
+    // oxlint-disable-next-line react/set-state-in-effect -- The stopped-turn recall store supplies this external editor update.
     setInput(text);
     setMentions([]);
     if (!editorRef.current) return;

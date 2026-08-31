@@ -65,6 +65,7 @@ export function useProjectSetupAttempt(threadId: string): {
     requestGeneration.current = generation;
     const sequence = requestSequence.current + 1;
     requestSequence.current = sequence;
+    // oxlint-disable-next-line react/set-state-in-effect -- A thread change starts a new transport snapshot and clears the old thread's result.
     setAttempt(null);
     setStarting(false);
     setStartError(null);
@@ -101,7 +102,7 @@ export function useProjectSetupAttempt(threadId: string): {
     } finally {
       if (isCurrent(threadId, generation)) setStarting(false);
     }
-  }, [isCurrent, threadId, visibleAttempt?.cleanupPending, visibleAttempt?.status, visibleStarting]);
+  }, [isCurrent, threadId, visibleAttempt, visibleStarting]);
 
   const approve = useCallback(async () => {
     const approval = visibleAttempt?.snapshot.approval;
@@ -157,10 +158,14 @@ export function ProjectSetupAttemptCard({ attempt, onApprove }: ProjectSetupAtte
   const command = attempt.snapshot.script;
 
   useEffect(() => {
-    if (attempt.status !== "passed") setOpen(true);
+    if (attempt.status !== "passed") {
+      // oxlint-disable-next-line react/set-state-in-effect -- A new server-reported failed or active attempt must expand its recovery details.
+      setOpen(true);
+    }
   }, [attempt.id, attempt.status]);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Server Setup state controls whether its approval dialog opens.
     setApprovalOpen(attempt.status === "awaiting-approval");
   }, [attempt.id, attempt.status]);
 

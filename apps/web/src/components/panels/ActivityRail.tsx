@@ -1,6 +1,7 @@
 import type {
   FocusEvent as ReactFocusEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  ReactElement,
   PointerEvent as ReactPointerEvent,
   ReactNode,
 } from "react";
@@ -17,6 +18,7 @@ import {
 import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -60,6 +62,23 @@ export const ACTIVITY_RAIL_FLOATING_OVERLAP_PX = 112;
 
 /** Shared trailing anchor for expanded-rail actions. */
 const RAIL_TRAILING_CONTROL_CLASS = "absolute right-0 top-0";
+
+function RailTooltip({
+  content,
+  disabled = false,
+  children,
+}: {
+  content: string;
+  disabled?: boolean;
+  children: ReactElement;
+}) {
+  return (
+    <Tooltip disabled={disabled}>
+      <TooltipTrigger render={children} />
+      <TooltipContent side="right">{content}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 function getPointerReorderDirection(
   item: HTMLDivElement,
@@ -265,42 +284,43 @@ function RailTab({
   const { Icon, label } = presentation;
   return (
     <div className="group relative w-full">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        data-rail-tab={railDomId(id)}
-        data-active={active ? "true" : undefined}
-        aria-pressed={active}
-        aria-label={railAccessibleLabel(id, label, scope, changesCount, changesFresh)}
-        title={expanded ? undefined : label}
-        onClick={() => onSelect(id)}
-        className={cn(
-          "relative h-8 w-full overflow-hidden px-2 text-xs transition-colors",
-          expanded ? "flex-row justify-start gap-2" : "flex-col gap-0",
-          active
-            ? "bg-card text-primary"
-            : "text-foreground/70 hover:bg-card/60 hover:text-foreground",
-        )}
-      >
-        <Icon size={17} />
-        <span
-          aria-hidden
+      <RailTooltip content={label} disabled={expanded}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-rail-tab={railDomId(id)}
+          data-active={active ? "true" : undefined}
+          aria-pressed={active}
+          aria-label={railAccessibleLabel(id, label, scope, changesCount, changesFresh)}
+          onClick={() => onSelect(id)}
           className={cn(
-            "absolute left-8 right-8 truncate text-left font-medium text-foreground transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-            expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+            "relative h-8 w-full overflow-hidden px-2 text-xs transition-colors",
+            expanded ? "flex-row justify-start gap-2" : "flex-col gap-0",
+            active
+              ? "bg-card text-primary"
+              : "text-foreground/70 hover:bg-card/60 hover:text-foreground",
           )}
         >
-          {label}
-        </span>
-        <RailStatus
-          id={id}
-          active={active}
-          expanded={expanded}
-          changesCount={changesCount}
-          changesFresh={changesFresh}
-        />
-      </Button>
+          <Icon size={17} />
+          <span
+            aria-hidden
+            className={cn(
+              "absolute left-8 right-8 truncate text-left font-medium text-foreground transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+              expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+            )}
+          >
+            {label}
+          </span>
+          <RailStatus
+            id={id}
+            active={active}
+            expanded={expanded}
+            changesCount={changesCount}
+            changesFresh={changesFresh}
+          />
+        </Button>
+      </RailTooltip>
       {/* Active lamp: a short amber bar on the rail's inner edge. */}
       {active && (
         <span
@@ -311,24 +331,25 @@ function RailTab({
       )}
       {/* Hover/focus-revealed close. A sibling button (not nested) so the markup
           stays valid and the × is its own focusable, announced control. */}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={`Close ${label}`}
-        data-rail-close
-        title={expanded ? undefined : `Close ${label}`}
-        onClick={() => onClose(id)}
-        className={cn(
-          RAIL_TRAILING_CONTROL_CLASS,
-          "text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
-          expanded
-            ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-            : "pointer-events-none",
-        )}
-      >
-        <X size={12} />
-      </Button>
+      <RailTooltip content={`Close ${label}`} disabled={expanded}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Close ${label}`}
+          data-rail-close
+          onClick={() => onClose(id)}
+          className={cn(
+            RAIL_TRAILING_CONTROL_CLASS,
+            "text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+            expanded
+              ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+              : "pointer-events-none",
+          )}
+        >
+          <X size={12} />
+        </Button>
+      </RailTooltip>
     </div>
   );
 }
@@ -383,35 +404,36 @@ function BrowserPageRailTab({
   const activePage = active && browserActive;
   return (
     <div className="group relative w-full">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        data-rail-browser-page={page.id}
-        data-active={active ? "true" : undefined}
-        aria-pressed={active}
-        // The live page (active, and Browser owns the panel) is the current
-        // page in the switcher; expose that beyond the visual lamp.
-        aria-current={activePage ? "page" : undefined}
-        aria-label={`Browser page: ${label}${agentControlled ? ", agent controls Browser" : ""}`}
-        title={expanded ? undefined : label}
-        onClick={() => onSelect(page.id)}
-        className={cn(
-          "relative h-8 w-full justify-start overflow-hidden px-2 text-xs transition-colors",
-          browserPageRailClass(active, browserActive),
-        )}
-      >
-        <BrowserPageRailGlyph agentControlled={agentControlled} faviconUrl={page.faviconUrl} />
-        <span
-          aria-hidden
+      <RailTooltip content={label} disabled={expanded}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-rail-browser-page={page.id}
+          data-active={active ? "true" : undefined}
+          aria-pressed={active}
+          // The live page (active, and Browser owns the panel) is the current
+          // page in the switcher; expose that beyond the visual lamp.
+          aria-current={activePage ? "page" : undefined}
+          aria-label={`Browser page: ${label}${agentControlled ? ", agent controls Browser" : ""}`}
+          onClick={() => onSelect(page.id)}
           className={cn(
-            "absolute left-8 right-8 truncate text-left font-medium text-foreground transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-            expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+            "relative h-8 w-full justify-start overflow-hidden px-2 text-xs transition-colors",
+            browserPageRailClass(active, browserActive),
           )}
         >
-          {label}
-        </span>
-      </Button>
+          <BrowserPageRailGlyph agentControlled={agentControlled} faviconUrl={page.faviconUrl} />
+          <span
+            aria-hidden
+            className={cn(
+              "absolute left-8 right-8 truncate text-left font-medium text-foreground transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+              expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+            )}
+          >
+            {label}
+          </span>
+        </Button>
+      </RailTooltip>
       {/* Active lamp mirrors the singleton tabs: a short amber bar on the inner
           edge, shown only when this page is active and Browser owns the panel. */}
       {activePage && (
@@ -421,27 +443,28 @@ function BrowserPageRailTab({
           className="pointer-events-none absolute -left-1.5 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
         />
       )}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={`Close page ${label}`}
-        data-rail-close
-        title={expanded ? undefined : `Close ${label}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose(page.id);
-        }}
-        className={cn(
-          RAIL_TRAILING_CONTROL_CLASS,
-          "text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
-          expanded
-            ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-            : "pointer-events-none",
-        )}
-      >
-        <X size={12} />
-      </Button>
+      <RailTooltip content={`Close ${label}`} disabled={expanded}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Close page ${label}`}
+          data-rail-close
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose(page.id);
+          }}
+          className={cn(
+            RAIL_TRAILING_CONTROL_CLASS,
+            "text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+            expanded
+              ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+              : "pointer-events-none",
+          )}
+        >
+          <X size={12} />
+        </Button>
+      </RailTooltip>
     </div>
   );
 }
@@ -552,52 +575,54 @@ function RailAddControl({
   if (creatable.length === 1) {
     const only = creatable[0];
     return (
-      <Button
-        variant="ghost"
-        size="sm"
-        className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground hover:text-foreground"
-        title={expanded ? undefined : `New ${only.label}`}
-        aria-label={`New ${only.label}`}
-        onClick={() => onCreate(only.id as RightPanelTab)}
-      >
-        <Plus />
-        <span
-          aria-hidden
-          className={cn(
-            "absolute left-8 right-2 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-            expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
-          )}
+      <RailTooltip content={`New ${only.label}`} disabled={expanded}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground hover:text-foreground"
+          aria-label={`New ${only.label}`}
+          onClick={() => onCreate(only.id as RightPanelTab)}
         >
-          New {only.label}
-        </span>
-      </Button>
+          <Plus />
+          <span
+            aria-hidden
+            className={cn(
+              "absolute left-8 right-2 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+              expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+            )}
+          >
+            New {only.label}
+          </span>
+        </Button>
+      </RailTooltip>
     );
   }
 
   return (
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="sm"
-            className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground hover:text-foreground"
-            title={expanded ? undefined : "New tab"}
-            aria-label="New tab"
-          >
-            <Plus />
-            <span
-              aria-hidden
-              className={cn(
-                "absolute left-8 right-2 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-                expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
-              )}
+      <RailTooltip content="New tab" disabled={expanded}>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground hover:text-foreground"
+              aria-label="New tab"
             >
-              New tab
-            </span>
-          </Button>
-        }
-      />
+              <Plus />
+              <span
+                aria-hidden
+                className={cn(
+                  "absolute left-8 right-2 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+                  expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+                )}
+              >
+                New tab
+              </span>
+            </Button>
+          }
+        />
+      </RailTooltip>
       <DropdownMenuContent align="start" sideOffset={6} className="min-w-[184px]">
         {shown.map((type) => {
           const keycap = tabKeycap(type);
@@ -674,43 +699,45 @@ function RailHeader({
 }: Pick<ActivityRailViewProps, "expanded" | "maximized" | "onTogglePanel" | "onToggleMaximized">) {
   return (
     <div className="relative h-8 w-full shrink-0">
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onTogglePanel}
-        className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
-        aria-label="Close panel"
-        title={expanded ? undefined : "Close panel"}
-        data-testid="rail-panel-toggle"
-        data-preview-design-keep-open="true"
-      >
-        <PanelRight />
-        <span
-          aria-hidden
-          className={cn(
-            "absolute left-8 right-8 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-            expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
-          )}
+      <RailTooltip content="Close panel" disabled={expanded}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onTogglePanel}
+          className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
+          aria-label="Close panel"
+          data-testid="rail-panel-toggle"
+          data-preview-design-keep-open="true"
         >
-          Close panel
-        </span>
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onClick={onToggleMaximized}
-        className={cn(
-          RAIL_TRAILING_CONTROL_CLASS,
-          "text-muted-foreground/70 transition-[color,opacity] motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
-          expanded ? "opacity-100" : "pointer-events-none opacity-0",
-        )}
-        aria-label={maximized ? "Restore panel" : "Maximize panel"}
-        title={maximized ? "Restore panel" : "Maximize panel"}
-        data-testid="rail-maximize-toggle"
-        data-preview-design-keep-open="true"
-      >
-        {maximized ? <Minimize2 /> : <Maximize2 />}
-      </Button>
+          <PanelRight />
+          <span
+            aria-hidden
+            className={cn(
+              "absolute left-8 right-8 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+              expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+            )}
+          >
+            Close panel
+          </span>
+        </Button>
+      </RailTooltip>
+      <RailTooltip content={maximized ? "Restore panel" : "Maximize panel"}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onToggleMaximized}
+          className={cn(
+            RAIL_TRAILING_CONTROL_CLASS,
+            "text-muted-foreground/70 transition-[color,opacity] motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+            expanded ? "opacity-100" : "pointer-events-none opacity-0",
+          )}
+          aria-label={maximized ? "Restore panel" : "Maximize panel"}
+          data-testid="rail-maximize-toggle"
+          data-preview-design-keep-open="true"
+        >
+          {maximized ? <Minimize2 /> : <Maximize2 />}
+        </Button>
+      </RailTooltip>
     </div>
   );
 }
