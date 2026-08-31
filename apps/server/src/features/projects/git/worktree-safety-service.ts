@@ -1,8 +1,9 @@
-import { realpath } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 import { getMcodeDir, logger } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { normalizePathForComparison } from "../../../shared/filesystem/path-identity.js";
 import type { GitExecutor } from "./execution/index.js";
 
@@ -27,7 +28,10 @@ export interface NamedWorktreeRemovalSafety {
 /** Verifies the safety conditions required before a worktree directory is removed. */
 @injectable()
 export class WorktreeSafetyService {
-  constructor(@inject("GitExecutor") private readonly gitExecutor: GitExecutor) {}
+  constructor(
+    @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
+  ) {}
 
   /** Return whether Git reports no uncommitted files for this repository. */
   async isWorkingTreeClean(repoPath: string): Promise<boolean> {
@@ -150,7 +154,10 @@ export class WorktreeSafetyService {
       return null;
     }
     try {
-      return normalizePathForComparison(await realpath(resolve(worktreePath)));
+      return normalizePathForComparison(
+        await NodeFSPromises.realpath(NodePath.resolve(worktreePath)),
+        this.hostRuntime.platform,
+      );
     } catch {
       return null;
     }

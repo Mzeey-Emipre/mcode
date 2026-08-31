@@ -37,6 +37,7 @@ describe.runIf(process.platform === "win32")("real PTY host", () => {
     const events: PtyHostEvent[] = [];
     const runtime = new PtyHostProcessRuntime({
       platform: "windows",
+      hostRuntime: { platform: "win32", architecture: process.arch },
       nativeAbi: `test-${process.arch}-${process.versions.modules}`,
       publish: (event) => events.push(event),
     });

@@ -228,8 +228,8 @@ export class SessionRuntime<TState> {
       return;
     }
     await Promise.all(pids.map((pid) => new Promise<void>((resolve) => {
-      if (process.platform === "win32") {
-        execFile("taskkill", ["/T", "/F", "/PID", String(pid)], (error) => {
+      if (this.deps.jobObject.isWindowsJob) {
+        NodeChildProcess.execFile("taskkill", ["/T", "/F", "/PID", String(pid)], (error) => {
           if (error) this.deps.logger?.debug("taskkill failed (process may have exited)", { pid, error: errorMessage(error) });
           resolve();
         });

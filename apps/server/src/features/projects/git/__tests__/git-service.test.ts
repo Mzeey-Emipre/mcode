@@ -27,6 +27,8 @@ vi.mock("@mcode/shared", () => ({
 
 import { GitComparisonService } from "../git-comparison-service.js";
 import { GitWorktreeService } from "../git-worktree-service.js";
+
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 import type { WorktreeDirectoryRemover } from "../../worktrees/worktree-directory-remover.js";
 import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 

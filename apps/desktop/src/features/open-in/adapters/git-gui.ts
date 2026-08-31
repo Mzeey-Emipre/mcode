@@ -26,8 +26,11 @@ export interface GitGuiAdapterConfig {
  * memoized on first detection so {@link OpenInAdapter.launch} reuses it without a
  * second PATH lookup.
  */
-export function createGitGuiAdapter(config: GitGuiAdapterConfig): OpenInAdapter {
-  const resolveCommand = createExecutableResolver(config.command, config.windowsPaths);
+export function createGitGuiAdapter(
+  config: GitGuiAdapterConfig,
+  platform: NodeJS.Platform,
+): OpenInAdapter {
+  const resolveCommand = createExecutableResolver(config.command, platform, config.windowsPaths);
 
   return {
     id: config.id,
@@ -44,7 +47,7 @@ export function createGitGuiAdapter(config: GitGuiAdapterConfig): OpenInAdapter 
       if (!cmd) {
         return Promise.reject(new Error(`Git GUI not detected: ${config.id}`));
       }
-      return spawnDetached(cmd, [target.path]);
+      return spawnDetached(cmd, [target.path], platform);
     },
   };
 }

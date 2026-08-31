@@ -5,14 +5,14 @@
  * fire-and-forget spawn are identical across them and live here.
  */
 
-import { execFileSync, spawn, type ChildProcess } from "child_process";
-import { existsSync } from "fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 
 /** Check whether a CLI command exists on the system PATH. */
-export function commandOnPath(cmd: string): boolean {
-  const checkCmd = process.platform === "win32" ? "where" : "which";
+export function commandOnPath(cmd: string, platform: NodeJS.Platform): boolean {
+  const checkCmd = platform === "win32" ? "where" : "which";
   try {
-    execFileSync(checkCmd, [cmd], { stdio: "pipe", encoding: "utf-8" });
+    NodeChildProcess.execFileSync(checkCmd, [cmd], { stdio: "pipe", encoding: "utf-8" });
     return true;
   } catch {
     return false;
@@ -27,19 +27,20 @@ export function commandOnPath(cmd: string): boolean {
  */
 export function createExecutableResolver(
   command: string,
+  platform: NodeJS.Platform,
   windowsPaths?: readonly string[],
 ): () => string | null {
   // `undefined` = not yet resolved; `null` = resolved as not installed.
   let resolved: string | null | undefined;
   return () => {
     if (resolved !== undefined) return resolved;
-    if (commandOnPath(command)) {
+    if (commandOnPath(command, platform)) {
       resolved = command;
       return resolved;
     }
-    if (process.platform === "win32" && windowsPaths) {
+    if (platform === "win32" && windowsPaths) {
       for (const p of windowsPaths) {
-        if (existsSync(p)) {
+        if (NodeFS.existsSync(p)) {
           resolved = p;
           return resolved;
         }
@@ -97,11 +98,11 @@ function spawnWindowsCommand(
 export function spawnDetached(
   cmd: string,
   args: string[],
-  platform: NodeJS.Platform = process.platform,
-  spawnProcess: typeof spawn = spawn,
+  platform: NodeJS.Platform,
+  spawnProcess: typeof NodeChildProcess.spawn = NodeChildProcess.spawn,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    let child: ChildProcess;
+    let child: NodeChildProcess.ChildProcess;
     if (platform === "win32" && /\.exe$/i.test(cmd)) {
       child = spawnProcess(cmd, args, { detached: true, stdio: "ignore" });
     } else if (platform === "win32") {

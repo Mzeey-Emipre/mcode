@@ -54,7 +54,10 @@ export function getServerPortBand(): ServerPortBand {
 }
 
 /** Spawn the detached Mcode server child for the assigned port. */
-export function spawnServerProcess(port: number): SpawnedServerProcess {
+export function spawnServerProcess(
+  port: number,
+  platform: NodeJS.Platform,
+): SpawnedServerProcess {
   const paths = getServerPaths();
   const heapMb = readServerHeapMb();
   console.log(
@@ -62,7 +65,7 @@ export function spawnServerProcess(port: number): SpawnedServerProcess {
   );
   const stderrStream = createServerStderrStream();
   try {
-    const child = spawnServerBinary(paths, port, heapMb, stderrStream);
+    const child = spawnServerBinary(paths, port, heapMb, stderrStream, platform);
     child.unref();
     pipeServerStderr(child, stderrStream);
     return { child, stderrStream };
@@ -180,16 +183,17 @@ function spawnServerBinary(
   paths: ServerPaths,
   port: number,
   heapMb: number,
-  stderrStream: WriteStream | undefined,
-): ChildProcess {
-  const env = createServerEnvironment(paths, port);
+  stderrStream: NodeFS.WriteStream | undefined,
+  platform: NodeJS.Platform,
+): NodeChildProcess.ChildProcess {
+  const env = createServerEnvironment(paths, port, platform);
   const binary = resolveServerBinary({
     isPackaged: app.isPackaged,
     execPath: process.execPath,
     resourcesPath: process.resourcesPath,
-    platform: process.platform,
+    platform,
   });
-  return spawn(binary, createServerArgs(paths.entry, heapMb), {
+  return NodeChildProcess.spawn(binary, createServerArgs(paths.entry, heapMb), {
     cwd: paths.cwd,
     env,
     detached: true,
@@ -203,6 +207,7 @@ function spawnServerBinary(
 function createServerEnvironment(
   paths: ServerPaths,
   port: number,
+  platform: NodeJS.Platform,
 ): Record<string, string> {
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
@@ -216,7 +221,7 @@ function createServerEnvironment(
     BETTER_SQLITE3_BINDING: paths.nativeBindingPath,
   };
   setGitEnvironment(env, paths.cwd);
-  setPackagedEnvironment(env);
+  setPackagedEnvironment(env, platform);
   return env;
 }
 
@@ -263,16 +268,22 @@ function setGitEnvironmentValue(
 }
 
 /** Add packaged-resource and Linux dynamic-library environment values. */
-function setPackagedEnvironment(env: Record<string, string>): void {
+function setPackagedEnvironment(
+  env: Record<string, string>,
+  platform: NodeJS.Platform,
+): void {
   if (!app.isPackaged) return;
   env.MCODE_PACKAGED_RESOURCES_ROOT = process.resourcesPath;
-  setPackagedLinuxLibraryPath(env);
+  setPackagedLinuxLibraryPath(env, platform);
 }
 
 /** Point packaged Linux children at Electron's shared libraries. */
-function setPackagedLinuxLibraryPath(env: Record<string, string>): void {
-  if (process.platform !== "linux") return;
-  env.LD_LIBRARY_PATH = [dirname(process.execPath), process.env.LD_LIBRARY_PATH]
+function setPackagedLinuxLibraryPath(
+  env: Record<string, string>,
+  platform: NodeJS.Platform,
+): void {
+  if (platform !== "linux") return;
+  env.LD_LIBRARY_PATH = [NodePath.dirname(process.execPath), process.env.LD_LIBRARY_PATH]
     .filter(Boolean)
     .join(":");
 }

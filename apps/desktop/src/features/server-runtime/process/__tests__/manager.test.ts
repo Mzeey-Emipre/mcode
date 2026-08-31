@@ -130,10 +130,16 @@ const LOCK_FILE_JSON = JSON.stringify({
   version: "0.1.0-test",
   ipcPath: "",
 });
+const TEST_PLATFORM: NodeJS.Platform = "linux";
 
 /** Create lock data for a specific spawned child process. */
 function lockFileJsonForPid(pid: number): string {
   return JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid });
+}
+
+/** Update the platform selected for this manager's explicit runtime boundary. */
+function setManagerPlatform(manager: ServerManager, platform: NodeJS.Platform): void {
+  Object.defineProperty(manager, "platform", { value: platform });
 }
 
 /**
@@ -807,9 +813,9 @@ describe("ServerManager", () => {
       isPackaged: true,
       execPath: process.execPath,
       resourcesPath: "/test/resources",
-      platform: process.platform,
+      platform: TEST_PLATFORM,
     });
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     expect(spawnCall[0]).toBe(process.execPath);
     const opts = spawnCall[2] as { env: Record<string, string> };
     expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
@@ -822,10 +828,7 @@ describe("ServerManager", () => {
       configurable: true,
       writable: true,
     });
-    const expectedBinary =
-      process.platform === "win32"
-        ? "/test/resources/bin/mcode-server.exe"
-        : "/test/resources/bin/mcode-server";
+    const expectedBinary = "/test/resources/bin/mcode-server";
     // Resolver returns the renamed binary when it exists
     refs.resolveServerBinarySpy.mockReturnValue(expectedBinary);
 
@@ -835,9 +838,9 @@ describe("ServerManager", () => {
       isPackaged: true,
       execPath: process.execPath,
       resourcesPath: "/test/resources",
-      platform: process.platform,
+      platform: TEST_PLATFORM,
     });
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
+    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     expect(spawnCall[0]).toBe(expectedBinary);
     const opts = spawnCall[2] as { env: Record<string, string> };
     expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
@@ -1043,11 +1046,7 @@ describe("ServerManager", () => {
       manager as unknown as { ownedServerProcess: unknown }
     ).ownedServerProcess = refs.mockChildProcess;
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "win32",
-      configurable: true,
-    });
+    setManagerPlatform(manager, "win32");
     let now = 1000;
     const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
       now += 5000;
@@ -1058,20 +1057,16 @@ describe("ServerManager", () => {
       await expect(manager.stopServerHeldByLock()).rejects.toThrow(
         "Failed to terminate server process tree 12345",
       );
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
   });
 
   it("kills the owned POSIX process group and treats ESRCH as success", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
     (
@@ -1080,11 +1075,7 @@ describe("ServerManager", () => {
     (
       manager as unknown as { ownedServerProcess: unknown }
     ).ownedServerProcess = refs.mockChildProcess;
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "linux",
-      configurable: true,
-    });
+    setManagerPlatform(manager, "linux");
     const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
       if (pid < 0) {
         const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
@@ -1102,12 +1093,8 @@ describe("ServerManager", () => {
       await manager.stopServerHeldByLock();
 
       expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
-      expect(unlinkSync).toHaveBeenCalledOnce();
+      expect(NodeFS.unlinkSync).toHaveBeenCalledOnce();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
@@ -1117,14 +1104,10 @@ describe("ServerManager", () => {
     await manager.start();
     refs.getExitCallback()!(1);
 
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
-    vi.mocked(unlinkSync).mockReset();
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "linux",
-      configurable: true,
-    });
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeFS.unlinkSync).mockReset();
+    setManagerPlatform(manager, "linux");
     const killSpy = vi
       .spyOn(process, "kill")
       .mockImplementation((pid, signal) => {
@@ -1149,12 +1132,8 @@ describe("ServerManager", () => {
       );
 
       expect(killSpy).not.toHaveBeenCalledWith(-12345, "SIGKILL");
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
@@ -1164,14 +1143,10 @@ describe("ServerManager", () => {
     await manager.start();
     refs.getExitCallback()!(1);
 
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
-    vi.mocked(execFileSync).mockReset();
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "win32",
-      configurable: true,
-    });
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(NodeChildProcess.execFileSync).mockReset();
+    setManagerPlatform(manager, "win32");
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
     let now = 1000;
     const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
@@ -1184,25 +1159,17 @@ describe("ServerManager", () => {
         "refusing to terminate unrelated process",
       );
 
-      expect(execFileSync).not.toHaveBeenCalled();
+      expect(NodeChildProcess.execFileSync).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
   });
 
   it("preserves an unknown lock when its leader is dead but POSIX group remains", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "linux",
-      configurable: true,
-    });
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    setManagerPlatform(manager, "linux");
     const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
       if (pid > 0) {
         const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
@@ -1221,24 +1188,20 @@ describe("ServerManager", () => {
         "refusing to terminate unrelated process",
       );
       expect(killSpy).not.toHaveBeenCalledWith(-12345, "SIGKILL");
-      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(NodeFS.unlinkSync).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
   });
 
   it("does not unlink a lock replaced while shutdown was in progress", async () => {
-    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(NodeFS.existsSync).mockReturnValue(true);
     const replacement = JSON.stringify({
       ...JSON.parse(LOCK_FILE_JSON),
       authToken: "replacement-token",
     });
-    vi.mocked(readFileSync)
+    vi.mocked(NodeFS.readFileSync)
       .mockReset()
       .mockReturnValueOnce(LOCK_FILE_JSON)
       .mockReturnValueOnce(replacement);
@@ -1346,25 +1309,17 @@ describe("ServerManager", () => {
       now += 5000; // jump 5s each call to exceed 10s deadline quickly
       return now;
     });
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      value: "win32",
-      configurable: true,
-    });
+    setManagerPlatform(manager, "win32");
 
     try {
       await manager.forceReplace();
 
-      expect(execFileSync).toHaveBeenCalledWith(
+      expect(NodeChildProcess.execFileSync).toHaveBeenCalledWith(
         "taskkill",
         ["/T", "/F", "/PID", "12345"],
         expect.objectContaining({ stdio: "ignore" }),
       );
     } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }

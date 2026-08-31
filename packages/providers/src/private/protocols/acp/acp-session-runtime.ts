@@ -129,19 +129,19 @@ export class AcpSessionRuntime {
       );
       return runtimeRef;
     }
-    let child: ChildProcess | undefined;
+    let child: NodeChildProcess.ChildProcess | undefined;
     try {
-      child = spawn(options.spawnSpec.command, [...options.spawnSpec.args], {
+      child = NodeChildProcess.spawn(options.spawnSpec.command, [...options.spawnSpec.args], {
         stdio: ["pipe", "pipe", "pipe"],
         cwd: options.spawnSpec.cwd,
         env: options.spawnSpec.env,
-        shell: process.platform === "win32",
+        shell: options.spawnSpec.shell,
       });
       if (!child.stdin || !child.stdout) throw new Error("ACP stdio pipes unavailable");
       const client: Client = (options.clientFactory ?? createAcpClientHandlers)(callbacks);
       const stream = ndJsonStream(
-        Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+        NodeStream.Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+        NodeStream.Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
       );
       const connection = new ClientSideConnection(() => client, stream);
       runtimeRef = new AcpSessionRuntime({ child, connection }, options);

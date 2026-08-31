@@ -8,15 +8,44 @@ const JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3;
 const ERROR_MORE_DATA = 234;
 const ERROR_NO_MORE_FILES = 18;
 const MAX_PROCESS_IDS = 128;
-const POINTER_BYTES = process.arch === "ia32" ? 4 : 8;
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9;
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
-const EXTENDED_LIMIT_SIZE = process.arch === "ia32" ? 112 : 144;
 const TH32CS_SNAPPROCESS = 0x00000002;
-const PROCESS_ENTRY_SIZE = process.arch === "ia32" ? 556 : 568;
-const PROCESS_ENTRY_PARENT_OFFSET = process.arch === "ia32" ? 24 : 32;
 const PROCESS_ENUMERATION_LIMIT = 16_384;
 const RECONCILIATION_PASS_LIMIT = 5;
+
+/** Immutable host facts required to create a Windows process scope. */
+export interface WindowsProcessScopeHostFacts {
+  readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
+}
+
+interface WindowsProcessScopeLayout {
+  readonly pointerBytes: 4 | 8;
+  readonly extendedLimitSize: 112 | 144;
+  readonly processEntrySize: 556 | 568;
+  readonly processEntryParentOffset: 24 | 32;
+}
+
+/** Resolve Win32 native structure sizes for a Node architecture. */
+export function createWindowsProcessScopeLayout(
+  architecture: NodeJS.Architecture,
+): WindowsProcessScopeLayout {
+  if (architecture === "ia32") {
+    return {
+      pointerBytes: 4,
+      extendedLimitSize: 112,
+      processEntrySize: 556,
+      processEntryParentOffset: 24,
+    };
+  }
+  return {
+    pointerBytes: 8,
+    extendedLimitSize: 144,
+    processEntrySize: 568,
+    processEntryParentOffset: 32,
+  };
+}
 
 /** Result returned by a Windows process-scope operation. */
 export interface WindowsProcessScopeResult {
@@ -83,11 +112,13 @@ type ProcessSnapshotNative = WindowsProcessScopeNative & Required<Pick<WindowsPr
 /** Owns one terminal process tree with a nested Windows Job Object. */
 export class WindowsProcessScope {
   private native: WindowsProcessScopeNative | null;
+  private readonly layout: WindowsProcessScopeLayout;
   private assigned = false;
   private authoritative = false;
 
-  constructor(native: WindowsProcessScopeNative | null) {
+  constructor(native: WindowsProcessScopeNative | null, architecture: NodeJS.Architecture) {
     this.native = native;
+    this.layout = createWindowsProcessScopeLayout(architecture);
   }
 
   /** Whether the native child Job Object was initialized successfully. */
@@ -449,9 +480,15 @@ export class WindowsProcessScope {
 
 /** Creates per-terminal Windows process scopes, or unavailable scopes off Windows. */
 export class WindowsProcessScopeFactory {
+  private readonly layout: WindowsProcessScopeLayout;
+
+  constructor(private readonly host: WindowsProcessScopeHostFacts) {
+    this.layout = createWindowsProcessScopeLayout(host.architecture);
+  }
+
   /** Create one isolated terminal process scope. */
   create(): WindowsProcessScope {
-    if (process.platform !== "win32") return new WindowsProcessScope(null);
+    if (this.host.platform !== "win32") return new WindowsProcessScope(null, this.host.architecture);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const koffi = nativeRequire("koffi") as any;
@@ -462,8 +499,8 @@ export class WindowsProcessScopeFactory {
         "int __stdcall SetInformationJobObject(void*, int, void*, uint32)",
       );
       const jobHandle = createJobObject(null, null);
-      if (!jobHandle) return new WindowsProcessScope(null);
-      const limits = Buffer.alloc(EXTENDED_LIMIT_SIZE);
+      if (!jobHandle) return new WindowsProcessScope(null, this.host.architecture);
+      const limits = Buffer.alloc(this.layout.extendedLimitSize);
       limits.writeUInt32LE(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 16);
       if (!setInformationJobObject(
         jobHandle,
@@ -472,7 +509,7 @@ export class WindowsProcessScopeFactory {
         limits.length,
       )) {
         closeHandle(jobHandle);
-        return new WindowsProcessScope(null);
+        return new WindowsProcessScope(null, this.host.architecture);
       }
       return new WindowsProcessScope({
         jobHandle,
@@ -490,9 +527,9 @@ export class WindowsProcessScopeFactory {
         getProcessTimes: kernel32.func(
           "int __stdcall GetProcessTimes(void*, void*, void*, void*, void*)",
         ),
-      });
+      }, this.host.architecture);
     } catch {
-      return new WindowsProcessScope(null);
+      return new WindowsProcessScope(null, this.host.architecture);
     }
   }
 }

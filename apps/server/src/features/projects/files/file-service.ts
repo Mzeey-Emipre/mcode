@@ -5,8 +5,9 @@
  */
 
 import { injectable, inject, delay } from "tsyringe";
-import { readFileSync, existsSync, statSync, realpathSync } from "fs";
-import { resolve, isAbsolute, sep } from "path";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { GitWorktreeService } from "../git/git-worktree-service.js";
@@ -20,6 +21,7 @@ export class FileService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(delay(() => GitWorktreeService)) private readonly gitWorktrees: GitWorktreeService,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
   ) {}
 
   /**
@@ -82,9 +84,14 @@ export class FileService {
   ): string {
     assertRelativeFilePath(relativePath);
     const rootDir = this.resolveWorkingDir(workspaceId, threadId);
-    const fullPath = resolve(rootDir, relativePath);
+    const fullPath = NodePath.resolve(rootDir, relativePath);
     assertFileExists(fullPath, relativePath);
-    const canonicalPath = assertPathWithinRoot(rootDir, fullPath, relativePath);
+    const canonicalPath = assertPathWithinRoot(
+      rootDir,
+      fullPath,
+      relativePath,
+      this.hostRuntime.platform,
+    );
     assertFileSize(fullPath, relativePath);
     return canonicalPath;
   }
@@ -123,23 +130,28 @@ export class FileService {
 }
 
 function assertRelativeFilePath(relativePath: string): void {
-  if (isAbsolute(relativePath) || relativePath.includes("..") || relativePath.includes("\0")) {
+  if (NodePath.isAbsolute(relativePath) || relativePath.includes("..") || relativePath.includes("\0")) {
     throw new Error(`Invalid file path: ${relativePath}`);
   }
 }
 
 function assertFileExists(fullPath: string, relativePath: string): void {
-  if (!existsSync(fullPath)) {
+  if (!NodeFS.existsSync(fullPath)) {
     throw new Error(`File not found: ${relativePath}`);
   }
 }
 
-function assertPathWithinRoot(rootDir: string, fullPath: string, relativePath: string): string {
-  const canonicalRoot = normalizePathForComparison(realpathSync(rootDir));
-  const canonicalPath = normalizePathForComparison(realpathSync(fullPath));
-  const rootWithSeparator = canonicalRoot.endsWith(sep)
+function assertPathWithinRoot(
+  rootDir: string,
+  fullPath: string,
+  relativePath: string,
+  platform: NodeJS.Platform,
+): string {
+  const canonicalRoot = normalizePathForComparison(NodeFS.realpathSync(rootDir), platform);
+  const canonicalPath = normalizePathForComparison(NodeFS.realpathSync(fullPath), platform);
+  const rootWithSeparator = canonicalRoot.endsWith(NodePath.sep)
     ? canonicalRoot
-    : canonicalRoot + sep;
+    : canonicalRoot + NodePath.sep;
 
   if (!canonicalPath.startsWith(rootWithSeparator) && canonicalPath !== canonicalRoot) {
     throw new Error(`File path escapes workspace root: ${relativePath}`);
@@ -148,13 +160,13 @@ function assertPathWithinRoot(rootDir: string, fullPath: string, relativePath: s
   return canonicalPath;
 }
 
-function normalizePathForComparison(path: string): string {
-  return process.platform === "win32" ? path.toLowerCase() : path;
+function normalizePathForComparison(path: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? path.toLowerCase() : path;
 }
 
 function assertFileSize(fullPath: string, relativePath: string): void {
   const maxFileSize = 256 * 1024;
-  const { size } = statSync(fullPath);
+  const { size } = NodeFS.statSync(fullPath);
   if (size > maxFileSize) {
     throw new Error(
       `File too large for injection: ${relativePath} (${size} bytes, max ${maxFileSize})`,

@@ -10,6 +10,7 @@ import { ServerRuntime } from "../index.js";
 
 function createRuntime(port = 43123): ServerRuntime {
   return new ServerRuntime({
+    platform: "linux",
     manager: {
       port,
       authToken: "test-token",

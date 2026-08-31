@@ -673,6 +673,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const cliPath = settings.cliPath;
     const result = await warmCodexAppServer(
       cliPath,
+      this.host.runtime.platform,
       USAGE_WARMUP_TIMEOUT_MS,
       () => ({ ...this.host.environment.snapshot() }),
     );
@@ -1269,6 +1270,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   ): CodexAppServer {
     return new CodexAppServer({
       cliPath: context.cliPath,
+      platform: this.host.runtime.platform,
       workingDirectory: context.cwd,
       model: undefined,
       sandbox: context.sandbox,
@@ -1927,6 +1929,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     const server = new CodexAppServer({
       cliPath,
+      platform: this.host.runtime.platform,
       workingDirectory: cwd,
       sandbox: "read-only",
       // No approvalHandler is registered here, so side-channel tool requests

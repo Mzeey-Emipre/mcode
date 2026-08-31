@@ -689,7 +689,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
     const resolution = resolveCopilotCli(
       { configuredPath: configuredCliPath },
-      createNodeResolverIO(this.envService.getEnv(), process.platform),
+      createNodeResolverIO(this.envService.getEnv(), this.requireHostRuntime().platform),
     );
     this.lastResolution = resolution;
     if (resolution.source === "not-found") {
@@ -711,14 +711,14 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     const nodePath = await this.resolveElectronNodePath();
     if (!nodePath) return;
 
-    const nodeDir = dirname(nodePath);
-    const separator = process.platform === "win32" ? ";" : ":";
+    const nodeDir = NodePath.dirname(nodePath);
+    const separator = this.requireHostRuntime().platform === "win32" ? ";" : ":";
     const existingPath = options.env?.PATH ?? options.env?.Path ?? "";
     const pathValue = existingPath ? `${nodeDir}${separator}${existingPath}` : nodeDir;
     options.env = {
       ...options.env,
       PATH: pathValue,
-      ...(process.platform === "win32" ? { Path: pathValue } : {}),
+      ...(this.requireHostRuntime().platform === "win32" ? { Path: pathValue } : {}),
     };
   }
 
@@ -885,7 +885,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       if (msg.includes("Could not find @github/copilot")) {
         const userMsg = formatCopilotNotFoundMessage(
           undefined,
-          createNodeResolverIO(this.envService.getEnv(), process.platform),
+          createNodeResolverIO(this.envService.getEnv(), this.requireHostRuntime().platform),
         );
         this.publishTurnEvent(routing, req.sessionId, { type: "error", threadId, error: userMsg } satisfies AgentEvent);
         this.publishTurnEvent(routing, req.sessionId, {
@@ -1128,7 +1128,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     model: string | undefined;
     browserGrant: ReturnType<BrowserAutomationSessionLease["issue"]> | null;
   }) {
-    const customAgents = discoverCopilotAgents(args.cwd)
+    const customAgents = discoverCopilotAgents(args.cwd, this.requireHostRuntime().platform)
       .filter((agent) => agent.source !== "default")
       .map((agent) => ({
         name: agent.name,
@@ -1170,6 +1170,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         } : {}),
       },
     };
+  }
+
+  private requireHostRuntime(): ProviderHostPorts["runtime"] {
+    if (this.host) return this.host.runtime;
+    throw new Error("Copilot Provider host runtime is required");
   }
 
   private async createOrResumeSession(

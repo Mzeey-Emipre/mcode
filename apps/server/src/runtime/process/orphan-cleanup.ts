@@ -33,20 +33,21 @@ const KNOWN_SERVER_BASENAMES = new Set(["node", "node.exe", "bun", "bun.exe"]);
  * Returns null if the name cannot be determined (e.g., /proc unavailable).
  * Used as the default for `OrphanCleanupDeps.getProcessName`.
  */
-function defaultGetProcessName(pid: number): string | null {
+function defaultGetProcessName(pid: number, platform: NodeJS.Platform): string | null {
   try {
-    if (process.platform === "win32") {
+    if (platform === "win32") {
       // tasklist /FO CSV outputs: "node.exe","1234","Console","1","5,192 K"
-      const out = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
+      const out = NodeChildProcess.execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
         timeout: 3000,
         encoding: "utf-8",
-      } as Parameters<typeof execSync>[1]);
+      } as Parameters<typeof NodeChildProcess.execSync>[1]);
       const match = /^"([^"]+)"/.exec(String(out).trim());
       return match ? match[1] : null;
-    } else {
+    } else if (platform === "linux") {
       // /proc/pid/comm is the fastest path on Linux.
-      return readFileSync(`/proc/${pid}/comm`, "utf-8").trim();
+      return NodeFS.readFileSync(`/proc/${pid}/comm`, "utf-8").trim();
     }
+    return null;
   } catch {
     return null;
   }
@@ -78,8 +79,8 @@ export interface OrphanCleanupDeps {
   getProcessName?: (pid: number) => string | null;
   /** Current process PID. Defaults to process.pid. */
   currentPid?: number;
-  /** Current platform string. Defaults to process.platform. */
-  platform?: NodeJS.Platform;
+  /** Current platform string. */
+  platform: NodeJS.Platform;
 }
 
 /** Injectable dependencies for {@link reapOrphanedPtys}. */
@@ -87,8 +88,8 @@ export interface ReapOrphanedPtysDeps {
   processKill?: (pid: number, signal: number | string) => void;
   execSync?: (cmd: string, opts?: { stdio?: "ignore"; timeout?: number }) => Buffer | string;
   getProcessName?: (pid: number) => string | null;
-  /** Current platform string. Defaults to process.platform. */
-  platform?: NodeJS.Platform;
+  /** Current platform string. */
+  platform: NodeJS.Platform;
 }
 
 type StalePtyEntry = ReturnType<PtyPidRegistry["loadStale"]>[number];
@@ -104,9 +105,9 @@ interface ReapContext {
 function createReapContext(deps: ReapOrphanedPtysDeps): ReapContext {
   return {
     processKill: deps.processKill ?? ((pid, signal) => process.kill(pid, signal as never)),
-    execSync: deps.execSync ?? ((cmd, opts) => execSync(cmd, opts)),
-    getProcessName: deps.getProcessName ?? defaultGetProcessName,
-    platform: deps.platform ?? process.platform,
+    execSync: deps.execSync ?? ((cmd, opts) => NodeChildProcess.execSync(cmd, opts)),
+    getProcessName: deps.getProcessName ?? ((pid) => defaultGetProcessName(pid, deps.platform)),
+    platform: deps.platform,
   };
 }
 
@@ -320,17 +321,17 @@ type ServerProcessIdentity = { kind: "verified" } | { kind: "unknown" } | { kind
 function createServerCleanupContext(deps: OrphanCleanupDeps): ServerCleanupContext {
   return {
     processKill: deps.processKill ?? ((pid, signal) => process.kill(pid, signal as never)),
-    execSync: deps.execSync ?? ((cmd, opts) => execSync(cmd, opts)),
-    getProcessName: deps.getProcessName ?? defaultGetProcessName,
+    execSync: deps.execSync ?? ((cmd, opts) => NodeChildProcess.execSync(cmd, opts)),
+    getProcessName: deps.getProcessName ?? ((pid) => defaultGetProcessName(pid, deps.platform)),
     currentPid: deps.currentPid ?? process.pid,
-    platform: deps.platform ?? process.platform,
+    platform: deps.platform,
   };
 }
 
 /** Reads and validates the previous server PID from the lock file. */
 function readOrphanedServerPid(lockFilePath: string, currentPid: number): number | null {
-  if (!existsSync(lockFilePath)) return null;
-  const lock = JSON.parse(readFileSync(lockFilePath, "utf-8")) as LockFile;
+  if (!NodeFS.existsSync(lockFilePath)) return null;
+  const lock = JSON.parse(NodeFS.readFileSync(lockFilePath, "utf-8")) as LockFile;
   if (typeof lock.pid !== "number" || !Number.isInteger(lock.pid) || lock.pid <= 1 || lock.pid === currentPid) return null;
   return lock.pid;
 }

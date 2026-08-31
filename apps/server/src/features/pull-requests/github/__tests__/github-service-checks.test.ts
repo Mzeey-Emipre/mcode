@@ -25,6 +25,8 @@ vi.mock("@mcode/shared", () => ({
 
 import { GithubService } from "../github-service.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 type CallbackFn = (error: Error | null, stdout: string, stderr: string) => void;
 
 async function waitFor(
@@ -414,15 +416,15 @@ describe("GithubService.getCheckRuns", () => {
     await ghService.cancelCheckRuns("main", "/repo");
     const result = await pending;
 
-    expect(mockKillProcessTree).toHaveBeenCalledWith(4321);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(4321, { platform: "win32" });
     expect(result.aggregate).toBe("no_checks");
   });
 
   it("cancelCheckRuns resolves a lookup queued behind the concurrency gate before it spawns gh", async () => {
-    const children: Array<EventEmitter & { pid: number }> = [];
+    const children: Array<NodeEvents.EventEmitter & { pid: number }> = [];
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], _opts: unknown, _cb: CallbackFn) => {
-        const child = Object.assign(new EventEmitter(), { pid: 5000 + children.length });
+        const child = Object.assign(new NodeEvents.EventEmitter(), { pid: 5000 + children.length });
         children.push(child);
         return child;
       },
@@ -483,7 +485,7 @@ describe("GithubService.getCheckRuns", () => {
     await ghService.cancelForRepoPath("c:/repo/worktree");
     await expect(pending).resolves.toMatchObject({ aggregate: "no_checks" });
 
-    expect(mockKillProcessTree).toHaveBeenCalledWith(6789);
+    expect(mockKillProcessTree).toHaveBeenCalledWith(6789, { platform: "win32" });
   });
 });
 

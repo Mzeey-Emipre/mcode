@@ -6,9 +6,9 @@
  */
 
 import { injectable } from "tsyringe";
-import { readdirSync, readFileSync, existsSync, statSync, type Dirent } from "fs";
-import { join } from "path";
-import { homedir, platform } from "os";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { logger } from "@mcode/shared";
 import type { SkillInfo, SkillSource, SkillDiagnostics } from "@mcode/contracts";
 
@@ -300,12 +300,12 @@ function cursorPluginVersionMtime(pluginDir: string, name: string): { name: stri
  *   - macOS/Linux: `~/.config/github-copilot/agents`
  */
 export function copilotUserAgentsDir(): string {
-  if (platform() === "win32") {
+  if (NodeOS.platform() === "win32") {
     const appData =
-      process.env["APPDATA"] ?? join(homedir(), "AppData", "Roaming");
-    return join(appData, "GitHub Copilot", "agents");
+      process.env["APPDATA"] ?? NodePath.join(NodeOS.homedir(), "AppData", "Roaming");
+    return NodePath.join(appData, "GitHub Copilot", "agents");
   }
-  return join(homedir(), ".config", "github-copilot", "agents");
+  return NodePath.join(NodeOS.homedir(), ".config", "github-copilot", "agents");
 }
 
 /** Drives a single directory scan: which path, what source, which providers, and whether to scan for skills, commands, or both. */

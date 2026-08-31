@@ -46,6 +46,7 @@ function service(overrides: Partial<ConstructorParameters<typeof TerminalCommand
     spawned,
     spawn,
     service: new TerminalCommandService({
+      platform: "win32",
       profiles: {
         resolveLaunchProfile: vi.fn(async () => ({
           requestedProfileId: "automatic" as const,

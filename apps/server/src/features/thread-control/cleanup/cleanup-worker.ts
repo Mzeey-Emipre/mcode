@@ -6,10 +6,11 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { isAbsolute, relative, resolve, sep } from "path";
-import { existsSync, realpathSync } from "fs";
+import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
 import type Database from "better-sqlite3";
 import { getMcodeDir, logger } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "./persistence/cleanup-job-repo.js";
 import type { CleanupJob } from "./persistence/cleanup-job-repo.js";
 import { ThreadRepo } from "../persistence/thread-repo.js";
@@ -96,6 +97,7 @@ export class CleanupWorker {
     @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
     @inject(WorkspaceEnvironmentService)
     private readonly workspaceEnvironmentService: WorkspaceEnvironmentService,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
     @inject(ThreadControlMutationReservationService, { isOptional: true })
     mutationReservations?: ThreadControlMutationReservationService,
     @inject(SettingsService, { isOptional: true })
@@ -526,9 +528,9 @@ export class CleanupWorker {
 
     // The SDK does not expose subprocess PIDs, so target all claude.exe
     // descendants to release any worktree directory handles on Windows.
-    await killDescendantsByName(process.pid, "claude.exe");
+    await killDescendantsByName(process.pid, "claude.exe", this.hostRuntime.platform);
 
-    if (process.platform === "win32") {
+    if (this.hostRuntime.platform === "win32") {
       await new Promise<void>((resolve) => setTimeout(resolve, HANDLE_RELEASE_DELAY_MS));
     }
   }

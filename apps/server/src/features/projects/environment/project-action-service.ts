@@ -71,10 +71,10 @@ export class ProjectActionService {
     @inject(PROJECT_ACTION_CLOCK_TOKEN)
     now: ProjectActionClock = () => new Date(),
     @inject(PROJECT_ACTION_RUN_ID_FACTORY_TOKEN)
-    createRunId: ProjectActionRunIdFactory = randomUUID,
+    createRunId: ProjectActionRunIdFactory = NodeCrypto.randomUUID,
   ) {
     this.publisher = new ProjectActionRunPublisher(this.runs);
-    this.runFactory = new ProjectActionRunFactory(now, createRunId);
+    this.runFactory = new ProjectActionRunFactory(now, createRunId, () => this.environment.platform());
     this.runLifecycle = new ProjectActionRunLifecycle(
       this.runs,
       this.active,

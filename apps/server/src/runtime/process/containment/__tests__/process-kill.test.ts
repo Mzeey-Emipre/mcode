@@ -495,13 +495,19 @@ describe("killProcessTree", () => {
     try {
       const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 
-      await killProcessTree(0);
+      await killProcessTree(0, { platform: "linux" });
 
       expect(killSpy).not.toHaveBeenCalled();
       killSpy.mockRestore();
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
+  });
+
+  it("rejects an unsupported platform instead of using the Unix process path", async () => {
+    await expect(killProcessTree(1234, {
+      platform: "unknown" as NodeJS.Platform,
+    })).rejects.toThrow("Unsupported process containment platform: unknown");
   });
 });
 

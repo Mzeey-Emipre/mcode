@@ -509,6 +509,7 @@ function createFakeCursorPorts(): NonNullable<ProviderFactoryInput["cursor"]> {
 
 function createFakeHost(sink: DeterministicCanonicalSink, calls: string[]): ProviderHostPorts {
   return {
+    runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
     environment: { snapshot: () => ({}) },
     processes: {
       attach: () => calls.push("processes.attach"),

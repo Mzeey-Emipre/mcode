@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { CodexAppServer } from "../../private/codex/codex-app-server.js";
+import {
+  CodexAppServer as NativeCodexAppServer,
+  type CodexAppServerOptions,
+} from "../../private/codex/codex-app-server.js";
+
+class CodexAppServer extends NativeCodexAppServer {
+  constructor(options: Omit<CodexAppServerOptions, "platform">) {
+    super({ ...options, platform: process.platform });
+  }
+}
 
 describe("CodexAppServer.interruptChildTurn", () => {
   it("sends the exact native thread and turn identifiers", async () => {

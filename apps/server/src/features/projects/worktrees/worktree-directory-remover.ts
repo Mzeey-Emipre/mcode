@@ -24,17 +24,18 @@ export interface WorktreeDirectoryRemoverDependencies {
 /** Removes one validated worktree directory in an isolated child process. */
 @injectable()
 export class WorktreeDirectoryRemover {
-  private readonly dependencies: Required<WorktreeDirectoryRemoverDependencies>;
+  private readonly dependencies: Omit<Required<WorktreeDirectoryRemoverDependencies>, "platform"> & {
+    readonly platform: NodeJS.Platform | undefined;
+  };
 
   constructor(
     @inject("WorktreeDirectoryRemoverDependencies", { isOptional: true })
     dependencies: WorktreeDirectoryRemoverDependencies = {},
   ) {
-    const platform = dependencies.platform ?? process.platform;
     this.dependencies = {
-      spawn,
-      killTree: (child) => killChildTree(child, platform),
-      platform,
+      spawn: NodeChildProcess.spawn,
+      killTree: (child) => killChildTree(child, this.requirePlatform()),
+      platform: dependencies.platform,
       timeoutMs: DEFAULT_WORKTREE_REMOVAL_TIMEOUT_MS,
       ...dependencies,
     };
@@ -48,16 +49,17 @@ export class WorktreeDirectoryRemover {
    * @param timeoutMs Optional test override for the hard child limit.
    */
   async remove(targetPath: string, timeoutMs = this.dependencies.timeoutMs): Promise<void> {
-    const target = validateRemovalTarget(targetPath);
+    const platform = this.requirePlatform();
+    const target = validateRemovalTarget(targetPath, platform);
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       throw new Error(`Invalid worktree removal timeout: ${timeoutMs}`);
     }
 
     const child = this.dependencies.spawn(process.execPath, ["-e", REMOVE_SCRIPT, target], {
-      cwd: parse(target).dir,
+      cwd: NodePath.parse(target).dir,
       shell: false,
       windowsHide: true,
-      detached: this.dependencies.platform !== "win32",
+      detached: platform !== "win32",
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       stdio: "ignore",
     });
@@ -112,23 +114,28 @@ export class WorktreeDirectoryRemover {
       });
     });
   }
+
+  private requirePlatform(): NodeJS.Platform {
+    if (this.dependencies.platform) return this.dependencies.platform;
+    throw new Error("Worktree directory remover platform is required");
+  }
 }
 
 /** Validate a child-process deletion target at the filesystem boundary. */
-export function validateRemovalTarget(targetPath: string): string {
-  if (typeof targetPath !== "string" || !isAbsolute(targetPath)) {
+export function validateRemovalTarget(targetPath: string, platform: NodeJS.Platform): string {
+  if (typeof targetPath !== "string" || !NodePath.isAbsolute(targetPath)) {
     throw new Error(`Worktree removal target must be absolute: ${targetPath}`);
   }
-  const target = resolve(targetPath);
-  if (target === parse(target).root) {
+  const target = NodePath.resolve(targetPath);
+  if (target === NodePath.parse(target).root) {
     throw new Error(`Refusing to remove filesystem root: ${target}`);
   }
   const protectedPaths = [
-    { path: resolve(process.cwd()), label: "server working directory" },
-    { path: resolve(process.execPath), label: "server executable" },
+    { path: NodePath.resolve(process.cwd()), label: "server working directory" },
+    { path: NodePath.resolve(process.execPath), label: "server executable" },
   ];
   for (const protectedPath of protectedPaths) {
-    if (isEqualOrAncestor(target, protectedPath.path, process.platform)) {
+    if (isEqualOrAncestor(target, protectedPath.path, platform)) {
       throw new Error(`Refusing to remove the ${protectedPath.label}: ${target}`);
     }
   }
@@ -136,11 +143,11 @@ export function validateRemovalTarget(targetPath: string): string {
 }
 
 /** Terminate the isolated remover and all of its descendants. */
-async function killChildTree(child: ChildProcess, platform: NodeJS.Platform): Promise<void> {
+async function killChildTree(child: NodeChildProcess.ChildProcess, platform: NodeJS.Platform): Promise<void> {
   if (!child.pid) return;
   if (platform === "win32") {
     await new Promise<void>((resolvePromise) => {
-      const killer = spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
+      const killer = NodeChildProcess.spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
         stdio: "ignore",
         windowsHide: true,
       });

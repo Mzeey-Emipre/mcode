@@ -1,5 +1,6 @@
 import { inject, injectable } from "tsyringe";
 import { validateBranchName } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import type {
   ContextWindowMode,
   ForkHistoryBudget,
@@ -78,6 +79,7 @@ export class ThreadBranchingService {
     @inject(ThreadService) private readonly threadService: ThreadService,
     @inject(GitWorktreeService) private readonly worktrees: GitWorktreeService,
     @inject(HandoffCoordinator) private readonly handoffs: HandoffCoordinator,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
   ) {}
 
   /** Create the child and durable handoff before the runtime owner dispatches its first turn. */
@@ -202,7 +204,7 @@ export class ThreadBranchingService {
     const normalize = (path: string) => path.replace(/\\/g, "/").replace(/\/$/, "");
     const normalizedLeft = normalize(left);
     const normalizedRight = normalize(right);
-    return process.platform === "win32"
+    return this.hostRuntime.platform === "win32"
       ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
       : normalizedLeft === normalizedRight;
   }

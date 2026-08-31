@@ -19,10 +19,11 @@ import {
   shell,
 } from "electron";
 import { autoUpdater } from "electron-updater";
-import { existsSync } from "fs";
-import { mkdir, writeFile } from "fs/promises";
-import { isAbsolute, join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 
 import {
   registerOpenInHandlers,
@@ -270,6 +271,7 @@ export function handleRendererCrashReport(
   });
 }
 const serverRuntime = new ServerRuntime({
+  platform: hostRuntime.platform,
   ipcMain,
   getMainWindow: () => mainWindow,
   dialog: {
@@ -325,7 +327,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  registerOpenInHandlers(ipcMain);
+  registerOpenInHandlers(ipcMain, hostRuntime.platform);
 
   registerExternalUrlHandler(resolveMcodeWorkspacePreviewUrl);
 
@@ -403,7 +405,7 @@ function registerIpcHandlers(): void {
     return supported;
   });
 
-  registerPreviewBrowserHandlers();
+  registerPreviewBrowserHandlers(hostRuntime.platform);
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +436,7 @@ app.commandLine.appendSwitch(
   "--max-old-space-size=2048 --max-semi-space-size=2",
 );
 
-if (process.platform === "win32") {
+if (hostRuntime.platform === "win32") {
   app.setAppUserModelId(APP_ID);
 }
 
@@ -453,10 +455,11 @@ app.whenReady().then(async () => {
       `[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`,
     );
     console.log(`Mcode v${app.getVersion()} starting`);
-    if (process.platform === "darwin") {
-      app.dock?.setIcon(getWindowIconPath());
+    if (hostRuntime.platform === "darwin") {
+      app.dock?.setIcon(getWindowIconPath(hostRuntime.platform));
     }
     const desktopWindow = createDesktopWindowFeature({
+      platform: hostRuntime.platform,
       isDesktopDev,
       lifecycleHooks: {
         disposePreviewForWindow,
@@ -538,7 +541,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (hostRuntime.platform !== "darwin") {
     app.quit();
   }
 });

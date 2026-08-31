@@ -1,5 +1,6 @@
 import { TERMINAL_MAX_SESSIONS } from "@mcode/contracts";
 import { Lifecycle, type DependencyContainer } from "tsyringe";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 
 import { GitWorktreeService } from "../../projects/git/git-worktree-service.js";
 import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
@@ -20,7 +21,9 @@ import { TerminalSessionService } from "../sessions/terminal-session-service.js"
 import { TerminalCommandService } from "../commands/terminal-command-service.js";
 import { TerminalDiagnosticsService } from "../diagnostics/terminal-diagnostics-service.js";
 import { TerminalProfileService } from "../profiles/terminal-profile-service.js";
+import { createTerminalProfileServiceOptions } from "../profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "../preferences/workspace-terminal-preferences-service.js";
+import { terminalPlatform } from "../terminal-platform.js";
 
 /** Register terminal backends, selector state, and backend diagnostics. */
 export function registerTerminalBackends(container: DependencyContainer): void {
@@ -29,6 +32,7 @@ export function registerTerminalBackends(container: DependencyContainer): void {
     useFactory: (c) => {
       if (terminalCommandService) return terminalCommandService;
       terminalCommandService = new TerminalCommandService({
+        platform: c.resolve<HostRuntime>("HostRuntime").platform,
         profiles: c.resolve(TerminalProfileService),
         env: c.resolve(EnvService),
         settings: c.resolve(SettingsService),
@@ -57,11 +61,13 @@ export function registerTerminalBackends(container: DependencyContainer): void {
   container.register("ModernTerminalBackend", {
     useFactory: (c: DependencyContainer) => {
       if (modernTerminalBackend) return modernTerminalBackend;
-      const platform = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+      const hostRuntime = c.resolve<HostRuntime>("HostRuntime");
       const host = new PtyHostSupervisor({
-        platform,
+        platform: terminalPlatform(hostRuntime.platform),
         cleanupLedger: c.resolve(PtyHostCleanupLedger),
         spawnHost: () => spawnPtyHostChild({
+          platform: hostRuntime.platform,
+          architecture: hostRuntime.architecture,
           entryPath: resolvePtyHostEntryPath(process.argv[1] ?? process.cwd()),
           env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
         }),
@@ -85,6 +91,7 @@ export function registerTerminalBackends(container: DependencyContainer): void {
         runtime,
         host,
         () => settings.get().terminal.behavior.sessionLimit,
+        hostRuntime,
         undefined,
         (threadId) => c.resolve(ThreadRepo).findById(threadId)?.workspace_id ?? null,
       );
@@ -146,6 +153,7 @@ export function registerTerminalPreferences(container: DependencyContainer): voi
     useFactory: (c) => new TerminalProfileService(
       c.resolve(SettingsService),
       c.resolve(WorkspaceTerminalPreferencesService),
+      createTerminalProfileServiceOptions(c.resolve<HostRuntime>("HostRuntime").platform),
     ),
   });
 }

@@ -17,12 +17,14 @@ vi.mock("@mcode/shared", () => ({
 
 import { GithubService } from "../github-service.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 describe("GithubService.createPr", () => {
   let ghService: GithubService;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    ghService = new GithubService({} as WorkspaceRepo);
+    ghService = new GithubService({} as WorkspaceRepo, TEST_HOST_RUNTIME);
   });
 
   it("creates a PR and returns number and url", async () => {

@@ -38,6 +38,7 @@ function committedRuntimeEnvelope(): CanonicalAgentEventEnvelope {
 describe("createProviderHostPorts", () => {
   it("adapts the server browser grant to the Provider contract", () => {
     const ports = createProviderHostPorts({
+      runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
       envService: { getEnv: () => ({}) },
       jobObject: { isWindowsJob: false },
       browser: {
@@ -82,6 +83,7 @@ describe("createProviderHostPorts", () => {
     });
     const acceptCommitted = vi.fn(() => deliveryOrder.push("ingress"));
     const ports = createProviderHostPorts({
+      runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
       envService: { getEnv: () => ({ PATH: "test" }) },
       jobObject: { isWindowsJob: false },
       browser: {},
@@ -123,6 +125,7 @@ describe("createProviderHostPorts", () => {
       })
       .mockImplementationOnce(() => { throw new Error("commit failed"); });
     const ports = createProviderHostPorts({
+      runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
       envService: { getEnv: () => ({ PATH: "test" }) },
       jobObject: { isWindowsJob: false },
       browser: {},

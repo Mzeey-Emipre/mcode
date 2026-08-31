@@ -30,10 +30,21 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-import { CodexAppServer, performInitialize, isRecoverableCodexResumeError } from "../../private/codex/codex-app-server.js";
+import {
+  CodexAppServer as NativeCodexAppServer,
+  performInitialize,
+  isRecoverableCodexResumeError,
+  type CodexAppServerOptions,
+} from "../../private/codex/codex-app-server.js";
 import { logger } from "@mcode/shared";
 
 const noSleep = (): Promise<void> => Promise.resolve();
+
+class CodexAppServer extends NativeCodexAppServer {
+  constructor(options: Omit<CodexAppServerOptions, "platform">) {
+    super({ ...options, platform: process.platform });
+  }
+}
 
 describe("isRecoverableCodexResumeError", () => {
   it("treated missing rollout as recoverable (falls back to thread/start)", () => {

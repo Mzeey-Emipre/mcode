@@ -12,6 +12,7 @@ import { providerProtocolBinding } from "../private/factory.js";
 
 function createHostPorts(): ProviderHostPorts {
   return {
+    runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
     environment: { snapshot: vi.fn(() => ({})) },
     processes: {
       attach: vi.fn(),

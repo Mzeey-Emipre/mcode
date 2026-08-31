@@ -34,6 +34,8 @@ import { logger } from "@mcode/shared";
 import { TerminalService } from "../terminal-service.js";
 import { TerminalReplayBuffer } from "../terminal-replay-buffer.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 function terminalServiceWithReplay(
   replay: TerminalReplayBuffer,
   data: ReturnType<typeof vi.fn>,
@@ -181,7 +183,7 @@ describe("TerminalService Windows teardown", () => {
 
     expect(pty.kill).toHaveBeenCalledOnce();
     expect(killProcessTree).toHaveBeenCalledOnce();
-    expect(killProcessTree).toHaveBeenCalledWith(session.pty.pid);
+    expect(killProcessTree).toHaveBeenCalledWith(session.pty.pid, { platform: "win32" });
     const ptyKill = vi.mocked(pty.kill);
     expect(killProcessTree.mock.invocationCallOrder[0]).toBeLessThan(
       ptyKill.mock.invocationCallOrder[0]!,

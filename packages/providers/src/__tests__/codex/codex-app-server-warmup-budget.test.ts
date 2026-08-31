@@ -32,7 +32,7 @@ describe("warmCodexAppServer discovery budget", () => {
       }),
     );
 
-    const warmup = warmCodexAppServer("slow-codex", 100);
+    const warmup = warmCodexAppServer("slow-codex", process.platform, 100);
     let settled = false;
     void warmup.then(
       () => {

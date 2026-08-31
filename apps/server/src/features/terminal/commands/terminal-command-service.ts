@@ -99,6 +99,7 @@ export type TerminalCommandPreparation =
 
 /** Injectable dependencies for isolated one-shot Terminal command execution. */
 export interface TerminalCommandServiceDependencies extends TerminalScopeResolverDependencies {
+  readonly platform: NodeJS.Platform;
   readonly profiles: TerminalCommandProfileResolver;
   readonly env: { getEnv(): Record<string, string> };
   readonly settings: { get(): Settings };
@@ -130,7 +131,8 @@ export class TerminalCommandService {
 
   constructor(private readonly deps: TerminalCommandServiceDependencies) {
     this.spawn = deps.spawn ?? spawnTerminalCommand;
-    this.kill = deps.killProcessTree ?? killProcessTree;
+    this.kill = deps.killProcessTree
+      ?? ((pid) => killProcessTree(pid, { platform: deps.platform }));
     this.schedule = deps.setTimeout ?? setTimeout;
     this.cancel = deps.clearTimeout ?? clearTimeout;
   }
@@ -287,7 +289,7 @@ export class TerminalCommandService {
           stdio: ["ignore", "pipe", "pipe"],
           shell: false,
           windowsHide: true,
-          detached: process.platform !== "win32",
+          detached: this.deps.platform !== "win32",
         });
       } catch {
         return null;

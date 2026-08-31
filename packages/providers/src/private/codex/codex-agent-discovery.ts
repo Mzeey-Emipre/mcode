@@ -60,7 +60,7 @@ export type CodexAgentFileReadResult =
 export interface DiscoverCodexStandaloneAgentsInput {
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly cwd?: string;
-  readonly platform?: NodeJS.Platform;
+  readonly platform: NodeJS.Platform;
   readonly limits?: CodexAgentDiscoveryLimits;
   readonly readFile?: (path: string, maxBytes: number) => Promise<CodexAgentFileReadResult>;
   readonly openDirectory?: (path: string) => Promise<AsyncIterable<CodexAgentDirectoryEntry>>;
@@ -86,8 +86,8 @@ function nonEmptyEnvironmentPath(value: string | undefined): string | undefined 
 /** Resolves the global and project roots from the Codex spawn context. */
 export function resolveCodexAgentDiscoveryRoots(
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
   cwd?: string,
-  platform: NodeJS.Platform = process.platform,
 ): CodexAgentDiscoveryRoot[] {
   const codexHome = nonEmptyEnvironmentPath(environment.CODEX_HOME)
     ?? (() => {
@@ -247,7 +247,7 @@ export async function discoverCodexStandaloneAgents(
   input: DiscoverCodexStandaloneAgentsInput,
 ): Promise<CodexStandaloneAgentDiscovery> {
   const scan = createCodexAgentScan(input);
-  const roots = resolveCodexAgentDiscoveryRoots(input.environment, input.cwd, input.platform);
+  const roots = resolveCodexAgentDiscoveryRoots(input.environment, input.platform, input.cwd);
   for (const root of roots) {
     const outcome = await scanCodexAgentRoot(root, scan);
     if (outcome === "stop") break;

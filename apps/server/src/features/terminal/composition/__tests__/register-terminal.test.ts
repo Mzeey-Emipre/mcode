@@ -1,7 +1,8 @@
 import "reflect-metadata";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import { describe, expect, it } from "vitest";
 import { container } from "tsyringe";
 import { EnvService } from "../../../../runtime/environment/env-service.js";
@@ -25,6 +26,7 @@ describe("registerTerminalBackends", () => {
     terminalContainer.register(ThreadRepo, { useValue: {} as ThreadRepo });
     terminalContainer.register(GitWorktreeService, { useValue: {} as GitWorktreeService });
     terminalContainer.register("PtyPidRegistry", { useValue: new PtyPidRegistry(pidRegistryDir) });
+    terminalContainer.register("HostRuntime", { useValue: hostRuntime });
 
     try {
       registerTerminalBackends(terminalContainer);

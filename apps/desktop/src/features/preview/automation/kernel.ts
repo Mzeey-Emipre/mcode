@@ -601,12 +601,14 @@ export function evaluateIsolatedExpression(argument: {
 }
 
 /** Returns the native Select All modifier mask used by Chromium input events. */
-export function selectAllModifierMask(platform: NodeJS.Platform = process.platform): number {
+export function selectAllModifierMask(platform: NodeJS.Platform): number {
   return platform === "darwin" ? 4 : 2;
 }
 
 /** Executes bounded, serial browser operations against exact visible Electron webviews. */
 export class BrowserAutomationKernel {
+  constructor(private readonly platform: NodeJS.Platform) {}
+
   private readonly scheduler = new BrowserAutomationScheduler(5, BROWSER_AUTOMATION_MAX_PENDING_REQUESTS);
   private readonly targets = new Map<string, TargetState>();
   private readonly targetGenerations = new Map<string, number>();
@@ -1611,7 +1613,7 @@ export class BrowserAutomationKernel {
   }
 
   private async clearSelectedText(state: TargetState, markEffect: () => void): Promise<void> {
-    const modifiers = selectAllModifierMask() === 4 ? ["Meta"] : ["Control"];
+    const modifiers = selectAllModifierMask(this.platform) === 4 ? ["Meta"] : ["Control"];
     await this.pressKey(state, "a", modifiers, markEffect);
     await this.pressKey(state, "Backspace", [], markEffect);
   }

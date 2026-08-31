@@ -5,9 +5,10 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { execFile, type ChildProcess } from "child_process";
+import * as NodeChildProcess from "node:child_process";
 import type { PrInfo, PrDetail, ChecksStatus, CheckRun } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import { killProcessTree } from "../../../runtime/process/containment/process-kill.js";
 
@@ -59,6 +60,7 @@ export class GithubService {
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
   ) {}
 
   /**
@@ -158,7 +160,7 @@ export class GithubService {
     await Promise.all(matches.map(async (tracked) => {
       const pid = tracked.child.pid;
       if (typeof pid === "number" && pid > 0) {
-        await killProcessTree(pid);
+        await killProcessTree(pid, { platform: this.hostRuntime.platform });
       }
       tracked.finish();
       await tracked.done;

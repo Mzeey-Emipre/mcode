@@ -28,7 +28,7 @@ describe("warmCodexAppServer", () => {
     boundaries.which.mockRejectedValue(new Error("missing"));
 
     await expect(
-      warmCodexAppServer("definitely-not-a-real-binary-xyz", 100),
+      warmCodexAppServer("definitely-not-a-real-binary-xyz", process.platform, 100),
     ).resolves.toEqual({ initialized: false });
     expect(boundaries.spawn).not.toHaveBeenCalled();
   });
@@ -37,7 +37,7 @@ describe("warmCodexAppServer", () => {
     vi.useFakeTimers();
     boundaries.which.mockReturnValue(new Promise(() => undefined));
 
-    const result = warmCodexAppServer("slow-codex", 100);
+    const result = warmCodexAppServer("slow-codex", process.platform, 100);
     await vi.advanceTimersByTimeAsync(100);
 
     await expect(result).resolves.toEqual({ initialized: false });

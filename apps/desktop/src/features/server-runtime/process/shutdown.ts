@@ -19,7 +19,9 @@ export interface StopServerOptions {
   portMin: number;
   portMax: number;
   ownedIdentity: OwnedServerIdentity | null;
-  ownedProcess: ChildProcess | null;
+  ownedProcess: NodeChildProcess.ChildProcess | null;
+  /** Platform selected by the Electron composition root. */
+  platform: NodeJS.Platform;
 }
 
 /** Outcome details that let the manager update its owned-server state. */
@@ -37,7 +39,10 @@ export async function stopServerHeldByLock(
     return { clearOwnedIdentity: true };
   }
   await requestGracefulShutdown(lockResult.lock);
-  const processAlive = await waitForProcessTreeExit(lockResult.lock.pid);
+  const processAlive = await waitForProcessTreeExit(
+    lockResult.lock.pid,
+    options.platform,
+  );
   const forceResult = await forceStopOwnedProcessIfNeeded(
     lockResult.lock,
     processAlive,
@@ -125,13 +130,16 @@ async function requestGracefulShutdown(lock: ServerLock): Promise<void> {
 }
 
 /** Wait up to ten seconds for a process leader and its POSIX group to exit. */
-async function waitForProcessTreeExit(pid: number): Promise<boolean> {
+async function waitForProcessTreeExit(
+  pid: number,
+  platform: NodeJS.Platform,
+): Promise<boolean> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (!isProcessAlive(pid) && !isProcessGroupAlive(pid)) return false;
+    if (!isProcessAlive(pid) && !isProcessGroupAlive(pid, platform)) return false;
     await delay(200);
   }
-  return isProcessAlive(pid) || isProcessGroupAlive(pid);
+  return isProcessAlive(pid) || isProcessGroupAlive(pid, platform);
 }
 
 /** Result of an owned-process force-stop operation. */
@@ -151,14 +159,14 @@ async function forceStopOwnedProcessIfNeeded(
     throwUnownedProcessError(lock.pid);
   }
   if (!hasCurrentOwnedLock(lock, options)) return { lostOwnership: true };
-  forceKillServerProcessTree(lock.pid);
-  await confirmPosixProcessGroupExit(lock.pid);
+  forceKillServerProcessTree(lock.pid, options.platform);
+  await confirmPosixProcessGroupExit(lock.pid, options.platform);
   return { lostOwnership: false };
 }
 
 /** Return whether the original owned child still proves the PID is safe to stop. */
 function isLiveOwnedProcess(
-  child: ChildProcess | null,
+  child: NodeChildProcess.ChildProcess | null,
   pid: number,
 ): boolean {
   return (
@@ -205,10 +213,10 @@ function readCurrentLock(lockPath: string): ServerLock | null {
 }
 
 /** Kill the server leader and all provider subprocesses that it owns. */
-function forceKillServerProcessTree(pid: number): void {
+function forceKillServerProcessTree(pid: number, platform: NodeJS.Platform): void {
   try {
-    if (process.platform === "win32") {
-      execFileSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
+    if (platform === "win32") {
+      NodeChildProcess.execFileSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
         stdio: "ignore",
         timeout: 5_000,
       });
@@ -224,13 +232,16 @@ function forceKillServerProcessTree(pid: number): void {
 }
 
 /** Recheck that a forced POSIX process group no longer exists. */
-async function confirmPosixProcessGroupExit(pid: number): Promise<void> {
-  if (process.platform === "win32") return;
+async function confirmPosixProcessGroupExit(
+  pid: number,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  if (platform === "win32") return;
   const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline && isProcessGroupAlive(pid)) {
+  while (Date.now() < deadline && isProcessGroupAlive(pid, platform)) {
     await delay(200);
   }
-  if (isProcessGroupAlive(pid)) {
+  if (isProcessGroupAlive(pid, platform)) {
     throw new Error(
       `Server process tree ${pid} still running after termination`,
     );

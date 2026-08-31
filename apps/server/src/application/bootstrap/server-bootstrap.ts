@@ -9,10 +9,11 @@ import { broadcast, broadcastTerminalData, maxBufferedAmount, onSessionChange, s
 import { PortPush } from "../transport/port-push.js";
 import { IpcPushServer, generateIpcPath } from "../transport/ipc-push-server.js";
 import { logger, getMcodeDir } from "@mcode/shared";
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
-import { join } from "path";
-import { randomUUID } from "crypto";
-import { execFileSync } from "child_process";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
 import { killOrphanedServer, reapOrphanedPtys } from "../../runtime/process/orphan-cleanup.js";
 import { PtyPidRegistry } from "../../features/terminal/host/pty-pid-registry.js";
 
@@ -409,7 +410,7 @@ const portPush = new PortPush();
 const ipcServer = new IpcPushServer();
 
 /** Platform-appropriate IPC path for this server process. */
-const ipcPath = generateIpcPath(process.pid, getMcodeDir());
+const ipcPath = generateIpcPath(process.pid, getMcodeDir(), hostRuntime.platform);
 
 ipcServer.onConnection((port) => {
   logger.info("IPC push client connected");
@@ -674,6 +675,7 @@ codexCatalogService.onSkillsChanged((cwd) => {
 
 // Create and start HTTP + WS server
 const { httpServer, wss } = createWsServer({
+  runtime: hostRuntime,
   workspaceService,
   workspaceEnvironmentService,
   projectActionService,
@@ -835,12 +837,12 @@ function startServerAndSubscribe(): void {
 // Kill any orphaned server from a previous unclean shutdown before binding
 // the new IPC socket and HTTP port, so zombie SDK subprocesses are stopped
 // before the new server accepts work.
-killOrphanedServer({ lockFilePath: LOCK_FILE_PATH, logger });
+killOrphanedServer({ lockFilePath: LOCK_FILE_PATH, logger, platform: hostRuntime.platform });
 
 // Reap any PTY processes left alive from a previous crash. Runs after
 // killOrphanedServer so the server process tree is clean before we inspect PTY PIDs.
 const pidRegistry = container.resolve<PtyPidRegistry>("PtyPidRegistry");
-reapOrphanedPtys(pidRegistry, logger);
+reapOrphanedPtys(pidRegistry, logger, { platform: hostRuntime.platform });
 projectActionService.recoverStaleRuns();
 
 async function bootstrapServer(): Promise<void> {
@@ -892,7 +894,7 @@ async function shutdown(): Promise<void> {
   shutdownCoordinator.setPhase("close external thread-control runtime");
   await externalThreadControlMcpRuntime.close();
 
-  removeIpcSocket(ipcPath);
+  removeIpcSocket(ipcPath, hostRuntime.platform);
 
   // 1. Capture active thread IDs before stopAll() clears them
   const activeThreadIds = agentService.runtimeAccess().activeThreadIds();
@@ -1009,9 +1011,10 @@ async function shutdown(): Promise<void> {
 }
 
 /** Removes the Unix IPC socket after its listener is closed. */
-function removeIpcSocket(path: string): void {
-  if (process.platform === "win32") return;
-  try { unlinkSync(path); } catch { /* already removed */ }
+function removeIpcSocket(path: string, platform: NodeJS.Platform): void {
+  if (platform === "win32") return;
+  if (platform !== "darwin" && platform !== "linux") return;
+  try { NodeFS.unlinkSync(path); } catch { /* already removed */ }
 }
 
 /** Sends the normal shutdown close code to every open WebSocket client. */

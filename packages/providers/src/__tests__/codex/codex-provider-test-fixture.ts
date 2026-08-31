@@ -170,6 +170,7 @@ export class CodexProvider extends PackageCodexProvider {
   ) {
     const delegatedSettingsService = { get: () => settings.get() };
     const host: ProviderHostPorts = {
+      runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
       environment: { snapshot: () => environment.getEnv() },
       processes: { attach: () => undefined, terminateTree: async () => undefined },
       browser: {

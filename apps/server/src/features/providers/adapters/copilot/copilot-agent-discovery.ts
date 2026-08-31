@@ -85,13 +85,13 @@ function scanAgentDir(dir: string, source: "user" | "project"): CopilotSubagent[
  * Windows: %APPDATA%\GitHub Copilot\agents
  * Linux/macOS: ~/.config/github-copilot/agents
  */
-function userAgentsDir(): string {
-  if (process.platform === "win32") {
+function userAgentsDir(platform: NodeJS.Platform): string {
+  if (platform === "win32") {
     const appData =
-      process.env["APPDATA"] ?? path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(appData, "GitHub Copilot", "agents");
+      process.env["APPDATA"] ?? NodePath.join(NodeOS.homedir(), "AppData", "Roaming");
+    return NodePath.join(appData, "GitHub Copilot", "agents");
   }
-  return path.join(os.homedir(), ".config", "github-copilot", "agents");
+  return NodePath.join(NodeOS.homedir(), ".config", "github-copilot", "agents");
 }
 
 /**
@@ -102,11 +102,15 @@ function userAgentsDir(): string {
  *
  * Always returns at least the three built-in defaults.
  */
-export function discoverCopilotAgents(workingDirectory: string, userDir?: string): CopilotSubagent[] {
-  const user = scanAgentDir(userDir ?? userAgentsDir(), "user");
+export function discoverCopilotAgents(
+  workingDirectory: string,
+  platform: NodeJS.Platform,
+  userDir?: string,
+): CopilotSubagent[] {
+  const user = scanAgentDir(userDir ?? userAgentsDir(platform), "user");
   const project = [
-    ...scanAgentDir(path.join(workingDirectory, ".github", "agents"), "project"),
-    ...scanAgentDir(path.join(workingDirectory, ".copilot", "agents"), "project"),
+    ...scanAgentDir(NodePath.join(workingDirectory, ".github", "agents"), "project"),
+    ...scanAgentDir(NodePath.join(workingDirectory, ".copilot", "agents"), "project"),
   ];
   return [...COPILOT_DEFAULT_AGENTS, ...user, ...project];
 }

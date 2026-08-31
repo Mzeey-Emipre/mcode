@@ -34,6 +34,7 @@ export interface CursorTurnRunnerOptions {
   model?: string;
   permissionMode: "default" | "full";
   chatId: string | null;
+  platform: NodeJS.Platform;
   env?: Record<string, string>;
 }
 
@@ -50,9 +51,8 @@ export function buildCursorTurnArgs(opts: {
   model?: string;
   permissionMode: "default" | "full";
   chatId: string | null;
-  platform?: NodeJS.Platform;
+  platform: NodeJS.Platform;
 }): string[] {
-  const platform = opts.platform ?? process.platform;
   const args: string[] = [
     "--print",
     "--output-format",
@@ -67,7 +67,7 @@ export function buildCursorTurnArgs(opts: {
     args.push("--sandbox", "disabled");
   } else {
     args.push("--trust");
-    const supervisedSandboxAvailable = platform === "darwin" || platform === "linux";
+    const supervisedSandboxAvailable = opts.platform === "darwin" || opts.platform === "linux";
     args.push("--sandbox", supervisedSandboxAvailable ? "enabled" : "disabled");
   }
   if (opts.model && opts.model.length > 0) {
@@ -85,17 +85,18 @@ export async function runCursorTurn(
   onEvent: (event: AgentEvent) => void,
   todoSnapshot: CursorTodoSnapshot,
   abortSignal?: AbortSignal,
-  deps: CursorTurnRunnerDeps = { spawn: nodeSpawn },
+  deps: CursorTurnRunnerDeps = { spawn: NodeChildProcess.spawn },
 ): Promise<CursorTurnResult> {
   const args = buildCursorTurnArgs({
     model: options.model,
     permissionMode: options.permissionMode,
     chatId: options.chatId,
+    platform: options.platform,
   });
 
   const child = deps.spawn(options.cliPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
-    shell: process.platform === "win32",
+    shell: options.platform === "win32",
     cwd: options.cwd,
     env: options.env ?? processEnvironmentSnapshot(),
   });

@@ -30,6 +30,8 @@ import { killDescendantsByName } from "../../../../runtime/process/containment/p
 import { getMcodeDir } from "@mcode/shared";
 import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 // Avoid real wmic/taskkill on Windows: unbounded wall time and Vitest's default
 // 5s test timeout (integration tests must not depend on the host process tree).
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({

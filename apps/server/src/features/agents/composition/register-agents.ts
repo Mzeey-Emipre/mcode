@@ -1,4 +1,5 @@
 import { Lifecycle, instanceCachingFactory, type DependencyContainer } from "tsyringe";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { broadcast } from "../../../application/transport/push.js";
 
 import {
@@ -161,6 +162,7 @@ export function registerAgentServices(container: DependencyContainer): void {
         (threadId, turnId, summary) => {
           broadcast("turn.fileEffectsUpdated", { threadId, turnId, summary });
         },
+        c.resolve<HostRuntime>("HostRuntime").platform,
       );
     }),
   });
@@ -203,6 +205,7 @@ export function registerAgentServices(container: DependencyContainer): void {
       c.resolve(GoalLifecycleService),
       c.resolve(WorkspaceEnvironmentService),
       c.resolve(FileService),
+      c.resolve<HostRuntime>("HostRuntime").platform,
     )),
   });
   container.register(TurnConversationProjectionService, { useClass: TurnConversationProjectionService }, { lifecycle: Lifecycle.Singleton });

@@ -102,9 +102,12 @@ function createSocketAdapter(socket: Socket): MessagePortLike {
  * Generate a platform-appropriate IPC path for the server process.
  * Windows uses a named pipe; macOS/Linux use a Unix domain socket in mcodeDir.
  */
-export function generateIpcPath(pid: number, mcodeDir: string): string {
-  if (process.platform === "win32") {
+export function generateIpcPath(pid: number, mcodeDir: string, platform: NodeJS.Platform): string {
+  if (platform === "win32") {
     return `\\\\.\\pipe\\mcode-${pid}`;
   }
-  return `${mcodeDir}/mcode-${pid}.sock`;
+  if (platform === "darwin" || platform === "linux") {
+    return `${mcodeDir}/mcode-${pid}.sock`;
+  }
+  throw new Error(`Unsupported IPC platform: ${platform}`);
 }

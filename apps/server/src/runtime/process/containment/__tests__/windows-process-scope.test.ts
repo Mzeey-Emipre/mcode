@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  WindowsProcessScope,
+  createWindowsProcessScopeLayout,
+  WindowsProcessScope as NativeWindowsProcessScope,
   type WindowsProcessScopeNative,
 } from "../windows-process-scope.js";
+
+class WindowsProcessScope extends NativeWindowsProcessScope {
+  constructor(native: WindowsProcessScopeNative | null) {
+    super(native, process.arch);
+  }
+}
 
 function createNative(processIds: number[] = []): WindowsProcessScopeNative {
   return {

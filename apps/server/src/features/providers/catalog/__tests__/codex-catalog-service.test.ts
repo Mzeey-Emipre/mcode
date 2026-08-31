@@ -104,6 +104,7 @@ class ControlledCatalogClient extends EventEmitter {
 }
 
 describe("CodexCatalogService", () => {
+  const TEST_HOST_RUNTIME = { platform: "linux", architecture: "x64", nodeAbi: "127" } as const;
   const services: CodexCatalogService[] = [];
   const temporaryDirectories: string[] = [];
 

@@ -14,6 +14,7 @@ import {
 } from "@mcode/contracts";
 import type { SettingsService } from "../../settings/settings-service.js";
 import type { WorkspaceTerminalPreferencesService } from "../preferences/workspace-terminal-preferences-service.js";
+import { terminalPlatform } from "../terminal-platform.js";
 
 interface CertifiedProfileDefinition {
   readonly id: Exclude<TerminalProfileReference, "automatic" | `custom:${string}`>;
@@ -82,25 +83,22 @@ export class TerminalProfileInUseError extends Error {
 }
 
 /** Creates the production profile discovery probes for this server process. */
-export function createTerminalProfileServiceOptions(): TerminalProfileServiceOptions {
-  const platform: TerminalPlatform = process.platform === "win32"
-    ? "windows"
-    : process.platform === "darwin"
-      ? "macos"
-      : "linux";
+export function createTerminalProfileServiceOptions(
+  platform: NodeJS.Platform,
+): TerminalProfileServiceOptions {
   return {
-    platform,
+    platform: terminalPlatform(platform),
     resolveExecutable: async (executable) => {
-      if (isAbsolute(executable)) {
+      if (NodePath.isAbsolute(executable)) {
         try {
-          return statSync(executable).isFile() ? executable : null;
+          return NodeFS.statSync(executable).isFile() ? executable : null;
         } catch {
           return null;
         }
       }
       return await which(executable, { nothrow: true });
     },
-    createId: randomUUID,
+    createId: NodeCrypto.randomUUID,
   };
 }
 

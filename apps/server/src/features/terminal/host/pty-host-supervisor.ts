@@ -24,6 +24,7 @@ import {
   type PtyHostServerMessage,
 } from "./pty-host-protocol.js";
 import { reapPosixProcessSession } from "./posix-process-scope.js";
+import { nodePlatformForTerminal } from "../terminal-platform.js";
 
 const STARTUP_TIMEOUT_MS = 5_000;
 const REPLACEMENT_DELAY_MS = 250;
@@ -646,7 +647,9 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     if (this.isProcessAlive(record.rootPid)) {
-      await killProcessTree(record.rootPid);
+      await killProcessTree(record.rootPid, {
+        platform: nodePlatformForTerminal(this.options.platform),
+      });
     }
   }
 

@@ -32,6 +32,8 @@ import {
 } from "../../terminal-backend.js";
 import { ModernTerminalBackend } from "../modern-terminal-backend.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const attachmentId = "00000000-0000-4000-8000-000000000002";
 const hydrationId = "00000000-0000-4000-8000-000000000003";

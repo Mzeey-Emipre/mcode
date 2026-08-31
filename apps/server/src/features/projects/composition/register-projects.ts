@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { Lifecycle, type DependencyContainer } from "tsyringe";
+import * as NodeCrypto from "node:crypto";
+import { instanceCachingFactory, Lifecycle, type DependencyContainer } from "tsyringe";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 
 import {
   FilesystemBrowser,
@@ -87,11 +88,11 @@ export function registerProjectServices(container: DependencyContainer): void {
     { useClass: WorktreeSafetyService },
     { lifecycle: Lifecycle.Singleton },
   );
-  container.register(
-    WorktreeDirectoryRemover,
-    { useClass: WorktreeDirectoryRemover },
-    { lifecycle: Lifecycle.Singleton },
-  );
+  container.register(WorktreeDirectoryRemover, {
+      useFactory: instanceCachingFactory((c: DependencyContainer) => new WorktreeDirectoryRemover({
+        platform: c.resolve<HostRuntime>("HostRuntime").platform,
+      })),
+    });
   container.register(
     ProjectWorktreeService,
     { useClass: ProjectWorktreeService },
@@ -103,6 +104,7 @@ export function registerProjectServices(container: DependencyContainer): void {
       useFactory: (c) => {
         if (workspaceEnvironmentService) return workspaceEnvironmentService;
         workspaceEnvironmentService = new WorkspaceEnvironmentService({
+          platform: workspaceEnvironmentPlatform(c.resolve<HostRuntime>("HostRuntime").platform),
           threads: c.resolve(ThreadRepo),
           workspaces: c.resolve(WorkspaceRepo),
           terminalCommands: c.resolve(TerminalCommandService),
@@ -118,8 +120,19 @@ export function registerProjectServices(container: DependencyContainer): void {
   );
   container.register(ProjectActionRunRepo, { useClass: ProjectActionRunRepo }, { lifecycle: Lifecycle.Singleton });
   container.register<ProjectActionClock>(PROJECT_ACTION_CLOCK_TOKEN, { useValue: () => new Date() });
-  container.register<ProjectActionRunIdFactory>(PROJECT_ACTION_RUN_ID_FACTORY_TOKEN, { useValue: randomUUID });
+  container.register<ProjectActionRunIdFactory>(PROJECT_ACTION_RUN_ID_FACTORY_TOKEN, { useValue: NodeCrypto.randomUUID });
   container.register(ProjectActionService, { useClass: ProjectActionService }, { lifecycle: Lifecycle.Singleton });
+}
+
+function workspaceEnvironmentPlatform(
+  platform: NodeJS.Platform,
+): "windows" | "macos" | "linux" {
+  switch (platform) {
+    case "win32": return "windows";
+    case "darwin": return "macos";
+    case "linux": return "linux";
+    default: throw new Error(`Unsupported workspace environment platform: ${platform}`);
+  }
 }
 
 /** Register project startup support services after their Git dependencies exist. */

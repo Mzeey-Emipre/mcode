@@ -22,6 +22,7 @@ import { killDescendantsByName } from "../../../../runtime/process/containment/p
 import type { GitExecutor } from "../../git/execution/index.js";
 
 const mockGitExecutor = { exec: vi.fn() } as unknown as GitExecutor;
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
 vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>();

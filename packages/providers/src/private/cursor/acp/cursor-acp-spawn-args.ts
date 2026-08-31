@@ -8,16 +8,15 @@
 /** Args after the executable: `["acp", ...]` */
 export function buildCursorAcpArgs(opts: {
   permissionMode: "default" | "full";
-  /** Host platform; defaults to `process.platform` in the provider. */
-  platform?: NodeJS.Platform;
+  /** Host platform that determines the available sandbox mode. */
+  platform: NodeJS.Platform;
 }): string[] {
-  const platform = opts.platform ?? process.platform;
   const args: string[] = ["acp"];
   if (opts.permissionMode === "full") {
     args.push("--force", "--sandbox", "disabled");
   } else {
     args.push("--trust");
-    const supervisedSandboxAvailable = platform === "darwin" || platform === "linux";
+    const supervisedSandboxAvailable = opts.platform === "darwin" || opts.platform === "linux";
     args.push("--sandbox", supervisedSandboxAvailable ? "enabled" : "disabled");
   }
   return args;

@@ -5,10 +5,10 @@
  */
 
 import { injectable } from "tsyringe";
-import { stat, readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { homedir, platform } from "node:os";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 
 /** Maximum number of directory entries returned in a single browse response. */
 const MAX_ENTRIES = 500;
@@ -96,7 +96,7 @@ export class FilesystemBrowser {
 }
 
 function isWindowsDrivePicker(input: string): boolean {
-  return input === "/" && platform() === "win32";
+  return input === "/" && NodeOS.platform() === "win32";
 }
 
 function windowsDrivePickerResponse(): {
@@ -141,7 +141,7 @@ async function resolveBrowseTarget(input: string): Promise<BrowseTarget | null> 
 }
 
 async function resolveFallbackBrowseTarget(): Promise<BrowseTarget | null> {
-  if (platform() === "win32") return null;
-  const details = await stat("/");
+  if (NodeOS.platform() === "win32") return null;
+  const details = await NodeFSPromises.stat("/");
   return { path: "/", isDirectory: details.isDirectory(), isExactDirectory: false };
 }

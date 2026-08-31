@@ -156,25 +156,32 @@ const TERMINAL_CONFIGS: readonly TerminalAdapterConfig[] = [
     iconKey: "wsl",
     command: "wsl",
     windowsPaths: [
-      join(process.env.SystemRoot ?? "", "System32", "wsl.exe"),
+      NodePath.join(process.env.SystemRoot ?? "", "System32", "wsl.exe"),
     ],
   },
 ];
 
 /**
- * Singleton registry: editors, then git GUIs, then terminals, then File Explorer
- * (menu order).
+ * Create the registry in menu order for the platform selected by app composition.
  */
-export const openInRegistry = new OpenInRegistry([
-  ...EDITOR_CONFIGS.map(createEditorAdapter),
-  ...GIT_GUI_CONFIGS.map(createGitGuiAdapter),
-  ...TERMINAL_CONFIGS.map((c) => createTerminalAdapter(c)),
-  createFileExplorerAdapter(),
-]);
+export function createOpenInRegistry(platform: NodeJS.Platform): OpenInRegistry {
+  return new OpenInRegistry([
+    ...EDITOR_CONFIGS.map((config) => createEditorAdapter(config, platform)),
+    ...GIT_GUI_CONFIGS.map((config) => createGitGuiAdapter(config, platform)),
+    ...TERMINAL_CONFIGS.map((config) => createTerminalAdapter(config, platform)),
+    createFileExplorerAdapter(),
+  ]);
+}
 
 /** Register Open In handlers with the configured registry. */
-export function registerOpenInHandlers(ipcMain: OpenInIpc): void {
-  registerOpenInHandlersForRegistry({ ipcMain, registry: openInRegistry });
+export function registerOpenInHandlers(
+  ipcMain: OpenInIpc,
+  platform: NodeJS.Platform,
+): void {
+  registerOpenInHandlersForRegistry({
+    ipcMain,
+    registry: createOpenInRegistry(platform),
+  });
 }
 
 export { OpenInRegistry } from "./registry/registry.js";

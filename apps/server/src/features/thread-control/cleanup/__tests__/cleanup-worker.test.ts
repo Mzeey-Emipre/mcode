@@ -34,11 +34,12 @@ vi.mock("fs", async (importOriginal) => {
 });
 
 // Synthetic worktree base that satisfies the production mcode-dir path guard.
-const WT_BASE = join(getMcodeDir(), "worktrees", "test-repo");
+const WT_BASE = NodePath.join(getMcodeDir(), "worktrees", "test-repo");
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
 /** Build a synthetic worktree path under the mcode base dir. */
 function wt(name: string): string {
-  return join(WT_BASE, name);
+  return NodePath.join(WT_BASE, name);
 }
 
 describe("CleanupWorker", () => {

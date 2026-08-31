@@ -201,6 +201,7 @@ describe("ServerRuntime entry point", () => {
     };
 
     runtime = new ServerRuntime({
+      platform: "linux",
       manager,
       relayStarter,
       ipcMain: {

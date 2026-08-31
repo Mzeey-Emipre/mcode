@@ -1,23 +1,24 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import { resolve } from "node:path";
+import * as NodePath from "node:path";
 import { ScopedPreGrantService } from "../scoped-pre-grant.js";
 
 const T = "child-thread-1";
-const DOC = resolve("/tmp/mcode-handoff-child-thread-1-123.md");
-const OTHER = resolve("/tmp/secrets.env");
+const DOC = NodePath.resolve("/tmp/mcode-handoff-child-thread-1-123.md");
+const OTHER = NodePath.resolve("/tmp/secrets.env");
+const hostRuntime = { platform: "linux", architecture: "x64", nodeAbi: "127" } as const;
 
 describe("ScopedPreGrantService", () => {
   let svc: ScopedPreGrantService;
   beforeEach(() => {
-    svc = new ScopedPreGrantService();
+    svc = new ScopedPreGrantService(hostRuntime);
     svc.issue({ threadId: T, toolName: "Read", path: DOC });
   });
 
   it("path-scoped: grants the exact path, denies any other path", () => {
     expect(svc.tryConsume({ threadId: T, toolName: "Read", path: OTHER })).toBe(false);
     // a sibling/parent dir is NOT covered (no prefix matching)
-    expect(svc.tryConsume({ threadId: T, toolName: "Read", path: resolve("/tmp") })).toBe(false);
+    expect(svc.tryConsume({ threadId: T, toolName: "Read", path: NodePath.resolve("/tmp") })).toBe(false);
     expect(svc.tryConsume({ threadId: T, toolName: "Read", path: DOC })).toBe(true);
   });
 

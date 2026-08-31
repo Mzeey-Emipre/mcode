@@ -17,6 +17,7 @@ import {
   SkillInfoSchema,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   createCodexCatalogClient,
   discoverCodexCatalogAgents,
@@ -499,6 +500,7 @@ export class CodexCatalogService {
     @inject(CodexCatalogClientFactory) private readonly clientFactory: CodexCatalogClientFactory,
     @inject(CodexCustomPromptService)
     private readonly customPromptService: CodexCustomPromptService,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
   ) {}
 
   /** Refreshes native Skills, plugins, custom prompts, and selectable agents for one context. */
@@ -569,7 +571,11 @@ export class CodexCatalogService {
   }
 
   private discoverStandaloneAgents(environment: Record<string, string>, cwd: string | undefined): Promise<CodexCatalogAgentDiscovery> {
-    return discoverCodexCatalogAgents({ environment, cwd }).catch(() => ({
+    return discoverCodexCatalogAgents({
+      environment,
+      cwd,
+      platform: this.hostRuntime.platform,
+    }).catch(() => ({
       agents: [],
       diagnostics: [sourceDiagnostic("standaloneAgentAdapter", "agents", "source-unavailable", "Standalone Codex agent discovery is temporarily unavailable for this catalog context.")],
     }));
@@ -708,6 +714,7 @@ export class CodexCatalogService {
     return this.clientFactory.create({
       cliPath: settings.provider.cli.codex || "codex",
       workingDirectory: cwd ?? process.cwd(),
+      platform: this.hostRuntime.platform,
       processAttachment: {
         attach: (pid, description) => {
           if (!this.jobObject.isWindowsJob) return;

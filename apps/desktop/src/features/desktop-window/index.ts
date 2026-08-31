@@ -14,6 +14,8 @@ import { installMainWindowNavigationPolicy } from "./navigation/main-window-poli
 
 /** Dependencies for the Desktop Window feature entry point. */
 export interface DesktopWindowFeatureDependencies {
+  /** Platform selected by the Electron composition root. */
+  readonly platform: NodeJS.Platform;
   /** Return whether the desktop runs in development mode. */
   readonly isDesktopDev: () => boolean;
   /** Per-window Preview, Spellcheck, and Server Runtime operations. */
@@ -41,11 +43,15 @@ export function createDesktopWindowFeature(
 ): DesktopWindowFeature {
   let mainWindow: BrowserWindowType | null = null;
 
-  configureApplicationMenu({ getMainWindow: () => mainWindow });
+  configureApplicationMenu({
+    platform: dependencies.platform,
+    getMainWindow: () => mainWindow,
+  });
   registerDesktopWindowActionHandler();
 
   const create = (): BrowserWindowType => {
     const window = createWindow({
+      platform: dependencies.platform,
       isDesktopDev: dependencies.isDesktopDev,
       hooks: dependencies.lifecycleHooks,
     });

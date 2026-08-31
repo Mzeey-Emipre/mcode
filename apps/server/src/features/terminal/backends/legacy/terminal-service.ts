@@ -4,13 +4,14 @@
  * Extracted from apps/desktop/src/main/pty-manager.ts.
  */
 
-import { createRequire } from "node:module";
+import * as NodeModule from "node:module";
 import { injectable, inject } from "tsyringe";
-import { isAbsolute } from "path";
-import { existsSync, statSync } from "fs";
+import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
 import type { IPty, IDisposable } from "node-pty";
 import { v4 as uuid } from "uuid";
 import { logger } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import type { Settings } from "@mcode/contracts";
 import { killProcessTree, gracefulKillProcessTree, listDirectChildren } from "../../../../runtime/process/containment/process-kill.js";
 import { TerminalFlowControl } from "./terminal-flow-control.js";
@@ -102,8 +103,8 @@ export interface PtySender {
 }
 
 /** Determine the default shell for the current platform. */
-function defaultShell(): string {
-  if (process.platform === "win32") {
+function defaultShell(platform: NodeJS.Platform): string {
+  if (platform === "win32") {
     return "powershell.exe";
   }
   return process.env["SHELL"] ?? "/bin/bash";
@@ -142,7 +143,8 @@ export class TerminalService {
     @inject(EnvService) private readonly envService: EnvService,
     @inject("PtyPidRegistry") private readonly pidRegistry: PtyPidRegistry,
     @inject("JobObject") private readonly jobObject: import("../../../../runtime/process/containment/job-object.js").JobObject,
-    private readonly processScopeFactory: WindowsProcessScopeFactory = new WindowsProcessScopeFactory(),
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
+    private readonly processScopeFactory: WindowsProcessScopeFactory = new WindowsProcessScopeFactory(hostRuntime),
   ) {
     // Keep server-side scrollback retention in sync with the terminal.scrollback
     // setting: when the user changes it, resize all live replay buffers so
@@ -186,7 +188,7 @@ export class TerminalService {
   create(scopeId: string, launch?: LegacyTerminalLaunch): { ptyId: string; shell: string } {
     const { cwd, threadPtys } = this.preparePtyCreation(scopeId, launch);
     const id = uuid();
-    const shell = launch?.executable ?? defaultShell();
+    const shell = launch?.executable ?? defaultShell(this.hostRuntime.platform);
     logger.info("Spawning PTY", { id, scopeId, shell, cwd });
     const terminalSettings = this.settingsService.get().terminal;
     const pty = this.spawnPty(id, scopeId, shell, cwd, launch);
@@ -248,7 +250,7 @@ export class TerminalService {
         rows: DEFAULT_ROWS,
         cwd,
         env: launch?.environment ?? this.envService.getEnv(),
-        ...(process.platform === "win32" ? { useConptyDll: true } : {}),
+        ...(this.hostRuntime.platform === "win32" ? { useConptyDll: true } : {}),
       });
     } catch (error) {
       logger.error("PTY spawn failed", {
@@ -283,13 +285,13 @@ export class TerminalService {
     const processScope = this.processScopeFactory.create();
     let processScopeReady = Promise.resolve(false);
     const globalAssigned = this.jobObject.assign(pty.pid);
-    if (process.platform === "win32" && (!globalAssigned || !processScope.ready)) {
+    if (this.hostRuntime.platform === "win32" && (!globalAssigned || !processScope.ready)) {
       logger.warn("PTY process scope unavailable; close will use process-tree fallback", {
         id, pid: pty.pid,
         reason: !globalAssigned ? "global-job-assignment-failed" : "child-job-init-failed",
       });
       processScope.close();
-    } else if (process.platform === "win32") {
+    } else if (this.hostRuntime.platform === "win32") {
       processScopeReady = this.assignProcessScope(id, pty, processScope);
     }
     return { processScope, processScopeReady };
@@ -722,7 +724,7 @@ export class TerminalService {
   }
 
   private childrenInWindowsScope(session: PtySession): boolean | null {
-    if (process.platform !== "win32" || !session.processScope.ownsProcessTree) return null;
+    if (this.hostRuntime.platform !== "win32" || !session.processScope.ownsProcessTree) return null;
     const snapshot = session.processScope.queryProcessIds();
     if (!snapshot.ok || snapshot.overflow) return null;
     return snapshot.processIds.some((pid) => pid !== session.pty.pid);
@@ -736,7 +738,7 @@ export class TerminalService {
         const parentPid = pending.shift()!;
         if (visited.has(parentPid)) continue;
         visited.add(parentPid);
-        const children = await listDirectChildren(parentPid);
+        const children = await listDirectChildren(parentPid, this.hostRuntime.platform);
         for (const child of children) {
           const basename =
             child.name.toLowerCase().split(/[\\/]/).pop() ?? child.name.toLowerCase();
@@ -764,7 +766,7 @@ export class TerminalService {
 
   private async terminatePtyProcessTree(session: PtySession): Promise<void> {
     if (this.useGracefulKill) {
-      await gracefulKillProcessTree(session.pty.pid);
+      await gracefulKillProcessTree(session.pty.pid, { platform: this.hostRuntime.platform });
       return;
     }
     try {
@@ -772,7 +774,7 @@ export class TerminalService {
         await this.terminateWindowsProcessScope(session);
         return;
       }
-      await killProcessTree(session.pty.pid);
+      await killProcessTree(session.pty.pid, { platform: this.hostRuntime.platform });
     } catch (error) {
       this.restoreFailedClose(session);
       throw error;
@@ -780,7 +782,7 @@ export class TerminalService {
   }
 
   private async canUseProcessScope(session: PtySession): Promise<boolean> {
-    return process.platform === "win32" &&
+    return this.hostRuntime.platform === "win32" &&
       await this.awaitProcessScopeAuthority(session, 500) &&
       session.processScope.ownsProcessTree;
   }
@@ -819,7 +821,7 @@ export class TerminalService {
     session: PtySession,
     timeoutMs: number,
   ): Promise<boolean> {
-    if (process.platform !== "win32") return false;
+    if (this.hostRuntime.platform !== "win32") return false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([

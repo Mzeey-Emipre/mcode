@@ -181,8 +181,9 @@ export class TurnAdmissionDispatchCoordinator {
     private readonly settings: Pick<SettingsService, "get">,
     private readonly plans: PlanTurnService,
     private readonly goals: GoalLifecycleService,
-    private readonly environment?: WorkspaceEnvironmentService,
-    private readonly files?: FileService,
+    private readonly environment: WorkspaceEnvironmentService | undefined,
+    private readonly files: FileService | undefined,
+    private readonly platform: NodeJS.Platform,
   ) {}
 
   /** Admit one command and return an immutable package for the runtime owner. */
@@ -349,7 +350,7 @@ export class TurnAdmissionDispatchCoordinator {
     const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/$/, "");
     const known = normalize(left);
     const input = normalize(right);
-    return process.platform === "win32" ? known.toLowerCase() === input.toLowerCase() : known === input;
+    return this.platform === "win32" ? known.toLowerCase() === input.toLowerCase() : known === input;
   }
 
   private async prepare(command: SendMessageCommand): Promise<{ kind: "ready"; value: PreparedCommand } | { kind: "handled" } | { kind: "queued" }> {

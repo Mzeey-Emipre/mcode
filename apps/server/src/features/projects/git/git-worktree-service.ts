@@ -1,8 +1,9 @@
-import { existsSync, realpathSync } from "node:fs";
-import { rmdir } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 import { getMcodeDir, logger, validateBranchName, validateWorktreeName } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import type { WorktreeInfo } from "@mcode/contracts";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
@@ -52,6 +53,7 @@ export class GitWorktreeService {
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
     @inject(WorktreeDirectoryRemover, { isOptional: true })
     worktreeDirectoryRemover?: WorktreeDirectoryRemover,
     @inject(WorktreeSafetyService, { isOptional: true })
@@ -59,8 +61,9 @@ export class GitWorktreeService {
     @inject(GitRepositoryService, { isOptional: true })
     gitRepository?: GitRepositoryService,
   ) {
-    this.worktreeDirectoryRemover = worktreeDirectoryRemover ?? new WorktreeDirectoryRemover();
-    this.worktreeSafety = worktreeSafety ?? new WorktreeSafetyService(gitExecutor);
+    this.worktreeDirectoryRemover = worktreeDirectoryRemover
+      ?? new WorktreeDirectoryRemover({ platform: this.hostRuntime.platform });
+    this.worktreeSafety = worktreeSafety ?? new WorktreeSafetyService(gitExecutor, this.hostRuntime);
     this.gitRepository = gitRepository ?? new GitRepositoryService(workspaceRepo, gitExecutor);
   }
 

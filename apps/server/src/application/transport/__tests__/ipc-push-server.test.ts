@@ -83,3 +83,11 @@ describe("IpcPushServer", () => {
     expect(server.isListening).toBe(false);
   });
 });
+
+describe("generateIpcPath", () => {
+  it("uses the supplied platform instead of the host process platform", () => {
+    expect(generateIpcPath(123, "C:/mcode", "win32")).toBe("\\\\.\\pipe\\mcode-123");
+    expect(generateIpcPath(123, "/mcode", "linux")).toBe("/mcode/mcode-123.sock");
+    expect(() => generateIpcPath(123, "/mcode", "freebsd")).toThrow("Unsupported IPC platform");
+  });
+});

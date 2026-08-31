@@ -51,19 +51,21 @@ const { min: PORT_MIN, max: PORT_MAX } = getServerPortBand();
 
 /** Manages the lifecycle of the detached Mcode server process. */
 export class ServerManager {
-  private serverProcess: ChildProcess | null = null;
+  private serverProcess: NodeChildProcess.ChildProcess | null = null;
   private serverProcessGeneration = 0;
   private ownedServerIdentity: OwnedServerIdentity | null = null;
-  private ownedServerProcess: ChildProcess | null = null;
+  private ownedServerProcess: NodeChildProcess.ChildProcess | null = null;
   private _port = 0;
   private _authToken = "";
   private _ipcPath = "";
   private _reusedExisting = false;
-  private readonly plannedExitProcesses = new Set<ChildProcess>();
+  private readonly plannedExitProcesses = new Set<NodeChildProcess.ChildProcess>();
   private readonly plannedRestartCoordinator = new PlannedRestartCoordinator();
 
   /** Callback invoked when the current server exits without a planned shutdown. */
   onUnexpectedExit: ((code: number | null) => void) | null = null;
+
+  constructor(private readonly platform: NodeJS.Platform) {}
 
   /** The port the server is listening on. */
   get port(): number {
@@ -169,6 +171,7 @@ export class ServerManager {
       portMax: PORT_MAX,
       ownedIdentity: this.ownedServerIdentity,
       ownedProcess: this.currentOwnedProcess(),
+      platform: this.platform,
     });
     if (result.clearOwnedIdentity) this.clearOwnedServer();
   }
@@ -231,7 +234,7 @@ export class ServerManager {
   /** Find a port, spawn the child, and retain the server lock identity. */
   private async startNewServer(): Promise<{ port: number; authToken: string }> {
     this._port = await this.findStartupPort();
-    const spawned = spawnServerProcess(this._port);
+    const spawned = spawnServerProcess(this._port, this.platform);
     const generation = this.assignServerProcess(spawned.child);
     this.registerSpawnedServer(spawned.child, spawned.stderrStream, generation);
     try {

@@ -64,28 +64,28 @@ describe("WorktreeDirectoryRemover", () => {
       platform: "linux",
     });
 
-    await expect(remover.remove(resolve("test-fixtures", "worktree"), 1)).rejects.toThrow(/timed out/);
+    await expect(remover.remove(NodePath.resolve("test-fixtures", "worktree"), 1)).rejects.toThrow(/timed out/);
     expect(killTree).toHaveBeenCalledWith(child);
   });
 
   it("executes the Node -e remover against a real temporary directory", async () => {
-    const target = mkdtempSync(resolve(tmpdir(), "mcode-worktree-remover-"));
-    mkdirSync(resolve(target, "nested"));
-    writeFileSync(resolve(target, "nested", "file.txt"), "temporary");
+    const target = NodeFS.mkdtempSync(NodePath.resolve(NodeOS.tmpdir(), "mcode-worktree-remover-"));
+    NodeFS.mkdirSync(NodePath.resolve(target, "nested"));
+    NodeFS.writeFileSync(NodePath.resolve(target, "nested", "file.txt"), "temporary");
 
     try {
-      await new WorktreeDirectoryRemover({ timeoutMs: 5_000 }).remove(target);
-      expect(existsSync(target)).toBe(false);
+      await new WorktreeDirectoryRemover({ timeoutMs: 5_000, platform: "linux" }).remove(target);
+      expect(NodeFS.existsSync(target)).toBe(false);
     } finally {
-      rmSync(target, { recursive: true, force: true });
+      NodeFS.rmSync(target, { recursive: true, force: true });
     }
   });
 
   it("rejects invalid, protected, and ancestor targets before spawning", () => {
-    expect(() => validateRemovalTarget("relative/worktree")).toThrow(/absolute/);
-    expect(() => validateRemovalTarget(process.cwd())).toThrow(/working directory/);
-    expect(() => validateRemovalTarget(resolve(process.cwd(), ".."))).toThrow(/working directory/);
-    expect(() => validateRemovalTarget(resolve(process.execPath, ".."))).toThrow(/server executable/);
-    expect(() => validateRemovalTarget(resolve(process.cwd(), "..", "sibling-worktree"))).not.toThrow();
+    expect(() => validateRemovalTarget("relative/worktree", "win32")).toThrow(/absolute/);
+    expect(() => validateRemovalTarget(process.cwd(), "win32")).toThrow(/working directory/);
+    expect(() => validateRemovalTarget(NodePath.resolve(process.cwd(), ".."), "win32")).toThrow(/working directory/);
+    expect(() => validateRemovalTarget(NodePath.resolve(process.execPath, ".."), "win32")).toThrow(/server executable/);
+    expect(() => validateRemovalTarget(NodePath.resolve(process.cwd(), "..", "sibling-worktree"), "win32")).not.toThrow();
   });
 });

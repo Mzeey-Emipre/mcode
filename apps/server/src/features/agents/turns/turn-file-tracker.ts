@@ -109,11 +109,12 @@ export class TurnFileTracker {
   constructor(
     private readonly readBaseline: TurnBaselineReader,
     private readonly onUpdate: FileEffectUpdateListener,
+    private readonly platform: NodeJS.Platform,
   ) {}
 
   /** Start a fresh tracker scope for an agent turn. */
   beginTurn(threadId: string, cwd: string, baselineRef: string | null): number {
-    const canonicalRoot = normalizeFilesystemPath(realpathSync.native(cwd));
+    const canonicalRoot = normalizeFilesystemPath(NodeFS.realpathSync.native(cwd), this.platform);
     const generation = this.nextGeneration++;
     const generations = this.turns.get(threadId) ?? new Map<number, TurnState>();
     generations.set(generation, {
@@ -274,7 +275,7 @@ export class TurnFileTracker {
   ): CandidateObservation | undefined {
     const requiredPaths = candidate.operationHint === "rename" && candidate.oldPath ? 2 : 1;
     if (candidate.beforeText !== undefined || budget.remainingPaths < requiredPaths) return undefined;
-    return observeCandidateSynchronously(canonicalRoot, candidate, budget);
+    return observeCandidateSynchronously(canonicalRoot, candidate, budget, this.platform);
   }
 
   private updateCurrentGeneration(
@@ -318,7 +319,7 @@ export class TurnFileTracker {
   } | null> {
     const resolvedPath = observation
       ? observation.resolvedPath
-      : await resolveCandidatePath(turn.canonicalRoot, candidate.path);
+      : await resolveCandidatePath(turn.canonicalRoot, candidate.path, this.platform);
     if (!resolvedPath) return null;
     const resolvedOldPath = await this.oldCandidatePath(turn, candidate, observation);
     return {
@@ -335,7 +336,7 @@ export class TurnFileTracker {
     if (candidate.operationHint !== "rename" || !candidate.oldPath) return null;
     return observation
       ? observation.resolvedOldPath
-      : resolveCandidatePath(turn.canonicalRoot, candidate.oldPath);
+      : resolveCandidatePath(turn.canonicalRoot, candidate.oldPath, this.platform);
   }
 
   private async updateTrackedCandidate(
@@ -619,9 +620,10 @@ function observeCandidateSynchronously(
   canonicalRoot: string,
   candidate: MutationCandidate,
   budget: SyncObservationBudget,
+  platform: NodeJS.Platform,
 ): CandidateObservation {
-  const resolvedPath = observePathSynchronously(canonicalRoot, candidate.path, budget);
-  const resolvedOldPath = observeRenameSourceSynchronously(canonicalRoot, candidate, budget);
+  const resolvedPath = observePathSynchronously(canonicalRoot, candidate.path, budget, platform);
+  const resolvedOldPath = observeRenameSourceSynchronously(canonicalRoot, candidate, budget, platform);
   return {
     resolvedPath: resolvedPath?.path ?? null,
     resolvedOldPath: resolvedOldPath?.path ?? null,
@@ -634,35 +636,38 @@ function observeRenameSourceSynchronously(
   canonicalRoot: string,
   candidate: MutationCandidate,
   budget: SyncObservationBudget,
+  platform: NodeJS.Platform,
 ): ReturnType<typeof observePathSynchronously> {
   if (candidate.operationHint !== "rename" || !candidate.oldPath) return null;
-  return observePathSynchronously(canonicalRoot, candidate.oldPath, budget);
+  return observePathSynchronously(canonicalRoot, candidate.oldPath, budget, platform);
 }
 
 function observePathSynchronously(
   canonicalRoot: string,
   candidatePath: string,
   budget: SyncObservationBudget,
+  platform: NodeJS.Platform,
 ): {
   path: Pick<TrackedPath, "path" | "displayPath" | "scope">;
   baseline: FileState;
 } | null {
   if (budget.remainingPaths === 0) return null;
   budget.remainingPaths -= 1;
-  const path = resolveCandidatePathSynchronously(canonicalRoot, candidatePath);
+  const path = resolveCandidatePathSynchronously(canonicalRoot, candidatePath, platform);
   return path ? { path, baseline: readBoundedStateSynchronously(path.path, budget) } : null;
 }
 
 function resolveCandidatePathSynchronously(
   canonicalRoot: string,
   candidatePath: string,
+  platform: NodeJS.Platform,
 ): Pick<TrackedPath, "path" | "displayPath" | "scope"> | null {
   if (candidatePath.length === 0 || candidatePath.length > 4096 || candidatePath.includes("\0")) return null;
-  const absolute = resolve(canonicalRoot, candidatePath);
-  const canonical = canonicalizePotentialPathSynchronously(absolute);
+  const absolute = NodePath.resolve(canonicalRoot, candidatePath);
+  const canonical = canonicalizePotentialPathSynchronously(absolute, platform);
   if (!canonical) return null;
-  const relativePath = relative(canonicalRoot, canonical);
-  const scope = relativePath === "" || (!relativePath.startsWith(`..${sep}`) && relativePath !== ".." && !isAbsolute(relativePath))
+  const relativePath = NodePath.relative(canonicalRoot, canonical);
+  const scope = relativePath === "" || (!relativePath.startsWith(`..${NodePath.sep}`) && relativePath !== ".." && !NodePath.isAbsolute(relativePath))
     ? "workspace"
     : "external";
   return {
@@ -672,17 +677,20 @@ function resolveCandidatePathSynchronously(
   };
 }
 
-function canonicalizePotentialPathSynchronously(absolutePath: string): string | null {
+function canonicalizePotentialPathSynchronously(
+  absolutePath: string,
+  platform: NodeJS.Platform,
+): string | null {
   let cursor = absolutePath;
   const missing: string[] = [];
   for (let depth = 0; depth < 64; depth += 1) {
     try {
-      const existing = realpathSync.native(cursor);
-      return normalizeFilesystemPath(resolve(existing, ...missing));
+      const existing = NodeFS.realpathSync.native(cursor);
+      return normalizeFilesystemPath(NodePath.resolve(existing, ...missing), platform);
     } catch {
-      const parent = dirname(cursor);
+      const parent = NodePath.dirname(cursor);
       if (parent === cursor) return null;
-      missing.unshift(basename(cursor));
+      missing.unshift(NodePath.basename(cursor));
       cursor = parent;
     }
   }
@@ -692,13 +700,14 @@ function canonicalizePotentialPathSynchronously(absolutePath: string): string | 
 async function resolveCandidatePath(
   canonicalRoot: string,
   candidatePath: string,
+  platform: NodeJS.Platform,
 ): Promise<Pick<TrackedPath, "path" | "displayPath" | "scope"> | null> {
   if (candidatePath.length === 0 || candidatePath.length > 4096 || candidatePath.includes("\0")) return null;
-  const absolute = resolve(canonicalRoot, candidatePath);
-  const canonical = await canonicalizePotentialPath(absolute);
+  const absolute = NodePath.resolve(canonicalRoot, candidatePath);
+  const canonical = await canonicalizePotentialPath(absolute, platform);
   if (!canonical) return null;
-  const relativePath = relative(canonicalRoot, canonical);
-  const scope = relativePath === "" || (!relativePath.startsWith(`..${sep}`) && relativePath !== ".." && !isAbsolute(relativePath))
+  const relativePath = NodePath.relative(canonicalRoot, canonical);
+  const scope = relativePath === "" || (!relativePath.startsWith(`..${NodePath.sep}`) && relativePath !== ".." && !NodePath.isAbsolute(relativePath))
     ? "workspace"
     : "external";
   return {
@@ -708,17 +717,20 @@ async function resolveCandidatePath(
   };
 }
 
-async function canonicalizePotentialPath(absolutePath: string): Promise<string | null> {
+async function canonicalizePotentialPath(
+  absolutePath: string,
+  platform: NodeJS.Platform,
+): Promise<string | null> {
   let cursor = absolutePath;
   const missing: string[] = [];
   for (let depth = 0; depth < 64; depth += 1) {
     try {
-      const existing = await realpath(cursor);
-      return normalizeFilesystemPath(resolve(existing, ...missing));
+      const existing = await NodeFSPromises.realpath(cursor);
+      return normalizeFilesystemPath(NodePath.resolve(existing, ...missing), platform);
     } catch {
-      const parent = dirname(cursor);
+      const parent = NodePath.dirname(cursor);
       if (parent === cursor) return null;
-      missing.unshift(basename(cursor));
+      missing.unshift(NodePath.basename(cursor));
       cursor = parent;
     }
   }

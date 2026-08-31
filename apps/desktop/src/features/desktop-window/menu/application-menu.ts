@@ -16,10 +16,10 @@ export interface ApplicationMenuApi {
 
 /** Dependencies for configuring the platform-specific application menu. */
 export interface ApplicationMenuOptions {
+  /** Platform selected by the Electron composition root. */
+  readonly platform: NodeJS.Platform;
   /** Return the current main window for renderer command fallback. */
   readonly getMainWindow: () => BrowserWindow | null;
-  /** Override the platform in responsibility-local tests. */
-  readonly platform?: NodeJS.Platform;
   /** Override Electron menu operations in responsibility-local tests. */
   readonly menu?: ApplicationMenuApi;
   /** Override focused-window resolution in responsibility-local tests. */
@@ -34,7 +34,7 @@ const defaultMenuApi: ApplicationMenuApi = {
 /** Configure macOS menus and remove the application menu on other platforms. */
 export function configureApplicationMenu(options: ApplicationMenuOptions): void {
   const menuApi = options.menu ?? defaultMenuApi;
-  if ((options.platform ?? process.platform) !== "darwin") {
+  if (options.platform !== "darwin") {
     menuApi.setApplicationMenu(null);
     return;
   }

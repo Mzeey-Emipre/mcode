@@ -11,6 +11,7 @@ export class ProjectActionRunFactory {
   constructor(
     private readonly now: () => Date,
     private readonly createRunId: () => string,
+    private readonly platform: () => WorkspaceEnvironmentPlatform,
   ) {}
 
   /** Creates a retained unavailable Action result. */
@@ -31,7 +32,7 @@ export class ProjectActionRunFactory {
   /** Creates a retained failed Action result before terminal launch. */
   createFailed(input: ProjectActionFailedRunInput): WorkspaceEnvironmentActionRun {
     const timestamp = this.timestamp();
-    return this.base({ ...input, snapshot: input.snapshot ?? unavailableSnapshot(input.script) }, {
+    return this.base({ ...input, snapshot: input.snapshot ?? unavailableSnapshot(input.script, this.platform()) }, {
       terminalSessionId: null,
       status: "failed",
       createdAt: timestamp,
@@ -128,17 +129,15 @@ export interface ProjectActionActiveRunInput {
   readonly session: PreparedTerminalCommandSession;
 }
 
-function unavailableSnapshot(script: string | null): WorkspaceEnvironmentActionLaunchSnapshot {
+function unavailableSnapshot(
+  script: string | null,
+  platform: WorkspaceEnvironmentPlatform,
+): WorkspaceEnvironmentActionLaunchSnapshot {
   return {
-    platform: platform(),
+    platform,
     script,
     checkoutPath: null,
     terminal: null,
     environmentNames: [],
   };
-}
-
-function platform(): "windows" | "macos" | "linux" {
-  if (process.platform === "win32") return "windows";
-  return process.platform === "darwin" ? "macos" : "linux";
 }

@@ -1,12 +1,14 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { existsSync } from "fs";
-import path from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { validateBranchName } from "@mcode/shared";
 import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { GitComparisonService } from "../git-comparison-service.js";
 import { GitRepositoryService } from "../git-repository-service.js";
 import { GitWorktreeService } from "../git-worktree-service.js";
+
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 
 vi.mock("fs", () => ({

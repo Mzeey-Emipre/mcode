@@ -1,9 +1,10 @@
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import { killProcessTree } from "../process-kill.js";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 const spawnedRoots = new Set<number>();
 
 async function isRunning(pid: number): Promise<boolean> {
@@ -13,12 +14,12 @@ async function isRunning(pid: number): Promise<boolean> {
 
 describe.runIf(process.platform === "win32")("killProcessTree integration", () => {
   afterEach(async () => {
-    await Promise.all([...spawnedRoots].map((pid) => killProcessTree(pid).catch(() => undefined)));
+    await Promise.all([...spawnedRoots].map((pid) => killProcessTree(pid, { platform: hostRuntime.platform }).catch(() => undefined)));
     spawnedRoots.clear();
   });
 
   it("terminates a real idle process within the bounded close window", async () => {
-    const root = spawn(
+    const root = NodeChildProcess.spawn(
       "powershell.exe",
       ["-NoProfile", "-Command", "Start-Sleep -Seconds 60"],
       { stdio: "ignore" },
@@ -28,7 +29,7 @@ describe.runIf(process.platform === "win32")("killProcessTree integration", () =
     expect(await isRunning(root.pid)).toBe(true);
 
     const startedAt = performance.now();
-    await killProcessTree(root.pid);
+    await killProcessTree(root.pid, { platform: hostRuntime.platform });
     const durationMs = performance.now() - startedAt;
     spawnedRoots.delete(root.pid);
 
@@ -57,7 +58,7 @@ describe.runIf(process.platform === "win32")("killProcessTree integration", () =
     expect(await isRunning(childPid)).toBe(true);
 
     const startedAt = performance.now();
-    await killProcessTree(root.pid);
+    await killProcessTree(root.pid, { platform: hostRuntime.platform });
     const durationMs = performance.now() - startedAt;
     spawnedRoots.delete(root.pid);
     spawnedRoots.delete(childPid);

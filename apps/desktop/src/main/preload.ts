@@ -6,6 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   PREVIEW_POPUP_REQUESTED_CHANNEL,
   type PreviewPopupRequest,
@@ -18,7 +19,7 @@ import {
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Platform facts and allowlisted native window actions for the custom title bar. */
   window: {
-    platform: process.platform,
+    platform: hostRuntime.platform,
     isDevelopment: Boolean(process.env.ELECTRON_RENDERER_URL),
     onCommand(callback: (command: string) => void) {
       const listener = (_event: unknown, command: string) => callback(command);

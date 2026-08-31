@@ -251,7 +251,10 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
       undefined,
       undefined,
       undefined,
-      { events: { submit } } as ProviderHostPorts,
+      {
+        runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
+        events: { submit },
+      } as ProviderHostPorts,
     );
     mockQuery.mockImplementation(mockSdkStream([
       { type: "result", is_error: true, errors: ["rate_limit_exceeded"] },

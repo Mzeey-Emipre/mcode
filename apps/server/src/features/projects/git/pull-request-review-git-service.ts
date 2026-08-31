@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { realpath } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 import { getMcodeDir, logger, validateWorktreeName } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { normalizePathForComparison } from "../../../shared/filesystem/path-identity.js";
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
 import type { GitExecutor } from "./execution/index.js";
@@ -204,22 +205,29 @@ export class PullRequestReviewGitService {
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
     @inject(GitRepositoryService)
     gitRepository: GitRepositoryService,
+    @inject("HostRuntime") private readonly hostRuntime: HostRuntime,
     @inject(WorktreeDirectoryRemover, { isOptional: true })
     worktreeDirectoryRemover?: WorktreeDirectoryRemover,
     @inject(RepositoryGitMutationLock, { isOptional: true })
     repositoryMutationLock?: RepositoryGitMutationLock,
   ) {
-    this.worktreeDirectoryRemover = worktreeDirectoryRemover ?? new WorktreeDirectoryRemover();
-    this.repositoryMutationLock = repositoryMutationLock ?? new RepositoryGitMutationLock();
+    this.worktreeDirectoryRemover = worktreeDirectoryRemover
+      ?? new WorktreeDirectoryRemover({ platform: this.hostRuntime.platform });
+    this.repositoryMutationLock = repositoryMutationLock
+      ?? new RepositoryGitMutationLock(this.hostRuntime);
     this.gitRepository = gitRepository;
   }
 
   /** Resolve a server-owned Review worktree leaf beneath the managed worktree root. */
   getReviewWorktreeDestination(repoPath: string, worktreeName: string): string {
     validateWorktreeName(worktreeName);
-    const base = resolve(getManagedWorktreeBaseDir(repoPath));
-    const destination = resolve(base, worktreeName);
-    if (!isPathWithin(base, destination) || normalizePathForComparison(base) === normalizePathForComparison(destination)) {
+    const base = NodePath.resolve(getManagedWorktreeBaseDir(repoPath));
+    const destination = NodePath.resolve(base, worktreeName);
+    if (
+      !isPathWithin(base, destination, this.hostRuntime.platform)
+      || normalizePathForComparison(base, this.hostRuntime.platform)
+        === normalizePathForComparison(destination, this.hostRuntime.platform)
+    ) {
       throw new PullRequestReviewGitError(
         "path_collision",
         "The Review worktree destination is outside managed storage.",
@@ -482,9 +490,9 @@ export class PullRequestReviewGitService {
   }
 
   private async assertReviewWorktreeDestination(repoPath: string, destination: string): Promise<string> {
-    const canonicalDestination = await realpath(destination);
-    const canonicalBase = await realpath(getManagedWorktreeBaseDir(repoPath));
-    if (!isPathWithin(canonicalBase, canonicalDestination)) {
+    const canonicalDestination = await NodeFSPromises.realpath(destination);
+    const canonicalBase = await NodeFSPromises.realpath(getManagedWorktreeBaseDir(repoPath));
+    if (!isPathWithin(canonicalBase, canonicalDestination, this.hostRuntime.platform)) {
       throw new PullRequestReviewGitError("path_collision", "The created Review worktree escaped managed storage.");
     }
     return canonicalDestination;
@@ -552,17 +560,17 @@ export class PullRequestReviewGitService {
     remoteName: string,
     branch: ReviewBranchRecord,
   ): Promise<PullRequestReviewGitCandidate | null> {
-    if (!branch.worktreePath || !existsSync(branch.worktreePath)) return null;
+    if (!branch.worktreePath || !NodeFS.existsSync(branch.worktreePath)) return null;
     let canonicalPath: string;
     try {
-      canonicalPath = realpathSync(branch.worktreePath);
+      canonicalPath = NodeFS.realpathSync(branch.worktreePath);
     } catch {
       return null;
     }
-    const normalizedPath = normalizePathForComparison(canonicalPath);
-    const candidateId = createHash("sha256")
+    const normalizedPath = normalizePathForComparison(canonicalPath, this.hostRuntime.platform);
+    const candidateId = NodeCrypto.createHash("sha256")
       .update([
-        normalizePathForComparison(repoPath),
+        normalizePathForComparison(repoPath, this.hostRuntime.platform),
         source.repositoryNodeId,
         String(source.pullRequestNumber),
         source.headOid.toLowerCase(),
@@ -573,17 +581,17 @@ export class PullRequestReviewGitService {
       .digest("base64url");
     let managed = false;
     const managedRoot = getManagedWorktreeBaseDir(repoPath);
-    if (existsSync(managedRoot)) {
+    if (NodeFS.existsSync(managedRoot)) {
       try {
-        const canonicalManagedRoot = await realpath(managedRoot);
-        managed = isPathWithin(canonicalManagedRoot, canonicalPath);
+        const canonicalManagedRoot = await NodeFSPromises.realpath(managedRoot);
+        managed = isPathWithin(canonicalManagedRoot, canonicalPath, this.hostRuntime.platform);
       } catch {
         managed = false;
       }
     }
     return {
       candidateId,
-      name: (basename(canonicalPath) || "worktree").slice(0, 100),
+      name: (NodePath.basename(canonicalPath) || "worktree").slice(0, 100),
       path: canonicalPath,
       branch: branch.name,
       managed,
@@ -819,20 +827,23 @@ export class PullRequestReviewGitService {
     repoPath: string,
     destination: string,
   ): Promise<void> {
-    if (existsSync(destination)) {
+    if (NodeFS.existsSync(destination)) {
       throw new PullRequestReviewGitError(
         "path_collision",
         "The Review worktree destination already exists.",
       );
     }
-    const managedRoot = resolve(getMcodeDir(), "worktrees");
-    mkdirSync(managedRoot, { recursive: true });
+    const managedRoot = NodePath.resolve(getMcodeDir(), "worktrees");
+    NodeFS.mkdirSync(managedRoot, { recursive: true });
     const base = ensureManagedWorktreeBaseDir(repoPath);
     const [realManagedRoot, realBase] = await Promise.all([
-      realpath(managedRoot),
-      realpath(base),
+      NodeFSPromises.realpath(managedRoot),
+      NodeFSPromises.realpath(base),
     ]);
-    if (!isPathWithin(realManagedRoot, realBase) || !isPathWithin(realBase, destination)) {
+    if (
+      !isPathWithin(realManagedRoot, realBase, this.hostRuntime.platform)
+      || !isPathWithin(realBase, destination, this.hostRuntime.platform)
+    ) {
       throw new PullRequestReviewGitError(
         "path_collision",
         "The Review worktree destination escapes managed storage.",
@@ -890,7 +901,11 @@ export class PullRequestReviewGitService {
           { timeout: 30_000 },
         );
       } catch {
-        if (isPathWithin(getManagedWorktreeBaseDir(attempt.repoPath), attempt.createdWorktreePath)) {
+        if (isPathWithin(
+          getManagedWorktreeBaseDir(attempt.repoPath),
+          attempt.createdWorktreePath,
+          this.hostRuntime.platform,
+        )) {
           await this.worktreeDirectoryRemover.remove(attempt.createdWorktreePath).catch(() => undefined);
           await this.gitExecutor.exec(
             [

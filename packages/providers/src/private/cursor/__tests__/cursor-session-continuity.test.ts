@@ -10,12 +10,13 @@ import { CursorProvider } from "../cursor-provider.js";
 
 type FakeRuntime = {
   runtime: AcpSessionRuntime;
-  child: ChildProcess;
+  child: NodeChildProcess.ChildProcess;
   connection: ClientSideConnection & { newSession: ReturnType<typeof vi.fn> };
 };
 
 function createHost(): ProviderHostPorts {
   return {
+    runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
     environment: { snapshot: vi.fn(() => ({})) },
     processes: {
       attach: vi.fn(),

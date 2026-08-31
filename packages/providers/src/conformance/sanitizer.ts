@@ -113,9 +113,9 @@ function normalizeAlias(value: string, prefix: string): string {
 }
 
 function requireContainedPath(filePath: string, directory: string, label: string): string {
-  const resolved = resolve(filePath);
-  const relativePath = relative(directory, resolved);
-  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(relativePath)) {
+  const resolved = NodePath.resolve(filePath);
+  const relativePath = NodePath.relative(directory, resolved);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${NodePath.sep}`) || NodePath.isAbsolute(relativePath)) {
     throw new TypeError(`Provider ${label} must stay under ${directory}`);
   }
   return resolved;

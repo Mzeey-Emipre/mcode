@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type { WebSocket } from "ws";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   TERMINAL_CHECKPOINT_CHUNK_BYTES,
   TERMINAL_CHECKPOINT_EXPIRES_AFTER_MS,
@@ -38,6 +39,7 @@ import {
   type TerminalReattachResult,
 } from "../terminal-backend.js";
 import { TerminalDiagnosticsService } from "../../diagnostics/terminal-diagnostics-service.js";
+import { terminalPlatform } from "../../terminal-platform.js";
 
 interface AttachmentRoute {
   readonly client: WebSocket;
@@ -88,6 +90,7 @@ export class ModernTerminalBackend extends TerminalBackend {
       diagnostics(): PtyHostDiagnostics;
     },
     private readonly sessionLimit: () => number,
+    private readonly hostRuntime: HostRuntime,
     diagnostics?: TerminalDiagnosticsService,
     private readonly workspaceForThread?: (threadId: string) => string | null,
   ) {
@@ -675,7 +678,7 @@ export class ModernTerminalBackend extends TerminalBackend {
     plan: PreparedTerminalSessionApprovalMismatchError["plan"],
   ): ConstructorParameters<typeof PreparedTerminalCommandApprovalMismatchError>[0] {
     return {
-      platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+      platform: terminalPlatform(this.hostRuntime.platform),
       script,
       checkoutPath: plan.checkoutPath,
       terminal: {
@@ -749,7 +752,7 @@ export class ModernTerminalBackend extends TerminalBackend {
     return {
       terminalSessionId: created.session.sessionId,
       snapshot: {
-        platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+        platform: terminalPlatform(this.hostRuntime.platform),
         script: input.script,
         checkoutPath: created.checkoutPath,
         terminal: {

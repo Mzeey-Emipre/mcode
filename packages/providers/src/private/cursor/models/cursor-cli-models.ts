@@ -67,10 +67,13 @@ function parseCursorCliModelLine(line: string): ProviderModelInfo | undefined {
  * Runs the Cursor Agent CLI with the `models` subcommand and returns the parsed list,
  * or null if the binary is missing, times out, or output cannot be parsed.
  */
-export async function fetchCursorCliModels(cliPath: string): Promise<ProviderModelInfo[] | null> {
+export async function fetchCursorCliModels(
+  cliPath: string,
+  platform: NodeJS.Platform,
+): Promise<ProviderModelInfo[] | null> {
   try {
     const { stdout } = await execFileAsync(cliPath, ["models"], {
-      shell: process.platform === "win32",
+      shell: platform === "win32",
       maxBuffer: 12 * 1024 * 1024,
       timeout: 60_000,
     });

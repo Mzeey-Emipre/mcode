@@ -59,16 +59,19 @@ function flattenProcessEnvironment(environment: NodeJS.ProcessEnv): Record<strin
 
 type CodexAppServerCommand = { cliPath: string; needsShell: boolean };
 
-async function resolveCodexAppServerCommand(cliPath: string): Promise<CodexAppServerCommand> {
+async function resolveCodexAppServerCommand(
+  cliPath: string,
+  platform: NodeJS.Platform,
+): Promise<CodexAppServerCommand> {
   const resolvedCliPath = await resolveCodexAppServerPath(cliPath);
   return {
     cliPath: resolvedCliPath,
-    needsShell: process.platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd"),
+    needsShell: platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd"),
   };
 }
 
 async function resolveCodexAppServerPath(cliPath: string): Promise<string> {
-  if (isAbsolute(cliPath)) return cliPath;
+  if (NodePath.isAbsolute(cliPath)) return cliPath;
   try {
     return await which(cliPath);
   } catch {
@@ -187,6 +190,8 @@ export type CodexApprovalHandler = (request: CodexApprovalRequest) => Promise<un
 export interface CodexAppServerOptions {
   /** Path to the codex binary, or `"codex"` to rely on PATH resolution. */
   cliPath: string;
+  /** Host platform that determines shell and process-tree behavior. */
+  platform: NodeJS.Platform;
   /** Working directory for the spawned process. */
   workingDirectory: string;
   /** Model identifier to pass to `thread/start`. */
@@ -733,13 +738,14 @@ export interface CodexAppServerWarmupResult {
 /** Starts a throwaway app-server process and reads an initial account limit snapshot. */
 export async function warmCodexAppServer(
   cliPath: string,
+  platform: NodeJS.Platform,
   timeoutMs = 20_000,
   getSpawnEnv?: () => Record<string, string>,
 ): Promise<CodexAppServerWarmupResult> {
   const deadline = performance.now() + Math.max(0, timeoutMs);
   const remainingBudgetMs = (): number => Math.max(0, deadline - performance.now());
   let resolvedCliPath = cliPath;
-  if (!isAbsolute(cliPath)) {
+  if (!NodePath.isAbsolute(cliPath)) {
     const discoveryBudgetMs = remainingBudgetMs();
     if (discoveryBudgetMs <= 0) return { initialized: false };
 
@@ -762,12 +768,12 @@ export async function warmCodexAppServer(
   }
   if (remainingBudgetMs() <= 0) return { initialized: false };
   const needsShell =
-    process.platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd");
+    platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd");
 
   return await new Promise<CodexAppServerWarmupResult>((resolve) => {
-    let child: ChildProcess;
+    let child: NodeChildProcess.ChildProcess;
     try {
-      child = spawn(resolvedCliPath, ["app-server"], {
+      child = NodeChildProcess.spawn(resolvedCliPath, ["app-server"], {
         stdio: ["pipe", "pipe", "ignore"],
         shell: needsShell,
         env: getSpawnEnv ? getSpawnEnv() : flattenProcessEnvironment(process.env),
@@ -787,8 +793,8 @@ export async function warmCodexAppServer(
       clearTimeout(timer);
       // taskkill reaps the whole tree on Windows; with shell:true a plain
       // kill() would only hit cmd.exe and orphan the codex child.
-      if (process.platform === "win32" && child.pid != null) {
-        void import("child_process").then(({ execFile }) => {
+      if (platform === "win32" && child.pid != null) {
+        void import("node:child_process").then(({ execFile }) => {
           execFile("taskkill", ["/T", "/F", "/PID", String(child.pid)], () => {});
         });
       } else {
@@ -933,7 +939,7 @@ export class CodexAppServer extends EventEmitter {
    */
   async start(): Promise<void> {
     this._lastTransportBreadcrumb = null;
-    const command = await resolveCodexAppServerCommand(this.options.cliPath);
+    const command = await resolveCodexAppServerCommand(this.options.cliPath, this.options.platform);
     const child = this.spawnAppServer(command);
     const spawnError = await waitForCodexAppServerSpawn(child);
     if (spawnError) {
@@ -1087,20 +1093,20 @@ export class CodexAppServer extends EventEmitter {
 
   private async terminateChild(): Promise<void> {
     if (!this.child) return;
-    if (process.platform === "win32") {
+    if (this.options.platform === "win32") {
       await this.terminateWindowsChild(this.child);
       return;
     }
     await this.terminatePosixChild(this.child);
   }
 
-  private async terminateWindowsChild(child: ChildProcess): Promise<void> {
+  private async terminateWindowsChild(child: NodeChildProcess.ChildProcess): Promise<void> {
     if (child.pid == null) {
       logger.warn("CodexAppServer: child process has no PID, cannot taskkill", { cliPath: this.cliPath });
       return;
     }
-    const { execFile } = await import("child_process");
-    const { promisify } = await import("util");
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
     try {
       await promisify(execFile)("taskkill", ["/T", "/F", "/PID", String(child.pid)]);
     } catch {

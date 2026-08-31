@@ -1,7 +1,8 @@
-import { Buffer } from "node:buffer";
-import { createRequire } from "node:module";
+import * as NodeBuffer from "node:buffer";
+import * as NodeModule from "node:module";
 import type { IPty } from "node-pty";
 import type { TerminalPlatform } from "@mcode/contracts";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   PTY_HOST_MAX_DATA_BYTES,
   PTY_HOST_HEARTBEAT_INTERVAL_MS,
@@ -28,6 +29,7 @@ export interface PtyProcessScope {
 /** Construction options for the isolated PTY host runtime. */
 export interface PtyHostProcessRuntimeOptions {
   readonly platform: TerminalPlatform;
+  readonly hostRuntime: Pick<HostRuntime, "platform" | "architecture">;
   readonly nativeAbi: string;
   readonly publish: (event: PtyHostEvent) => void;
   readonly queueBytes?: () => number;
@@ -189,7 +191,8 @@ export class PtyHostProcessRuntime {
         : {}),
     });
     pty.pause();
-    const scope = (this.options.createScope ?? createPtyProcessScope)(pty.pid);
+    const scope = (this.options.createScope ?? ((pid) =>
+      createPtyProcessScope(pid, this.options.hostRuntime)))(pty.pid);
     let resolveExit!: () => void;
     const exitPromise = new Promise<void>((resolve) => {
       resolveExit = resolve;

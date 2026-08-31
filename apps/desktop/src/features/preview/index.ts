@@ -38,7 +38,7 @@ export function disposePreviewForWindow(win: import("electron").BrowserWindow): 
 }
 
 /** Registers all preview:* IPC handlers. Call once at app startup. */
-export function registerPreviewBrowserHandlers(): void {
+export function registerPreviewBrowserHandlers(platform: NodeJS.Platform): void {
   const previewPartition = registerPreviewSessionPolicy();
 
   registerNavigationHandlers();
@@ -49,7 +49,7 @@ export function registerPreviewBrowserHandlers(): void {
   registerTabHandlers();
   registerPreviewSurfaceHandlers();
   registerDesignModeHandlers();
-  registerBrowserAutomationHandlers();
+  registerBrowserAutomationHandlers(platform);
   ipcMain.handle("preview:get-perf-counters", () => getPerfCounters());
 }
 

@@ -376,6 +376,12 @@ export function parseSQLiteProfileCliOptions(args: readonly string[]): SQLitePro
   return options;
 }
 
+/** Immutable host facts recorded with a SQLite profile report. */
+export interface SQLiteProfileHostRuntime {
+  readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
+}
+
 type SQLiteProfileMetricName = SQLiteProfileMetricComparison["metric"];
 
 function applySQLiteProfileOption(
@@ -473,6 +479,7 @@ function compareProfileRuntime(
 export async function runSQLiteProfile(
   samplesPerWorkload: number,
   createDatabase: (workload: SQLiteProfileWorkloadName, sample: number) => WorkloadDatabase,
+  hostRuntime: SQLiteProfileHostRuntime,
 ): Promise<SQLiteProfileReport> {
   if (!Number.isInteger(samplesPerWorkload) || samplesPerWorkload < MIN_SAMPLES || samplesPerWorkload > MAX_SAMPLES) {
     throw new Error(`samplesPerWorkload must be an integer from ${MIN_SAMPLES} to ${MAX_SAMPLES}.`);
@@ -542,12 +549,12 @@ export async function runSQLiteProfile(
       contentBytesPerMessage: Buffer.byteLength(CONTENT, "utf8"),
     },
     runtime: {
-      platform: process.platform,
-      architecture: process.arch,
+      platform: hostRuntime.platform,
+      architecture: hostRuntime.architecture,
       nodeVersion: process.version,
       electronVersion: process.versions.electron ?? null,
       sqliteVersion,
-      cpu: cpus()[0]?.model ?? "unknown",
+      cpu: NodeOS.cpus()[0]?.model ?? "unknown",
     },
     samples,
     aggregates: aggregateSamples(samples),

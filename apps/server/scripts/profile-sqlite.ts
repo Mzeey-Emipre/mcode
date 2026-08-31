@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { mkdtempSync } from "node:fs";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import {
   compareSQLiteProfileReports,
   openSQLiteProfileDatabase,
@@ -37,15 +37,15 @@ if (options.help) {
     throw new Error("SQLite certification requires --baseline <path>.");
   }
   const baselinePath = options.baselinePath
-    ? resolve(options.baselinePath)
+    ? NodePath.resolve(options.baselinePath)
     : undefined;
   const baseline = baselinePath ? readBaseline(baselinePath) : undefined;
-  const profileDirectory = mkdtempSync(join(tmpdir(), "mcode-sqlite-profile-"));
+  const profileDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-sqlite-profile-"));
   try {
     const report = await runSQLiteProfile(options.samples, (workload, sample) => {
-      const dbPath = join(profileDirectory, `${sample}-${workload}.sqlite`);
+      const dbPath = NodePath.join(profileDirectory, `${sample}-${workload}.sqlite`);
       return openSQLiteProfileDatabase(dbPath);
-    });
+    }, hostRuntime);
 
     if (baseline && baselinePath) {
       report.comparison = compareSQLiteProfileReports(

@@ -4,6 +4,7 @@ import type {
   ProviderIdentity,
 } from "@mcode/agent-model";
 import type { InteractionMode } from "@mcode/contracts";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 
 /** Provider event input submitted to the server-owned canonical event sink. */
 export interface ProviderEventDraft {
@@ -21,6 +22,9 @@ export interface ProviderEventDraft {
 export interface ProviderEnvironmentPort {
   snapshot(): Readonly<Record<string, string>>;
 }
+
+/** Supplies immutable facts about the Node runtime that hosts providers. */
+export interface ProviderRuntimePort extends HostRuntime {}
 
 /** Attaches and terminates child process trees without exposing the server process service. */
 export interface ProviderProcessPort {
@@ -148,6 +152,7 @@ export interface ProviderEventSubmissionReceipt {
 
 /** Narrow server services that Provider implementations can use. */
 export interface ProviderHostPorts {
+  runtime: ProviderRuntimePort;
   environment: ProviderEnvironmentPort;
   processes: ProviderProcessPort;
   browser: ProviderBrowserPort;

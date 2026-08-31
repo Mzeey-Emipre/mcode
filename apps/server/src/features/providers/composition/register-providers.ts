@@ -1,4 +1,5 @@
 import { Lifecycle, type DependencyContainer } from "tsyringe";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 
 import { ClaudeProvider } from "../adapters/claude/claude-provider.js";
 import { CopilotProvider } from "../adapters/copilot/copilot-provider.js";
@@ -64,6 +65,7 @@ export function registerProviderAdapters(container: DependencyContainer): void {
   });
   container.register("ProviderHostPorts", {
     useFactory: (c) => createProviderHostPorts({
+      runtime: hostRuntime,
       envService: c.resolve(EnvService),
       jobObject: c.resolve<JobObject>("JobObject"),
       browser: c.resolve(BrowserAutomationSessionLease),

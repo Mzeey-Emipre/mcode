@@ -1,10 +1,11 @@
 import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EventEmitter } from "events";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeEvents from "node:events";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { WebSocket } from "ws";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import { routeMessage, type RouterDeps } from "../ws-router.js";
 import { CodexCatalogService } from "../../../features/providers/catalog/codex-catalog-service.js";
 import { ProviderCatalogService } from "../../../features/providers/catalog/provider-catalog-service.js";
@@ -247,6 +248,7 @@ describe("routeMessage provider.catalog", () => {
         refresh: vi.fn(async () => ({ prompts: [], diagnostics: [], available: true })),
         currentPrompts: vi.fn(() => []),
       } as never,
+      hostRuntime,
     );
     const db = openMemoryDatabase();
     const providerCatalogService = new ProviderCatalogService(
@@ -327,6 +329,7 @@ describe("routeMessage provider.catalog", () => {
         refresh: vi.fn(async () => ({ prompts: [], diagnostics: [], available: true })),
         currentPrompts: vi.fn(() => []),
       } as never,
+      hostRuntime,
     );
     const db = openMemoryDatabase();
     const providerCatalogService = new ProviderCatalogService(
@@ -489,6 +492,7 @@ describe("routeMessage provider.catalog", () => {
       { getEnv: () => ({}) } as never,
       { create } as never,
       customPromptService as never,
+      hostRuntime,
     );
     const refresh = vi.spyOn(codexCatalogService, "refresh");
     const db = openMemoryDatabase();
@@ -1570,11 +1574,12 @@ describe("routeMessage thread.delete watcher teardown", () => {
 
 describe("routeMessage Setup deletion barriers", () => {
   it("rejects Setup during a Thread deletion and releases the barrier after teardown fails", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-setup-thread-delete-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-setup-thread-delete-"));
     const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
     const environment = new WorkspaceEnvironmentService({
       mcodeDir: root,
       threads: { findById: (threadId) => threadId === thread.id ? thread : null },
+      platform: hostRuntime.platform,
     });
     const teardownEntered = deferred<void>();
     const teardown = deferred<void>();
@@ -1610,17 +1615,18 @@ describe("routeMessage Setup deletion barriers", () => {
       await expect(deletion).resolves.toMatchObject({ error: { message: "teardown failed" } });
       await expect(environment.startSetup({ threadId: thread.id })).resolves.toMatchObject({ status: "unavailable" });
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 
   it("rejects Setup during a workspace deletion and falls back to not found after deletion", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-setup-workspace-delete-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-setup-workspace-delete-"));
     const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
     let deleted = false;
     const environment = new WorkspaceEnvironmentService({
       mcodeDir: root,
       threads: { findById: (threadId) => !deleted && threadId === thread.id ? thread : null },
+      platform: hostRuntime.platform,
     });
     const teardownEntered = deferred<void>();
     const teardown = deferred<void>();

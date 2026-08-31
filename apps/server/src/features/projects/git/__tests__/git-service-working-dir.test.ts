@@ -3,13 +3,15 @@ import { describe, it, expect } from "vitest";
 import { FakeGitExecutor } from "../execution/fake-git-executor.js";
 import { GitWorktreeService } from "../git-worktree-service.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 /**
  * resolveWorkingDir decides the cwd a threadless or thread-scoped terminal
  * spawns in. It needs no repo access, so a bare GitService is enough to
  * exercise the worktree-vs-root branch the terminal rebind relies on.
  */
 function makeGitService(): GitWorktreeService {
-  return new GitWorktreeService(undefined as never, new FakeGitExecutor());
+  return new GitWorktreeService(undefined as never, new FakeGitExecutor(), TEST_HOST_RUNTIME);
 }
 
 describe("GitWorktreeService.resolveWorkingDir", () => {

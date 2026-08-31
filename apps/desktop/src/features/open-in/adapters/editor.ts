@@ -24,8 +24,11 @@ export interface EditorAdapterConfig {
  * memoized on first detection so {@link OpenInAdapter.launch} reuses it without a
  * second PATH lookup.
  */
-export function createEditorAdapter(config: EditorAdapterConfig): OpenInAdapter {
-  const resolveCommand = createExecutableResolver(config.id, config.windowsPaths);
+export function createEditorAdapter(
+  config: EditorAdapterConfig,
+  platform: NodeJS.Platform,
+): OpenInAdapter {
+  const resolveCommand = createExecutableResolver(config.id, platform, config.windowsPaths);
 
   return {
     id: config.id,
@@ -42,7 +45,7 @@ export function createEditorAdapter(config: EditorAdapterConfig): OpenInAdapter 
       if (!cmd) {
         return Promise.reject(new Error(`Editor not detected: ${config.id}`));
       }
-      return spawnDetached(cmd, buildEditorArgs(config.id, target.path, target.line));
+      return spawnDetached(cmd, buildEditorArgs(config.id, target.path, target.line), platform);
     },
   };
 }

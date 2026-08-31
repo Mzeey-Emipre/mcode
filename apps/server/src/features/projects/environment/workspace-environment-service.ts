@@ -323,6 +323,11 @@ export class WorkspaceEnvironmentService {
       : null;
   }
 
+  /** Returns the explicitly composed host platform for Project command resolution. */
+  platform(): WorkspaceEnvironmentPlatform {
+    return requireWorkspaceEnvironmentPlatform(this.options.platform);
+  }
+
   /** Connect the one post-commit automatic Setup dispatcher during server composition. */
   setAutomaticSetupDispatcher(dispatcher: WorkspaceEnvironmentAutomaticSetupDispatcher): void {
     this.automaticDispatcher = dispatcher;
@@ -743,7 +748,7 @@ export class WorkspaceEnvironmentService {
     target: WorkspaceEnvironmentCommandTarget,
     canContinue?: () => boolean,
   ): Promise<WorkspaceEnvironmentCommandResolution> {
-    const platform = this.options.platform ?? platformForCurrentProcess();
+    const platform = this.platform();
     const environment = await this.readForThread(thread);
     this.assertCommandResolutionCurrent(canContinue);
     const action = this.resolveCommandAction(environment, target);
@@ -1186,7 +1191,7 @@ export class WorkspaceEnvironmentService {
     thread: WorkspaceEnvironmentSetupThread,
     attemptId: string,
   ): Promise<AutomaticSetupConfiguration | null> {
-    const platform = this.options.platform ?? platformForCurrentProcess();
+    const platform = this.platform();
     try {
       const environment = await this.readForThread(thread);
       return {
@@ -1622,7 +1627,7 @@ export class WorkspaceEnvironmentService {
     thread: WorkspaceEnvironmentSetupThread,
     generation: number,
   ): Promise<WorkspaceEnvironmentSetupAttempt> {
-    const platform = this.options.platform ?? platformForCurrentProcess();
+    const platform = this.platform();
     let resolved: WorkspaceEnvironmentCommandResolution;
     try {
       resolved = await this.resolveCommand(thread, { kind: "setup" }, () => this.isStartCurrent(thread.id, generation));
@@ -1967,8 +1972,11 @@ function approvalFingerprint(input: {
   })).digest("hex");
 }
 
-function platformForCurrentProcess(): WorkspaceEnvironmentPlatform {
-  return process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+function requireWorkspaceEnvironmentPlatform(
+  platform: WorkspaceEnvironmentPlatform | undefined,
+): WorkspaceEnvironmentPlatform {
+  if (platform) return platform;
+  throw new Error("Workspace environment platform is required");
 }
 
 /** Selects the non-empty platform override or the non-empty default command. */

@@ -569,7 +569,7 @@ export class ClaudeProvider
   private lastNumTurns?: number;
   private lastDurationMs?: number;
   private readonly oauthUsageSource = new AnthropicOAuthUsageSource(
-    readAnthropicOauthToken,
+    () => readAnthropicOauthToken(this.requireHostRuntime().platform),
   );
   private readonly usageSource: CompositeUsageSource = new CompositeUsageSource(
     [this.oauthUsageSource, new AnthropicHeaderUsageSource()],
@@ -1828,11 +1828,16 @@ export class ClaudeProvider
     if (!this.jobObject.isWindowsJob) return undefined;
     try {
       return new Set(
-        (await listDirectChildren(process.pid)).map((child) => child.pid),
+        (await listDirectChildren(process.pid, this.requireHostRuntime().platform)).map((child) => child.pid),
       );
     } catch {
       return undefined;
     }
+  }
+
+  private requireHostRuntime(): ProviderHostPorts["runtime"] {
+    if (!this.host) throw new Error("Claude Provider host runtime is required");
+    return this.host.runtime;
   }
 
   private startClaudeSdkQuery(
@@ -1877,7 +1882,7 @@ export class ClaudeProvider
   ): Promise<number[]> {
     if (!beforePids) return [];
     try {
-      const children = await listDirectChildren(process.pid);
+      const children = await listDirectChildren(process.pid, this.requireHostRuntime().platform);
       return children
         .filter((child) => !beforePids.has(child.pid))
         .map((child) => child.pid);

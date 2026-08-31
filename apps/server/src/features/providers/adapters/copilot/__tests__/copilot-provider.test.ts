@@ -105,10 +105,34 @@ beforeEach(() => {
 });
 
 import which from "which";
-import { CopilotProvider } from "../copilot-provider.js";
+import { CopilotProvider as ProductionCopilotProvider } from "../copilot-provider.js";
 import { stubEnvService } from "../../../../../runtime/environment/__tests__/stub-env-service.js";
 import { stubJobObject } from "../../../../../runtime/process/containment/__tests__/stub-job-object.js";
 import { BrowserAutomationSessionLease } from "../../../../browser-automation/index.js";
+
+const TEST_HOST_PORTS = {
+  runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
+} as ProviderHostPorts;
+
+class CopilotProvider extends ProductionCopilotProvider {
+  constructor(
+    settingsService: ConstructorParameters<typeof ProductionCopilotProvider>[0],
+    jobObject: ConstructorParameters<typeof ProductionCopilotProvider>[1],
+    envService: ConstructorParameters<typeof ProductionCopilotProvider>[2],
+    browserAutomationLease?: ConstructorParameters<typeof ProductionCopilotProvider>[3],
+    threadControlMcp?: ConstructorParameters<typeof ProductionCopilotProvider>[4],
+    host?: ProviderHostPorts,
+  ) {
+    super(
+      settingsService,
+      jobObject,
+      envService,
+      browserAutomationLease,
+      threadControlMcp,
+      host ?? TEST_HOST_PORTS,
+    );
+  }
+}
 
 /** Minimal SettingsService stub. */
 function makeSettingsService(cliPath = "") {
@@ -695,7 +719,10 @@ describe("CopilotProvider canonical host delivery", () => {
       stubEnvService(),
       undefined,
       makeThreadControlMcp() as any,
-      { events: { submit } } as ProviderHostPorts,
+      {
+        runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
+        events: { submit },
+      } as ProviderHostPorts,
     );
     const directEvents = vi.fn();
     provider.on("event", directEvents);

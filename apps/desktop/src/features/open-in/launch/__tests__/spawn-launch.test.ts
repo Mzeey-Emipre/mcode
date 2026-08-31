@@ -31,27 +31,16 @@ function fakeChild() {
   };
 }
 
-const originalPlatform = process.platform;
-
-/** Pin process.platform so the OS-dependent spawn branches are deterministic. */
-function setPlatform(platform: NodeJS.Platform): void {
-  Object.defineProperty(process, "platform", { value: platform, configurable: true });
-}
-
 beforeEach(() => {
   spawnMock.mockReset();
   execFileSyncMock.mockReset();
   existsSyncMock.mockReset();
 });
 
-afterEach(() => {
-  setPlatform(originalPlatform);
-});
-
 describe("createExecutableResolver", () => {
   it("prefers the PATH command and caches the result across calls", () => {
     execFileSyncMock.mockReturnValue("");
-    const resolve = createExecutableResolver("code");
+    const resolve = createExecutableResolver("code", "linux");
 
     expect(resolve()).toBe("code");
     expect(resolve()).toBe("code");

@@ -1,13 +1,14 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeTimersPromises from "node:timers/promises";
 import { describe, expect, it } from "vitest";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import { JobObject } from "../job-object.js";
 import { WindowsProcessScopeFactory } from "../windows-process-scope.js";
 
 describe.runIf(process.platform === "win32")("WindowsProcessScope integration", () => {
   it("terminates one nested process tree without affecting another", async () => {
-    const globalJob = new JobObject();
-    const factory = new WindowsProcessScopeFactory();
+    const globalJob = new JobObject(hostRuntime);
+    const factory = new WindowsProcessScopeFactory(hostRuntime);
     const scopeA = factory.create();
     const scopeB = factory.create();
     const processA = spawnTree();
@@ -39,9 +40,9 @@ describe.runIf(process.platform === "win32")("WindowsProcessScope integration", 
   }, 15_000);
 
   it("reconciles and terminates a descendant created before root assignment", async () => {
-    const globalJob = new JobObject();
-    const scope = new WindowsProcessScopeFactory().create();
-    const root = spawn(
+    const globalJob = new JobObject(hostRuntime);
+    const scope = new WindowsProcessScopeFactory(hostRuntime).create();
+    const root = NodeChildProcess.spawn(
       "powershell.exe",
       [
         "-NoLogo",

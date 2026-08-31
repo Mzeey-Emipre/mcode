@@ -37,7 +37,11 @@ export class CursorAcpProcessSpawner {
     settings: Settings,
   ): Promise<CursorSessionState> {
     let lastError: unknown = null;
-    const processIdentity = cursorAcpProcessIdentity(settings, permissionMode);
+    const processIdentity = cursorAcpProcessIdentity(
+      settings,
+      permissionMode,
+      this.deps.host.runtime.platform,
+    );
     for (const cliPath of cursorCliProbeBinaries(settings)) {
       try {
         return await this.spawnOneCli(cliPath, sessionId, threadId, cwd, permissionMode, processIdentity);
@@ -66,9 +70,13 @@ export class CursorAcpProcessSpawner {
     const runtime = await AcpSessionRuntime.start({
       spawnSpec: {
         command: cliPath,
-        args: buildCursorAcpArgs({ permissionMode }),
+        args: buildCursorAcpArgs({
+          permissionMode,
+          platform: this.deps.host.runtime.platform,
+        }),
         cwd,
         env: this.deps.getEnvironment(),
+        shell: this.deps.host.runtime.platform === "win32",
       },
       callbacks: {
         onPermissionRequest: async (request) => entry

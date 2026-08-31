@@ -223,19 +223,21 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           operationTimeoutMs: 20_000,
           spawnHost: () => {
             const child = spawnPtyHostChild({
+              platform: process.platform,
+              architecture: process.arch,
               entryPath,
               env: {
                 ...process.env,
                 ELECTRON_RUN_AS_NODE: "1",
                 NODE_PATH: [
-                  dirname(
-                    dirname(nativeRequire.resolve("node-pty/package.json")),
+                  NodePath.dirname(
+                    NodePath.dirname(nativeRequire.resolve("node-pty/package.json")),
                   ),
-                  dirname(dirname(nativeRequire.resolve("koffi/package.json"))),
+                  NodePath.dirname(NodePath.dirname(nativeRequire.resolve("koffi/package.json"))),
                   process.env.NODE_PATH,
                 ]
                   .filter((value): value is string => Boolean(value))
-                  .join(delimiter),
+                  .join(NodePath.delimiter),
               },
               onStderr: (text) => diagnostics.push(text),
             });

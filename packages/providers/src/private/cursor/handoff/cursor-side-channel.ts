@@ -171,14 +171,17 @@ export class CursorSideChannel {
     return cursorSupportsHttpMcp(initialized);
   }
 
-  private spawnChild(cwd: string): ChildProcess {
+  private spawnChild(cwd: string): NodeChildProcess.ChildProcess {
     let lastError: unknown = null;
     for (const cliPath of this.deps.getCliCandidates()) {
       try {
-        return spawn(cliPath, buildCursorAcpArgs({ permissionMode: "default" }), {
+        return NodeChildProcess.spawn(cliPath, buildCursorAcpArgs({
+          permissionMode: "default",
+          platform: this.deps.host.runtime.platform,
+        }), {
           stdio: ["pipe", "pipe", "pipe"],
           cwd,
-          shell: process.platform === "win32",
+          shell: this.deps.host.runtime.platform === "win32",
           env: this.deps.getEnvironment(),
         });
       } catch (error) {

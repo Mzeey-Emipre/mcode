@@ -41,7 +41,6 @@ function fakeDeps(overrides: Partial<TerminalAdapterDeps> = {}): {
       commandOnPath: () => false,
       fileExists: () => false,
       spawn: spawn as unknown as TerminalAdapterDeps["spawn"],
-      platform: "win32",
       ...overrides,
     },
   };
@@ -68,25 +67,25 @@ describe("createTerminalAdapter detection", () => {
       commandOnPath: () => false,
       fileExists: (p) => p === "C:\\fallback\\wt.exe",
     });
-    expect(createTerminalAdapter(WT_CONFIG, deps).detect()).toBe(true);
+    expect(createTerminalAdapter(WT_CONFIG, "win32", deps).detect()).toBe(true);
   });
 
   it("is not detected when neither PATH nor fallback paths resolve", () => {
     const { deps } = fakeDeps();
-    expect(createTerminalAdapter(WT_CONFIG, deps).detect()).toBe(false);
+    expect(createTerminalAdapter(WT_CONFIG, "win32", deps).detect()).toBe(false);
   });
 
   it("is never detected off Windows, without probing PATH", () => {
     const commandOnPath = vi.fn().mockReturnValue(true);
-    const { deps } = fakeDeps({ platform: "darwin", commandOnPath });
-    expect(createTerminalAdapter(WT_CONFIG, deps).detect()).toBe(false);
+    const { deps } = fakeDeps({ commandOnPath });
+    expect(createTerminalAdapter(WT_CONFIG, "darwin", deps).detect()).toBe(false);
     expect(commandOnPath).not.toHaveBeenCalled();
   });
 
   it("memoizes resolution so PATH is probed once across detect + launch", async () => {
     const commandOnPath = vi.fn().mockReturnValue(true);
     const { deps } = fakeDeps({ commandOnPath });
-    const adapter = createTerminalAdapter(WT_CONFIG, deps);
+    const adapter = createTerminalAdapter(WT_CONFIG, "win32", deps);
 
     adapter.detect();
     adapter.detect();

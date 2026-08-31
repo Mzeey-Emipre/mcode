@@ -327,7 +327,7 @@ export class CursorProvider
     const settings = this.cursorPorts.settings.get();
 
     for (const cliPath of cursorCliProbeBinaries(settings)) {
-      const discovered = await fetchCursorCliModels(cliPath);
+      const discovered = await fetchCursorCliModels(cliPath, this.host.runtime.platform);
       if (discovered?.length) {
         return discovered;
       }
@@ -1001,7 +1001,11 @@ export class CursorProvider
     const pm: "full" | "default" = args.permissionMode === "full" ? "full" : "default";
     return state.permissionMode !== pm ||
       state.cwd !== args.cwd ||
-      state.processIdentity !== cursorAcpProcessIdentity(this.settingsService.get(), pm);
+      state.processIdentity !== cursorAcpProcessIdentity(
+        this.settingsService.get(),
+        pm,
+        this.host.runtime.platform,
+      );
   }
 
   private async spawnChild(

@@ -23,6 +23,8 @@ import type { AttachmentService } from "../../../attachments/storage/attachment-
 import type { HandoffStorage } from "../../../handoff/index.js";
 import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
 }));

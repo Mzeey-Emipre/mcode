@@ -14,6 +14,7 @@ export interface CodexCatalogProcessAttachment {
 /** Options for the provider-owned, catalog-only Codex connection. */
 export interface CodexCatalogClientOptions {
   cliPath: string;
+  platform: NodeJS.Platform;
   workingDirectory: string;
   processAttachment?: CodexCatalogProcessAttachment;
   getSpawnEnv?: () => Record<string, string>;
@@ -113,6 +114,7 @@ export function createCodexCatalogClient(
 ): CodexCatalogClient {
   return new CodexAppServer({
     cliPath: options.cliPath,
+    platform: options.platform,
     workingDirectory: options.workingDirectory,
     approvalPolicy: "never",
     catalogOnly: true,
@@ -125,7 +127,7 @@ export function createCodexCatalogClient(
 export interface CodexCatalogAgentDiscoveryOptions {
   environment: Readonly<Record<string, string | undefined>>;
   cwd?: string;
-  platform?: NodeJS.Platform;
+  platform: NodeJS.Platform;
 }
 
 /** Standalone agent suggestions and source-scoped diagnostics. */

@@ -82,8 +82,11 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /** Return whether a detached POSIX process group exists. */
-export function isProcessGroupAlive(pid: number): boolean {
-  if (process.platform === "win32") return isProcessAlive(pid);
+export function isProcessGroupAlive(
+  pid: number,
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === "win32") return isProcessAlive(pid);
   try {
     process.kill(-pid, 0);
     return true;

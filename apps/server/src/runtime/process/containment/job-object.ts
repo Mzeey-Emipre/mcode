@@ -24,7 +24,11 @@ const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION sizes:
 // x64/arm64 = 144 bytes, x86 = 112 bytes.
 // LimitFlags is at offset 16 in BasicLimitInformation (which is at offset 0).
-const EXTENDED_LIMIT_SIZE = process.arch === "ia32" ? 112 : 144;
+/** Immutable host facts required to initialize a Windows Job Object. */
+export interface JobObjectHostFacts {
+  readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
+}
 
 interface WindowsState {
   jobHandle: unknown; // opaque koffi handle
@@ -47,11 +51,13 @@ export class JobObject {
    * field (false when koffi/native init fails).
    */
   public readonly isWindowsJob: boolean;
+  private readonly extendedLimitSize: number;
   private initialized = false;
   private windowsState: WindowsState | null = null;
 
-  constructor() {
-    this.isWindowsJob = process.platform === "win32";
+  constructor({ platform, architecture }: JobObjectHostFacts) {
+    this.isWindowsJob = platform === "win32";
+    this.extendedLimitSize = architecture === "ia32" ? 112 : 144;
     if (this.isWindowsJob) {
       this.initWindows();
     }

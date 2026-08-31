@@ -29,6 +29,8 @@ export interface DesktopWindowLifecycleHooks {
 
 /** Dependencies for creating one behavior-preserving desktop window. */
 export interface CreateWindowDependencies {
+  /** Platform selected by the Electron composition root. */
+  readonly platform: NodeJS.Platform;
   /** Return whether the desktop runs in development mode. */
   readonly isDesktopDev: () => boolean;
   /** Per-window feature hooks. */
@@ -42,12 +44,12 @@ export function createWindow(
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
-    icon: getWindowIconPath(),
+    icon: getWindowIconPath(dependencies.platform),
     // Keep window hidden until first paint to eliminate the blank white flash.
     show: false,
     backgroundColor: "#0a0a0f",
     autoHideMenuBar: true,
-    ...(process.platform === "darwin"
+    ...(dependencies.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 14, y: 12 },

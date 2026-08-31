@@ -1,4 +1,5 @@
 import type { ProviderHostPorts } from "@mcode/providers";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import type { JobObject } from "../../../runtime/process/containment/job-object.js";
 import type { EnvService } from "../../../runtime/environment/env-service.js";
 import type { ScopedPreGrantService } from "../../agents/permissions/scoped-pre-grant.js";
@@ -10,6 +11,7 @@ import type { ProviderEventIngress } from "./provider-event-ingress.js";
 
 /** Server services used to compose the narrow Provider host-port boundary. */
 export interface ProviderHostPortDependencies {
+  runtime: HostRuntime;
   envService: EnvService;
   jobObject: JobObject;
   browser: BrowserAutomationSessionLease;
@@ -33,7 +35,9 @@ export function createProviderHostPorts(
         dependencies.jobObject.assign(pid);
         dependencies.jobObject.setDescription(pid, description);
       },
-      terminateTree: (pid) => killProcessTree(pid),
+      terminateTree: (pid) => killProcessTree(pid, {
+        platform: dependencies.runtime.platform,
+      }),
     },
     browser: {
       stage: (request) => dependencies.browser.stage(request),

@@ -45,7 +45,7 @@ interface ProcessIdentity {
 /** Injectable process-tree termination dependencies for focused verification tests. */
 export interface KillProcessTreeDeps {
   readonly execFile?: typeof execFile;
-  readonly platform?: NodeJS.Platform;
+  readonly platform: NodeJS.Platform;
   readonly processKill?: (pid: number, signal: string | number) => void;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
@@ -75,10 +75,11 @@ function isProcessGoneError(err: unknown): boolean {
  */
 export async function killProcessTree(
   pid: number,
-  deps?: KillProcessTreeDeps,
+  deps: KillProcessTreeDeps,
 ): Promise<void> {
   const context = createKillContext(deps);
   if (context.platform === "win32") return killWindowsProcessTree(pid, context.windows);
+  assertPosixPlatform(context.platform);
   return killUnixProcessTree(pid, context.unix);
 }
 
@@ -123,30 +124,35 @@ function createSharedKillContext(deps: KillProcessTreeDeps | undefined): SharedK
   };
 }
 
-function resolveKillPlatform(deps: KillProcessTreeDeps | undefined): NodeJS.Platform {
-  return deps?.platform ?? process.platform;
+function resolveKillPlatform(deps: KillProcessTreeDeps): NodeJS.Platform {
+  return deps.platform;
 }
 
-function resolveProcessExecutor(deps: KillProcessTreeDeps | undefined): typeof execFile {
-  return deps?.execFile ?? execFile;
+function assertPosixPlatform(platform: NodeJS.Platform): void {
+  if (["aix", "android", "darwin", "freebsd", "linux", "openbsd", "sunos"].includes(platform)) return;
+  throw new Error(`Unsupported process containment platform: ${platform}`);
+}
+
+function resolveProcessExecutor(deps: KillProcessTreeDeps): typeof execFile {
+  return deps.execFile ?? execFile;
 }
 
 function resolveProcessKiller(
-  deps: KillProcessTreeDeps | undefined,
+  deps: KillProcessTreeDeps,
 ): (pid: number, signal: string | number) => void {
-  return deps?.processKill ?? defaultProcessKill;
+  return deps.processKill ?? defaultProcessKill;
 }
 
-function resolveProcessSleep(deps: KillProcessTreeDeps | undefined): (ms: number) => Promise<void> {
-  return deps?.sleep ?? defaultSleep;
+function resolveProcessSleep(deps: KillProcessTreeDeps): (ms: number) => Promise<void> {
+  return deps.sleep ?? defaultSleep;
 }
 
-function resolveProcessClock(deps: KillProcessTreeDeps | undefined): () => number {
-  return deps?.now ?? Date.now;
+function resolveProcessClock(deps: KillProcessTreeDeps): () => number {
+  return deps.now ?? Date.now;
 }
 
 function createWindowsKillContext(
-  deps: KillProcessTreeDeps | undefined,
+  deps: KillProcessTreeDeps,
   shared: SharedKillContext,
 ): WindowsKillContext {
   return {
@@ -626,6 +632,7 @@ async function readUnixProcessStartMarker(
 export async function findDescendantsByName(
   parentPid: number,
   processName: string,
+  platform: NodeJS.Platform,
 ): Promise<number[]> {
   const matched: number[] = [];
   const visited = new Set<number>();
@@ -638,7 +645,7 @@ export async function findDescendantsByName(
 
     let children: Array<{ name: string; pid: number }>;
     try {
-      children = await listDirectChildren(pid);
+      children = await listDirectChildren(pid, platform);
     } catch {
       continue;
     }
@@ -667,14 +674,15 @@ export async function findDescendantsByName(
 export async function killDescendantsByName(
   parentPid: number,
   processName: string,
+  platform: NodeJS.Platform,
 ): Promise<void> {
-  if (process.platform !== "win32") return;
+  if (platform !== "win32") return;
 
-  const pids = await findDescendantsByName(parentPid, processName);
+  const pids = await findDescendantsByName(parentPid, processName, platform);
   if (pids.length === 0) return;
 
   logger.info("Killing descendant processes", { parentPid, processName, pids });
-  await Promise.all(pids.map((pid) => killProcessTree(pid)));
+  await Promise.all(pids.map((pid) => killProcessTree(pid, { platform })));
 }
 
 // 2 s grace period between each signal ladder step
@@ -688,7 +696,7 @@ export interface GracefulKillDeps {
     args: string[],
     opts: { timeout?: number },
   ) => Promise<{ stdout: string; stderr: string }>;
-  platform?: NodeJS.Platform;
+  platform: NodeJS.Platform;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -721,12 +729,12 @@ interface GracefulKillContext {
   readonly sleep: (ms: number) => Promise<void>;
 }
 
-function createGracefulKillContext(deps: GracefulKillDeps | undefined): GracefulKillContext {
+function createGracefulKillContext(deps: GracefulKillDeps): GracefulKillContext {
   return {
-    kill: deps?.processKill ?? defaultProcessKill,
-    execFile: deps?.execFile ?? execFile,
-    platform: deps?.platform ?? process.platform,
-    sleep: deps?.sleep ?? defaultSleep,
+    kill: deps.processKill ?? defaultProcessKill,
+    execFile: deps.execFile ?? execFile,
+    platform: deps.platform,
+    sleep: deps.sleep ?? defaultSleep,
   };
 }
 
@@ -734,6 +742,7 @@ async function runGracefulKillProcessTree(pid: number, context: GracefulKillCont
   if (context.platform === "win32") {
     return gracefulKillWindowsProcessTree(pid, context.execFile, context.sleep);
   }
+  assertPosixPlatform(context.platform);
   return gracefulKillUnixProcessTree(pid, context.kill, context.sleep);
 }
 
@@ -813,8 +822,9 @@ function isEsrch(err: unknown): boolean {
  */
 export async function listDirectChildren(
   pid: number,
+  platform: NodeJS.Platform,
 ): Promise<Array<{ name: string; pid: number }>> {
-  return listDirectChildrenWith(pid, process.platform, execFile);
+  return listDirectChildrenWith(pid, platform, execFile);
 }
 
 async function listDirectChildrenWith(
@@ -841,6 +851,8 @@ async function listDirectChildrenWith(
     );
     return parsePowerShellProcesses(stdout);
   }
+
+  assertPosixPlatform(platform);
 
   // Unix: pgrep -P returns child PIDs, one per line
   let stdout: string;

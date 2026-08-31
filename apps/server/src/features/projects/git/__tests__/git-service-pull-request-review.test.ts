@@ -14,6 +14,8 @@ import {
 } from "../pull-request-review-git-service.js";
 import { GitRepositoryService } from "../git-repository-service.js";
 
+const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
+
 const headOid = "a".repeat(40);
 const source: PullRequestReviewGitSource = {
   repositoryNodeId: "R_mcode",

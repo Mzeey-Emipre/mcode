@@ -111,17 +111,18 @@ describe("WorkspaceEnvironmentService", () => {
     expect(stale[0]?.reason).toMatchObject({ code: "WORKSPACE_ENVIRONMENT_STALE" });
     const persisted = await instance.read(workspaceId);
     expect(persisted.document).toEqual(successes[0]?.value.document);
-    expect(await readFile(join(root, "projects", workspaceId, "environment.json"), "utf8")).toContain(persisted.document.actions[0]?.name);
+    expect(await NodeFSPromises.readFile(NodePath.join(root, "projects", workspaceId, "environment.json"), "utf8")).toContain(persisted.document.actions[0]?.name);
   });
 
   it("reads and writes the selected worktree checkout without accepting a revision from another storage scope", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-worktree-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-worktree-"));
     roots.push(root);
-    const baseCheckout = join(root, "base");
-    const worktreeCheckout = join(root, "worktree");
-    await mkdir(worktreeCheckout, { recursive: true });
+    const baseCheckout = NodePath.join(root, "base");
+    const worktreeCheckout = NodePath.join(root, "worktree");
+    await NodeFSPromises.mkdir(worktreeCheckout, { recursive: true });
     const instance = new WorkspaceEnvironmentService({
       mcodeDir: root,
+      platform: "linux",
       workspaces: { findById: (id) => id === workspaceId ? { id, path: baseCheckout } : null },
       threads: {
         findById: (id) => id === "worktree"
@@ -178,6 +179,7 @@ describe("WorkspaceEnvironmentService", () => {
     }));
     const instance = new WorkspaceEnvironmentService({
       mcodeDir: root,
+      platform: "linux",
       workspaces: { findById: (id) => id === workspaceId ? { id, path: baseCheckout } : null },
       threads: { findById: (id) => sharedEnvironmentThread(id, baseCheckout, worktreeCheckout) },
       terminalCommands: { prepare },

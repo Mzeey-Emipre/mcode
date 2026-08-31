@@ -20,6 +20,7 @@ import {
   workspaceEnvironmentValidationIssues,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import type {
   AgentPermissionService,
   AgentService,
@@ -203,11 +204,13 @@ function routeTerminalDiagnostics(
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
+  /** Immutable host facts required by provider transport routes. */
+  runtime: Pick<HostRuntime, "platform">;
   /** Routes browser operations to renderer hosts when visible-browser automation is enabled. */
   browserAutomationBroker?: BrowserAutomationBroker;
   /** Resolves trusted browser-host identity and workspace scope from an authenticated connection. */
   resolveBrowserAutomationHostAuthorization: (
-    request: IncomingMessage,
+    request: NodeHTTP.IncomingMessage,
   ) => BrowserAutomationHostConnectionAuthorization | null;
   workspaceService: WorkspaceService;
   /** Owns private workspace environment document reads and revision-checked saves. */

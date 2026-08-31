@@ -7,6 +7,7 @@ import type {
   WsMethodName,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { discoverCopilotAgents } from "../adapters/copilot/copilot-agent-discovery.js";
 import type { ProviderAvailabilityService } from "../availability/provider-availability-service.js";
 import type {
@@ -47,6 +48,7 @@ type ProviderRpcParamsByMethod = {
 
 /** Defines the dependencies required by provider transport routes. */
 export interface ProviderRouterDeps {
+  runtime: Pick<HostRuntime, "platform">;
   configService: Pick<ConfigService, "discover">;
   workspaceService: Pick<WorkspaceService, "findById">;
   threadRepo: Pick<ThreadRepo, "findById">;
@@ -272,5 +274,5 @@ function redactedUsageDiagnostic(error: unknown): string {
 function routeCopilotAgents(deps: ProviderRouterDeps, workspaceId: string) {
   const workspace = deps.workspaceService.findById(workspaceId);
   if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-  return discoverCopilotAgents(workspace.path);
+  return discoverCopilotAgents(workspace.path, deps.runtime.platform);
 }
