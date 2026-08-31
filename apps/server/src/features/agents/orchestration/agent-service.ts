@@ -1627,10 +1627,7 @@ export class AgentService {
       observeFileMutation: (event) => {
         this.turnFileEffects.observeProviderMutation(event);
       },
-      rejectForQueueCapacity: (event) => this.stopForParentAssistantTextCheckpointFailure(
-        event,
-        "Assistant text event retention capacity reached",
-      ),
+      rejectForQueueCapacity: (event) => this.stopForProviderEventQueueCapacity(event),
       previousFileFinalization: (threadId) => this.turnFileEffects.previousFinalization(threadId),
       beginResumedFileTracking: (threadId) => this.turnFileEffects.beginResumed(threadId),
       observeToolUse: (event) => this.turnFileEffects.observeToolUse(event),
@@ -1805,6 +1802,19 @@ export class AgentService {
       threadId: event.threadId,
       turnExecutionId: executionId,
       reason,
+    });
+    this.requestProviderStopAfterCheckpointFailure(event.threadId, executionId);
+    this.disarmTurnRetryWindow(event.threadId);
+  }
+
+  /** Stop only when a provider event cannot be represented within the bounded ingress queue. */
+  private stopForProviderEventQueueCapacity(event: AgentEvent): void {
+    const executionId = event.turnExecutionId;
+    if (!executionId || !isActiveRuntimeExecution(this.turnRuntime.snapshot(event.threadId) ?? null, executionId)) return;
+    logger.error("Provider event queue capacity reached", {
+      threadId: event.threadId,
+      turnExecutionId: executionId,
+      eventType: event.type,
     });
     this.requestProviderStopAfterCheckpointFailure(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);
