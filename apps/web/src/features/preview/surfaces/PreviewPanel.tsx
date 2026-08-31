@@ -51,7 +51,7 @@ import { LocalPortsEmptyState } from "./LocalPortsEmptyState";
 import { PreviewErrorPanel } from "./PreviewErrorPanel";
 import { PreviewPerfHud } from "./PreviewPerfHud";
 import { PreviewWebview, type PreviewWebviewHandle } from "./PreviewWebview";
-import { formatNavError, usePreviewBridge } from "../navigation/usePreviewBridge";
+import { formatNavError, usePreviewSurfaceBridge } from "../navigation/usePreviewSurfaceBridge";
 import {
   usePreviewCapture,
   type PreviewCaptureKind,
@@ -1803,15 +1803,10 @@ function annotationPageLabel(
 }
 
 function hasLoadedPreviewPage(
-  showWebviewPreview: boolean,
   activeWebviewUrl: string | null,
   pageStatus: PreviewPageStatus,
-  storedUrl: string,
 ): boolean {
-  if (showWebviewPreview) {
-    return !isEmptyPreviewTabUrl(activeWebviewUrl ?? pageStatus.url);
-  }
-  return storedUrl.trim().length > 0;
+  return !isEmptyPreviewTabUrl(activeWebviewUrl ?? pageStatus.url);
 }
 
 function previewPageError(pageStatus: PreviewPageStatus): PreviewPageError | undefined {
@@ -1819,7 +1814,6 @@ function previewPageError(pageStatus: PreviewPageStatus): PreviewPageError | und
 }
 
 function previewSurfaceState(
-  showWebviewPreview: boolean,
   hasLoadedPage: boolean,
   isLoading: boolean,
   pageError: PreviewPageError | undefined,
@@ -1830,7 +1824,7 @@ function previewSurfaceState(
   readonly webviewLayerInteractive: boolean;
 } {
   const showLocalPorts = !hasLoadedPage && !isLoading && !pageError;
-  const hasWebviewLayer = showWebviewPreview && warmTabCount > 0;
+  const hasWebviewLayer = warmTabCount > 0;
   return {
     showLocalPorts,
     hasWebviewLayer,
@@ -1904,20 +1898,14 @@ function shouldShowAnnotationCommandBar(
 }
 
 function previewSurfaceClassName(
-  showWebviewPreview: boolean,
   responsiveViewportSize: { readonly width: number; readonly height: number } | null,
   webviewLayerInteractive: boolean,
   showLocalPorts: boolean,
 ): string {
-  const previewModeClassName = showWebviewPreview
-    ? cn(
-        "z-0 rounded-tl-md",
-        responsiveViewportSize ? "overflow-auto bg-muted/20" : "overflow-hidden",
-      )
-    : "mx-2 mb-2 mt-1 rounded-md border border-border/40 bg-muted/10";
   return cn(
     "relative min-h-[min(40vh,20rem)] min-w-0 flex-1 basis-0",
-    previewModeClassName,
+    "z-0 rounded-tl-md",
+    responsiveViewportSize ? "overflow-auto bg-muted/20" : "overflow-hidden",
     webviewLayerInteractive && "pointer-events-none",
     showLocalPorts && "overflow-y-auto",
   );
@@ -1968,35 +1956,6 @@ function activeAutomationPointer(
   controller: { readonly pointer?: { readonly x: number; readonly y: number } | null } | undefined,
 ): { readonly x: number; readonly y: number } | null {
   return controller?.pointer ?? null;
-}
-
-type PreviewNavigationAction = () => void | Promise<void>;
-
-interface PreviewPanelState {
-  readonly pageStatus: PreviewPageStatus;
-  readonly inputUrl: string;
-  readonly pageTitle: string | null;
-  readonly faviconUrl: string | null;
-  readonly canBack: boolean;
-  readonly canFwd: boolean;
-  readonly loading: boolean;
-  readonly navError: string | null;
-  readonly navigate: (url: string) => void;
-  readonly goBack: PreviewNavigationAction;
-  readonly goForward: PreviewNavigationAction;
-  readonly reload: PreviewNavigationAction;
-  readonly forceReload: PreviewNavigationAction;
-  readonly openExternal: PreviewNavigationAction;
-  readonly getZoom: () => Promise<number>;
-  readonly setZoom: (factor: number) => Promise<number>;
-}
-
-function selectPreviewState(
-  showWebviewPreview: boolean,
-  webviewState: PreviewPanelState,
-  bridgeState: PreviewPanelState,
-): PreviewPanelState {
-  return showWebviewPreview ? webviewState : bridgeState;
 }
 
 function previewPageIdentityUrl(
@@ -2720,10 +2679,9 @@ export function PreviewPanel({
   }, [activeViewportCoordinator]);
 
   const omniboxFocusTick = usePreviewFocusStore((s) => s.omniboxFocusTick);
-  const showWebviewPreview = true;
   const webRuntime = webRuntimeWithoutDesktopBridge();
 
-  const bridge = usePreviewBridge({
+  const bridge = usePreviewSurfaceBridge({
     threadId,
     workspaceId,
     surfaceRef,
@@ -2870,7 +2828,6 @@ export function PreviewPanel({
   }, [activeWebviewSrc]);
 
   useEffect(() => {
-    if (!showWebviewPreview) return;
     if (!activeWebviewTabUrl) return;
     const active = activeWebviewRef();
     const nextCanBack = active?.canGoBack() ?? false;
@@ -2882,7 +2839,6 @@ export function PreviewPanel({
   }, [
     activeWebviewRef,
     activeWebviewTabUrl,
-    showWebviewPreview,
   ]);
 
   const hydrateHostTabStatus = useCallback((): boolean => {
@@ -2938,14 +2894,12 @@ export function PreviewPanel({
   ]);
 
   useEffect(() => {
-    if (!showWebviewPreview) return;
     if (hydrateHostTabStatus()) return;
     // oxlint-disable-next-line react/set-state-in-effect -- Host tab hydration must synchronously replace stale browser chrome before a resident webview becomes visible.
     hydrateStoredWebviewStatus();
   }, [
     hydrateHostTabStatus,
     hydrateStoredWebviewStatus,
-    showWebviewPreview,
   ]);
 
   const onWebviewPageStatus = useCallback(
@@ -3014,67 +2968,10 @@ export function PreviewPanel({
     [activeWebviewRef],
   );
 
-  const webviewPreviewState: PreviewPanelState = {
-    pageStatus: webviewPageStatus,
-    inputUrl: previewInputUrl(webviewPageStatus, activeWebviewSrc),
-    pageTitle: webviewPageStatus.title,
-    faviconUrl: webviewPageStatus.favicon,
-    canBack: webviewCanBack,
-    canFwd: webviewCanFwd,
-    loading: webviewPageStatus.phase === "loading",
-    navError: webviewNavError,
-    navigate: onWebviewNavigate,
-    goBack: () => activeWebviewRef()?.goBack(),
-    goForward: () => activeWebviewRef()?.goForward(),
-    reload: () => activeWebviewRef()?.reload(),
-    forceReload: () => activeWebviewRef()?.forceReload(),
-    openExternal: onWebviewOpenExternal,
-    getZoom: onWebviewGetZoom,
-    setZoom: onWebviewSetZoom,
-  };
-  const bridgePreviewState: PreviewPanelState = {
-    pageStatus: bridge.pageStatus,
-    inputUrl: bridge.inputUrl,
-    pageTitle: bridge.pageTitle,
-    faviconUrl: bridge.faviconUrl,
-    canBack: bridge.canBack,
-    canFwd: bridge.canFwd,
-    loading: bridge.previewLoading,
-    navError: bridge.navError,
-    navigate: bridge.onNavigate,
-    goBack: bridge.onGoBack,
-    goForward: bridge.onGoForward,
-    reload: bridge.onReload,
-    forceReload: bridge.onForceReload,
-    openExternal: bridge.onOpenExternal,
-    getZoom: bridge.onGetZoom,
-    setZoom: bridge.onSetZoom,
-  };
-  const effectivePreviewState = selectPreviewState(
-    showWebviewPreview,
-    webviewPreviewState,
-    bridgePreviewState,
-  );
-  const {
-    pageStatus: effectivePageStatus,
-    inputUrl: effectiveInputUrl,
-    pageTitle: effectivePageTitle,
-    faviconUrl: effectiveFaviconUrl,
-    canBack: effectiveCanBack,
-    canFwd: effectiveCanFwd,
-    loading: effectivePreviewLoading,
-    navError: effectiveNavError,
-    navigate: effectiveNavigate,
-    goBack: effectiveGoBack,
-    goForward: effectiveGoForward,
-    reload: effectiveReload,
-    forceReload: effectiveForceReload,
-    openExternal: effectiveOpenExternal,
-    getZoom: effectiveGetZoom,
-    setZoom: effectiveSetZoom,
-  } = effectivePreviewState;
+  const webviewInputUrl = previewInputUrl(webviewPageStatus, activeWebviewSrc);
+  const webviewLoading = webviewPageStatus.phase === "loading";
   const currentPageIdentity = normalizePreviewPageIdentity(
-    previewPageIdentityUrl(effectivePageStatus, effectiveInputUrl),
+    previewPageIdentityUrl(webviewPageStatus, webviewInputUrl),
   );
   const savedAnnotations = usePreviewAnnotationStore(
     (s) => s.byThread[threadId] ?? EMPTY_SAVED_ANNOTATIONS,
@@ -3163,7 +3060,7 @@ export function PreviewPanel({
   );
   const annotationHeaderPageLabel = annotationPageLabel(
     currentPageIdentity,
-    effectiveInputUrl,
+    webviewInputUrl,
   );
 
   // Page events flow through `preview:page-status`, not `preview:tabs-updated`
@@ -3174,11 +3071,11 @@ export function PreviewPanel({
   // each tab's own persisted favicon rather than a stale overlay.
   useEffect(() => {
     usePreviewTabsStore.getState().setLiveChrome(browserWorkspaceId, threadId, {
-      title: effectivePageStatus.title,
-      url: effectivePageStatus.url,
-      favicon: effectivePageStatus.favicon,
+      title: webviewPageStatus.title,
+      url: webviewPageStatus.url,
+      favicon: webviewPageStatus.favicon,
     });
-  }, [browserWorkspaceId, threadId, effectivePageStatus]);
+  }, [browserWorkspaceId, threadId, webviewPageStatus]);
   useEffect(() => {
     return () => {
       usePreviewTabsStore.getState().setLiveChrome(browserWorkspaceId, threadId, null);
@@ -3451,20 +3348,17 @@ export function PreviewPanel({
   }
 
   const hasLoadedPage = hasLoadedPreviewPage(
-    showWebviewPreview,
     activeWebviewSrc,
     webviewPageStatus,
-    bridge.storedUrl,
   );
-  const pageError = previewPageError(effectivePageStatus);
+  const pageError = previewPageError(webviewPageStatus);
   const {
     showLocalPorts,
     hasWebviewLayer,
     webviewLayerInteractive,
   } = previewSurfaceState(
-    showWebviewPreview,
     hasLoadedPage,
-    effectivePreviewLoading,
+    webviewLoading,
     pageError,
     warmWebviewTabs.length,
   );
@@ -3650,7 +3544,7 @@ export function PreviewPanel({
 
   const renderPreviewChrome = (): ReactNode => (
     <div
-      className={cn(showWebviewPreview && "pointer-events-auto relative z-20")}
+      className="pointer-events-auto relative z-20"
       style={coveredLeft ? { clipPath: `inset(0 0 0 ${coveredLeft}px)` } : undefined}
     >
         {showAnnotationCommandBar ? (
@@ -3672,12 +3566,12 @@ export function PreviewPanel({
           />
         ) : (
           <BrowserHeader
-            url={effectiveInputUrl}
-            pageTitle={effectivePageTitle}
-            faviconUrl={effectiveFaviconUrl}
+            url={webviewInputUrl}
+            pageTitle={webviewPageStatus.title}
+            faviconUrl={webviewPageStatus.favicon}
             hasLoadedPage={hasLoadedPage}
-            canBack={effectiveCanBack}
-            canFwd={effectiveCanFwd}
+            canBack={webviewCanBack}
+            canFwd={webviewCanFwd}
             threadId={threadId}
             designModeActive={designModeActive}
             elementPickBusy={capture.elementPickBusy}
@@ -3686,21 +3580,21 @@ export function PreviewPanel({
             focusRequest={omniboxFocusTick}
             onNavigate={(url) => {
               invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
-              effectiveNavigate(url);
+              onWebviewNavigate(url);
             }}
             onGoBack={() => {
               invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
-              effectiveGoBack();
+              activeWebviewRef()?.goBack();
             }}
             onGoForward={() => {
               invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
-              effectiveGoForward();
+              activeWebviewRef()?.goForward();
             }}
             onReload={() => {
               invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
-              effectiveReload();
+              activeWebviewRef()?.reload();
             }}
-            onOpenExternal={effectiveOpenExternal}
+            onOpenExternal={onWebviewOpenExternal}
             onToggleDesign={onToggleDesignMode}
             onScreenshot={capture.onAddPictureReference}
             onNewPage={() => {
@@ -3709,14 +3603,14 @@ export function PreviewPanel({
             }}
             onForceReload={() => {
               invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
-              effectiveForceReload();
+              activeWebviewRef()?.forceReload();
             }}
             onRegionCapture={capture.onAddRegionPictureReference}
             onDumpContent={capture.onAddPageContextOnly}
-            onClearCookies={bridge.onClearCookies}
-            onClearCache={bridge.onClearCache}
-            onGetZoom={effectiveGetZoom}
-            onSetZoom={effectiveSetZoom}
+            onClearCookies={bridge.clearCookies}
+            onClearCache={bridge.clearCache}
+            onGetZoom={onWebviewGetZoom}
+            onSetZoom={onWebviewSetZoom}
             onOpenDevTools={() => {
               void window.desktopBridge?.preview.openGuestDevTools({
                 threadId,
@@ -3755,12 +3649,12 @@ export function PreviewPanel({
     >
       {renderPreviewChrome()}
 
-      <RenderWhen condition={Boolean(effectiveNavError)}>
+      <RenderWhen condition={Boolean(webviewNavError)}>
         <p
           className="flex-none px-3 py-1 text-xs text-destructive"
           role="status"
         >
-          {effectiveNavError}
+          {webviewNavError}
         </p>
       </RenderWhen>
 
@@ -3771,7 +3665,6 @@ export function PreviewPanel({
         aria-label="Page preview"
         data-testid="preview-surface"
         className={previewSurfaceClassName(
-          showWebviewPreview,
           responsiveViewportSize,
           webviewLayerInteractive,
           showLocalPorts,
@@ -3780,7 +3673,7 @@ export function PreviewPanel({
         {/* Loading: thin indeterminate progress bar at top of content area.
             motion-safe gates the animation so users with prefers-reduced-motion
             get a static bar instead of a perpetual sweep. */}
-        <RenderWhen condition={effectivePreviewLoading}>
+        <RenderWhen condition={webviewLoading}>
           <div
             data-testid="preview-loading-banner"
             className="absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden rounded-t-md"
@@ -4210,17 +4103,17 @@ export function PreviewPanel({
           {(pageError) => (
           <PreviewErrorPanel
             error={pageError}
-            url={effectivePageStatus.url}
-            canBack={effectiveCanBack}
-            onRetry={() => void effectiveReload()}
-            onGoBack={() => void effectiveGoBack()}
+            url={webviewPageStatus.url}
+            canBack={webviewCanBack}
+            onRetry={() => void activeWebviewRef()?.reload()}
+            onGoBack={() => void activeWebviewRef()?.goBack()}
           />
           )}
         </RenderValue>
         <RenderWhen condition={showLocalPorts}>
           <LocalPortsEmptyState
             active={showLocalPorts}
-            onOpenPort={(port) => effectiveNavigate(`http://localhost:${port}`)}
+            onOpenPort={(port) => onWebviewNavigate(`http://localhost:${port}`)}
           />
         </RenderWhen>
       </div>

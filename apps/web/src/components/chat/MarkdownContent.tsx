@@ -25,7 +25,7 @@ import { EntityToken, type EntityKind } from "./EntityToken";
 /** Pass through workspace preview URLs; otherwise use react-markdown's default sanitizer. */
 function markdownUrlTransform(value: string): string {
   const trimmed = value.trim();
-  if (isMcodeWorkspacePreviewUrl(trimmed)) return trimmed;
+  if (isPreviewableUrl(trimmed)) return trimmed;
   return defaultUrlTransform(value);
 }
 
@@ -130,14 +130,14 @@ function handleLinkClick(e: React.MouseEvent | React.KeyboardEvent, url: string)
 function resolveMarkdownHref(href: string | undefined, workspacePath: string | null): string | undefined {
   if (!href) return undefined;
   const raw = href.trim();
-  if (isMcodeWorkspacePreviewUrl(raw)) return raw;
   if (workspacePath && looksLikeWorkspaceRelativeFileRef(raw)) {
     return mcodeWorkspacePreviewHref(raw);
   }
+  if (isPreviewableUrl(raw)) return raw;
 
   try {
     const { protocol } = new URL(raw);
-    if (protocol === "https:" || protocol === "http:" || protocol === "mailto:") {
+    if (protocol === "mailto:") {
       return raw;
     }
   } catch {

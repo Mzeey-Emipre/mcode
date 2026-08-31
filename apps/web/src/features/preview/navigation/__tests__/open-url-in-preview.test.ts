@@ -33,6 +33,10 @@ describe("isPreviewableUrl", () => {
     expect(isPreviewableUrl("mcode-workspace:///page.html")).toBe(true);
   });
 
+  it("accepts absolute Windows paths", () => {
+    expect(isPreviewableUrl("C:/workspace/hello-world.html")).toBe(true);
+  });
+
   it("rejects mailto URLs", () => {
     expect(isPreviewableUrl("mailto:test@example.com")).toBe(false);
   });

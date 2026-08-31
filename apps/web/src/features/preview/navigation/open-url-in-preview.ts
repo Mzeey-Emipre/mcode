@@ -4,15 +4,18 @@ import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 
+const WINDOWS_ABSOLUTE_PATH_RE = /^[A-Z]:[\\/]/i;
+
 /** Returns true when the event is a Ctrl+click (Windows/Linux) or Cmd+click (macOS). */
 export function isModifierClick(e: { ctrlKey: boolean; metaKey: boolean }): boolean {
   return e.ctrlKey || e.metaKey;
 }
 
-/** Whether a URL can be loaded in the embedded preview panel. */
+/** Whether an address can be sent to the embedded Preview resolver. */
 export function isPreviewableUrl(url: string): boolean {
   const trimmed = url.trim();
   if (isMcodeWorkspacePreviewUrl(trimmed)) return true;
+  if (WINDOWS_ABSOLUTE_PATH_RE.test(trimmed)) return true;
   try {
     const { protocol } = new URL(trimmed);
     return protocol === "https:" || protocol === "http:";
@@ -98,7 +101,7 @@ export function openUrlInPreview({
   workspacePath,
   newTab = true,
 }: OpenUrlInPreviewOptions): void {
-  if (!isPreviewableUrl(url)) return;
+  if (!url.trim()) return;
 
   const preview = window.desktopBridge?.preview;
   if (!preview) {
