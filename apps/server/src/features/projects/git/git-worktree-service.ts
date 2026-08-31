@@ -108,7 +108,7 @@ export class GitWorktreeService {
     const request = await this.createWorktreeRemovalRequest(repoPath, name, options);
     await this.tryGitWorktreeRemoval(repoPath, request.path);
     await this.tryFallbackWorktreeRemoval(request.path);
-    if (existsSync(request.path)) {
+    if (NodeFS.existsSync(request.path)) {
       logger.error("Worktree directory could not be removed", { wtPath: request.path });
       return false;
     }
@@ -180,9 +180,9 @@ export class GitWorktreeService {
   ): Promise<void> {
     if (managedCanonicalOnly) return;
 
-    const managedRoot = resolve(getMcodeDir(), "worktrees");
-    const relativePath = relative(managedRoot, resolve(worktreePath));
-    const isManagedPath = !(relativePath.startsWith("..") || isAbsolute(relativePath));
+    const managedRoot = NodePath.resolve(getMcodeDir(), "worktrees");
+    const relativePath = NodePath.relative(managedRoot, NodePath.resolve(worktreePath));
+    const isManagedPath = !(relativePath.startsWith("..") || NodePath.isAbsolute(relativePath));
     if (isManagedPath) return;
 
     if (!(await this.isRegisteredWorktreePath(repoPath, worktreePath))) {
@@ -197,12 +197,12 @@ export class GitWorktreeService {
     options: { branchless?: boolean; baseRef?: string },
   ): WorktreeCreationRequest {
     validateWorktreeName(name);
-    if (!existsSync(repoPath)) throw new Error(`Repository path does not exist: ${repoPath}`);
+    if (!NodeFS.existsSync(repoPath)) throw new Error(`Repository path does not exist: ${repoPath}`);
     const branch = branchName ?? `mcode/${name}`;
     validateBranchName(branch);
     if (options.baseRef) validateBranchName(options.baseRef);
-    const path = join(ensureManagedWorktreeBaseDir(repoPath), name);
-    if (existsSync(path)) throw new Error(`Worktree directory already exists: ${path}`);
+    const path = NodePath.join(ensureManagedWorktreeBaseDir(repoPath), name);
+    if (NodeFS.existsSync(path)) throw new Error(`Worktree directory already exists: ${path}`);
     return { branch, name, path, repoPath, options };
   }
 
@@ -224,7 +224,7 @@ export class GitWorktreeService {
   }
 
   private handleWorktreeCreateFailure(request: WorktreeCreationRequest, error: unknown): string {
-    if (!existsSync(join(request.path, ".git"))) throw error;
+    if (!NodeFS.existsSync(NodePath.join(request.path, ".git"))) throw error;
     const message = gitErrorMessage(error);
     logger.warn("Worktree created but post-checkout hook failed", {
       wtPath: request.path,
@@ -241,7 +241,7 @@ export class GitWorktreeService {
   ): Promise<WorktreeRemovalRequest> {
     validateWorktreeName(name);
     const managedCanonicalOnly = options.managedCanonicalOnly === true;
-    const requestedPath = options.worktreePath ?? join(getManagedWorktreeBaseDir(repoPath), name);
+    const requestedPath = options.worktreePath ?? NodePath.join(getManagedWorktreeBaseDir(repoPath), name);
     const path = managedCanonicalOnly
       ? await this.worktreeSafety.resolveManagedCanonicalWorktreePath(requestedPath)
       : requestedPath;
@@ -262,7 +262,7 @@ export class GitWorktreeService {
   }
 
   private async tryFallbackWorktreeRemoval(worktreePath: string): Promise<void> {
-    if (!existsSync(worktreePath)) return;
+    if (!NodeFS.existsSync(worktreePath)) return;
     logger.warn(
       "Worktree directory still exists after git remove, falling back to bounded child removal",
       { wtPath: worktreePath },
@@ -292,20 +292,20 @@ export class GitWorktreeService {
   }
 
   private async removeEmptyManagedParentDirs(worktreePath: string): Promise<boolean> {
-    const managedRoot = resolve(getMcodeDir(), "worktrees");
+    const managedRoot = NodePath.resolve(getMcodeDir(), "worktrees");
     if (!isManagedWorktreeDescendant(managedRoot, worktreePath)) return true;
 
-    let current = dirname(resolve(worktreePath));
+    let current = NodePath.dirname(NodePath.resolve(worktreePath));
     while (current !== managedRoot) {
       try {
         await this.rmdirWithRetry(current);
         logger.info("Removed empty managed worktree parent dir", { path: current });
-        current = dirname(current);
+        current = NodePath.dirname(current);
       } catch (error) {
         const outcome = managedParentRemovalOutcome(error);
         if (outcome === "stop") break;
         if (outcome === "continue") {
-          current = dirname(current);
+          current = NodePath.dirname(current);
           continue;
         }
         logger.warn("Failed to remove empty managed worktree parent dir", {
@@ -321,7 +321,7 @@ export class GitWorktreeService {
   private async rmdirWithRetry(directory: string): Promise<void> {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await rmdir(directory);
+        await NodeFSPromises.rmdir(directory);
         return;
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code ?? "";
@@ -342,8 +342,8 @@ export class GitWorktreeService {
 }
 
 function normalizeWorktreePath(path: string): string {
-  const resolvedPath = resolve(path);
-  const identityPath = existsSync(resolvedPath) ? realpathSync.native(resolvedPath) : resolvedPath;
+  const resolvedPath = NodePath.resolve(path);
+  const identityPath = NodeFS.existsSync(resolvedPath) ? NodeFS.realpathSync.native(resolvedPath) : resolvedPath;
   return identityPath.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 }
 
@@ -364,8 +364,8 @@ function resolveWorktreeBranch(name: string, options: RemoveWorktreeOptions): st
 }
 
 function isManagedWorktreeDescendant(managedRoot: string, worktreePath: string): boolean {
-  const relativePath = relative(managedRoot, resolve(worktreePath));
-  return !relativePath.startsWith("..") && !isAbsolute(relativePath);
+  const relativePath = NodePath.relative(managedRoot, NodePath.resolve(worktreePath));
+  return !relativePath.startsWith("..") && !NodePath.isAbsolute(relativePath);
 }
 
 function managedParentRemovalOutcome(error: unknown): "stop" | "continue" | "fail" {

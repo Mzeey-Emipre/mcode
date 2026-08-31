@@ -1,6 +1,7 @@
 import type {
   WorkspaceEnvironmentActionLaunchSnapshot,
   WorkspaceEnvironmentActionRun,
+  WorkspaceEnvironmentPlatform,
 } from "@mcode/contracts";
 import type { PreparedTerminalCommandSession } from "../../terminal/backends/terminal-backend.js";
 

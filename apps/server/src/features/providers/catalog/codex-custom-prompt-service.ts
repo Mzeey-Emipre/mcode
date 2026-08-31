@@ -15,9 +15,9 @@
  * produce source-scoped diagnostics without hiding valid sibling prompts.
  */
 
-import { open, opendir } from "fs/promises";
-import { homedir } from "os";
-import { join, resolve } from "path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 import { parseDocument } from "yaml";
 import type { ProviderCatalogSourceDiagnostic, SkillInfo } from "@mcode/contracts";
@@ -74,13 +74,13 @@ const DEFAULT_DISCOVERY_OPTIONS: CodexCustomPromptDiscoveryLimits = {
 
 const NODE_FILE_SYSTEM: CodexCustomPromptFileSystem = {
   async *entries(directory) {
-    const handle = await opendir(directory);
+    const handle = await NodeFSPromises.opendir(directory);
     for await (const entry of handle) {
       yield { name: entry.name, isFile: entry.isFile() };
     }
   },
   async readFile(path, maxBytes) {
-    const handle = await open(path, "r");
+    const handle = await NodeFSPromises.open(path, "r");
     try {
       const buffer = Buffer.allocUnsafe(maxBytes + 1);
       let offset = 0;
@@ -106,7 +106,7 @@ export function resolveEffectiveCodexHome(
   environment: Readonly<Record<string, string>>,
 ): string {
   const configuredHome = environmentValue(environment, CODEX_HOME_ENVIRONMENT_VARIABLE);
-  if (configuredHome) return resolve(configuredHome);
+  if (configuredHome) return NodePath.resolve(configuredHome);
 
   const driveHome = environmentValue(environment, "HOMEDRIVE")
     && environmentValue(environment, "HOMEPATH")
@@ -115,8 +115,8 @@ export function resolveEffectiveCodexHome(
   const userHome = environmentValue(environment, "HOME")
     ?? environmentValue(environment, "USERPROFILE")
     ?? driveHome
-    ?? homedir();
-  return resolve(userHome, ".codex");
+    ?? NodeOS.homedir();
+  return NodePath.resolve(userHome, ".codex");
 }
 
 function safeSourceName(name: string): string {
@@ -212,7 +212,7 @@ async function readPromptEntry(
   fileSystem: CodexCustomPromptFileSystem,
   state: PromptDiscoveryState,
 ): Promise<void> {
-  const path = join(promptDirectory, entryName);
+  const path = NodePath.join(promptDirectory, entryName);
   try {
     const buffer = await fileSystem.readFile(path, options.maxFileBytes);
     if (buffer.length > options.maxFileBytes) {
@@ -300,7 +300,7 @@ export async function discoverCodexCustomPrompts(
   options: CodexCustomPromptDiscoveryOptions = DEFAULT_DISCOVERY_OPTIONS,
 ): Promise<CodexCustomPromptDiscoveryResult> {
   const state: PromptDiscoveryState = { inspectedEntries: 0, inspectedFiles: 0, prompts: [], diagnostics: [] };
-  const promptDirectory = join(codexHome, CODEX_CUSTOM_PROMPT_DIRECTORY_NAME);
+  const promptDirectory = NodePath.join(codexHome, CODEX_CUSTOM_PROMPT_DIRECTORY_NAME);
   if (promptDirectory.length > PROVIDER_CATALOG_PATH_MAX_CHARS) {
     return {
       prompts: state.prompts,

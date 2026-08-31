@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type Database from "better-sqlite3";
 import {
   CONVERSATION_HISTORY_PAGE_MAX_MESSAGES,
@@ -483,5 +483,5 @@ function formatToolInput(value: unknown): string {
 }
 
 function hashCodexKey(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 32);
+  return NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
 }

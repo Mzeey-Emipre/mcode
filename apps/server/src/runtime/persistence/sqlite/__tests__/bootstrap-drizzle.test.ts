@@ -1,25 +1,25 @@
-import { createHash } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import type Database from "better-sqlite3";
-import { readFileSync } from "fs";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { bootstrapDrizzle } from "../bootstrap-drizzle.js";
 import { openElectronMemoryDatabase } from "./electron-sqlite.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DRIZZLE_DIR = join(__dirname, "../../../../../drizzle");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const DRIZZLE_DIR = NodePath.join(__dirname, "../../../../../drizzle");
 
 const journal = JSON.parse(
-  readFileSync(join(DRIZZLE_DIR, "meta/_journal.json"), "utf-8"),
+  NodeFS.readFileSync(NodePath.join(DRIZZLE_DIR, "meta/_journal.json"), "utf-8"),
 ) as { entries: Array<{ tag: string; when: number }> };
 
 const baselineTag = journal.entries[0]?.tag;
 if (!baselineTag) throw new Error("missing baseline migration");
 
 function baselineSqlHash(): string {
-  const sqlContent = readFileSync(join(DRIZZLE_DIR, `${baselineTag}.sql`), "utf-8");
-  return createHash("sha256").update(sqlContent).digest("hex");
+  const sqlContent = NodeFS.readFileSync(NodePath.join(DRIZZLE_DIR, `${baselineTag}.sql`), "utf-8");
+  return NodeCrypto.createHash("sha256").update(sqlContent).digest("hex");
 }
 
 function freshDb(): Database.Database {

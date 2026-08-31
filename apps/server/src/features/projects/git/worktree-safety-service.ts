@@ -70,7 +70,7 @@ export class WorktreeSafetyService {
     }
     for (const siblingPath of activeSiblingPaths) {
       // A missing directory cannot resolve to the existing target.
-      if (!existsSync(siblingPath)) continue;
+      if (!NodeFS.existsSync(siblingPath)) continue;
       const canonicalSibling = await this.canonicalWorktreeIdentity(siblingPath);
       if (!canonicalSibling) {
         return { safe: false, reason: "identity_uncertain" };
@@ -136,10 +136,10 @@ export class WorktreeSafetyService {
 
   /** Resolve and validate a managed worktree path without following a link later. */
   async resolveManagedCanonicalWorktreePath(worktreePath: string): Promise<string> {
-    const managedRoot = await realpath(resolve(getMcodeDir(), "worktrees"));
-    const canonicalPath = await realpath(worktreePath);
-    const rel = relative(managedRoot, canonicalPath);
-    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    const managedRoot = await NodeFSPromises.realpath(NodePath.resolve(getMcodeDir(), "worktrees"));
+    const canonicalPath = await NodeFSPromises.realpath(worktreePath);
+    const rel = NodePath.relative(managedRoot, canonicalPath);
+    if (rel === "" || rel === ".." || rel.startsWith(`..${NodePath.sep}`) || NodePath.isAbsolute(rel)) {
       throw new Error(`worktreePath is not a canonical managed worktree: ${worktreePath}`);
     }
     return canonicalPath;

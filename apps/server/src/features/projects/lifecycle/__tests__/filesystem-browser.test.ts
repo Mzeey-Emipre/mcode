@@ -41,8 +41,8 @@ describe("FilesystemBrowser", () => {
   });
 
   it("browse on a non-existent path walks up to nearest existing parent", async () => {
-    const tmp = await mkdtemp(join(tmpdir(), "fs-browse-"));
-    const result = await browser.browse(join(tmp, "ghost", "child"));
+    const tmp = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "fs-browse-"));
+    const result = await browser.browse(NodePath.join(tmp, "ghost", "child"));
     expect(result.path).toBe(tmp);
     expect(Array.isArray(result.entries)).toBe(true);
     expect(result.isExactDirectory).toBe(false);
@@ -76,9 +76,9 @@ describe("FilesystemBrowser", () => {
   });
 
   it("browse returns at most 500 entries", async () => {
-    const tmp = await mkdtemp(join(tmpdir(), "fs-browse-big-"));
+    const tmp = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "fs-browse-big-"));
     await Promise.all(
-      Array.from({ length: 600 }, (_, i) => writeFile(join(tmp, `f${i}.txt`), "")),
+      Array.from({ length: 600 }, (_, i) => NodeFSPromises.writeFile(NodePath.join(tmp, `f${i}.txt`), "")),
     );
     const result = await browser.browse(tmp);
     expect(result.entries.length).toBeLessThanOrEqual(500);

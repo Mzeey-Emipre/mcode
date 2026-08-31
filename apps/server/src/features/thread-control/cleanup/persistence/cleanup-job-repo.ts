@@ -5,7 +5,7 @@
  * surviving app restarts.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { Statement } from "better-sqlite3";
@@ -148,7 +148,7 @@ export class CleanupJobRepo {
     branch: string | null;
     kind?: "explicit" | "retention";
   }): CleanupJob {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const now = Date.now();
     const kind = job.kind ?? "explicit";
 
@@ -374,7 +374,7 @@ export class CleanupJobRepo {
         if (update.run(row.id).changes === 0) continue;
         deleteRetentionJob.run(row.id);
         insertRetentionJob.run(
-          randomUUID(),
+          NodeCrypto.randomUUID(),
           row.id,
           row.workspace_path,
           row.worktree_path,
@@ -439,7 +439,7 @@ export class CleanupJobRepo {
           (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
          VALUES (?, ?, ?, ?, ?, 'retention', 0, 0, ?)`,
       ).run(
-        randomUUID(),
+        NodeCrypto.randomUUID(),
         row.id,
         row.workspace_path,
         row.worktree_path,
@@ -467,7 +467,7 @@ export class CleanupJobRepo {
 
     const tx = this.db.transaction(() => {
       for (const job of jobs) {
-        const result = insert.run(randomUUID(), job.thread_id, job.workspace_path, job.worktree_path, job.branch, now);
+        const result = insert.run(NodeCrypto.randomUUID(), job.thread_id, job.workspace_path, job.worktree_path, job.branch, now);
         if (result.changes > 0) inserted++;
       }
     });

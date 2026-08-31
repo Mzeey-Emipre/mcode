@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BROWSER_AUTOMATION_OPERATIONS,
   type BrowserAutomationPublicOperation,
@@ -61,7 +61,7 @@ export interface BrowserAutomationCredentialRegistryOptions {
 }
 
 function digestToken(token: string): Buffer {
-  return createHash("sha256").update(token, "utf8").digest();
+  return NodeCrypto.createHash("sha256").update(token, "utf8").digest();
 }
 
 function validateScope(scope: BrowserAutomationCredentialScope): void {
@@ -132,8 +132,8 @@ export class BrowserAutomationCredentialRegistry {
     this.sweepExpired(now);
     while (this.credentials.size >= this.maxCredentials) this.evictLeastRecentlyUsed();
 
-    const credentialId = randomBytes(16).toString("hex");
-    const token = randomBytes(32).toString("base64url");
+    const credentialId = NodeCrypto.randomBytes(16).toString("hex");
+    const token = NodeCrypto.randomBytes(32).toString("base64url");
     const claims: BrowserAutomationCredentialClaims = {
       ...scope,
       allowedOperations: [...scope.allowedOperations],
@@ -159,7 +159,7 @@ export class BrowserAutomationCredentialRegistry {
     const candidate = digestToken(token);
     let matched: StoredCredential | null = null;
     for (const stored of this.credentials.values()) {
-      if (timingSafeEqual(stored.digest, candidate)) {
+      if (NodeCrypto.timingSafeEqual(stored.digest, candidate)) {
         matched = stored;
       }
     }

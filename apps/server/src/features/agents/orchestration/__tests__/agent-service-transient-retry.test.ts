@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
@@ -72,13 +72,13 @@ function buildService(): {
   discardSession: ReturnType<typeof vi.fn>;
   waitForSessionExit: ReturnType<typeof vi.fn>;
   threadControlMcp: { activate: ReturnType<typeof vi.fn> };
-  providerEmitter: EventEmitter;
+  providerEmitter: NodeEvents.EventEmitter;
   messageRepo: MessageRepo;
   mutationReservations: ThreadControlMutationReservationService;
   threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
-  const providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+  const providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
     id: "claude" as const,
   }));
   const sendTurn = vi.fn(() => Promise.resolve());

@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { runBoundedWriteBatches } from "../bounded-write-batches.js";
 import { openMemoryDatabase, resolveElectronNativeBinding } from "../database.js";
@@ -116,8 +116,8 @@ describe("runBoundedWriteBatches", () => {
   });
 
   it("rolls back the active batch when the lock timeout expires", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "mcode-write-lock-"));
-    const databasePath = join(directory, "locked.sqlite");
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-write-lock-"));
+    const databasePath = NodePath.join(directory, "locked.sqlite");
     const nativeBinding = resolveElectronNativeBinding();
     const lockOwner = new Database(databasePath, { nativeBinding });
     const writer = new Database(databasePath, { nativeBinding });
@@ -143,7 +143,7 @@ describe("runBoundedWriteBatches", () => {
       if (lockOwner.inTransaction) lockOwner.exec("ROLLBACK");
       writer.close();
       lockOwner.close();
-      rmSync(directory, { recursive: true, force: true });
+      NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
 

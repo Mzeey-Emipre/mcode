@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createConnection } from "net";
-import { IpcPushServer } from "../ipc-push-server.js";
-import { join } from "path";
-import { tmpdir } from "os";
-import { randomUUID } from "crypto";
+import * as NodeNet from "node:net";
+import { generateIpcPath, IpcPushServer } from "../ipc-push-server.js";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto";
 
 function ipcPath(): string {
   return process.platform === "win32"
-    ? `\\\\.\\pipe\\mcode-test-${randomUUID()}`
-    : join(tmpdir(), `mcode-test-${randomUUID()}.sock`);
+    ? `\\\\.\\pipe\\mcode-test-${NodeCrypto.randomUUID()}`
+    : NodePath.join(NodeOS.tmpdir(), `mcode-test-${NodeCrypto.randomUUID()}.sock`);
 }
 
 /** Read a length-prefixed frame from a buffer. */
@@ -41,7 +41,7 @@ describe("IpcPushServer", () => {
     server.onConnection(onAttach);
     await server.listen(path);
 
-    const client = createConnection(path);
+    const client = NodeNet.createConnection(path);
     await new Promise<void>((r) => client.on("connect", r));
     await new Promise((r) => setTimeout(r, 50));
     expect(onAttach).toHaveBeenCalledTimes(1);
@@ -59,7 +59,7 @@ describe("IpcPushServer", () => {
     server.onConnection(onAttach);
     await server.listen(path);
 
-    const client = createConnection(path);
+    const client = NodeNet.createConnection(path);
     await new Promise<void>((r) => client.on("connect", r));
     await new Promise((r) => setTimeout(r, 50));
 

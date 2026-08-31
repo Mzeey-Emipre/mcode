@@ -29,7 +29,7 @@ describe.runIf(process.platform === "win32")(
       job.assign(parent.pid!);
 
       // Allow the nested cmd → ping chain time to start on a loaded CI machine.
-      await delay(1500);
+      await NodeTimersPromises.setTimeout(1500);
 
       let exited = false;
       try {
@@ -38,7 +38,7 @@ describe.runIf(process.platform === "win32")(
 
         exited = await Promise.race([
           new Promise<true>((r) => parent.once("exit", () => r(true))),
-          delay(3000).then(() => false as const),
+          NodeTimersPromises.setTimeout(3000).then(() => false as const),
         ]);
         expect(exited).toBe(true);
       } finally {

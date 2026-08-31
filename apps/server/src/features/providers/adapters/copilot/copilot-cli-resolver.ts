@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
 import { isProviderVersionAtLeast } from "@mcode/providers";
 
 /** Which discovery strategy produced a resolution (for diagnostics + banner copy). */
@@ -136,9 +136,9 @@ function resolvePackageEntry(
   pkgDir: string,
   io: CopilotCliResolverIO,
 ): { entry: string; version: string | null } | null {
-  const entry = join(pkgDir, "index.js");
+  const entry = NodePath.join(pkgDir, "index.js");
   if (!io.exists(entry)) return null;
-  const raw = io.readFile(join(pkgDir, "package.json"));
+  const raw = io.readFile(NodePath.join(pkgDir, "package.json"));
   let version: string | null = null;
   if (raw) {
     try {
@@ -189,7 +189,7 @@ const npmGlobalStrategy: Strategy = {
   resolve(_ctx, io) {
     const root = io.exec("npm", ["root", "-g"]);
     if (!root) return null;
-    return resolvePackageEntry(join(root, "@github", "copilot"), io);
+    return resolvePackageEntry(NodePath.join(root, "@github", "copilot"), io);
   },
 };
 
@@ -224,7 +224,7 @@ const pathShimStrategy: Strategy = {
   resolve(_ctx, io) {
     const shim = locateOnPath(io);
     if (!shim) return null;
-    return resolvePackageEntry(join(dirname(shim), "node_modules", "@github", "copilot"), io);
+    return resolvePackageEntry(NodePath.join(NodePath.dirname(shim), "node_modules", "@github", "copilot"), io);
   },
 };
 
@@ -336,16 +336,16 @@ export function createNodeResolverIO(
 ): CopilotCliResolverIO {
   return {
     platform,
-    exists: (p) => existsSync(p),
+    exists: (p) => NodeFS.existsSync(p),
     readFile: (p) => {
       try {
-        return readFileSync(p, "utf8");
+        return NodeFS.readFileSync(p, "utf8");
       } catch {
         return null;
       }
     },
     exec: (command, args) => {
-      const r = spawnSync(command, args, {
+      const r = NodeChildProcess.spawnSync(command, args, {
         encoding: "utf8",
         timeout: 5000,
         windowsHide: true,

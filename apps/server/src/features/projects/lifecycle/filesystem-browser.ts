@@ -40,7 +40,7 @@ function listWindowsDrives(): { name: string; isDir: boolean }[] {
   for (let code = "A".charCodeAt(0); code <= "Z".charCodeAt(0); code++) {
     const letter = String.fromCharCode(code);
     const root = `${letter}:\\`;
-    if (existsSync(root)) {
+    if (NodeFS.existsSync(root)) {
       drives.push({ name: root, isDir: true });
     }
   }
@@ -73,9 +73,9 @@ export class FilesystemBrowser {
 
     const target = await resolveBrowseTarget(input);
     if (!target) return windowsDrivePickerResponse();
-    const dir = target.isDirectory ? target.path : dirname(target.path);
+    const dir = target.isDirectory ? target.path : NodePath.dirname(target.path);
 
-    const dirents = await readdir(dir, { withFileTypes: true });
+    const dirents = await NodeFSPromises.readdir(dir, { withFileTypes: true });
     const entries = dirents
       .map((d) => ({ name: d.name, isDir: d.isDirectory() }))
       .sort((a, b) => {
@@ -85,7 +85,7 @@ export class FilesystemBrowser {
       })
       .slice(0, MAX_ENTRIES);
 
-    const parentDir = dirname(dir);
+    const parentDir = NodePath.dirname(dir);
     return {
       path: dir,
       parent: parentDir === dir ? null : parentDir,
@@ -114,7 +114,7 @@ function windowsDrivePickerResponse(): {
 }
 
 function resolveBrowsePath(input: string): string {
-  return resolve(input.replace(/^~(?=$|[\\/])/, homedir()));
+  return NodePath.resolve(input.replace(/^~(?=$|[\\/])/, NodeOS.homedir()));
 }
 
 async function resolveBrowseTarget(input: string): Promise<BrowseTarget | null> {
@@ -123,7 +123,7 @@ async function resolveBrowseTarget(input: string): Promise<BrowseTarget | null> 
 
   for (let attempts = 0; attempts < 50; attempts += 1) {
     try {
-      const details = await stat(path);
+      const details = await NodeFSPromises.stat(path);
       return {
         path,
         isDirectory: details.isDirectory(),
@@ -131,7 +131,7 @@ async function resolveBrowseTarget(input: string): Promise<BrowseTarget | null> 
       };
     } catch {
       resolvedToAncestor = true;
-      const parent = dirname(path);
+      const parent = NodePath.dirname(path);
       if (parent === path) break;
       path = parent;
     }

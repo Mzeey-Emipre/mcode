@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { performance } from "node:perf_hooks";
+import * as NodePerfHooks from "node:perf_hooks";
 import type Database from "better-sqlite3";
 import { CONVERSATION_HISTORY_PAGE_MAX_BYTES } from "@mcode/contracts";
 import { openMemoryDatabase } from "../src/runtime/persistence/sqlite/database.js";
@@ -111,14 +111,14 @@ const originalPrepare = db.prepare.bind(db);
 loadConversationPage(deps, { threadId, limit: assistantCount * 2 });
 prepareCount = 0;
 
-const started = performance.now();
+const started = NodePerfHooks.performance.now();
 let lastRows = 0;
 for (let i = 0; i < iterations; i++) {
   const page = loadConversationPage(deps, { threadId, limit: assistantCount * 2 });
   lastRows = Object.values(page.narrativeByMessage)
     .reduce((sum, item) => sum + item.tools.length + item.thoughts.length + item.hooks.length, 0);
 }
-const elapsedMs = performance.now() - started;
+const elapsedMs = NodePerfHooks.performance.now() - started;
 const prepareCallsPerLoad = Number((prepareCount / iterations).toFixed(1));
 
 const olderRequest = {
@@ -141,20 +141,20 @@ const newerRequest = {
 };
 
 loadOlderConversationPage(deps, olderRequest);
-const olderStarted = performance.now();
+const olderStarted = NodePerfHooks.performance.now();
 let olderRows = 0;
 for (let i = 0; i < iterations; i++) {
   olderRows = loadOlderConversationPage(deps, olderRequest).messages.length;
 }
-const olderElapsedMs = performance.now() - olderStarted;
+const olderElapsedMs = NodePerfHooks.performance.now() - olderStarted;
 
 loadNewerConversationPage(deps, newerRequest);
-const newerStarted = performance.now();
+const newerStarted = NodePerfHooks.performance.now();
 let newerRows = 0;
 for (let i = 0; i < iterations; i++) {
   newerRows = loadNewerConversationPage(deps, newerRequest).messages.length;
 }
-const newerElapsedMs = performance.now() - newerStarted;
+const newerElapsedMs = NodePerfHooks.performance.now() - newerStarted;
 
 console.log(JSON.stringify({
   assistantMessages: assistantCount,

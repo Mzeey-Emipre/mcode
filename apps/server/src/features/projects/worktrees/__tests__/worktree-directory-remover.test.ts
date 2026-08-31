@@ -1,9 +1,9 @@
 import "reflect-metadata";
-import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { tmpdir } from "node:os";
+import * as NodeEvents from "node:events";
+import type * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import {
   WorktreeDirectoryRemover,
@@ -11,8 +11,9 @@ import {
   validateRemovalTarget,
 } from "../worktree-directory-remover.js";
 
+
 function fakeChild() {
-  const child = new EventEmitter() as unknown as ChildProcess;
+  const child = new NodeEvents.EventEmitter() as unknown as NodeChildProcess.ChildProcess;
   Object.defineProperty(child, "pid", { value: 42 });
   return child;
 }
@@ -22,7 +23,7 @@ describe("WorktreeDirectoryRemover", () => {
     const child = fakeChild();
     const spawn = vi.fn(() => child) as unknown as WorktreeDirectoryRemoverDependencies["spawn"];
     const remover = new WorktreeDirectoryRemover({ spawn, platform: "linux" });
-    const target = resolve("test-fixtures", "worktree");
+    const target = NodePath.resolve("test-fixtures", "worktree");
 
     const removing = remover.remove(target);
     expect(spawn).toHaveBeenCalledWith(
@@ -47,7 +48,7 @@ describe("WorktreeDirectoryRemover", () => {
       platform: "linux",
     });
 
-    const removing = remover.remove(resolve("test-fixtures", "worktree"));
+    const removing = remover.remove(NodePath.resolve("test-fixtures", "worktree"));
     child.emit("close", 1, null);
 
     await expect(removing).rejects.toThrow(/exit code 1/);

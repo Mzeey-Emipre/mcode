@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import type Database from "better-sqlite3";
 import {
@@ -97,7 +97,7 @@ export class ThreadControlApprovalRepo {
 
   /** Persist one pending approval and return its opaque identity. */
   create(input: Omit<PendingThreadCreateApproval, "approvalId" | "operation" | "operationPhase">): string {
-    const approvalId = randomUUID();
+    const approvalId = NodeCrypto.randomUUID();
     this.db.prepare(
       "INSERT INTO thread_control_approvals (id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, caller_id, source_thread_id, operation, operation_phase, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'thread_create_batch', 'pre_provision', 'pending')",
     ).run(
@@ -148,7 +148,7 @@ export class ThreadControlApprovalRepo {
     sourceProviderId?: string;
     approvalId?: string;
   }): string {
-    const approvalId = input.approvalId ?? randomUUID();
+    const approvalId = input.approvalId ?? NodeCrypto.randomUUID();
     this.db.prepare(
       "INSERT INTO thread_control_approvals (id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, caller_id, source_thread_id, source_turn_id, source_provider_id, operation, operation_phase, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pre_dispatch', 'pending')",
     ).run(

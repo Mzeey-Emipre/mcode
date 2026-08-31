@@ -1,13 +1,13 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { SkillService } from "../skill-service.js";
 import { SkillWatcherService } from "../skill-watcher-service.js";
 
 function tmp() {
-  return mkdtempSync(join(tmpdir(), "skill-watch-"));
+  return NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "skill-watch-"));
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -32,28 +32,28 @@ describe("SkillWatcherService", () => {
 
   afterEach(() => {
     watcher.stopAll();
-    rmSync(dir, { recursive: true, force: true });
+    NodeFS.rmSync(dir, { recursive: true, force: true });
   });
 
   it("invalidates the SkillService cache when a watched dir changes", async () => {
-    mkdirSync(join(dir, "skills"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(dir, "skills"), { recursive: true });
     const invalidateSpy = vi.spyOn(svc, "invalidate");
 
     watcher.watch(dir);
     // Trigger a change event
-    writeFileSync(join(dir, "skills", "marker.txt"), "x");
+    NodeFS.writeFileSync(NodePath.join(dir, "skills", "marker.txt"), "x");
 
     await waitFor(() => invalidateSpy.mock.calls.length > 0);
     expect(invalidateSpy).toHaveBeenCalled();
   });
 
   it("debounces rapid changes into a single invalidation", async () => {
-    mkdirSync(join(dir, "skills"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(dir, "skills"), { recursive: true });
     const invalidateSpy = vi.spyOn(svc, "invalidate");
 
     watcher.watch(dir);
     for (let i = 0; i < 5; i++) {
-      writeFileSync(join(dir, "skills", `f${i}.txt`), "x");
+      NodeFS.writeFileSync(NodePath.join(dir, "skills", `f${i}.txt`), "x");
     }
 
     await waitFor(() => invalidateSpy.mock.calls.length > 0);
@@ -62,12 +62,12 @@ describe("SkillWatcherService", () => {
   });
 
   it("watch() on a missing directory does not throw", () => {
-    expect(() => watcher.watch(join(dir, "does-not-exist"))).not.toThrow();
+    expect(() => watcher.watch(NodePath.join(dir, "does-not-exist"))).not.toThrow();
   });
 
   it("watch() dedupes by directory path: a second call for the same dir is a no-op", async () => {
-    mkdirSync(join(dir, "skills"), { recursive: true });
-    const target = join(dir, "skills");
+    NodeFS.mkdirSync(NodePath.join(dir, "skills"), { recursive: true });
+    const target = NodePath.join(dir, "skills");
     const invalidateSpy = vi.spyOn(svc, "invalidate");
 
     watcher.watch(target);
@@ -78,7 +78,7 @@ describe("SkillWatcherService", () => {
     // resets it), and the eventual single timer fire would still call
     // invalidate once — so call count alone is insufficient. The real
     // assertion is that we never registered a second underlying watcher.
-    writeFileSync(join(target, "marker.txt"), "x");
+    NodeFS.writeFileSync(NodePath.join(target, "marker.txt"), "x");
     await waitFor(() => invalidateSpy.mock.calls.length > 0);
     await new Promise((r) => setTimeout(r, 250));
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
@@ -94,7 +94,7 @@ describe("SkillWatcherService", () => {
     // skills/commands/plugins child dirs don't yet. Without parent-dir
     // watching, those roots would never be picked up until a process
     // restart.
-    const root = join(dir, "skills");
+    const root = NodePath.join(dir, "skills");
     // dir (parent) exists; root does not.
 
     watcher.start({ parentDirs: [dir], roots: [root] });
@@ -103,7 +103,7 @@ describe("SkillWatcherService", () => {
 
     // Create the missing root after start() — this should be observed by
     // the parent watcher and trigger a delayed registration of `root`.
-    mkdirSync(root, { recursive: true });
+    NodeFS.mkdirSync(root, { recursive: true });
     // Let the parent-triggered debounce flush; that fires onChange once
     // for the parent, which alone could satisfy a naive call-count assert.
     // Clearing the spy after this isolates the next assertion to the
@@ -112,7 +112,7 @@ describe("SkillWatcherService", () => {
     invalidateSpy.mockClear();
 
     // A change inside the late-registered root must invalidate exactly once.
-    writeFileSync(join(root, "marker.txt"), "x");
+    NodeFS.writeFileSync(NodePath.join(root, "marker.txt"), "x");
     await waitFor(() => invalidateSpy.mock.calls.length > 0);
     await new Promise((r) => setTimeout(r, 250));
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
@@ -132,25 +132,25 @@ describe("SkillWatcherService", () => {
 
   it("auto-registers roots from multiple parent directories", async () => {
     // Simulate two non-Codex provider parent directories existing at startup.
-    const claudeParent = join(dir, ".claude");
-    const cursorParent = join(dir, ".cursor");
-    mkdirSync(claudeParent, { recursive: true });
-    mkdirSync(cursorParent, { recursive: true });
+    const claudeParent = NodePath.join(dir, ".claude");
+    const cursorParent = NodePath.join(dir, ".cursor");
+    NodeFS.mkdirSync(claudeParent, { recursive: true });
+    NodeFS.mkdirSync(cursorParent, { recursive: true });
 
-    const cursorRoot = join(cursorParent, "skills");
+    const cursorRoot = NodePath.join(cursorParent, "skills");
 
     watcher.start({
       parentDirs: [claudeParent, cursorParent],
-      roots: [join(claudeParent, "skills"), cursorRoot],
+      roots: [NodePath.join(claudeParent, "skills"), cursorRoot],
     });
 
     const invalidateSpy = vi.spyOn(svc, "invalidate");
 
-    mkdirSync(cursorRoot, { recursive: true });
+    NodeFS.mkdirSync(cursorRoot, { recursive: true });
     await waitFor(() => invalidateSpy.mock.calls.length > 0);
     invalidateSpy.mockClear();
 
-    writeFileSync(join(cursorRoot, "marker.txt"), "x");
+    NodeFS.writeFileSync(NodePath.join(cursorRoot, "marker.txt"), "x");
     await waitFor(() => invalidateSpy.mock.calls.length > 0);
     await new Promise((r) => setTimeout(r, 250));
     expect(invalidateSpy).toHaveBeenCalledTimes(1);

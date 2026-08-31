@@ -1,13 +1,6 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { openDatabase } from "../database.js";
@@ -19,10 +12,10 @@ describe("database migration recovery", () => {
   const originalMigrationsDirectory = process.env.MCODE_DRIZZLE_MIGRATIONS_DIR;
 
   beforeEach(() => {
-    directory = mkdtempSync(join(tmpdir(), "mcode-migration-recovery-"));
-    databasePath = join(directory, "mcode.db");
-    migrationsDirectory = join(directory, "drizzle");
-    mkdirSync(join(migrationsDirectory, "meta"), { recursive: true });
+    directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-migration-recovery-"));
+    databasePath = NodePath.join(directory, "mcode.db");
+    migrationsDirectory = NodePath.join(directory, "drizzle");
+    NodeFS.mkdirSync(NodePath.join(migrationsDirectory, "meta"), { recursive: true });
   });
 
   afterEach(() => {
@@ -31,14 +24,14 @@ describe("database migration recovery", () => {
     } else {
       process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = originalMigrationsDirectory;
     }
-    rmSync(directory, { recursive: true, force: true });
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   });
 
   it("restores the usable database when a migration fails", () => {
     const originalBytes = Buffer.from("usable generation");
-    writeFileSync(databasePath, originalBytes);
-    writeFileSync(
-      join(migrationsDirectory, "meta", "_journal.json"),
+    NodeFS.writeFileSync(databasePath, originalBytes);
+    NodeFS.writeFileSync(
+      NodePath.join(migrationsDirectory, "meta", "_journal.json"),
       JSON.stringify({
         version: "7",
         dialect: "sqlite",
@@ -57,9 +50,9 @@ describe("database migration recovery", () => {
 
     expect(() => openDatabase({ dbPath: databasePath })).toThrow();
 
-    expect(readFileSync(databasePath)).toEqual(originalBytes);
+    expect(NodeFS.readFileSync(databasePath)).toEqual(originalBytes);
     expect(
-      readdirSync(directory).some((name) => name.startsWith("mcode.db.bak-")),
+      NodeFS.readdirSync(directory).some((name) => name.startsWith("mcode.db.bak-")),
     ).toBe(true);
   });
 });

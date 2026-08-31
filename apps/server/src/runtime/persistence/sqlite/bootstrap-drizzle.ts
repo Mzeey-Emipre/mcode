@@ -8,10 +8,10 @@
  * resolving merge conflicts).
  */
 
-import { createHash } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import type Database from "better-sqlite3";
-import { readFileSync } from "fs";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 const PREVIOUS_MIGRATION_TAG = "0041_index_completed_thread_cleanup";
 const SUBAGENT_IDENTITY_MIGRATION_TAG = "0042_supreme_terrax";
@@ -26,13 +26,13 @@ type MigrationJournal = {
 };
 
 function readJournal(drizzleDir: string): MigrationJournal {
-  const journalPath = join(drizzleDir, "meta", "_journal.json");
-  return JSON.parse(readFileSync(journalPath, "utf-8")) as MigrationJournal;
+  const journalPath = NodePath.join(drizzleDir, "meta", "_journal.json");
+  return JSON.parse(NodeFS.readFileSync(journalPath, "utf-8")) as MigrationJournal;
 }
 
 function migrationHash(drizzleDir: string, tag: string): string {
-  return createHash("sha256")
-    .update(readFileSync(join(drizzleDir, `${tag}.sql`), "utf-8"))
+  return NodeCrypto.createHash("sha256")
+    .update(NodeFS.readFileSync(NodePath.join(drizzleDir, `${tag}.sql`), "utf-8"))
     .digest("hex");
 }
 
@@ -103,8 +103,8 @@ export function bootstrapDrizzle(db: Database.Database, drizzleDir: string): voi
 
   if (!baselineAlreadyApplied(db)) return;
 
-  const journalPath = join(drizzleDir, "meta", "_journal.json");
-  const journal = JSON.parse(readFileSync(journalPath, "utf-8")) as {
+  const journalPath = NodePath.join(drizzleDir, "meta", "_journal.json");
+  const journal = JSON.parse(NodeFS.readFileSync(journalPath, "utf-8")) as {
     entries: Array<{ idx: number; tag: string; when: number }>;
   };
   const baseline = journal.entries[0];
@@ -112,9 +112,9 @@ export function bootstrapDrizzle(db: Database.Database, drizzleDir: string): voi
     throw new Error("Drizzle journal has no entries; cannot bootstrap");
   }
 
-  const sqlPath = join(drizzleDir, `${baseline.tag}.sql`);
-  const sqlContent = readFileSync(sqlPath, "utf-8");
-  const hash = createHash("sha256").update(sqlContent).digest("hex");
+  const sqlPath = NodePath.join(drizzleDir, `${baseline.tag}.sql`);
+  const sqlContent = NodeFS.readFileSync(sqlPath, "utf-8");
+  const hash = NodeCrypto.createHash("sha256").update(sqlContent).digest("hex");
 
   // Atomic CREATE + INSERT so an interrupted bootstrap can never leave the
   // tracking table in a "exists but empty" state that fools the early-return.
@@ -148,17 +148,17 @@ export function bootstrapDrizzle(db: Database.Database, drizzleDir: string): voi
 export function reconcileMigrations(db: Database.Database, drizzleDir: string): void {
   if (!tableExists(db, "__drizzle_migrations")) return;
 
-  const journalPath = join(drizzleDir, "meta", "_journal.json");
-  const journal = JSON.parse(readFileSync(journalPath, "utf-8")) as {
+  const journalPath = NodePath.join(drizzleDir, "meta", "_journal.json");
+  const journal = JSON.parse(NodeFS.readFileSync(journalPath, "utf-8")) as {
     entries: Array<{ idx: number; tag: string; when: number }>;
   };
 
   // Compute hashes the same way Drizzle does: Buffer.toString() then SHA-256
   const currentHashes = new Set<string>();
   for (const entry of journal.entries) {
-    const sqlPath = join(drizzleDir, `${entry.tag}.sql`);
-    const sqlContent = readFileSync(sqlPath).toString();
-    currentHashes.add(createHash("sha256").update(sqlContent).digest("hex"));
+    const sqlPath = NodePath.join(drizzleDir, `${entry.tag}.sql`);
+    const sqlContent = NodeFS.readFileSync(sqlPath).toString();
+    currentHashes.add(NodeCrypto.createHash("sha256").update(sqlContent).digest("hex"));
   }
 
   const applied = db

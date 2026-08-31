@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable } from "tsyringe";
 
 /** Lifecycle states for one per-thread mutation reservation. */
@@ -24,7 +24,7 @@ export class ThreadControlMutationReservationService {
   reserve(
     threadId: string,
     state: ThreadMutationReservationState,
-    token = randomUUID(),
+    token = NodeCrypto.randomUUID(),
   ): string | null {
     if (this.reservations.has(threadId)) return null;
     this.reservations.set(threadId, { token, state });

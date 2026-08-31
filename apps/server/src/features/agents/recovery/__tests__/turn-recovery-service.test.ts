@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -225,7 +225,7 @@ describe("TurnRecoveryService", () => {
   });
 
   it("imports a fsynced recovery journal before it restores the interrupted assistant text", () => {
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-recovery-journal-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-recovery-journal-"));
     const checkpoints = new ParentAssistantTextCheckpointService(db, undefined, { directory: journalDirectory });
     checkpoints.recoveryJournal.append([{
       executionId: EXECUTION_ID,
@@ -251,7 +251,7 @@ describe("TurnRecoveryService", () => {
         outcomeExecutionId: EXECUTION_ID,
       });
     } finally {
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 

@@ -138,14 +138,14 @@ const PREFERRED_PORT = parseInt(process.env.MCODE_PORT ?? "19400", 10);
 const MAX_PORT_ATTEMPTS = 10;
 
 /** Path to the server lock file used for service discovery across instances. */
-const LOCK_FILE_PATH = join(getMcodeDir(), "server.lock");
+const LOCK_FILE_PATH = NodePath.join(getMcodeDir(), "server.lock");
 
 /**
  * Path to the clean-shutdown breadcrumb. Written at the end of shutdown() and
  * deleted on startup. Absence at startup implies the previous process died
  * without running shutdown(): the primary diagnostic for #290-class restarts.
  */
-const SHUTDOWN_MARKER_PATH = join(getMcodeDir(), ".clean-shutdown");
+const SHUTDOWN_MARKER_PATH = NodePath.join(getMcodeDir(), ".clean-shutdown");
 
 /**
  * Host address to bind the server to.
@@ -164,15 +164,15 @@ function resolveAuthToken(): string {
   const fromEnv = process.env.MCODE_AUTH_TOKEN;
   if (fromEnv) return fromEnv;
 
-  const secretPath = join(getMcodeDir(), "auth-secret");
-  if (existsSync(secretPath)) {
-    const token = readFileSync(secretPath, "utf-8").trim();
+  const secretPath = NodePath.join(getMcodeDir(), "auth-secret");
+  if (NodeFS.existsSync(secretPath)) {
+    const token = NodeFS.readFileSync(secretPath, "utf-8").trim();
     if (token) return token;
   }
 
-  const token = randomUUID();
-  mkdirSync(getMcodeDir(), { recursive: true });
-  writeFileSync(secretPath, token, { mode: 0o600 });
+  const token = NodeCrypto.randomUUID();
+  NodeFS.mkdirSync(getMcodeDir(), { recursive: true });
+  NodeFS.writeFileSync(secretPath, token, { mode: 0o600 });
   return token;
 }
 
@@ -210,11 +210,11 @@ logger.info("Single-instance dev mode resolved", {
 
 /** Records an unclean previous exit, then clears a clean-shutdown marker. */
 function inspectCleanShutdownMarker(): void {
-  if (existsSync(SHUTDOWN_MARKER_PATH)) {
-    unlinkSync(SHUTDOWN_MARKER_PATH);
+  if (NodeFS.existsSync(SHUTDOWN_MARKER_PATH)) {
+    NodeFS.unlinkSync(SHUTDOWN_MARKER_PATH);
     return;
   }
-  if (existsSync(LOCK_FILE_PATH)) {
+  if (NodeFS.existsSync(LOCK_FILE_PATH)) {
     logger.warn(
       "Previous server process did not shut down gracefully: no clean-shutdown marker found",
       { markerPath: SHUTDOWN_MARKER_PATH },
@@ -230,7 +230,7 @@ function applyDevGitCheckoutEnv(): void {
   const cwd = process.cwd();
   if (!process.env.MCODE_GIT_BRANCH) {
     try {
-      const stdout = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      const stdout = NodeChildProcess.execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
         cwd,
         timeout: 3000,
         encoding: "utf8",
@@ -245,7 +245,7 @@ function applyDevGitCheckoutEnv(): void {
   }
   if (!process.env.MCODE_GIT_TOPLEVEL) {
     try {
-      const stdout = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      const stdout = NodeChildProcess.execFileSync("git", ["rev-parse", "--show-toplevel"], {
         cwd,
         timeout: 3000,
         encoding: "utf8",
@@ -617,7 +617,7 @@ function initializeWorkspaceWatcher(workspace: ReturnType<typeof workspaceRepo.l
       gitWatcherService.watchThreadWorktree(thread.id, thread.worktree_path);
     }
   }
-  if (!workspace.is_git_repo && existsSync(join(workspace.path, ".git"))) {
+  if (!workspace.is_git_repo && NodeFS.existsSync(NodePath.join(workspace.path, ".git"))) {
     workspaceRepo.setIsGitRepo(workspace.id, true);
     logger.info("Corrected stale is_git_repo=false at startup", { workspaceId: workspace.id, path: workspace.path });
   }
@@ -744,7 +744,7 @@ const { httpServer, wss } = createWsServer({
   instanceToken: INSTANCE_TOKEN,
   worktreeIdentity: WORKTREE_IDENTITY,
   resolveBrowserAutomationHostAuthorization: () => ({
-    desktopInstanceId: randomUUID(),
+    desktopInstanceId: NodeCrypto.randomUUID(),
     worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
     allowedWorkspaceIds: workspaceService.list().map((workspace) => workspace.id),
     allowWebRuntime: WEB_AUTOMATION_ENABLED,
@@ -790,7 +790,7 @@ function listen(port: number): void {
           version: process.env.MCODE_VERSION ?? "0.0.0",
           ipcPath,
         });
-        writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
+        NodeFS.writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
         logger.info("Server lock file written", { path: LOCK_FILE_PATH });
       } catch (err) {
         logger.warn("Failed to write server lock file", { error: String(err) });
@@ -985,7 +985,7 @@ async function shutdown(): Promise<void> {
   // detects an unclean exit (missing marker + present lock = warn).
   try {
     shutdownCoordinator.setPhase("write clean-shutdown marker");
-    writeFileSync(SHUTDOWN_MARKER_PATH, String(Date.now()), {
+    NodeFS.writeFileSync(SHUTDOWN_MARKER_PATH, String(Date.now()), {
       mode: 0o600,
       encoding: "utf-8",
     });
@@ -1000,7 +1000,7 @@ async function shutdown(): Promise<void> {
   // 13. Remove server lock file
   shutdownCoordinator.setPhase("remove server lock");
   try {
-    unlinkSync(LOCK_FILE_PATH);
+    NodeFS.unlinkSync(LOCK_FILE_PATH);
   } catch {
     // Lock file may already be gone
   }

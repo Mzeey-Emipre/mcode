@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import type {
   WorkspaceEnvironmentActionRun,

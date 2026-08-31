@@ -1,8 +1,8 @@
 import "reflect-metadata";
-import { mkdirSync, rmSync } from "fs";
-import { mkdtemp } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { WorkspaceRepo } from "../../../features/projects/persistence/workspace-repo.js";
 import { seedAgentRuntimeWorkspace } from "../dev-agent-seed.js";
@@ -17,15 +17,15 @@ describe("seedAgentRuntimeWorkspace", () => {
     db?.close();
     db = null;
     for (const dir of tmpDirs.splice(0)) {
-      rmSync(dir, { recursive: true, force: true });
+      NodeFS.rmSync(dir, { recursive: true, force: true });
     }
   });
 
   async function createFixtureRepo(): Promise<string> {
-    const root = await mkdtemp(join(tmpdir(), "mcode-agent-seed-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-seed-"));
     tmpDirs.push(root);
-    const fixtureRepo = join(root, "fixture-repo");
-    mkdirSync(join(fixtureRepo, ".git"), { recursive: true });
+    const fixtureRepo = NodePath.join(root, "fixture-repo");
+    NodeFS.mkdirSync(NodePath.join(fixtureRepo, ".git"), { recursive: true });
     return fixtureRepo;
   }
 
@@ -71,7 +71,7 @@ describe("seedAgentRuntimeWorkspace", () => {
 
     expect(() =>
       seedAgentRuntimeWorkspace(
-        { MCODE_AGENT_RUNTIME: "1", MCODE_AGENT_FIXTURE_REPO: join(tmpdir(), "missing-fixture") },
+        { MCODE_AGENT_RUNTIME: "1", MCODE_AGENT_FIXTURE_REPO: NodePath.join(NodeOS.tmpdir(), "missing-fixture") },
         { workspaceRepo },
       ),
     ).toThrow(/does not exist/);

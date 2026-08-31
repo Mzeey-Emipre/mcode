@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
-import { delimiter, dirname, join, resolve } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 import type { TerminalPlatform } from "@mcode/contracts";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
@@ -19,7 +19,7 @@ const TEST_PLATFORM: TerminalPlatform =
     : process.platform === "darwin"
       ? "macos"
       : "linux";
-const nativeRequire = createRequire(import.meta.url);
+const nativeRequire = NodeModule.createRequire(import.meta.url);
 
 function launchSnapshot() {
   const executable = TEST_PLATFORM === "windows" ? process.env.ComSpec ?? "cmd.exe" : "/bin/bash";
@@ -131,16 +131,16 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
   "ModernTerminalSessionRuntime with the supervised PTY host",
   () => {
     it("restores bounded output after a real shell detaches, then closes its process tree", async () => {
-      const repoRoot = resolve(process.cwd(), "../..");
-      const devDir = join(repoRoot, ".dev");
-      mkdirSync(devDir, { recursive: true });
-      const tempDir = mkdtempSync(join(devDir, "terminal-runtime-live-"));
-      const entryPath = join(tempDir, "pty-host.cjs");
+      const repoRoot = NodePath.resolve(process.cwd(), "../..");
+      const devDir = NodePath.join(repoRoot, ".dev");
+      NodeFS.mkdirSync(devDir, { recursive: true });
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(devDir, "terminal-runtime-live-"));
+      const entryPath = NodePath.join(tempDir, "pty-host.cjs");
       let supervisor: PtyHostSupervisor | null = null;
       let runtime: ModernTerminalSessionRuntime | null = null;
       try {
         await build({
-          entryPoints: [resolve(process.cwd(), "src/features/terminal/host/pty-host-entry.ts")],
+          entryPoints: [NodePath.resolve(process.cwd(), "src/features/terminal/host/pty-host-entry.ts")],
           outfile: entryPath,
           bundle: true,
           platform: "node",
@@ -315,7 +315,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
       } finally {
         if (runtime) await runtime.shutdown().catch(() => undefined);
         else if (supervisor) await supervisor.shutdown().catch(() => undefined);
-        if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+        if (NodeFS.existsSync(tempDir)) NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
     }, 40_000);
   },

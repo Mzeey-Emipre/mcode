@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { join } from "node:path";
+import * as NodePath from "node:path";
 import {
   resolveCopilotCli,
   clearResolutionCache,
@@ -109,12 +109,12 @@ describe("resolveCopilotCli", () => {
   });
 
   it("falls through when the configured path is missing and npm-global resolves", () => {
-    const pkgDir = join("/global", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const pkgDir = NodePath.join("/global", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "linux",
       exec: withSdkHelp({ "npm root -g": "/global" }, [entry]),
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
       existsExtra: [entry],
     });
     const res = resolveCopilotCli({ configuredPath: "/missing/copilot" }, io);
@@ -123,13 +123,13 @@ describe("resolveCopilotCli", () => {
 
   it("falls through when the configured path does not respond to --version", () => {
     const configured = "/usr/bin/copilot";
-    const pkgDir = join("/global", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const pkgDir = NodePath.join("/global", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "linux",
       existsExtra: [configured, entry],
       exec: withSdkHelp({ "npm root -g": "/global" }, [entry]),
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
     });
     const res = resolveCopilotCli({ configuredPath: configured }, io);
     expect(res).toMatchObject({ source: "npm-global", entry, version: "1.0.24" });
@@ -141,12 +141,12 @@ describe("resolveCopilotCli", () => {
   });
 
   it("resolves @github/copilot via npm root -g to index.js, version from package.json", () => {
-    const pkgDir = join("/global", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const pkgDir = NodePath.join("/global", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "linux",
       exec: withSdkHelp({ "npm root -g": "/global" }, [entry]),
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
       existsExtra: [entry],
     });
     const res = resolveCopilotCli({}, io);
@@ -154,15 +154,15 @@ describe("resolveCopilotCli", () => {
   });
 
   it("accepts 1.x when version qualifies even if --help only lists --acp", () => {
-    const pkgDir = join("/global", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const pkgDir = NodePath.join("/global", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "linux",
       exec: {
         "npm root -g": "/global",
         [`${entry} --help`]: SDK_ACP_HELP,
       },
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("1.0.56") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("1.0.56") },
       existsExtra: [entry],
     });
     const res = resolveCopilotCli({}, io);
@@ -170,15 +170,15 @@ describe("resolveCopilotCli", () => {
   });
 
   it("rejects an SDK-incompatible CLI below the minimum 0.0.x build", () => {
-    const pkgDir = join("/global", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const pkgDir = NodePath.join("/global", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "linux",
       exec: {
         "npm root -g": "/global",
         [`${entry} --help`]: "Usage: copilot [options] [command]",
       },
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("0.0.330") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("0.0.330") },
       existsExtra: [entry],
     });
     const res = resolveCopilotCli({}, io);
@@ -190,22 +190,22 @@ describe("resolveCopilotCli", () => {
   });
 
   it("falls through when npm root -g resolves but index.js is absent", () => {
-    const pkgDir = join("/global", "@github", "copilot");
+    const pkgDir = NodePath.join("/global", "@github", "copilot");
     const io = fakeIO({
       platform: "linux",
       exec: { "npm root -g": "/global" },
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
     });
     expect(resolveCopilotCli({}, io).source).toBe("not-found");
   });
 
   it("falls through when package.json name is not @github/copilot", () => {
-    const pkgDir = join("/global", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const pkgDir = NodePath.join("/global", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "linux",
       exec: { "npm root -g": "/global" },
-      files: { [join(pkgDir, "package.json")]: JSON.stringify({ name: "evil-pkg", version: "1.0.0" }) },
+      files: { [NodePath.join(pkgDir, "package.json")]: JSON.stringify({ name: "evil-pkg", version: "1.0.0" }) },
       existsExtra: [entry],
     });
     expect(resolveCopilotCli({}, io).source).toBe("not-found");
@@ -216,17 +216,17 @@ describe("resolveCopilotCli", () => {
   });
 
   it("follows a win32 .ps1 shim to the adjacent package index.js (PowerShell-aware)", () => {
-    const binDir = join("C:/scoop/bin");
-    const shim = join(binDir, "copilot.ps1");
-    const pkgDir = join(binDir, "node_modules", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const binDir = NodePath.join("C:/scoop/bin");
+    const shim = NodePath.join(binDir, "copilot.ps1");
+    const pkgDir = NodePath.join(binDir, "node_modules", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "win32",
       exec: withSdkHelp(
         { "powershell -NoProfile -Command (Get-Command copilot).Source": shim },
         [entry],
       ),
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
       existsExtra: [entry],
     });
     const res = resolveCopilotCli({}, io);
@@ -234,14 +234,14 @@ describe("resolveCopilotCli", () => {
   });
 
   it("falls back to where.exe on win32 when PowerShell does not resolve copilot", () => {
-    const binDir = join("C:/tools/bin");
-    const shim = join(binDir, "copilot.cmd");
-    const pkgDir = join(binDir, "node_modules", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const binDir = NodePath.join("C:/tools/bin");
+    const shim = NodePath.join(binDir, "copilot.cmd");
+    const pkgDir = NodePath.join(binDir, "node_modules", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "win32",
       exec: withSdkHelp({ "where copilot": shim }, [entry]),
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
       existsExtra: [entry],
     });
     const res = resolveCopilotCli({}, io);
@@ -250,13 +250,13 @@ describe("resolveCopilotCli", () => {
 
   it("resolves via posix which, following to the adjacent package index.js", () => {
     const binDir = "/usr/local/bin";
-    const shim = join(binDir, "copilot");
-    const pkgDir = join(binDir, "node_modules", "@github", "copilot");
-    const entry = join(pkgDir, "index.js");
+    const shim = NodePath.join(binDir, "copilot");
+    const pkgDir = NodePath.join(binDir, "node_modules", "@github", "copilot");
+    const entry = NodePath.join(pkgDir, "index.js");
     const io = fakeIO({
       platform: "linux",
       exec: withSdkHelp({ "which copilot": shim }, [entry]),
-      files: { [join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
+      files: { [NodePath.join(pkgDir, "package.json")]: COPILOT_PKG("1.0.24") },
       existsExtra: [entry],
     });
     const res = resolveCopilotCli({}, io);

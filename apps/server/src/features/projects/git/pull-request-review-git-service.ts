@@ -96,7 +96,7 @@ interface ReviewProvisionAttempt {
 
 function safeReviewRefComponent(value: string): string {
   const readable = value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  const hash = createHash("sha256").update(value).digest("hex").slice(0, 10);
+  const hash = NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 10);
   return `${readable.slice(0, 30) || "repository"}-${hash}`;
 }
 
@@ -613,7 +613,7 @@ export class PullRequestReviewGitService {
   }
 
   private assertReviewRepositoryAvailable(repoPath: string): void {
-    if (!existsSync(repoPath)) {
+    if (!NodeFS.existsSync(repoPath)) {
       throw new PullRequestReviewGitError(
         "workspace_mapping_missing",
         "The mapped Workspace repository is unavailable.",
@@ -667,7 +667,7 @@ export class PullRequestReviewGitService {
     repoPath: string,
     source: PullRequestReviewGitSource,
   ): Promise<{ remote: NormalizedGitRemote; created: true }> {
-    const remoteName = `mcode-pr-${createHash("sha256")
+    const remoteName = `mcode-pr-${NodeCrypto.createHash("sha256")
       .update(source.headRepositoryNodeId)
       .digest("hex")
       .slice(0, 12)}`;

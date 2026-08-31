@@ -1,10 +1,10 @@
 import { defineConfig } from "vitest/config";
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "url";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { createTestDataDir } from "../../scripts/vitest-test-dir";
 
 const testDataDir = createTestDataDir();
-const serverPackageRoot = dirname(fileURLToPath(import.meta.url));
+const serverPackageRoot = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
@@ -17,7 +17,7 @@ export default defineConfig({
     maxWorkers: 2,
     env: {
       MCODE_DATA_DIR: testDataDir,
-      MCODE_DRIZZLE_MIGRATIONS_DIR: resolve(serverPackageRoot, "drizzle"),
+      MCODE_DRIZZLE_MIGRATIONS_DIR: NodePath.resolve(serverPackageRoot, "drizzle"),
     },
     globalSetup: ["../../scripts/vitest-global-setup.ts"],
   },

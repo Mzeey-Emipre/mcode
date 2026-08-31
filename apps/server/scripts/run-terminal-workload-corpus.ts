@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node-pty";
 import type { IPty } from "node-pty";
-import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import {
   evaluateTerminalWorkload,
   getTerminalWorkload,
@@ -17,12 +17,12 @@ import {
   type TerminalWorkloadSpec,
 } from "../src/features/terminal/testing/terminal-workload-corpus.js";
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../../..");
 
 function resolveNodeExecutable(): string {
   if (!/[\\/]bun(?:\.exe)?$/i.test(process.execPath)) return process.execPath;
   const resolver = process.platform === "win32" ? "where.exe" : "which";
-  const output = execFileSync(resolver, ["node"], {
+  const output = NodeChildProcess.execFileSync(resolver, ["node"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });

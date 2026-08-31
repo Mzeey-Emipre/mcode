@@ -1,6 +1,6 @@
-import { existsSync, statSync } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { isAbsolute } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 import {
   AgentEventType,
   previewAnnotationSnapshotAttachments,
@@ -399,7 +399,7 @@ export class TurnAdmissionDispatchCoordinator {
     const cwd = this.resolveWorkingDirectory(prepared);
     runtime.activate(lease);
     const attachmentData = await this.persistAttachments(prepared);
-    const sourceTurnId = prepared.command.sourceTurnId ?? randomUUID();
+    const sourceTurnId = prepared.command.sourceTurnId ?? NodeCrypto.randomUUID();
     this.startParentTurn(prepared, lease, sourceTurnId, attachmentData);
     this.publishCommittedEffects(prepared, sourceTurnId);
     const wirePayload = this.buildWirePayload(prepared);
@@ -575,7 +575,7 @@ export class TurnAdmissionDispatchCoordinator {
     mentions: readonly MessageMention[],
     attachments: PersistedAttachmentData,
   ) {
-    const messageId = command.messageId ?? randomUUID();
+    const messageId = command.messageId ?? NodeCrypto.randomUUID();
     return {
       threadId: thread.id,
       messageId,
@@ -650,7 +650,7 @@ export class TurnAdmissionDispatchCoordinator {
 
   private resolveWorkingDirectory(prepared: PreparedCommand): string {
     const cwd = this.worktrees.resolveWorkingDir(prepared.workspace.path, prepared.thread.mode, prepared.thread.worktree_path);
-    if (!isAbsolute(cwd) || !existsSync(cwd) || !statSync(cwd).isDirectory()) {
+    if (!NodePath.isAbsolute(cwd) || !NodeFS.existsSync(cwd) || !NodeFS.statSync(cwd).isDirectory()) {
       throw new Error(`cwd is not a valid absolute directory: ${cwd}`);
     }
     return cwd;

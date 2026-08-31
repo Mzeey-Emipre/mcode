@@ -1,4 +1,4 @@
-import { createServer, type Server, type Socket } from "net";
+import * as NodeNet from "node:net";
 import type { MessagePortLike } from "./port-push.js";
 import { logger } from "@mcode/shared";
 
@@ -7,9 +7,9 @@ import { logger } from "@mcode/shared";
  * Each connected client gets a MessagePortLike adapter for use with PortPush.
  */
 export class IpcPushServer {
-  private server: Server | null = null;
+  private server: NodeNet.Server | null = null;
   private connectionHandler: ((port: MessagePortLike) => void) | null = null;
-  private sockets = new Set<Socket>();
+  private sockets = new Set<NodeNet.Socket>();
 
   /** Whether the server is actively listening. */
   get isListening(): boolean {
@@ -23,7 +23,7 @@ export class IpcPushServer {
 
   /** Start listening on the given IPC path. */
   async listen(ipcPath: string): Promise<void> {
-    this.server = createServer((socket) => {
+    this.server = NodeNet.createServer((socket) => {
       this.sockets.add(socket);
       socket.on("close", () => this.sockets.delete(socket));
       socket.on("error", (err) => {
@@ -69,7 +69,7 @@ export class IpcPushServer {
  * Wrap a net.Socket in a MessagePortLike adapter.
  * Uses length-prefixed binary framing: [4-byte BE uint32 length][JSON payload].
  */
-function createSocketAdapter(socket: Socket): MessagePortLike {
+function createSocketAdapter(socket: NodeNet.Socket): MessagePortLike {
   return {
     postMessage(message: unknown): void {
       const json = JSON.stringify(message);

@@ -5,10 +5,10 @@
  * so token validation logic lives in one place.
  */
 
-import type { IncomingMessage } from "http";
+import * as NodeHTTP from "node:http";
 
 /** Minimal request shape required for token extraction. */
-type RequestLike = Pick<IncomingMessage, "url" | "headers">;
+type RequestLike = Pick<NodeHTTP.IncomingMessage, "url" | "headers">;
 
 /**
  * Extract an auth token from a request using the following precedence:

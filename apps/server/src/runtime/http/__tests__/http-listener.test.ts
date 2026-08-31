@@ -1,8 +1,8 @@
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { listenWithPortRetry } from "../http-listener.js";
 
-class FakeServer extends EventEmitter {
+class FakeServer extends NodeEvents.EventEmitter {
   readonly attempts: number[] = [];
 
   listen(port: number): this {

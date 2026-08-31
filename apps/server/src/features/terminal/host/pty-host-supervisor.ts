@@ -1,6 +1,6 @@
 import type { TerminalPlatform } from "@mcode/contracts";
-import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import * as NodeBuffer from "node:buffer";
+import * as NodeCrypto from "node:crypto";
 import { killProcessTree } from "../../../runtime/process/containment/process-kill.js";
 import {
   type PtyHostCleanupLedgerStore,
@@ -216,7 +216,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
             hostGeneration: command.hostGeneration,
             attachmentEpoch: command.attachmentEpoch,
             commandSeq: command.commandSeq,
-            dataBase64: Buffer.from(command.data).toString("base64"),
+            dataBase64: NodeBuffer.Buffer.from(command.data).toString("base64"),
           }
         : {
             contractVersion: 1,
@@ -578,7 +578,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     const child = this.child;
     if (!child?.connected) throw new Error("PTY host channel is unavailable");
     const message = PtyHostServerMessageSchema().parse(value);
-    const messageBytes = Buffer.byteLength(JSON.stringify(message), "utf8");
+    const messageBytes = NodeBuffer.Buffer.byteLength(JSON.stringify(message), "utf8");
     if (this.outboundBytes + messageBytes > MAX_IPC_QUEUE_BYTES) {
       throw new Error("PTY host channel queue exceeds 1 MiB");
     }
@@ -713,7 +713,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
           contractVersion: 1,
           kind: "probe",
           hostGeneration: generation,
-          nonce: randomUUID(),
+          nonce: NodeCrypto.randomUUID(),
         });
       } catch (error) {
         this.handleHostFailure(

@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import { describe, it, expect } from "vitest";
 import { handleBinaryUpload } from "../binary-upload.js";
-import { existsSync } from "fs";
-import { readFile, unlink } from "fs/promises";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
 
 describe("handleBinaryUpload", () => {
   it("writes binary data to a temp file and returns attachment metadata", async () => {
@@ -23,11 +23,11 @@ describe("handleBinaryUpload", () => {
       });
 
       // Verify the file was actually written
-      expect(existsSync(result.sourcePath)).toBe(true);
-      const contents = await readFile(result.sourcePath);
+      expect(NodeFS.existsSync(result.sourcePath)).toBe(true);
+      const contents = await NodeFSPromises.readFile(result.sourcePath);
       expect(contents.toString()).toBe("hello world");
     } finally {
-      await unlink(result.sourcePath).catch(() => undefined);
+      await NodeFSPromises.unlink(result.sourcePath).catch(() => undefined);
     }
   });
 

@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import * as NodeHTTP from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -22,7 +22,7 @@ import { BrowserAutomationMcpHandler } from "../mcp-handler.js";
 
 const socket = { name: "conformance-host" } as never;
 
-let server: Server | undefined;
+let server: NodeHTTP.Server | undefined;
 let broker: BrowserAutomationBroker | undefined;
 let credentials: BrowserAutomationCredentialRegistry | undefined;
 
@@ -152,7 +152,7 @@ function createMcpConformanceScenario() {
 }
 
 async function startMcpConformanceServer(handler: BrowserAutomationMcpHandler): Promise<string> {
-  server = createServer((req, res) => void handler.handle(req, res));
+  server = NodeHTTP.createServer((req, res) => void handler.handle(req, res));
   await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("conformance server did not bind");

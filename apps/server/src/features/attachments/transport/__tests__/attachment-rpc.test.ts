@@ -1,11 +1,11 @@
-import { readFile, rm } from "node:fs/promises";
+import * as NodeFSPromises from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { routeAttachmentRpc } from "../attachment-rpc.js";
 
 const createdPaths: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(createdPaths.splice(0).map((path) => rm(path, { force: true })));
+  await Promise.all(createdPaths.splice(0).map((path) => NodeFSPromises.rm(path, { force: true })));
 });
 
 describe("routeAttachmentRpc", () => {
@@ -31,7 +31,7 @@ describe("routeAttachmentRpc", () => {
       sizeBytes: 14,
     });
     expect(attachment.sourcePath).toMatch(/mcode-attachments.*\.txt$/);
-    await expect(readFile(attachment.sourcePath, "utf8")).resolves.toBe("clipboard text");
+    await expect(NodeFSPromises.readFile(attachment.sourcePath, "utf8")).resolves.toBe("clipboard text");
   });
 
   it("requires data when a client uses the legacy JSON-RPC path", async () => {

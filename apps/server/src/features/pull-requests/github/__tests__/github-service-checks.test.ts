@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 
 const { mockExecFile } = vi.hoisted(() => ({
@@ -10,7 +10,7 @@ const { mockKillProcessTree } = vi.hoisted(() => ({
   mockKillProcessTree: vi.fn(),
 }));
 
-vi.mock("child_process", () => ({
+vi.mock("node:child_process", () => ({
   execFile: mockExecFile,
 }));
 
@@ -47,7 +47,7 @@ describe("GithubService.getCheckRuns", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockKillProcessTree.mockResolvedValue(undefined);
-    ghService = new GithubService({} as WorkspaceRepo);
+    ghService = new GithubService({} as WorkspaceRepo, TEST_HOST_RUNTIME);
     vi.spyOn(ghService, "resolveRepoSlug").mockResolvedValue("owner/test-repo");
   });
 
@@ -400,10 +400,10 @@ describe("GithubService.getCheckRuns", () => {
   });
 
   it("cancelCheckRuns terminates the active gh process for that branch and repo", async () => {
-    let child!: EventEmitter & { pid: number };
+    let child!: NodeEvents.EventEmitter & { pid: number };
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], _opts: unknown, _cb: CallbackFn) => {
-        child = Object.assign(new EventEmitter(), { pid: 4321 });
+        child = Object.assign(new NodeEvents.EventEmitter(), { pid: 4321 });
         return child;
       },
     );
@@ -471,10 +471,10 @@ describe("GithubService.getCheckRuns", () => {
   });
 
   it("cancelForRepoPath terminates active gh processes for normalized matching repo paths", async () => {
-    let child!: EventEmitter & { pid: number };
+    let child!: NodeEvents.EventEmitter & { pid: number };
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], _opts: unknown, _cb: CallbackFn) => {
-        child = Object.assign(new EventEmitter(), { pid: 6789 });
+        child = Object.assign(new NodeEvents.EventEmitter(), { pid: 6789 });
         return child;
       },
     );
@@ -495,7 +495,7 @@ describe("GithubService.getPullRequestWatchSnapshots", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockKillProcessTree.mockResolvedValue(undefined);
-    ghService = new GithubService({} as WorkspaceRepo);
+    ghService = new GithubService({} as WorkspaceRepo, TEST_HOST_RUNTIME);
     vi.spyOn(ghService, "resolveRepoSlug").mockResolvedValue("owner/test-repo");
   });
 
@@ -724,7 +724,7 @@ describe("GithubService.resolveRepoSlug", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    ghService = new GithubService({} as WorkspaceRepo);
+    ghService = new GithubService({} as WorkspaceRepo, TEST_HOST_RUNTIME);
   });
 
   it("returns owner/repo from gh repo view", async () => {

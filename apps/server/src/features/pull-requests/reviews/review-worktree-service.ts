@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import type {
   InteractionMode,
@@ -518,7 +518,7 @@ export class ReviewWorktreeService {
       let link = existing
         ? this.reviewLinkRepo.replaceLocalCheckout(linkIdentity, checkout)
         : this.reviewLinkRepo.insert({
-            worktreeId: randomUUID(),
+            worktreeId: NodeCrypto.randomUUID(),
             ...linkIdentity,
             ...checkout,
           });

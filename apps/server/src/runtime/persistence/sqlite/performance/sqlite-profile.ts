@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { statSync } from "node:fs";
-import { cpus } from "node:os";
-import { performance } from "node:perf_hooks";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePerfHooks from "node:perf_hooks";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { NarrativeEntry } from "@mcode/contracts";
@@ -492,15 +492,15 @@ export async function runSQLiteProfile(
     for (const workload of SQLITE_PROFILE_WORKLOADS) {
       if (workload === "startup-and-migrations") {
         const before = process.memoryUsage();
-        const started = performance.now();
+        const started = NodePerfHooks.performance.now();
         const workloadDatabase = createDatabase(workload, sample);
         try {
-          const completed = performance.now();
+          const completed = NodePerfHooks.performance.now();
           const after = process.memoryUsage();
           const startupResult = {
             migrations: (workloadDatabase.db.prepare("SELECT COUNT(*) AS count FROM __drizzle_migrations").get() as { count: number }).count,
             tables: (workloadDatabase.db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table'").get() as { count: number }).count,
-            databaseBytes: statSync(workloadDatabase.dbPath).size,
+            databaseBytes: NodeFS.statSync(workloadDatabase.dbPath).size,
           };
           sqliteVersion = readSQLiteVersion(workloadDatabase.db);
           samples.push({
@@ -731,7 +731,7 @@ function measureCheckpointPolicy(
   const appendChunkLatenciesMs: number[] = [];
   let transactions = 0;
   let commits = 0;
-  const started = performance.now();
+  const started = NodePerfHooks.performance.now();
   const simulation = simulateCheckpointPolicy(
     streams,
     virtualDurationMs,
@@ -746,9 +746,9 @@ function measureCheckpointPolicy(
         sequence: chunk.firstSequence + offset,
         text: CHECKPOINT_DELTA_TEXT,
       }));
-      const appendStarted = performance.now();
+      const appendStarted = NodePerfHooks.performance.now();
       const result = checkpoints.appendChunk(inputs);
-      appendChunkLatenciesMs.push(performance.now() - appendStarted);
+      appendChunkLatenciesMs.push(NodePerfHooks.performance.now() - appendStarted);
       transactions += 1;
       if (result.outcome !== "committed") {
         throw new Error(`Checkpoint profile expected a durable commit, received ${result.outcome}.`);
@@ -756,7 +756,7 @@ function measureCheckpointPolicy(
       commits += 1;
     },
   );
-  const elapsedDurationMs = performance.now() - started;
+  const elapsedDurationMs = NodePerfHooks.performance.now() - started;
   const retained = readCheckpointRetention(db, executions.map((execution) => execution.executionId));
 
   if (transactions !== simulation.durableChunkCount || commits !== simulation.durableChunkCount) {
@@ -1008,9 +1008,9 @@ function readConversation(db: Database.Database, limit: 100 | 1000): unknown {
 
 function measureSync<T>(work: () => T): MeasuredResult<T> {
   const before = process.memoryUsage();
-  const started = performance.now();
+  const started = NodePerfHooks.performance.now();
   const value = work();
-  const durationMs = performance.now() - started;
+  const durationMs = NodePerfHooks.performance.now() - started;
   const after = process.memoryUsage();
   return {
     value,
@@ -1022,9 +1022,9 @@ function measureSync<T>(work: () => T): MeasuredResult<T> {
 
 async function measureAsync<T>(work: () => Promise<T>): Promise<MeasuredResult<T>> {
   const before = process.memoryUsage();
-  const started = performance.now();
+  const started = NodePerfHooks.performance.now();
   const value = await work();
-  const durationMs = performance.now() - started;
+  const durationMs = NodePerfHooks.performance.now() - started;
   const after = process.memoryUsage();
   return {
     value,

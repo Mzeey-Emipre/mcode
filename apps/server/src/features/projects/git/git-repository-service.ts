@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 import { validateBranchName } from "@mcode/shared";
 import type { GitBranch, GitRemoteUrl } from "@mcode/contracts";
@@ -32,7 +32,7 @@ function assertSafeBranchCreationName(name: string): void {
 function fallbackRemoteUrl(repoPath: string): GitRemoteUrl {
   return {
     webUrl: null,
-    label: basename(repoPath) || repoPath,
+    label: NodePath.basename(repoPath) || repoPath,
   };
 }
 

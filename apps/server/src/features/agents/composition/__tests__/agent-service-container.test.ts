@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
 import { container } from "tsyringe";
@@ -18,8 +18,8 @@ describe("AgentService container composition", () => {
 
   beforeEach(() => {
     container.reset();
-    temporaryDirectory = mkdtempSync(join(tmpdir(), "mcode-agent-service-composition-"));
-    process.env.MCODE_DB_PATH = join(temporaryDirectory, "mcode.db");
+    temporaryDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-agent-service-composition-"));
+    process.env.MCODE_DB_PATH = NodePath.join(temporaryDirectory, "mcode.db");
     setupContainer(temporaryDirectory);
     database = container.resolve<Database.Database>("Database");
   });
@@ -30,7 +30,7 @@ describe("AgentService container composition", () => {
     container.reset();
     if (previousDatabasePath === undefined) delete process.env.MCODE_DB_PATH;
     else process.env.MCODE_DB_PATH = previousDatabasePath;
-    if (temporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true });
+    if (temporaryDirectory) NodeFS.rmSync(temporaryDirectory, { recursive: true, force: true });
     temporaryDirectory = undefined;
   });
 

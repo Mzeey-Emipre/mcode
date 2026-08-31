@@ -1,17 +1,6 @@
-import { createHash } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  unlinkSync,
-  writeSync,
-} from "node:fs";
-import { basename, dirname, join } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import type Database from "better-sqlite3";
 import { inject, injectable } from "tsyringe";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../runtime/persistence/sqlite/bounded-write-batches.js";
@@ -442,19 +431,19 @@ export class ParentAssistantTextRecoveryJournal {
     if (!this.directory) throw new Error("Assistant text recovery journal is unavailable");
     const record = createRecoveryJournalRecord(inputs);
     const path = this.pathFor(record.executionId);
-    mkdirSync(this.directory, { recursive: true });
-    const descriptor = openSync(path, "a", 0o600);
+    NodeFS.mkdirSync(this.directory, { recursive: true });
+    const descriptor = NodeFS.openSync(path, "a", 0o600);
     try {
       const encoded = Buffer.from(JSON.stringify(record) + "\n", "utf8");
       let offset = 0;
       while (offset < encoded.length) {
-        const written = writeSync(descriptor, encoded, offset, encoded.length - offset);
+        const written = NodeFS.writeSync(descriptor, encoded, offset, encoded.length - offset);
         if (written <= 0) throw new Error("Assistant text recovery journal write did not complete");
         offset += written;
       }
-      fsyncSync(descriptor);
+      NodeFS.fsyncSync(descriptor);
     } finally {
-      closeSync(descriptor);
+      NodeFS.closeSync(descriptor);
     }
   }
 
@@ -465,19 +454,19 @@ export class ParentAssistantTextRecoveryJournal {
   ): boolean {
     if (!this.directory) return true;
     const path = this.pathFor(executionId);
-    if (!existsSync(path)) return true;
+    if (!NodeFS.existsSync(path)) return true;
     for (const record of this.readRecords(path, executionId)) {
       append(recoveryJournalChunk(record));
     }
-    unlinkSync(path);
+    NodeFS.unlinkSync(path);
     return true;
   }
 
   /** Import every journal whose filename has a safe execution identity. */
   drainAll(append: (input: ParentAssistantTextRecoveryJournalChunk) => unknown): string[] {
-    if (!this.directory || !existsSync(this.directory)) return [];
+    if (!this.directory || !NodeFS.existsSync(this.directory)) return [];
     const drained: string[] = [];
-    for (const name of readdirSync(this.directory)) {
+    for (const name of NodeFS.readdirSync(this.directory)) {
       if (!name.endsWith(".journal")) continue;
       const executionId = name.slice(0, -".journal".length);
       if (!isSafeExecutionId(executionId)) continue;
@@ -491,24 +480,24 @@ export class ParentAssistantTextRecoveryJournal {
   discard(executionId: string): void {
     if (!this.directory || !isSafeExecutionId(executionId)) return;
     const path = this.pathFor(executionId);
-    if (existsSync(path)) unlinkSync(path);
+    if (NodeFS.existsSync(path)) NodeFS.unlinkSync(path);
   }
 
   private pathFor(executionId: string): string {
     if (!this.directory || !isSafeExecutionId(executionId)) {
       throw new Error("Assistant text recovery journal execution identity is invalid");
     }
-    return join(this.directory, executionId + ".journal");
+    return NodePath.join(this.directory, executionId + ".journal");
   }
 
   private readRecords(
     path: string,
     executionId: string,
   ): ParentAssistantTextRecoveryJournalRecord[] {
-    if (statSync(path).size > PARENT_ASSISTANT_TEXT_RECOVERY_JOURNAL_MAX_BYTES) {
+    if (NodeFS.statSync(path).size > PARENT_ASSISTANT_TEXT_RECOVERY_JOURNAL_MAX_BYTES) {
       throw new Error("Assistant text recovery journal exceeds its bounded retention");
     }
-    const contents = readFileSync(path, "utf8");
+    const contents = NodeFS.readFileSync(path, "utf8");
     if (contents.length > 0 && !contents.endsWith("\n")) {
       throw new Error("Assistant text recovery journal has an incomplete final record");
     }
@@ -534,7 +523,7 @@ export class ParentAssistantTextRecoveryJournal {
 function resolveDefaultRecoveryJournalDirectory(db: Database.Database): string | undefined {
   if (db.name === ":memory:") return undefined;
   if (!db.name) throw new Error("Assistant text recovery journal database path is unavailable");
-  return join(dirname(db.name), basename(db.name) + ".recovery", "parent-assistant-text");
+  return NodePath.join(NodePath.dirname(db.name), NodePath.basename(db.name) + ".recovery", "parent-assistant-text");
 }
 
 function createRecoveryJournalRecord(
@@ -691,7 +680,7 @@ function recoveryJournalChunk(
 function recoveryJournalChecksum(
   record: Omit<ParentAssistantTextRecoveryJournalRecord, "checksum">,
 ): string {
-  return createHash("sha256").update([
+  return NodeCrypto.createHash("sha256").update([
     record.version,
     record.executionId,
     record.threadId,

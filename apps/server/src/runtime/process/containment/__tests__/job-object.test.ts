@@ -39,7 +39,7 @@ describe.runIf(process.platform === "win32")("JobObject (Windows)", () => {
     job.close();
     const exitedWithin = await Promise.race([
       new Promise<true>((resolve) => child.once("exit", () => resolve(true))),
-      delay(2000).then(() => false),
+      NodeTimersPromises.setTimeout(2000).then(() => false),
     ]);
 
     try {

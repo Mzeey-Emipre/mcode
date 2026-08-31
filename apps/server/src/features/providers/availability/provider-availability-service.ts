@@ -13,7 +13,7 @@ import {
   ProviderCliMissingError,
 } from "./provider-availability-errors.js";
 import whichModule from "which";
-import { promises as fsp, constants as fsConst } from "node:fs";
+import * as NodeFS from "node:fs";
 
 type CliRuntime = {
   status: "found" | "not_found" | "unchecked";
@@ -44,7 +44,7 @@ export const defaultResolver: CliResolver = {
   which: (binary) => whichModule(binary),
   statExecutable: async (path) => {
     try {
-      await fsp.access(path, fsConst.X_OK);
+      await NodeFS.promises.access(path, NodeFS.constants.X_OK);
       return true;
     } catch {
       return false;

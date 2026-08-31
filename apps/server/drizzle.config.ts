@@ -1,12 +1,12 @@
 import { defineConfig } from "drizzle-kit";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 /** Default SQLite URL for CLI commands (`db:migrate`, `db:push`, …). Override with `MCODE_DRIZZLE_DB`. */
 function defaultSqliteUrl(): string {
   const dirName =
     process.env.NODE_ENV === "production" ? ".mcode" : ".mcode-dev";
-  const filePath = join(homedir(), dirName, "mcode.db");
+  const filePath = NodePath.join(NodeOS.homedir(), dirName, "mcode.db");
   return `file:${filePath.replace(/\\/g, "/")}`;
 }
 

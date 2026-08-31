@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { getDefaultSettings, type TerminalResolvedProfile } from "@mcode/contracts";
 import {
@@ -18,12 +18,12 @@ const profile: TerminalResolvedProfile = {
   platform: "windows",
 };
 
-function childProcess(): TerminalCommandProcess & EventEmitter {
-  const child = new EventEmitter() as TerminalCommandProcess & EventEmitter;
+function childProcess(): TerminalCommandProcess & NodeEvents.EventEmitter {
+  const child = new NodeEvents.EventEmitter() as TerminalCommandProcess & NodeEvents.EventEmitter;
   Object.assign(child, {
     pid: 421,
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
+    stdout: new NodeEvents.EventEmitter(),
+    stderr: new NodeEvents.EventEmitter(),
   });
   return child;
 }
@@ -82,7 +82,7 @@ describe("TerminalCommandService", () => {
       ["-ExecutionPolicy", "Bypass", "-NoLogo", "-NonInteractive", "-Command", "bun run setup"],
       expect.objectContaining({ cwd: "C:\\workspace", stdio: ["ignore", "pipe", "pipe"], shell: false }),
     );
-    (spawned.stdout as EventEmitter).emit("data", Buffer.from("prepared\n"));
+    (spawned.stdout as NodeEvents.EventEmitter).emit("data", Buffer.from("prepared\n"));
     spawned.emit("close", 0);
     await expect(completion).resolves.toEqual({
       kind: "exited",
@@ -167,8 +167,8 @@ describe("TerminalCommandService", () => {
     if (prepared.kind !== "ready") return;
 
     const completion = prepared.command.start();
-    (spawned.stdout as EventEmitter).emit("data", Buffer.alloc(40_000, "a"));
-    (spawned.stdout as EventEmitter).emit("data", Buffer.alloc(40_000, "b"));
+    (spawned.stdout as NodeEvents.EventEmitter).emit("data", Buffer.alloc(40_000, "a"));
+    (spawned.stdout as NodeEvents.EventEmitter).emit("data", Buffer.alloc(40_000, "b"));
     spawned.emit("close", 0);
 
     await expect(completion).resolves.toEqual({

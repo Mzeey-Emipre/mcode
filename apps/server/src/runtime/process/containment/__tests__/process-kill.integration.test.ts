@@ -38,7 +38,7 @@ describe.runIf(process.platform === "win32")("killProcessTree integration", () =
   }, 30_000);
 
   it("terminates a real root process and its descendant", async () => {
-    const root = spawn(
+    const root = NodeChildProcess.spawn(
       "powershell.exe",
       [
         "-NoProfile",

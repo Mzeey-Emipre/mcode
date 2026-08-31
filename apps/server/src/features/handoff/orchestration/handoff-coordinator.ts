@@ -8,10 +8,10 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { existsSync } from "fs";
-import { writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { logger, getMcodeDir } from "@mcode/shared";
 import { storedAttachmentSuffix } from "@mcode/contracts";
 import type { Thread, Message, ProviderId, ForkHistoryBudget } from "@mcode/contracts";
@@ -261,12 +261,12 @@ export class HandoffCoordinator {
   }
 
   private collectAttachmentSources(parentThreadId: string, messages: Message[]): AttachmentSource[] {
-    const parentAttachmentsDir = join(getMcodeDir(), "attachments", parentThreadId);
+    const parentAttachmentsDir = NodePath.join(getMcodeDir(), "attachments", parentThreadId);
     const attachmentSources: AttachmentSource[] = [];
     for (const message of messages) {
       for (const attachment of message.attachments ?? []) {
-        const absolutePath = join(parentAttachmentsDir, `${attachment.id}${storedAttachmentSuffix(attachment.mimeType)}`);
-        if (!existsSync(absolutePath)) {
+        const absolutePath = NodePath.join(parentAttachmentsDir, `${attachment.id}${storedAttachmentSuffix(attachment.mimeType)}`);
+        if (!NodeFS.existsSync(absolutePath)) {
           logger.warn("deliverHandoff: parent attachment not found on disk, skipping", {
             attachmentId: attachment.id,
             parentThreadId,
@@ -312,9 +312,9 @@ export class HandoffCoordinator {
   }
 
   private async writeOffBandHandoff(childThreadId: string, markdown: string, userMessage: string): Promise<string> {
-    const handoffTempPath = join(tmpdir(), `mcode-handoff-${childThreadId}-${Date.now()}.md`);
+    const handoffTempPath = NodePath.join(NodeOS.tmpdir(), `mcode-handoff-${childThreadId}-${Date.now()}.md`);
     try {
-      await writeFile(handoffTempPath, markdown, "utf8");
+      await NodeFSPromises.writeFile(handoffTempPath, markdown, "utf8");
       this.scopedPreGrant.issue({ threadId: childThreadId, toolName: "Read", path: handoffTempPath });
       return buildOffBandHandoffPrompt(handoffTempPath, markdown, userMessage);
     } catch (error) {

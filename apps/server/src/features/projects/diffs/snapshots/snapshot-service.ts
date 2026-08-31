@@ -5,9 +5,9 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { unlink } from "node:fs/promises";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import type { GitExecutor } from "../../git/execution/index.js";
 import { RealGitExecutor } from "../../git/execution/real-git-executor.js";
 
@@ -361,9 +361,9 @@ export class SnapshotService {
     const gitDirRaw = gitDirOut.trim();
     const gitDir = gitDirRaw.startsWith("/") || /^[A-Za-z]:/.test(gitDirRaw)
       ? gitDirRaw
-      : join(cwd, gitDirRaw);
+      : NodePath.join(cwd, gitDirRaw);
 
-    tmpIndex = `${gitDir}/mcode-index-${randomUUID()}`;
+    tmpIndex = `${gitDir}/mcode-index-${NodeCrypto.randomUUID()}`;
     const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
 
     try {
@@ -381,7 +381,7 @@ export class SnapshotService {
       );
       return treeOut.trim();
     } finally {
-      unlink(tmpIndex).catch(() => {});
+      NodeFSPromises.unlink(tmpIndex).catch(() => {});
     }
   }
 }

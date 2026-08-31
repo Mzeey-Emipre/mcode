@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 
@@ -46,7 +46,7 @@ export class WorktreeRepo {
         "INSERT INTO workspace_worktrees (id, workspace_id, canonical_path, label, branch, base_ref, managed, last_seen_at, stale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0) ON CONFLICT(workspace_id, canonical_path) DO UPDATE SET label = excluded.label, branch = excluded.branch, base_ref = excluded.base_ref, managed = excluded.managed, last_seen_at = excluded.last_seen_at, stale = 0",
       );
       for (const worktree of worktrees) {
-        upsert.run(randomUUID(), workspaceId, worktree.canonicalPath, worktree.label, worktree.branch ?? null, worktree.baseRef ?? null, worktree.managed ? 1 : 0, lastSeenAt);
+        upsert.run(NodeCrypto.randomUUID(), workspaceId, worktree.canonicalPath, worktree.label, worktree.branch ?? null, worktree.baseRef ?? null, worktree.managed ? 1 : 0, lastSeenAt);
       }
       this.db.prepare("DELETE FROM workspace_worktrees WHERE workspace_id = ? AND stale = 1 AND last_seen_at < ?").run(workspaceId, staleCutoff);
     });
@@ -96,7 +96,7 @@ export class WorktreeRepo {
 
   /** Register one newly provisioned worktree without invalidating sibling registrations. */
   register(workspaceId: string, worktree: RegisteredWorktreeInput): RegisteredWorktree {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     this.db.prepare(
       "INSERT INTO workspace_worktrees (id, workspace_id, canonical_path, label, branch, base_ref, managed, last_seen_at, stale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0) ON CONFLICT(workspace_id, canonical_path) DO UPDATE SET label = excluded.label, branch = excluded.branch, base_ref = excluded.base_ref, managed = excluded.managed, last_seen_at = excluded.last_seen_at, stale = 0",
     ).run(

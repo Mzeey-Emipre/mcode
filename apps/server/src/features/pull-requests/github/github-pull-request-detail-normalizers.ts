@@ -181,6 +181,27 @@ const githubReviewThreadSchema = z.object({
   }),
 });
 
+const githubCommitTimelineSchema = z.object({ commit: z.object({
+  id: z.string().min(1).max(256), oid: z.string().regex(/^[0-9a-f]{40,64}$/i),
+  messageHeadline: z.string().max(65_536), committedDate: z.string().datetime({ offset: true }),
+  url: z.string().max(4_096).nullable().optional(), author: z.object({ user: githubActorSchema.nullable() }).nullable(),
+}) });
+
+const githubReviewTimelineSchema = z.object({
+  id: z.string().min(1).max(256), state: githubReviewStateSchema,
+  body: z.string().max(4 * PULL_REQUEST_DETAIL_TEXT_MAX_LENGTH),
+  submittedAt: z.string().datetime({ offset: true }).nullable(), createdAt: z.string().datetime({ offset: true }).optional(),
+  url: z.string().max(4_096).nullable(), author: githubActorSchema.nullable(),
+  commit: z.object({ oid: z.string().regex(/^[0-9a-f]{40,64}$/i) }).nullable(),
+});
+
+const githubMergeTimelineSchema = z.object({
+  id: z.string().min(1).max(256), createdAt: z.string().datetime({ offset: true }),
+  actor: githubActorSchema.nullable(), url: z.string().max(4_096).nullable().optional(),
+  commit: z.object({ oid: z.string().regex(/^[0-9a-f]{40,64}$/i) }).nullable(),
+  mergeRefName: z.string().max(1_024).nullable(),
+});
+
 const githubTimelineBaseSchema = z.object({
   __typename: z.string().min(1).max(100),
 });
@@ -632,11 +653,7 @@ const timelineNodeNormalizers: Partial<Record<
 };
 
 function normalizeGithubTimelineCommit(node: Record<string, unknown>): unknown | null {
-  const parsed = z.object({ commit: z.object({
-    id: z.string().min(1).max(256), oid: z.string().regex(/^[0-9a-f]{40,64}$/i),
-    messageHeadline: z.string().max(65_536), committedDate: z.string().datetime({ offset: true }),
-    url: z.string().max(4_096).nullable().optional(), author: z.object({ user: githubActorSchema.nullable() }).nullable(),
-  }) }).safeParse(node);
+  const parsed = githubCommitTimelineSchema.safeParse(node);
   if (!parsed.success) return null;
   const { commit } = parsed.data;
   return { kind: "commit", providerNodeId: commit.id, occurredAt: commit.committedDate,
@@ -645,13 +662,7 @@ function normalizeGithubTimelineCommit(node: Record<string, unknown>): unknown |
 }
 
 function normalizeGithubTimelineReview(node: Record<string, unknown>): unknown | null {
-  const parsed = z.object({
-    id: z.string().min(1).max(256), state: githubReviewStateSchema,
-    body: z.string().max(4 * PULL_REQUEST_DETAIL_TEXT_MAX_LENGTH),
-    submittedAt: z.string().datetime({ offset: true }).nullable(), createdAt: z.string().datetime({ offset: true }).optional(),
-    url: z.string().max(4_096).nullable(), author: githubActorSchema.nullable(),
-    commit: z.object({ oid: z.string().regex(/^[0-9a-f]{40,64}$/i) }).nullable(),
-  }).safeParse(node);
+  const parsed = githubReviewTimelineSchema.safeParse(node);
   if (!parsed.success) return null;
   const occurredAt = parsed.data.submittedAt ?? parsed.data.createdAt;
   if (!occurredAt) return null;
@@ -723,12 +734,7 @@ function normalizeGithubTimelineReviewRequest(
 }
 
 function normalizeGithubTimelineMerge(node: Record<string, unknown>): unknown | null {
-  const parsed = z.object({
-    id: z.string().min(1).max(256), createdAt: z.string().datetime({ offset: true }),
-    actor: githubActorSchema.nullable(), url: z.string().max(4_096).nullable().optional(),
-    commit: z.object({ oid: z.string().regex(/^[0-9a-f]{40,64}$/i) }).nullable(),
-    mergeRefName: z.string().max(1_024).nullable(),
-  }).safeParse(node);
+  const parsed = githubMergeTimelineSchema.safeParse(node);
   if (!parsed.success) return null;
   return { kind: "merged", providerNodeId: parsed.data.id, occurredAt: parsed.data.createdAt,
     actor: normalizeGithubActor(parsed.data.actor), url: normalizeGithubHttpUrl(parsed.data.url),

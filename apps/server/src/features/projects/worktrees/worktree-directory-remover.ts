@@ -1,5 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { isAbsolute, parse, resolve } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 
 /** Default hard limit for a recursive worktree directory removal. */
@@ -15,8 +15,8 @@ const REMOVE_SCRIPT = [
 
 /** Dependencies used by the bounded child-process deletion boundary. */
 export interface WorktreeDirectoryRemoverDependencies {
-  spawn?: typeof spawn;
-  killTree?: (child: ChildProcess) => void | Promise<void>;
+  spawn?: typeof NodeChildProcess.spawn;
+  killTree?: (child: NodeChildProcess.ChildProcess) => void | Promise<void>;
   platform?: NodeJS.Platform;
   timeoutMs?: number;
 }
@@ -186,6 +186,6 @@ function isEqualOrAncestor(candidate: string, protectedPath: string, platform: N
 
 /** Normalize path text for lexical ancestry checks. */
 function normalizePathForComparison(path: string, platform: NodeJS.Platform): string {
-  const normalized = resolve(path);
+  const normalized = NodePath.resolve(path);
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }

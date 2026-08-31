@@ -3,10 +3,10 @@
  */
 
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, realpathSync, readdirSync, readFileSync } from "fs";
-import { createRequire } from "module";
-import { dirname, isAbsolute, join, resolve } from "path";
-import { fileURLToPath } from "url";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { getMcodeDir, resolveDbPath } from "@mcode/shared";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
@@ -31,7 +31,7 @@ import {
  * Windows `migrationsFolder` strings remain valid for fs.*
  */
 function migrationsFolderForDrizzle(absDir: string): string {
-  return resolve(absDir).replace(/\\/g, "/");
+  return NodePath.resolve(absDir).replace(/\\/g, "/");
 }
 
 /**
@@ -47,8 +47,8 @@ function migrationsFolderForDrizzle(absDir: string): string {
 function resolveDrizzleMigrationsDir(): string {
   const fromEnv = process.env.MCODE_DRIZZLE_MIGRATIONS_DIR;
   if (fromEnv) {
-    const dir = resolve(fromEnv.trim());
-    if (!existsSync(join(dir, "meta", "_journal.json"))) {
+    const dir = NodePath.resolve(fromEnv.trim());
+    if (!NodeFS.existsSync(NodePath.join(dir, "meta", "_journal.json"))) {
       throw new Error(
         `MCODE_DRIZZLE_MIGRATIONS_DIR is set but meta/_journal.json is missing: ${dir}`,
       );
@@ -56,13 +56,13 @@ function resolveDrizzleMigrationsDir(): string {
     return dir;
   }
 
-  let dir = dirname(fileURLToPath(import.meta.url));
+  let dir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
   for (let i = 0; i < 20; i++) {
-    const candidate = join(dir, "drizzle");
-    if (existsSync(join(candidate, "meta", "_journal.json"))) {
-      return resolve(candidate);
+    const candidate = NodePath.join(dir, "drizzle");
+    if (NodeFS.existsSync(NodePath.join(candidate, "meta", "_journal.json"))) {
+      return NodePath.resolve(candidate);
     }
-    const parent = dirname(dir);
+    const parent = NodePath.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -89,9 +89,9 @@ export function resolveElectronNativeBinding(): string {
     throw new Error("SQLite requires Electron's Node.js runtime.");
   }
 
-  const localRequire = createRequire(import.meta.url);
-  const betterSqliteDir = dirname(localRequire.resolve("better-sqlite3/package.json"));
-  const expectedBinding = join(
+  const localRequire = NodeModule.createRequire(import.meta.url);
+  const betterSqliteDir = NodePath.dirname(localRequire.resolve("better-sqlite3/package.json"));
+  const expectedBinding = NodePath.join(
     betterSqliteDir,
     "build",
     "Release",
@@ -104,12 +104,12 @@ export function resolveElectronNativeBinding(): string {
       `BETTER_SQLITE3_BINDING must be ${expectedBinding}. Run 'bun install' to install the Electron binding.`,
     );
   }
-  if (resolve(configuredBinding) === resolve(expectedBinding)) return resolveWorkspaceBinding(expectedBinding);
+  if (NodePath.resolve(configuredBinding) === NodePath.resolve(expectedBinding)) return resolveWorkspaceBinding(expectedBinding);
   return resolvePackagedBinding(configuredBinding);
 }
 
 function resolveWorkspaceBinding(expectedBinding: string): string {
-  if (!existsSync(expectedBinding)) {
+  if (!NodeFS.existsSync(expectedBinding)) {
     throw new Error(
       `Workspace Electron better-sqlite3 binding not found: ${expectedBinding}. Run 'bun install'.`,
     );
@@ -119,16 +119,16 @@ function resolveWorkspaceBinding(expectedBinding: string): string {
 
 function resolvePackagedBinding(configuredBinding: string): string {
   const packagedResourcesRoot = process.env.MCODE_PACKAGED_RESOURCES_ROOT;
-  if (!packagedResourcesRoot || !isAbsolute(packagedResourcesRoot)) {
+  if (!packagedResourcesRoot || !NodePath.isAbsolute(packagedResourcesRoot)) {
     throw new Error("MCODE_PACKAGED_RESOURCES_ROOT must be an absolute canonical packaged resources directory.");
   }
 
-  const canonicalResourcesRoot = realpathSync(packagedResourcesRoot);
+  const canonicalResourcesRoot = NodeFS.realpathSync(packagedResourcesRoot);
   if (packagedResourcesRoot !== canonicalResourcesRoot) {
     throw new Error("MCODE_PACKAGED_RESOURCES_ROOT must be a canonical packaged resources directory.");
   }
 
-  const expectedPackagedBinding = join(
+  const expectedPackagedBinding = NodePath.join(
     canonicalResourcesRoot,
     "app.asar.unpacked",
     "node_modules",
@@ -137,13 +137,13 @@ function resolvePackagedBinding(configuredBinding: string): string {
     "Release",
     "better_sqlite3.node",
   );
-  if (!existsSync(configuredBinding) || !existsSync(expectedPackagedBinding)) {
+  if (!NodeFS.existsSync(configuredBinding) || !NodeFS.existsSync(expectedPackagedBinding)) {
     throw new Error(
       `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or the packaged binding: ${expectedPackagedBinding}`,
     );
   }
 
-  const canonicalBinding = realpathSync(configuredBinding);
+  const canonicalBinding = NodeFS.realpathSync(configuredBinding);
   if (canonicalBinding !== expectedPackagedBinding) {
     throw new Error(
       `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or the packaged binding: ${expectedPackagedBinding}`,
@@ -154,10 +154,10 @@ function resolvePackagedBinding(configuredBinding: string): string {
 }
 
 function hasSubagentIdentityMigration(migrationsDir: string | undefined): boolean {
-  if (!migrationsDir || !existsSync(migrationsDir)) return false;
-  return readdirSync(migrationsDir)
+  if (!migrationsDir || !NodeFS.existsSync(migrationsDir)) return false;
+  return NodeFS.readdirSync(migrationsDir)
     .filter((name) => name.endsWith(".sql"))
-    .some((name) => readFileSync(join(migrationsDir, name), "utf8").includes("subagent_identity_key"));
+    .some((name) => NodeFS.readFileSync(NodePath.join(migrationsDir, name), "utf8").includes("subagent_identity_key"));
 }
 
 /**
@@ -272,8 +272,8 @@ export interface OpenDatabaseOptions {
  */
 export function openDatabase(opts?: OpenDatabaseOptions): Database.Database {
   const resolvedPath = resolveDatabasePath(opts);
-  const dir = dirname(resolvedPath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const dir = NodePath.dirname(resolvedPath);
+  if (!NodeFS.existsSync(dir)) NodeFS.mkdirSync(dir, { recursive: true });
   const nativeBinding = resolveElectronNativeBinding();
   const backupPath = opts?.migrationBackupSpace
     ? createMigrationBackup(resolvedPath, opts.migrationBackupSpace)

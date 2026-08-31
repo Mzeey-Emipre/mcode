@@ -5,8 +5,8 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { existsSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { logger } from "@mcode/shared";
 import { GitComparisonService } from "../../projects/git/git-comparison-service.js";
 import { GitRepositoryService } from "../../projects/git/git-repository-service.js";
@@ -200,15 +200,15 @@ export class PrDraftService {
       return this.templateCache.get(repoPath) ?? null;
     }
     for (const templatePath of PR_TEMPLATE_PATHS) {
-      const fullPath = join(repoPath, templatePath);
-      if (existsSync(fullPath)) {
+      const fullPath = NodePath.join(repoPath, templatePath);
+      if (NodeFS.existsSync(fullPath)) {
         try {
-          const { size } = statSync(fullPath);
+          const { size } = NodeFS.statSync(fullPath);
           if (size > MAX_TEMPLATE_BYTES) {
             logger.warn("PR template file exceeds size limit, skipped", { fullPath, size });
             continue;
           }
-          const content = readFileSync(fullPath, "utf-8");
+          const content = NodeFS.readFileSync(fullPath, "utf-8");
           this.templateCache.set(repoPath, content);
           return content;
         } catch {

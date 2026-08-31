@@ -6,7 +6,7 @@ const { mockExecFile } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
 }));
 
-vi.mock("child_process", () => ({
+vi.mock("node:child_process", () => ({
   execFile: mockExecFile,
 }));
 

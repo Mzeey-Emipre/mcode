@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { container } from "tsyringe";
 import type Database from "better-sqlite3";
 import {
@@ -84,8 +84,8 @@ describe("provider composition container", () => {
 
   beforeEach(() => {
     container.reset();
-    temporaryDirectory = mkdtempSync(join(tmpdir(), "mcode-provider-composition-"));
-    process.env.MCODE_DB_PATH = join(temporaryDirectory, "mcode.db");
+    temporaryDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-provider-composition-"));
+    process.env.MCODE_DB_PATH = NodePath.join(temporaryDirectory, "mcode.db");
     setupContainer(temporaryDirectory);
     database = container.resolve<Database.Database>("Database");
   });
@@ -96,7 +96,7 @@ describe("provider composition container", () => {
     container.reset();
     if (previousDatabasePath === undefined) delete process.env.MCODE_DB_PATH;
     else process.env.MCODE_DB_PATH = previousDatabasePath;
-    if (temporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true });
+    if (temporaryDirectory) NodeFS.rmSync(temporaryDirectory, { recursive: true, force: true });
     temporaryDirectory = undefined;
   });
 

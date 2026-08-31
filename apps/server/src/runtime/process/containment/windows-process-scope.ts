@@ -1,6 +1,6 @@
-import { createRequire } from "node:module";
+import * as NodeModule from "node:module";
 
-const nativeRequire = createRequire(import.meta.url);
+const nativeRequire = NodeModule.createRequire(import.meta.url);
 const PROCESS_SET_QUOTA = 0x0100;
 const PROCESS_TERMINATE = 0x0001;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
@@ -298,7 +298,7 @@ export class WindowsProcessScope {
   queryProcessIds(): WindowsProcessScopeProcessIds {
     const native = this.native;
     if (!native) return { ok: false, processIds: [], overflow: false, error: "scope unavailable" };
-    const buffer = Buffer.alloc(8 + MAX_PROCESS_IDS * POINTER_BYTES);
+    const buffer = Buffer.alloc(8 + MAX_PROCESS_IDS * this.layout.pointerBytes);
     const returnLength = Buffer.alloc(4);
     try {
       const ok = native.queryInformationJobObject(
@@ -316,8 +316,8 @@ export class WindowsProcessScope {
       const listedCount = Math.min(buffer.readUInt32LE(4), MAX_PROCESS_IDS);
       const processIds: number[] = [];
       for (let index = 0; index < listedCount; index += 1) {
-        const offset = 8 + index * POINTER_BYTES;
-        const pid = POINTER_BYTES === 4
+        const offset = 8 + index * this.layout.pointerBytes;
+        const pid = this.layout.pointerBytes === 4
           ? buffer.readUInt32LE(offset)
           : Number(buffer.readBigUInt64LE(offset));
         if (pid > 0) processIds.push(pid);
@@ -398,17 +398,17 @@ export class WindowsProcessScope {
   }
 
   private scanProcessSnapshot(native: ProcessSnapshotNative, snapshot: unknown): Map<number, number> {
-    const entry = Buffer.alloc(PROCESS_ENTRY_SIZE);
-    entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
+    const entry = Buffer.alloc(this.layout.processEntrySize);
+    entry.writeUInt32LE(this.layout.processEntrySize, 0);
     if (!native.process32First(snapshot, entry)) return this.emptyProcessSnapshot(native);
 
     const parentByPid = new Map<number, number>();
     let hasEntry = true;
     let count = 0;
     while (hasEntry && count < PROCESS_ENUMERATION_LIMIT) {
-      parentByPid.set(entry.readUInt32LE(8), entry.readUInt32LE(PROCESS_ENTRY_PARENT_OFFSET));
+      parentByPid.set(entry.readUInt32LE(8), entry.readUInt32LE(this.layout.processEntryParentOffset));
       entry.fill(0);
-      entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
+      entry.writeUInt32LE(this.layout.processEntrySize, 0);
       hasEntry = Boolean(native.process32Next(snapshot, entry));
       count += 1;
     }

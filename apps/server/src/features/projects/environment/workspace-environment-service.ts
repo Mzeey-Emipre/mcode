@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "crypto";
-import { mkdir, open, rename, unlink, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import {
   DEFAULT_WORKSPACE_ENVIRONMENT_DOCUMENT,
   WORKSPACE_ENVIRONMENT_APPROVAL_CONTRACT_VERSION,
@@ -261,7 +261,7 @@ function revisionFor(
   storageMode: WorkspaceEnvironmentStorageMode,
   filePath: string,
 ): string {
-  return createHash("sha256")
+  return NodeCrypto.createHash("sha256")
     .update(storageMode)
     .update("\0")
     .update(filePath)
@@ -541,7 +541,7 @@ export class WorkspaceEnvironmentService {
         [issue(["workspaceId"], "INVALID_WORKSPACE_ID", "invalid_value", "Workspace id is not a safe path segment")],
       );
     }
-    return join(this.mcodeDir, "projects", workspaceId, "environment.json");
+    return NodePath.join(this.mcodeDir, "projects", workspaceId, "environment.json");
   }
 
   /** Select the exclusive storage location and return its current document. */
@@ -689,7 +689,7 @@ export class WorkspaceEnvironmentService {
 
   private filePathForWorkspace(workspaceId: string, storageMode: WorkspaceEnvironmentStorageMode): string {
     if (storageMode === "system") return this.filePath(workspaceId);
-    return join(this.requireWorkspace(workspaceId).path, ".mcode", "environment.json");
+    return NodePath.join(this.requireWorkspace(workspaceId).path, ".mcode", "environment.json");
   }
 
   private filePathForThread(
@@ -704,7 +704,7 @@ export class WorkspaceEnvironmentService {
         "The shared Project environment checkout is unavailable",
       );
     }
-    return join(checkoutPath, ".mcode", "environment.json");
+    return NodePath.join(checkoutPath, ".mcode", "environment.json");
   }
 
   private requireWorkspace(workspaceId: string): WorkspaceEnvironmentWorkspace {
@@ -720,7 +720,7 @@ export class WorkspaceEnvironmentService {
     const stored = this.configuration?.storageMode(workspaceId) ?? this.inMemoryStorageModes.get(workspaceId);
     if (stored) return stored;
     const workspace = this.options.workspaces?.findById(workspaceId);
-    const storageMode = workspace && await this.hasValidSharedDocument(join(workspace.path, ".mcode", "environment.json"))
+    const storageMode = workspace && await this.hasValidSharedDocument(NodePath.join(workspace.path, ".mcode", "environment.json"))
       ? "shared"
       : "system";
     this.persistStorageMode(workspaceId, storageMode);
@@ -876,9 +876,9 @@ export class WorkspaceEnvironmentService {
     | { kind: "too_large" }
     | { kind: "present"; bytes: Uint8Array }
   > {
-    let handle: Awaited<ReturnType<typeof open>>;
+    let handle: Awaited<ReturnType<typeof NodeFSPromises.open>>;
     try {
-      handle = await open(filePath, "r");
+      handle = await NodeFSPromises.open(filePath, "r");
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
@@ -952,12 +952,12 @@ export class WorkspaceEnvironmentService {
   }
 
   private async writeEnvironmentDocument(filePath: string, encoded: Uint8Array): Promise<void> {
-    const directory = dirname(filePath);
-    await mkdir(directory, { recursive: true });
-    const temporaryPath = join(directory, `.environment.${randomUUID()}.tmp`);
+    const directory = NodePath.dirname(filePath);
+    await NodeFSPromises.mkdir(directory, { recursive: true });
+    const temporaryPath = NodePath.join(directory, `.environment.${NodeCrypto.randomUUID()}.tmp`);
     try {
-      await writeFile(temporaryPath, encoded);
-      await rename(temporaryPath, filePath);
+      await NodeFSPromises.writeFile(temporaryPath, encoded);
+      await NodeFSPromises.rename(temporaryPath, filePath);
     } catch (error) {
       await this.removeTemporaryEnvironmentFile(temporaryPath);
       throw error;
@@ -966,7 +966,7 @@ export class WorkspaceEnvironmentService {
 
   private async removeTemporaryEnvironmentFile(filePath: string): Promise<void> {
     try {
-      await unlink(filePath);
+      await NodeFSPromises.unlink(filePath);
     } catch {
       // Cleanup is limited to this operation's own temporary file.
     }
@@ -1915,7 +1915,7 @@ export class WorkspaceEnvironmentService {
   }
 
   private createAttemptId(): string {
-    return (this.options.createAttemptId ?? randomUUID)();
+    return (this.options.createAttemptId ?? NodeCrypto.randomUUID)();
   }
 
   private setupWorkCount(): number {
@@ -1961,7 +1961,7 @@ function approvalFingerprint(input: {
   readonly script: string;
   readonly terminal: NonNullable<PreparedTerminalCommand["snapshot"]["terminal"]>;
 }): string {
-  return createHash("sha256").update(JSON.stringify({
+  return NodeCrypto.createHash("sha256").update(JSON.stringify({
     contractVersion: WORKSPACE_ENVIRONMENT_APPROVAL_CONTRACT_VERSION,
     projectIdentity: input.workspaceId,
     commandIdentity: commandIdentity(input.target),

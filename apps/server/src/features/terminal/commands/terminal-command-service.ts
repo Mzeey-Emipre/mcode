@@ -1,6 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 import {
   type Settings,
   type TerminalProfileReference,
@@ -297,7 +297,7 @@ export class TerminalCommandService {
     };
     const registerChild = (process: TerminalCommandProcess): void => {
       if (typeof process.pid !== "number" || process.pid <= 0 || !this.deps.pidRegistry) return;
-      registeredCommandId = `terminal-command:${this.deps.createCommandId?.() ?? randomUUID()}`;
+      registeredCommandId = `terminal-command:${this.deps.createCommandId?.() ?? NodeCrypto.randomUUID()}`;
       this.deps.pidRegistry.register(registeredCommandId, process.pid, terminal!.executable);
     };
     const observeChild = (process: TerminalCommandProcess): void => {
@@ -359,7 +359,7 @@ export function noninteractiveLaunch(
   profile: TerminalResolvedProfile,
   script: string,
 ): { readonly executable: string; readonly arguments: readonly string[] } | null {
-  const executable = basename(profile.executable).toLowerCase();
+  const executable = NodePath.basename(profile.executable).toLowerCase();
   const arguments_ = [...profile.arguments];
   if (isPowerShell(executable)) {
     return { executable: profile.executable, arguments: [...arguments_, "-NoLogo", "-NonInteractive", "-Command", script] };
@@ -412,7 +412,7 @@ function spawnTerminalCommand(
     readonly detached: boolean;
   },
 ): TerminalCommandProcess {
-  return spawn(executable, [...arguments_], { ...options, stdio: [...options.stdio] }) as ChildProcess;
+  return NodeChildProcess.spawn(executable, [...arguments_], { ...options, stdio: [...options.stdio] }) as NodeChildProcess.ChildProcess;
 }
 
 class TerminalOutputCapture {

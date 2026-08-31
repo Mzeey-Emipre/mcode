@@ -1,6 +1,6 @@
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { parse as parseYaml } from "yaml";
 import type { CopilotSubagent } from "@mcode/contracts";
 
@@ -47,7 +47,7 @@ function invalidOptionalString(value: unknown): boolean {
 /** Parses one agent YAML file into a validated Copilot sub-agent. */
 function readAgentFile(filePath: string, source: "user" | "project"): CopilotSubagent | null {
   try {
-    const parsed = parseYaml(fs.readFileSync(filePath, "utf-8")) as AgentYaml;
+    const parsed = parseYaml(NodeFS.readFileSync(filePath, "utf-8")) as AgentYaml;
     if (!validAgentName(parsed?.name)) return null;
     if (invalidOptionalString(parsed.displayName)) return null;
     if (invalidOptionalString(parsed.description)) return null;
@@ -65,17 +65,17 @@ function readAgentFile(filePath: string, source: "user" | "project"): CopilotSub
 
 /** Scans a directory for `*.yml`/`*.yaml` files and parses each as a CopilotSubagent. */
 function scanAgentDir(dir: string, source: "user" | "project"): CopilotSubagent[] {
-  if (!fs.existsSync(dir)) return [];
+  if (!NodeFS.existsSync(dir)) return [];
   let entries: string[];
   try {
-    entries = fs.readdirSync(dir);
+    entries = NodeFS.readdirSync(dir);
   } catch {
     return [];
   }
   return entries
     .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
     .flatMap((fileName) => {
-      const agent = readAgentFile(path.join(dir, fileName), source);
+      const agent = readAgentFile(NodePath.join(dir, fileName), source);
       return agent ? [agent] : [];
     });
 }

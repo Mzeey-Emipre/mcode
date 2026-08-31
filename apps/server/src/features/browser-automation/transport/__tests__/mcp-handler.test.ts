@@ -1,4 +1,4 @@
-import { createServer, type Server } from "http";
+import * as NodeHTTP from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -13,7 +13,7 @@ import { BrowserAutomationMcpHandler } from "../mcp-handler.js";
 import { BrowserAutomationTelemetry, type BrowserAutomationTelemetryEvent } from "../../observability/telemetry.js";
 
 describe("BrowserAutomationMcpHandler", () => {
-  let server: Server;
+  let server: NodeHTTP.Server;
   let endpoint: string;
   let token: string;
   let credentialId: string;
@@ -61,7 +61,7 @@ describe("BrowserAutomationMcpHandler", () => {
       now: () => 1_000,
       maxSequenceEntries: 1,
     });
-    server = createServer((req, res) => {
+    server = NodeHTTP.createServer((req, res) => {
       void handler.handle(req, res);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

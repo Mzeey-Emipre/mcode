@@ -6,8 +6,8 @@
  * credits after an unclean shutdown.
  */
 
-import { existsSync, readFileSync } from "fs";
-import { execSync } from "child_process";
+import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import type { PtyPidRegistry } from "../../features/terminal/host/pty-pid-registry.js";
 
 /** Subset of the lock file contents we care about for orphan detection. */
@@ -123,7 +123,7 @@ function createReapContext(deps: ReapOrphanedPtysDeps): ReapContext {
 export function reapOrphanedPtys(
   registry: PtyPidRegistry,
   logger: MinLogger,
-  deps: ReapOrphanedPtysDeps = {},
+  deps: ReapOrphanedPtysDeps,
 ): void {
   const context = createReapContext(deps);
 

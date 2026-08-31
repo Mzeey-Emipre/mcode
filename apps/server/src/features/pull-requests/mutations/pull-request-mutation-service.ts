@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import type {
   PullRequestCloseRequest,
   PullRequestCloseResult,
@@ -59,7 +59,7 @@ interface IdempotencyEntry {
 
 function requestFingerprint(request: PullRequestMutationRequest): string {
   const { idempotencyKey: _idempotencyKey, ...payload } = request;
-  return createHash("sha256").update(JSON.stringify(payload)).digest("base64url");
+  return NodeCrypto.createHash("sha256").update(JSON.stringify(payload)).digest("base64url");
 }
 
 function identityKey(identity: PullRequestIdentity): string {

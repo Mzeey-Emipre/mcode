@@ -19,7 +19,7 @@ import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 
 // Mock the broadcast transport so we can assert agent.event emissions
 // without a real WebSocket server.
@@ -121,7 +121,7 @@ function buildService({
     persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
   } as unknown as AttachmentService;
 
-  const providerStub = Object.assign(new EventEmitter(), {
+  const providerStub = Object.assign(new NodeEvents.EventEmitter(), {
     id: "codex" as const,
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,

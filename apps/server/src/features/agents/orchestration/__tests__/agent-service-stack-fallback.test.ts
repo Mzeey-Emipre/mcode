@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import type { Thread, IProviderRegistry } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { createAgentServiceForTest } from "./agent-service-test-harness.js";
@@ -70,7 +70,7 @@ interface BufferedToolRow {
 
 function minimalService(): { service: AgentService; narrativeStore: NarrativeStore } {
   const thread = makeThread();
-  const providerEmitter = new EventEmitter();
+  const providerEmitter = new NodeEvents.EventEmitter();
   (providerEmitter as unknown as Record<string, unknown>).sendMessage = vi.fn(() => Promise.resolve());
 
   const threadRepo = {

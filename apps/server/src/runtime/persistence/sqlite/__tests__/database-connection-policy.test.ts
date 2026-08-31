@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,8 +12,8 @@ describe("SQLite connection policy", () => {
   const originalMigrationsDirectory = process.env.MCODE_DRIZZLE_MIGRATIONS_DIR;
 
   beforeEach(() => {
-    directory = mkdtempSync(join(tmpdir(), "mcode-connection-policy-"));
-    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = join(process.cwd(), "drizzle");
+    directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-connection-policy-"));
+    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = NodePath.join(process.cwd(), "drizzle");
   });
 
   afterEach(() => {
@@ -25,11 +25,11 @@ describe("SQLite connection policy", () => {
     } else {
       process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = originalMigrationsDirectory;
     }
-    rmSync(directory, { recursive: true, force: true });
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   });
 
   it("opens a file-backed database with the durable active policy", () => {
-    database = openDatabase({ dbPath: join(directory, "mcode.db") });
+    database = openDatabase({ dbPath: NodePath.join(directory, "mcode.db") });
 
     expect({
       journalMode: database.pragma("journal_mode", { simple: true }),
@@ -51,7 +51,7 @@ describe("SQLite connection policy", () => {
   it("runs bounded optimization when the database opens and its schema changes", () => {
     const pragma = vi.spyOn(Database.prototype, "pragma");
 
-    database = openDatabase({ dbPath: join(directory, "mcode.db") });
+    database = openDatabase({ dbPath: NodePath.join(directory, "mcode.db") });
 
     expect(pragma).toHaveBeenCalledWith("optimize = 0x10002");
     expect(pragma).toHaveBeenCalledWith("optimize");
@@ -60,7 +60,7 @@ describe("SQLite connection policy", () => {
   });
 
   it("does not repeat schema-change optimization when the schema is current", () => {
-    const databasePath = join(directory, "mcode.db");
+    const databasePath = NodePath.join(directory, "mcode.db");
     database = openDatabase({ dbPath: databasePath });
     database.close();
     database = undefined;

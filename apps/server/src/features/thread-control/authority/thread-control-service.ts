@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { logger } from "@mcode/shared";
 import {
   type IProviderRegistry,
@@ -270,7 +270,7 @@ export class ThreadControlService {
       type: "internal",
       userId: "local-user",
       sourceThreadId: source.id,
-      sourceTurnId: randomUUID(),
+      sourceTurnId: NodeCrypto.randomUUID(),
       sourceToolCallId: "ui-thread-control",
       sourceProviderId: source.provider || "unknown",
       permissionMode: this.resolveInternalPermissionMode(source.permission_mode),
@@ -300,7 +300,7 @@ export class ThreadControlService {
       type: "internal",
       userId: "local-user",
       sourceThreadId: source.id,
-      sourceTurnId: randomUUID(),
+      sourceTurnId: NodeCrypto.randomUUID(),
       sourceToolCallId: "ui-thread-control",
       sourceProviderId: source.provider || "unknown",
       permissionMode: this.resolveInternalPermissionMode(source.permission_mode),
@@ -533,7 +533,7 @@ export class ThreadControlService {
     try {
       return this.approvals.createSend({
         approvalId: reservationToken, threadId: target.id, workspaceId: target.workspace_id,
-        message: input.message, execution, turnId: randomUUID(),
+        message: input.message, execution, turnId: NodeCrypto.randomUUID(),
         callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
         ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId, sourceTurnId: authority.sourceTurnId, sourceProviderId: authority.sourceProviderId } : {}),
       });
@@ -567,7 +567,7 @@ export class ThreadControlService {
   ): Promise<ThreadSendResult> {
     const reservationToken = this.mutationReservations.reserve(target.id, "activeTurn");
     if (!reservationToken) return this.rejectSendTarget(authority, target, "thread_busy", "Thread mutation is already pending", true);
-    const turnId = randomUUID();
+    const turnId = NodeCrypto.randomUUID();
     try {
       await this.startTurn(target.id, input.message, execution, turnId, this.sendOrigin(authority), reservationToken);
     } catch (error) {
@@ -651,7 +651,7 @@ export class ThreadControlService {
   ): string | null {
     try {
       return this.approvals.createStop({
-        approvalId: reservationToken, threadId: target.id, workspaceId: target.workspace_id, execution, turnId: randomUUID(),
+        approvalId: reservationToken, threadId: target.id, workspaceId: target.workspace_id, execution, turnId: NodeCrypto.randomUUID(),
         callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
         ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
       });
@@ -1329,7 +1329,7 @@ export class ThreadControlService {
     if (input.placement.type !== "new_worktree" || !this.requiresWorktreeApproval(authority, execution)) return null;
     this.threads.updateStatus(threadId, "paused");
     const approvalId = this.approvals.create({
-      threadId, workspaceId: input.workspaceId, prompt: input.prompt, execution, placement: input.placement, turnId: randomUUID(),
+      threadId, workspaceId: input.workspaceId, prompt: input.prompt, execution, placement: input.placement, turnId: NodeCrypto.randomUUID(),
       callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
       ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
     });
@@ -1358,7 +1358,7 @@ export class ThreadControlService {
     execution: ResolvedExecution,
   ): Promise<ThreadCreateItemResult> {
     const placement = await this.resolveCreatedPlacement(threadId, input);
-    const turnId = randomUUID();
+    const turnId = NodeCrypto.randomUUID();
     await this.startTurn(threadId, input.prompt, execution, turnId);
     return { index, status: "created", workspaceId: input.workspaceId, threadId, turnId, execution, placement, state: { status: "starting" } };
   }

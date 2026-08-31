@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { PassThrough } from "node:stream";
+import * as NodeCrypto from "node:crypto";
+import * as NodeHTTP from "node:http";
+import * as NodeStream from "node:stream";
 import { inject, injectable } from "tsyringe";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -49,7 +49,7 @@ export interface InternalThreadControlMcpHttpConnection {
 export class InternalThreadControlMcpRuntime {
   private readonly transport;
   private readonly httpSessions = new Map<string, HttpProviderSession>();
-  private httpServer: Server | undefined;
+  private httpServer: NodeHTTP.Server | undefined;
   private httpPort: number | undefined;
   private httpServerStartup: Promise<void> | undefined;
   private lifecycleTail: Promise<void> = Promise.resolve();
@@ -180,7 +180,7 @@ export class InternalThreadControlMcpRuntime {
   }
 
   private async startHttpServer(): Promise<void> {
-    const server = createServer((request, response) => this.handleHttpRequest(request, response));
+    const server = NodeHTTP.createServer((request, response) => this.handleHttpRequest(request, response));
     server.requestTimeout = INTERNAL_MCP_REQUEST_TIMEOUT_MS;
     server.headersTimeout = INTERNAL_MCP_REQUEST_TIMEOUT_MS;
     server.timeout = INTERNAL_MCP_REQUEST_TIMEOUT_MS;
@@ -200,14 +200,14 @@ export class InternalThreadControlMcpRuntime {
     this.httpPort = address.port;
   }
 
-  private handleHttpRequest(request: IncomingMessage, response: ServerResponse): void {
+  private handleHttpRequest(request: NodeHTTP.IncomingMessage, response: NodeHTTP.ServerResponse): void {
     this.applyRequestTimeout(request, response);
     const authorized = this.authorizeHttpRequest(request, response);
     if (!authorized) return;
     this.routeHttpRequest(request, response, authorized);
   }
 
-  private applyRequestTimeout(request: IncomingMessage, response: ServerResponse): void {
+  private applyRequestTimeout(request: NodeHTTP.IncomingMessage, response: NodeHTTP.ServerResponse): void {
     request.setTimeout(INTERNAL_MCP_REQUEST_TIMEOUT_MS, () => {
       if (!response.headersSent) response.writeHead(408).end();
       request.destroy();
@@ -215,8 +215,8 @@ export class InternalThreadControlMcpRuntime {
   }
 
   private authorizeHttpRequest(
-    request: IncomingMessage,
-    response: ServerResponse,
+    request: NodeHTTP.IncomingMessage,
+    response: NodeHTTP.ServerResponse,
   ): AuthorizedHttpRequest | undefined {
     const sessionId = readRequestSessionId(request, response);
     if (!sessionId) return undefined;
@@ -235,8 +235,8 @@ export class InternalThreadControlMcpRuntime {
   }
 
   private routeHttpRequest(
-    request: IncomingMessage,
-    response: ServerResponse,
+    request: NodeHTTP.IncomingMessage,
+    response: NodeHTTP.ServerResponse,
     authorized: AuthorizedHttpRequest,
   ): void {
     const route = resolveHttpRequestRoute(request.method, authorized.clientSessionId);
@@ -265,8 +265,8 @@ export class InternalThreadControlMcpRuntime {
   private async handleHttpInitialize(
     sessionId: string,
     entry: HttpProviderSession,
-    request: IncomingMessage,
-    response: ServerResponse,
+    request: NodeHTTP.IncomingMessage,
+    response: NodeHTTP.ServerResponse,
   ): Promise<void> {
     if (entry.clients.size + entry.pending.size >= MAX_HTTP_CLIENT_SESSIONS) {
       response.writeHead(429).end();
@@ -276,7 +276,7 @@ export class InternalThreadControlMcpRuntime {
     let transport!: StreamableHTTPServerTransport;
     let registered = false;
     transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
+      sessionIdGenerator: () => NodeCrypto.randomUUID(),
       onsessioninitialized: (clientSessionId) => {
         entry.pending.delete(transport);
         if (entry.closed || this.httpSessions.get(sessionId) !== entry) {
@@ -306,9 +306,9 @@ export class InternalThreadControlMcpRuntime {
   }
 
   private async handleBoundedRequest(
-    request: IncomingMessage,
-    response: ServerResponse,
-    handler: (boundedRequest: IncomingMessage) => Promise<void>,
+    request: NodeHTTP.IncomingMessage,
+    response: NodeHTTP.ServerResponse,
+    handler: (boundedRequest: NodeHTTP.IncomingMessage) => Promise<void>,
   ): Promise<void> {
     const declaredLength = parseContentLength(request);
     if (declaredLength === "invalid") {
@@ -358,7 +358,7 @@ export class InternalThreadControlMcpRuntime {
       response.writeHead(413, { Connection: "close" }).end();
       return;
     }
-    const body = new PassThrough();
+    const body = new NodeStream.PassThrough();
     const boundedRequest = Object.assign(body, {
       method: request.method,
       headers: request.headers,
@@ -369,7 +369,7 @@ export class InternalThreadControlMcpRuntime {
       socket: request.socket,
       rawHeaders: request.rawHeaders,
       rawTrailers: request.rawTrailers,
-    }) as unknown as IncomingMessage;
+    }) as unknown as NodeHTTP.IncomingMessage;
     body.end(Buffer.concat(chunks));
     try {
       await handler(boundedRequest);
@@ -381,14 +381,14 @@ export class InternalThreadControlMcpRuntime {
   }
 }
 
-function readClientSessionHeader(request: IncomingMessage): { value?: string; invalid: boolean } {
+function readClientSessionHeader(request: NodeHTTP.IncomingMessage): { value?: string; invalid: boolean } {
   const header = request.headers["mcp-session-id"];
   if (header === undefined) return { invalid: false };
   if (typeof header !== "string" || header.length === 0 || header.length > 256) return { invalid: true };
   return { value: header, invalid: false };
 }
 
-function readRequestSessionId(request: IncomingMessage, response: ServerResponse): string | undefined {
+function readRequestSessionId(request: NodeHTTP.IncomingMessage, response: NodeHTTP.ServerResponse): string | undefined {
   const encodedSessionId = request.url?.split("?", 1)[0]?.slice(1);
   if (!encodedSessionId) {
     response.writeHead(404).end();
@@ -412,7 +412,7 @@ function resolveHttpRequestRoute(
   return clientSessionId ? "dispatch" : "not-found";
 }
 
-function parseContentLength(request: IncomingMessage): number | "invalid" | undefined {
+function parseContentLength(request: NodeHTTP.IncomingMessage): number | "invalid" | undefined {
   const raw = request.headers["content-length"];
   if (raw === undefined) return undefined;
   if (typeof raw !== "string" || !/^\d+$/.test(raw)) return "invalid";

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type {
   MessageMention,
@@ -124,7 +124,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
   /** Atomically persist one blocked Turn and create the Setup gate on the first submission. */
   queueFirstTurn(input: WorkspaceEnvironmentQueueFirstTurnInput): WorkspaceEnvironmentQueueAdmission {
     const now = this.now();
-    const submissionId = randomUUID();
+    const submissionId = NodeCrypto.randomUUID();
     const queued = this.db.transaction(
       () => this.queueBlockedFirstTurn(input, now, submissionId),
     )();
@@ -165,7 +165,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
 
   private ensureBlockedSetupGate(threadId: string, gate: AutomaticSetupGate | undefined, now: string): void {
     if (gate) return;
-    const attemptId = randomUUID();
+    const attemptId = NodeCrypto.randomUUID();
     this.db.prepare(
       "INSERT INTO workspace_environment_setup_gates (thread_id, state, attempt_id, created_at, updated_at) VALUES (?, 'blocked', ?, ?, ?)",
     ).run(threadId, attemptId, now, now);
@@ -429,7 +429,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
   /** Create one new queued automatic Setup attempt after a final blocked outcome. */
   retryCurrentAttempt(threadId: string): boolean {
     const now = this.now();
-    const attemptId = randomUUID();
+    const attemptId = NodeCrypto.randomUUID();
     return this.db.transaction(() => {
       const replaced = this.db.prepare(
         "UPDATE workspace_environment_setup_gates SET attempt_id = ?, updated_at = ? WHERE thread_id = ? AND state = 'blocked' AND attempt_id IN (SELECT id FROM workspace_environment_automatic_setup_attempts WHERE state IN ('failed', 'interrupted'))",

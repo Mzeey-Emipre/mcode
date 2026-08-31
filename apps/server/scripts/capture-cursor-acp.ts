@@ -13,10 +13,10 @@
  *
  * Requires `agent` or `cursor-agent` on PATH and a logged-in Cursor CLI session.
  */
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
-import { Readable, Writable } from "node:stream";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeStream from "node:stream";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -34,8 +34,8 @@ import {
 import { summarizeEmittedAgentEventsForTrace } from "../../../packages/providers/src/private/cursor/acp/cursor-acp-session-trace.js";
 import { cursorTaskExtToAgentEvents } from "../../../packages/providers/src/private/cursor/acp/cursor-acp-task.js";
 
-const REPO_ROOT = resolve(import.meta.dir, "../../..");
-const OUT_DIR = join(REPO_ROOT, ".mcode-local", "cursor-acp-capture");
+const REPO_ROOT = NodePath.resolve(import.meta.dir, "../../..");
+const OUT_DIR = NodePath.join(REPO_ROOT, ".mcode-local", "cursor-acp-capture");
 const SMOKE_CWD = OUT_DIR;
 const SMOKE_REQUEST_TIMEOUT_MS = 30_000;
 const SMOKE_UPDATE_TIMEOUT_MS = 10_000;
@@ -106,7 +106,7 @@ class SmokeArtifactWriter {
       this.reachLimit(`${stream} artifact exceeded ${maxBytes} bytes`);
       return;
     }
-    appendFileSync(this.paths[stream], line, "utf8");
+    NodeFS.appendFileSync(this.paths[stream], line, "utf8");
     this.eventCounts[stream] += 1;
     this.byteCounts[stream] += bytes;
   }
@@ -161,17 +161,17 @@ function resolveWithinRepo(requestPath: string): string {
 
 /** Resolves a path inside a permitted root and rejects path traversal. */
 function resolveWithin(rootPath: string, requestPath: string, rootName: string): string {
-  const root = resolve(rootPath);
-  const candidate = resolve(root, requestPath);
-  const rel = relative(root, candidate);
-  if (isAbsolute(rel) || rel.startsWith("..") || rel.split(/[/\\]/).includes("..")) {
+  const root = NodePath.resolve(rootPath);
+  const candidate = NodePath.resolve(root, requestPath);
+  const rel = NodePath.relative(root, candidate);
+  if (NodePath.isAbsolute(rel) || rel.startsWith("..") || rel.split(/[/\\]/).includes("..")) {
     throw new Error(`Path escapes ${rootName}: ${requestPath}`);
   }
   return candidate;
 }
 
-const FIXTURE_DIR = join(OUT_DIR, "fixture-workspace");
-const FIXTURE_FILE = join(FIXTURE_DIR, "scratch.txt");
+const FIXTURE_DIR = NodePath.join(OUT_DIR, "fixture-workspace");
+const FIXTURE_FILE = NodePath.join(FIXTURE_DIR, "scratch.txt");
 
 /** Scenarios designed to exercise distinct ACP tool_call shapes. */
 const CAPTURE_SUITE: Array<{ id: string; prompt: string }> = [
@@ -236,7 +236,7 @@ function stamp(): string {
 }
 
 function writeLine(file: string, record: Record<string, unknown>): void {
-  appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
+  NodeFS.appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
 }
 
 /** Returns whether a value can safely be read as a record. */
@@ -355,7 +355,7 @@ function failMissingSmokeRequirements(summary: SmokeSummary, detail: string): vo
 }
 
 /** Stops the child process when the bounded smoke run completes or fails. */
-function stopChild(child: ChildProcess): void {
+function stopChild(child: NodeChildProcess.ChildProcess): void {
   child.stdin?.destroy();
   child.stdout?.destroy();
   child.stderr?.destroy();
@@ -365,7 +365,7 @@ function stopChild(child: ChildProcess): void {
 function summarizeRawLog(rawPath: string): Record<string, number> {
   const counts: Record<string, number> = {};
   try {
-    const text = readFileSync(rawPath, "utf8");
+    const text = NodeFS.readFileSync(rawPath, "utf8");
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       const row = JSON.parse(line) as Record<string, unknown>;
@@ -447,13 +447,13 @@ function buildClient(opts: {
     readTextFile: async (r) => {
       if (!allowReadTextFile) throw new Error("ACP text-file reads are disabled for smoke mode");
       const path = resolveWithinRepo(r.path);
-      return { content: readFileSync(path, "utf8") };
+      return { content: NodeFS.readFileSync(path, "utf8") };
     },
     writeTextFile: async (r) => {
       if (!allowWriteTextFile) throw new Error("ACP text-file writes are disabled for smoke mode");
       const path = resolveWithinRepo(r.path);
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, r.content, "utf8");
+      NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+      NodeFS.writeFileSync(path, r.content, "utf8");
       return {};
     },
     extMethod: async (method, params) => {
@@ -495,7 +495,7 @@ function buildClient(opts: {
 }
 
 interface SmokeConnection {
-  child: ChildProcess;
+  child: NodeChildProcess.ChildProcess;
   connection: ClientSideConnection;
   initialized: Awaited<ReturnType<ClientSideConnection["initialize"]>>;
 }
@@ -529,7 +529,7 @@ function stopSmokeConnections(context: SmokeRunContext | undefined): void {
 }
 
 /** Captures bounded child stderr and stops the run if it exceeds its limit. */
-function attachSmokeStderrCapture(child: ChildProcess, artifacts: SmokeArtifactWriter): void {
+function attachSmokeStderrCapture(child: NodeChildProcess.ChildProcess, artifacts: SmokeArtifactWriter): void {
   if (!child.stderr) return;
   child.stderr.on("data", (chunk: Buffer) => {
     artifacts.writeStderr(chunk.toString().trim(), Buffer.byteLength(chunk));
@@ -540,7 +540,7 @@ function attachSmokeStderrCapture(child: ChildProcess, artifacts: SmokeArtifactW
 /** Writes a smoke artifact record and stops its child after a limit failure. */
 function writeSmokeRecord(
   artifacts: SmokeArtifactWriter,
-  child: ChildProcess,
+  child: NodeChildProcess.ChildProcess,
   stream: CaptureArtifactStream,
   record: Record<string, unknown>,
 ): void {
@@ -550,11 +550,11 @@ function writeSmokeRecord(
 
 /** Builds the restricted ACP client used for smoke connections. */
 function createSmokeClientConnection(
-  child: ChildProcess,
+  child: NodeChildProcess.ChildProcess,
   opts: Parameters<typeof openSmokeConnection>[0],
 ): ClientSideConnection {
-  const out = Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>;
-  const inp = Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>;
+  const out = NodeStream.Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>;
+  const inp = NodeStream.Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>;
   return new ClientSideConnection(
     () => buildClient({
       ...opts,
@@ -621,7 +621,7 @@ async function openSmokeConnection(opts: {
   artifacts: SmokeArtifactWriter;
   onSessionUpdate: (params: SessionNotification, updateKind: string) => void;
 }): Promise<SmokeConnection> {
-  const child = spawn(cliPath, buildCursorAcpArgs({ permissionMode: "default" }), {
+  const child = NodeChildProcess.spawn(cliPath, buildCursorAcpArgs({ permissionMode: "default" }), {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: SMOKE_CWD,
     shell: process.platform === "win32",
@@ -645,12 +645,12 @@ async function openSmokeConnection(opts: {
 
 /** Creates the mutable state and bounded artifacts for one smoke run. */
 function createSmokeRunContext(): SmokeRunContext {
-  mkdirSync(OUT_DIR, { recursive: true });
+  NodeFS.mkdirSync(OUT_DIR, { recursive: true });
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const paths: SmokePaths = {
-    raw: join(OUT_DIR, `${runId}-smoke-raw.jsonl`),
-    mapped: join(OUT_DIR, `${runId}-smoke-mapped.jsonl`),
-    summary: join(OUT_DIR, `${runId}-smoke-summary.json`),
+    raw: NodePath.join(OUT_DIR, `${runId}-smoke-raw.jsonl`),
+    mapped: NodePath.join(OUT_DIR, `${runId}-smoke-mapped.jsonl`),
+    summary: NodePath.join(OUT_DIR, `${runId}-smoke-summary.json`),
   };
   const summary: SmokeSummary = {
     schemaVersion: 1,
@@ -992,7 +992,7 @@ function finalizeSmokeRun(context: SmokeRunContext): void {
     && Object.values(context.summary.requirements).every((requirement) => requirement.passed)
     ? "passed"
     : "failed";
-  writeFileSync(context.paths.summary, `${JSON.stringify(context.summary, null, 2)}\n`, "utf8");
+  NodeFS.writeFileSync(context.paths.summary, `${JSON.stringify(context.summary, null, 2)}\n`, "utf8");
   const wroteSummary = context.artifacts.writeStdout({
     type: "smoke_summary",
     status: context.summary.status,
@@ -1001,7 +1001,7 @@ function finalizeSmokeRun(context: SmokeRunContext): void {
   if (!wroteSummary) {
     context.summary.error ??= "Cursor ACP smoke failed: stdout summary exceeded its byte limit";
     context.summary.status = "failed";
-    writeFileSync(context.paths.summary, `${JSON.stringify(context.summary, null, 2)}\n`, "utf8");
+    NodeFS.writeFileSync(context.paths.summary, `${JSON.stringify(context.summary, null, 2)}\n`, "utf8");
   }
 }
 
@@ -1028,21 +1028,21 @@ async function runSmoke(): Promise<void> {
 }
 
 async function runCapture(): Promise<void> {
-  mkdirSync(OUT_DIR, { recursive: true });
-  mkdirSync(FIXTURE_DIR, { recursive: true });
+  NodeFS.mkdirSync(OUT_DIR, { recursive: true });
+  NodeFS.mkdirSync(FIXTURE_DIR, { recursive: true });
   try {
-    writeFileSync(FIXTURE_FILE, "before\n", "utf8");
+    NodeFS.writeFileSync(FIXTURE_FILE, "before\n", "utf8");
   } catch {
     /* ok */
   }
 
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
-  const rawPath = join(OUT_DIR, `${runId}-raw.jsonl`);
-  const mappedPath = join(OUT_DIR, `${runId}-mapped.jsonl`);
-  const summaryPath = join(OUT_DIR, `${runId}-summary.txt`);
+  const rawPath = NodePath.join(OUT_DIR, `${runId}-raw.jsonl`);
+  const mappedPath = NodePath.join(OUT_DIR, `${runId}-mapped.jsonl`);
+  const summaryPath = NodePath.join(OUT_DIR, `${runId}-summary.txt`);
   const scenarios = useSuite ? CAPTURE_SUITE : [{ id: "single", prompt: singlePrompt }];
 
-  writeFileSync(
+  NodeFS.writeFileSync(
     summaryPath,
     [
       `capture started ${stamp()}`,
@@ -1056,7 +1056,7 @@ async function runCapture(): Promise<void> {
   );
 
   const acpArgs = buildCursorAcpArgs({ permissionMode: "full" });
-  const child = spawn(cliPath, acpArgs, {
+  const child = NodeChildProcess.spawn(cliPath, acpArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: REPO_ROOT,
     shell: process.platform === "win32",
@@ -1071,8 +1071,8 @@ async function runCapture(): Promise<void> {
     if (text) writeLine(rawPath, { t: stamp(), kind: "stderr", text });
   });
 
-  const out = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
-  const inp = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
+  const out = NodeStream.Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
+  const inp = NodeStream.Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
   const stream = ndJsonStream(out, inp);
 
   let turnState = createCursorAcpTurnState();
@@ -1129,7 +1129,7 @@ async function runCapture(): Promise<void> {
   }
 
   const counts = summarizeRawLog(rawPath);
-  appendFileSync(
+  NodeFS.appendFileSync(
     summaryPath,
     [
       "",

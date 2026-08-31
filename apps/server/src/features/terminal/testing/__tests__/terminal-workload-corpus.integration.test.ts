@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { describe, expect, it } from "vitest";
 
 interface CliRun {
@@ -12,23 +12,23 @@ interface CliRun {
   readonly timedOut: boolean;
 }
 
-const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
-const REPOSITORY_ROOT = resolve(TEST_DIRECTORY, "../../../../../../..");
-const CORPUS_SCRIPT = resolve(REPOSITORY_ROOT, "apps/server/scripts/run-terminal-workload-corpus.ts");
-const VITE_NODE_CLI = resolve(
-  dirname(createRequire(import.meta.url).resolve("vite-node/package.json")),
+const TEST_DIRECTORY = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const REPOSITORY_ROOT = NodePath.resolve(TEST_DIRECTORY, "../../../../../../..");
+const CORPUS_SCRIPT = NodePath.resolve(REPOSITORY_ROOT, "apps/server/scripts/run-terminal-workload-corpus.ts");
+const VITE_NODE_CLI = NodePath.resolve(
+  NodePath.dirname(NodeModule.createRequire(import.meta.url).resolve("vite-node/package.json")),
   "dist/cli.mjs",
 );
 
 function runWorkload(workloadId: string): Promise<CliRun> {
   const executable = process.platform === "win32" ? "node.exe" : "node";
   const ptyModeArgs = process.platform === "win32" ? ["--windows-pty", "native"] : [];
-  const child = spawn(
+  const child = NodeChildProcess.spawn(
     executable,
     [
       VITE_NODE_CLI,
       "--root",
-      resolve(REPOSITORY_ROOT, "apps/server"),
+      NodePath.resolve(REPOSITORY_ROOT, "apps/server"),
       CORPUS_SCRIPT,
       "--workload",
       workloadId,

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import type { AgentEvent } from "@mcode/contracts";
 
@@ -53,7 +53,7 @@ export class TurnConversationProjectionService {
         providerId: thread.provider,
         createdAt: thread.created_at,
       },
-      turnId: randomUUID(),
+      turnId: NodeCrypto.randomUUID(),
       executionId,
       permissionMode: "supervised",
       providerIdentities: [],

@@ -8,15 +8,15 @@
  *   session.idle → signals the turn is complete
  */
 
-import { execFile } from "child_process";
-import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { dirname, join } from "path";
-import { promisify } from "util";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
 import { injectable, inject } from "tsyringe";
 import which from "which";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import { CopilotClient, approveAll } from "@github/copilot-sdk";
 import type { CopilotSession, ModelInfo } from "@github/copilot-sdk";
 import { discoverCopilotAgents, COPILOT_DEFAULT_AGENTS } from "./copilot-agent-discovery.js";
@@ -71,7 +71,7 @@ import {
 } from "../../composition/canonical-live-event-publisher.js";
 
 /** Promisified execFile used to retrieve the gh auth token. */
-const execFileAsync = promisify(execFile);
+const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
 
 /** Builds the Copilot SDK's remote HTTP MCP configuration for one provider session. */
@@ -112,7 +112,7 @@ function transientHandoffError(message: string): Error & { code: string } {
  */
 function readUserInstructions(): string | undefined {
   try {
-    return readFileSync(join(homedir(), ".copilot", "copilot-instructions.md"), "utf8");
+    return NodeFS.readFileSync(NodePath.join(NodeOS.homedir(), ".copilot", "copilot-instructions.md"), "utf8");
   } catch {
     return undefined;
   }
@@ -123,8 +123,8 @@ function readUserInstructions(): string | undefined {
  * Currently resolves `~/.copilot/skills` if it exists.
  */
 function userSkillDirectories(): string[] {
-  const dir = join(homedir(), ".copilot", "skills");
-  return existsSync(dir) ? [dir] : [];
+  const dir = NodePath.join(NodeOS.homedir(), ".copilot", "skills");
+  return NodeFS.existsSync(dir) ? [dir] : [];
 }
 
 /** Maps raw Copilot quota snapshot keys to human-readable labels. */
@@ -244,7 +244,7 @@ type CopilotClientOptions = NonNullable<ConstructorParameters<typeof CopilotClie
 
 /** GitHub Copilot SDK adapter implementing IAgentProvider with callback-based event mapping. */
 @injectable()
-export class CopilotProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CopilotSessionState> {
+export class CopilotProvider extends NodeEvents.EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CopilotSessionState> {
   readonly id: ProviderId = "copilot";
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;
@@ -298,11 +298,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     @inject(InternalThreadControlMcpRuntime)
     private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
     @inject("ProviderHostPorts")
-    host?: ProviderHostPorts,
+    private readonly host?: ProviderHostPorts,
   ) {
     super();
-    this.canonicalEventPublisher = host
-      ? new CanonicalLiveEventPublisher(this.id, host.events)
+    this.canonicalEventPublisher = this.host?.events
+      ? new CanonicalLiveEventPublisher(this.id, this.host.events)
       : undefined;
     this.runtime = new SessionRuntime<CopilotSessionState>(this, {
       jobObject: this.jobObject,

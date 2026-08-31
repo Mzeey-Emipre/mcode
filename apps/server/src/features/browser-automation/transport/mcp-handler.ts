@@ -1,5 +1,5 @@
-import { randomUUID } from "crypto";
-import type { IncomingMessage, ServerResponse } from "http";
+import * as NodeCrypto from "node:crypto";
+import type * as NodeHTTP from "node:http";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_RESULT_BYTES,
@@ -65,7 +65,7 @@ function isLoopback(address: string | undefined): boolean {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
-function bearerToken(req: IncomingMessage): string | null {
+function bearerToken(req: NodeHTTP.IncomingMessage): string | null {
   const value = req.headers.authorization;
   if (typeof value !== "string") return null;
   const match = /^Bearer ([A-Za-z0-9_-]{20,256})$/.exec(value);
@@ -76,7 +76,7 @@ function jsonRpcError(id: JsonRpcId, code: number, message: string): Record<stri
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-function writeJson(res: ServerResponse, status: number, value: unknown): void {
+function writeJson(res: NodeHTTP.ServerResponse, status: number, value: unknown): void {
   const body = JSON.stringify(value);
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -86,7 +86,7 @@ function writeJson(res: ServerResponse, status: number, value: unknown): void {
   res.end(body);
 }
 
-async function readBoundedBody(req: IncomingMessage): Promise<Buffer> {
+async function readBoundedBody(req: NodeHTTP.IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -350,7 +350,7 @@ export class BrowserAutomationMcpHandler {
   }
 
   /** Processes one HTTP request and returns true when the `/mcp` route matched. */
-  async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  async handle(req: NodeHTTP.IncomingMessage, res: NodeHTTP.ServerResponse): Promise<boolean> {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
     if (pathname !== "/mcp") return false;
     const claims = this.authenticateLoopbackRequest(req, res);
@@ -361,7 +361,7 @@ export class BrowserAutomationMcpHandler {
   }
 
   private async handleAuthenticatedRequest(
-    res: ServerResponse,
+    res: NodeHTTP.ServerResponse,
     claims: BrowserAutomationCredentialClaims,
     request: JsonRpcRequest,
   ): Promise<boolean> {
@@ -389,7 +389,7 @@ export class BrowserAutomationMcpHandler {
   }
 
   private async dispatchWithDisconnectCancellation(
-    res: ServerResponse,
+    res: NodeHTTP.ServerResponse,
     claims: BrowserAutomationCredentialClaims,
     request: JsonRpcRequest,
   ): Promise<Record<string, unknown>> {
@@ -406,7 +406,7 @@ export class BrowserAutomationMcpHandler {
   }
 
   private writeBoundedResponse(
-    res: ServerResponse,
+    res: NodeHTTP.ServerResponse,
     request: JsonRpcRequest,
     response: Record<string, unknown>,
   ): void {
@@ -418,8 +418,8 @@ export class BrowserAutomationMcpHandler {
   }
 
   private authenticateLoopbackRequest(
-    req: IncomingMessage,
-    res: ServerResponse,
+    req: NodeHTTP.IncomingMessage,
+    res: NodeHTTP.ServerResponse,
   ): BrowserAutomationCredentialClaims | null {
     if (!isLoopback(req.socket.remoteAddress)) {
       writeJson(res, 403, jsonRpcError(null, -32003, "Forbidden"));
@@ -436,7 +436,7 @@ export class BrowserAutomationMcpHandler {
     return claims;
   }
 
-  private async parseRequestBody(req: IncomingMessage, res: ServerResponse): Promise<JsonRpcRequest | null> {
+  private async parseRequestBody(req: NodeHTTP.IncomingMessage, res: NodeHTTP.ServerResponse): Promise<JsonRpcRequest | null> {
     const body = await this.readRequestBody(req, res);
     if (!body) return null;
     let decoded: unknown;
@@ -451,7 +451,7 @@ export class BrowserAutomationMcpHandler {
     return request;
   }
 
-  private async readRequestBody(req: IncomingMessage, res: ServerResponse): Promise<Buffer | null> {
+  private async readRequestBody(req: NodeHTTP.IncomingMessage, res: NodeHTTP.ServerResponse): Promise<Buffer | null> {
     try {
       return await readBoundedBody(req);
     } catch (error) {
@@ -594,7 +594,7 @@ export class BrowserAutomationMcpHandler {
       threadId: claims.threadId,
       providerSessionId: claims.providerSessionId,
       providerInstanceId: claims.mcodeSessionId,
-      requestId: randomUUID(),
+      requestId: NodeCrypto.randomUUID(),
       sequence,
       deadline: this.now() + 60_000,
       expectedControlEpoch,

@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryPtyHostCleanupLedger } from "../../testing/in-memory-pty-host-cleanup-ledger.js";
 import type {
@@ -30,7 +30,7 @@ const createRequest = {
   rows: 24,
 };
 
-class FakeHostChild extends EventEmitter implements PtyHostChild {
+class FakeHostChild extends NodeEvents.EventEmitter implements PtyHostChild {
   readonly pid = 42;
   readonly connected = true;
   respondToInspection = true;

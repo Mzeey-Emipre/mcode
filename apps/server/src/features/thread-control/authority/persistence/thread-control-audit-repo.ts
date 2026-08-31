@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import type Database from "better-sqlite3";
 
@@ -9,6 +9,6 @@ export class ThreadControlAuditRepo {
 
   /** Persist one operation outcome without prompt, credential, or path data. */
   write(input: { callerId: string; sourceThreadId?: string; workspaceId?: string; threadId?: string; operation: string; outcome: string }): void {
-    this.db.prepare("INSERT INTO thread_control_audit (id, caller_id, source_thread_id, workspace_id, thread_id, operation, outcome) VALUES (?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), input.callerId, input.sourceThreadId ?? null, input.workspaceId ?? null, input.threadId ?? null, input.operation, input.outcome);
+    this.db.prepare("INSERT INTO thread_control_audit (id, caller_id, source_thread_id, workspace_id, thread_id, operation, outcome) VALUES (?, ?, ?, ?, ?, ?, ?)").run(NodeCrypto.randomUUID(), input.callerId, input.sourceThreadId ?? null, input.workspaceId ?? null, input.threadId ?? null, input.operation, input.outcome);
   }
 }

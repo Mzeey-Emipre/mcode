@@ -32,13 +32,13 @@ describe("GitWorktreeService", () => {
         ["worktree", "list", "--porcelain"],
         { stdout: `worktree ${alias}\ndetached\n\n`, stderr: "" },
       );
-      const service = new GitWorktreeService({} as WorkspaceRepo, gitExecutor);
+      const service = new GitWorktreeService({} as WorkspaceRepo, gitExecutor, TEST_HOST_RUNTIME);
 
       await expect(service.isRegisteredWorktreePath(repository, target)).resolves.toBe(true);
     } finally {
-      rmSync(aliasParent, { recursive: true, force: true });
-      rmSync(target, { recursive: true, force: true });
-      rmSync(repository, { recursive: true, force: true });
+      NodeFS.rmSync(aliasParent, { recursive: true, force: true });
+      NodeFS.rmSync(target, { recursive: true, force: true });
+      NodeFS.rmSync(repository, { recursive: true, force: true });
     }
   });
 });

@@ -6,11 +6,11 @@
  * cannot report a successful close while descendants may still be running.
  */
 
-import { execFile as execFileCb } from "child_process";
-import { promisify } from "util";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import { logger } from "@mcode/shared";
 
-const execFile = promisify(execFileCb);
+const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
 // 5 s gives taskkill enough time to propagate through a deep process tree
 // without blocking server shutdown or the cleanup worker's retry loop.
@@ -101,7 +101,7 @@ interface SharedKillContext {
   readonly now: () => number;
 }
 
-function createKillContext(deps: KillProcessTreeDeps | undefined): {
+function createKillContext(deps: KillProcessTreeDeps): {
   readonly platform: NodeJS.Platform;
   readonly windows: WindowsKillContext;
   readonly unix: UnixKillContext;
@@ -114,7 +114,7 @@ function createKillContext(deps: KillProcessTreeDeps | undefined): {
   };
 }
 
-function createSharedKillContext(deps: KillProcessTreeDeps | undefined): SharedKillContext {
+function createSharedKillContext(deps: KillProcessTreeDeps): SharedKillContext {
   return {
     platform: resolveKillPlatform(deps),
     execFile: resolveProcessExecutor(deps),
@@ -160,13 +160,13 @@ function createWindowsKillContext(
     processKill: shared.processKill,
     sleep: shared.sleep,
     now: shared.now,
-    getSnapshot: deps?.getWindowsProcessSnapshot ?? (() => readWindowsProcessSnapshot(shared.execFile)),
-    isProcessAlive: deps?.isProcessAlive ?? createProcessLivenessProbe(shared.processKill),
+    getSnapshot: deps.getWindowsProcessSnapshot ?? (() => readWindowsProcessSnapshot(shared.execFile)),
+    isProcessAlive: deps.isProcessAlive ?? createProcessLivenessProbe(shared.processKill),
   };
 }
 
 function createUnixKillContext(
-  deps: KillProcessTreeDeps | undefined,
+  deps: KillProcessTreeDeps,
   shared: SharedKillContext,
 ): UnixKillContext {
   const getProcessStartMarker = resolveUnixStartMarker(deps, shared.processKill, shared.execFile);
@@ -200,12 +200,12 @@ function createProcessLivenessProbe(
 }
 
 function resolveUnixStartMarker(
-  deps: KillProcessTreeDeps | undefined,
+  deps: KillProcessTreeDeps,
   processKill: (pid: number, signal: string | number) => void,
   execFileForProcess: typeof execFile,
 ): (pid: number) => Promise<string | null> {
-  if (deps?.getProcessStartMarker) return deps.getProcessStartMarker;
-  if (!deps?.processKill) return (pid) => readUnixProcessStartMarker(pid, execFileForProcess);
+  if (deps.getProcessStartMarker) return deps.getProcessStartMarker;
+  if (!deps.processKill) return (pid) => readUnixProcessStartMarker(pid, execFileForProcess);
   return async (pid) => {
     try {
       processKill(pid, 0);
@@ -218,11 +218,11 @@ function resolveUnixStartMarker(
 }
 
 function resolveRemainingMarkers(
-  deps: KillProcessTreeDeps | undefined,
+  deps: KillProcessTreeDeps,
   getProcessStartMarker: (pid: number) => Promise<string | null>,
   execFileForProcess: typeof execFile,
 ): (identities: readonly ProcessIdentity[]) => Promise<Map<number, string | null>> {
-  if (!deps?.getProcessStartMarker && !deps?.processKill) {
+  if (!deps.getProcessStartMarker && !deps.processKill) {
     return (identities) => readUnixProcessStartMarkers(identities.map((identity) => identity.pid), execFileForProcess);
   }
   return async (identities) => {
@@ -709,7 +709,7 @@ export interface GracefulKillDeps {
  */
 export async function gracefulKillProcessTree(
   pid: number,
-  deps?: GracefulKillDeps,
+  deps: GracefulKillDeps,
 ): Promise<void> {
   const context = createGracefulKillContext(deps);
   try {

@@ -29,7 +29,7 @@ import {
 
 // createRequire lets us load native CJS modules (node-pty) from both ESM
 // (Bun running `src/index.ts`) and the CJS production / dev bundle.
-const _require = createRequire(import.meta.url);
+const _require = NodeModule.createRequire(import.meta.url);
 
 /**
  * Returns the shell executable basename without a `.exe` suffix for display
@@ -222,7 +222,7 @@ export class TerminalService {
     launch: LegacyTerminalLaunch | undefined,
   ): { readonly cwd: string; readonly threadPtys: ReadonlySet<string> | undefined } {
     const cwd = this.resolveWorkingDirectory(scopeId);
-    if (!isAbsolute(cwd) || !existsSync(cwd) || !statSync(cwd).isDirectory()) {
+    if (!NodePath.isAbsolute(cwd) || !NodeFS.existsSync(cwd) || !NodeFS.statSync(cwd).isDirectory()) {
       throw new Error(`Invalid working directory: ${cwd}`);
     }
     const threadPtys = this.threadIndex.get(scopeId);

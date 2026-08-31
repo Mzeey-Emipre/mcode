@@ -191,27 +191,27 @@ describe("routeMessage snapshot.getCumulativeDiffStats", () => {
 
 describe("routeMessage provider.catalog", () => {
   it("merges scoped standalone agents and non-colliding config registrations", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-provider-catalog-ws-"));
-    const codexHome = join(root, "codex-home");
-    const cwd = join(root, "workspace");
-    await mkdir(join(codexHome, "agents"), { recursive: true });
-    await mkdir(join(cwd, ".codex", "agents"), { recursive: true });
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-provider-catalog-ws-"));
+    const codexHome = NodePath.join(root, "codex-home");
+    const cwd = NodePath.join(root, "workspace");
+    await NodeFSPromises.mkdir(NodePath.join(codexHome, "agents"), { recursive: true });
+    await NodeFSPromises.mkdir(NodePath.join(cwd, ".codex", "agents"), { recursive: true });
     await Promise.all([
-      writeFile(
-        join(codexHome, "agents", "reviewer.toml"),
+      NodeFSPromises.writeFile(
+        NodePath.join(codexHome, "agents", "reviewer.toml"),
         'name = "reviewer"\ndescription = "Global review"\n',
       ),
-      writeFile(
-        join(codexHome, "agents", "global-only.toml"),
+      NodeFSPromises.writeFile(
+        NodePath.join(codexHome, "agents", "global-only.toml"),
         'name = "global-only"\n',
       ),
-      writeFile(
-        join(cwd, ".codex", "agents", "reviewer.toml"),
+      NodeFSPromises.writeFile(
+        NodePath.join(cwd, ".codex", "agents", "reviewer.toml"),
         'name = "reviewer"\ndescription = "Project review"\n',
       ),
-      writeFile(join(cwd, ".codex", "agents", "broken.toml"), 'name = "broken\n'),
+      NodeFSPromises.writeFile(NodePath.join(cwd, ".codex", "agents", "broken.toml"), 'name = "broken\n'),
     ]);
-    const client = Object.assign(new EventEmitter(), {
+    const client = Object.assign(new NodeEvents.EventEmitter(), {
       isAlive: true,
       start: vi.fn(async () => undefined),
       kill: vi.fn(async () => undefined),
@@ -291,21 +291,21 @@ describe("routeMessage provider.catalog", () => {
     } finally {
       await codexCatalogService.shutdown();
       db.close();
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 
   it("publishes standalone agents when the app-server catalog fails on first load", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-provider-catalog-offline-ws-"));
-    const codexHome = join(root, "codex-home");
-    const cwd = join(root, "workspace");
-    await mkdir(join(codexHome, "agents"), { recursive: true });
-    await mkdir(cwd, { recursive: true });
-    await writeFile(
-      join(codexHome, "agents", "offline-review.toml"),
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-provider-catalog-offline-ws-"));
+    const codexHome = NodePath.join(root, "codex-home");
+    const cwd = NodePath.join(root, "workspace");
+    await NodeFSPromises.mkdir(NodePath.join(codexHome, "agents"), { recursive: true });
+    await NodeFSPromises.mkdir(cwd, { recursive: true });
+    await NodeFSPromises.writeFile(
+      NodePath.join(codexHome, "agents", "offline-review.toml"),
       'name = "offline-review"\ndescription = "Standalone review"\n',
     );
-    const client = Object.assign(new EventEmitter(), {
+    const client = Object.assign(new NodeEvents.EventEmitter(), {
       isAlive: true,
       start: vi.fn(async () => undefined),
       kill: vi.fn(async () => undefined),
@@ -371,13 +371,13 @@ describe("routeMessage provider.catalog", () => {
     } finally {
       await codexCatalogService.shutdown();
       db.close();
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 
   it("returns persisted Codex Skills immediately and reconciles refreshes in the background", async () => {
     let catalogVersion = 1;
-    const client = Object.assign(new EventEmitter(), {
+    const client = Object.assign(new NodeEvents.EventEmitter(), {
       isAlive: true,
       start: vi.fn(async () => undefined),
       kill: vi.fn(async () => undefined),
@@ -1670,7 +1670,7 @@ describe("routeMessage Setup deletion barriers", () => {
         code: "WORKSPACE_ENVIRONMENT_NOT_FOUND",
       });
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 });

@@ -1,7 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeHTTP from "node:http";
 import type Database from "better-sqlite3";
 import type { WebSocketServer } from "ws";
 import { THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH } from "@mcode/contracts";
@@ -43,8 +43,8 @@ export interface ReliabilityHarnessAssistantStream {
 export interface ReliabilityHarnessAdapter {
   readonly enabled: boolean;
   handleRequest(
-    request: IncomingMessage,
-    response: ServerResponse,
+    request: NodeHTTP.IncomingMessage,
+    response: NodeHTTP.ServerResponse,
     sockets: WebSocketServer["clients"],
   ): Promise<boolean>;
 }
@@ -58,12 +58,12 @@ const MAX_HANG_MS = 30_000;
 export function readReliabilityHarnessCapability(
   capabilityPath = process.env[CAPABILITY_PATH_ENV],
 ): ReliabilityHarnessCapability | null {
-  if (!capabilityPath || !isAbsolute(capabilityPath)) return null;
-  const normalizedPath = resolve(capabilityPath);
+  if (!capabilityPath || !NodePath.isAbsolute(capabilityPath)) return null;
+  const normalizedPath = NodePath.resolve(capabilityPath);
   try {
-    const stat = lstatSync(normalizedPath);
+    const stat = NodeFS.lstatSync(normalizedPath);
     if (!stat.isFile()) return null;
-    const parsed: unknown = JSON.parse(readFileSync(normalizedPath, "utf8"));
+    const parsed: unknown = JSON.parse(NodeFS.readFileSync(normalizedPath, "utf8"));
     return parseReliabilityHarnessCapability(parsed);
   } catch {
     return null;
@@ -132,8 +132,8 @@ export function createReliabilityHarnessAdapter(
 }
 
 function authorizeReliabilityRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
+  request: NodeHTTP.IncomingMessage,
+  response: NodeHTTP.ServerResponse,
   capability: ReliabilityHarnessCapability,
 ): boolean {
   if (!isLoopbackAddress(request.socket.remoteAddress)) {
@@ -149,8 +149,8 @@ function authorizeReliabilityRequest(
 }
 
 async function readReliabilityCommand(
-  request: IncomingMessage,
-  response: ServerResponse,
+  request: NodeHTTP.IncomingMessage,
+  response: NodeHTTP.ServerResponse,
 ): Promise<ReliabilityHarnessCommand | null> {
   try {
     return await readCommand(request);
@@ -164,7 +164,7 @@ async function readReliabilityCommand(
 function executeAssistantStream(
   command: ReliabilityHarnessCommand,
   hooks: { readonly streamAssistant?: (threadId: string) => ReliabilityHarnessAssistantStream },
-  response: ServerResponse,
+  response: NodeHTTP.ServerResponse,
 ): ReliabilityHarnessAssistantStream | null | undefined {
   if (command.control !== "assistant-stream") return null;
   if (!hooks.streamAssistant) {
@@ -207,7 +207,7 @@ function executeReliabilityControl(
   }
 }
 
-async function readCommand(request: IncomingMessage): Promise<ReliabilityHarnessCommand> {
+async function readCommand(request: NodeHTTP.IncomingMessage): Promise<ReliabilityHarnessCommand> {
   const parsed = parseReliabilityCommandJson(await readReliabilityBody(request));
   if (!parsed || typeof parsed !== "object") throw new Error("Reliability command must be an object");
   const value = parsed as Record<string, unknown>;
@@ -221,7 +221,7 @@ async function readCommand(request: IncomingMessage): Promise<ReliabilityHarness
   };
 }
 
-async function readReliabilityBody(request: IncomingMessage): Promise<Buffer> {
+async function readReliabilityBody(request: NodeHTTP.IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -269,7 +269,7 @@ function parseAssistantThreadId(
 
 function safeTokenEqual(left: string, right: string): boolean {
   if (left.length !== right.length) return false;
-  return timingSafeEqual(Buffer.from(left), Buffer.from(right));
+  return NodeCrypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {

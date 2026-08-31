@@ -13,7 +13,7 @@ import {
 } from "./pty-host-protocol.js";
 import { createPtyProcessScope } from "./pty-process-scope.js";
 
-const nativeRequire = createRequire(import.meta.url);
+const nativeRequire = NodeModule.createRequire(import.meta.url);
 const MAX_SESSIONS = 20;
 
 /** Containment operations owned by one PTY host session. */
@@ -273,7 +273,7 @@ export class PtyHostProcessRuntime {
     if (sequence !== session.commandSeq + 1n)
       throw new Error("PTY command sequence is out of order");
     if (message.kind === "command.input") {
-      session.pty.write(Buffer.from(message.dataBase64, "base64"));
+      session.pty.write(NodeBuffer.Buffer.from(message.dataBase64, "base64"));
     } else {
       session.pty.resize(message.cols, message.rows);
     }
@@ -289,10 +289,10 @@ export class PtyHostProcessRuntime {
     });
   }
 
-  private publishOutput(sessionId: string, data: string | Buffer): void {
+  private publishOutput(sessionId: string, data: string | NodeBuffer.Buffer): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data, "utf8");
+    const bytes = NodeBuffer.Buffer.isBuffer(data) ? data : NodeBuffer.Buffer.from(data, "utf8");
     for (
       let offset = 0;
       offset < bytes.length;

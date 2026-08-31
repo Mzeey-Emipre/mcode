@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 /** Stable workload identifiers used by the terminal comparison corpus. */
 export const TERMINAL_WORKLOAD_IDS = [
@@ -416,9 +416,9 @@ export function evaluateTerminalWorkload(
   workload: TerminalWorkloadSpec,
   capture: TerminalWorkloadCapture,
 ): TerminalWorkloadResult {
-  const outputSha256 = createHash("sha256").update(capture.output, "utf8").digest("hex");
+  const outputSha256 = NodeCrypto.createHash("sha256").update(capture.output, "utf8").digest("hex");
   const normalizedOutput = normalizeTerminalWorkloadOutput(capture.output);
-  const normalizedOutputSha256 = createHash("sha256")
+  const normalizedOutputSha256 = NodeCrypto.createHash("sha256")
     .update(normalizedOutput, "utf8")
     .digest("hex");
   const observedMarkers = workload.expectedMarkers.filter((marker) => capture.output.includes(marker));

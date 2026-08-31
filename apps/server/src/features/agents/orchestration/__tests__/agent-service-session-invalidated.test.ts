@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -95,7 +95,7 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
   let toolCallRecordRepo: ToolCallRecordRepo;
   let turnSnapshotRepo: TurnSnapshotRepo;
   let svc: AgentService;
-  let providerStub: EventEmitter & Partial<IAgentProvider>;
+  let providerStub: NodeEvents.EventEmitter & Partial<IAgentProvider>;
   let providerEventIngress: ProviderEventIngress;
 
   beforeEach(() => {
@@ -106,7 +106,7 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
     toolCallRecordRepo = new ToolCallRecordRepo(db);
     turnSnapshotRepo = new TurnSnapshotRepo(db);
 
-    providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+    providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
       id: "claude" as ProviderId,
       supportsCompletion: false,
       sessionForkOnResume: "unsupported" as const,

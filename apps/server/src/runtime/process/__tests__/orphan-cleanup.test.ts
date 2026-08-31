@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, unlinkSync, mkdirSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
-import { spawn } from "child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeChildProcess from "node:child_process";
 import { killOrphanedServer, type OrphanCleanupDeps } from "../orphan-cleanup.js";
 
 // ---------------------------------------------------------------------------
@@ -24,8 +24,8 @@ function makeDeps(overrides: Partial<OrphanCleanupDeps> = {}): OrphanCleanupDeps
 }
 
 function writeTempLock(dir: string, content: object): string {
-  const path = join(dir, "server.lock");
-  writeFileSync(path, JSON.stringify(content), { encoding: "utf-8" });
+  const path = NodePath.join(dir, "server.lock");
+  NodeFS.writeFileSync(path, JSON.stringify(content), { encoding: "utf-8" });
   return path;
 }
 
@@ -37,16 +37,16 @@ describe("killOrphanedServer", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = join(tmpdir(), `orphan-test-${process.pid}-${Date.now()}`);
-    mkdirSync(tmpDir, { recursive: true });
+    tmpDir = NodePath.join(NodeOS.tmpdir(), `orphan-test-${process.pid}-${Date.now()}`);
+    NodeFS.mkdirSync(tmpDir, { recursive: true });
   });
 
   afterEach(() => {
-    try { unlinkSync(join(tmpDir, "server.lock")); } catch { /* ok */ }
+    try { NodeFS.unlinkSync(NodePath.join(tmpDir, "server.lock")); } catch { /* ok */ }
   });
 
   it("does nothing when lock file does not exist", () => {
-    const deps = makeDeps({ lockFilePath: join(tmpDir, "server.lock") });
+    const deps = makeDeps({ lockFilePath: NodePath.join(tmpDir, "server.lock") });
     killOrphanedServer(deps);
     expect(deps.processKill).not.toHaveBeenCalled();
     expect(deps.execSync).not.toHaveBeenCalled();
@@ -140,8 +140,8 @@ describe("killOrphanedServer", () => {
   });
 
   it("logs a warning but does not throw when lock file contains invalid JSON", () => {
-    const lockFilePath = join(tmpDir, "server.lock");
-    writeFileSync(lockFilePath, "not-json", "utf-8");
+    const lockFilePath = NodePath.join(tmpDir, "server.lock");
+    NodeFS.writeFileSync(lockFilePath, "not-json", "utf-8");
     const deps = makeDeps({ lockFilePath, currentPid: 12345 });
     expect(() => killOrphanedServer(deps)).not.toThrow();
     expect(deps.logger.warn).toHaveBeenCalledWith(
@@ -213,7 +213,7 @@ describe("killOrphanedServer", () => {
 
   it("kills a real child process and verifies it is dead afterward", async () => {
     // Spawn a real long-lived process so we can safely kill it
-    const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+    const child = NodeChildProcess.spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
       detached: true,
       stdio: "ignore",
     });

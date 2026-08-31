@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type Database from "better-sqlite3";
 import {
   CANONICAL_SUBAGENT_TASK_MAX_LENGTH,
@@ -235,8 +235,8 @@ export class CanonicalCodexCollaborationCoordinator {
     const existing = this.loadChildTurn(childThread.id, input.nativeTurnId);
     if (existing) return existing;
     const now = new Date().toISOString();
-    const turnId = `turn:codex-child:${randomUUID()}`;
-    const executionId = randomUUID();
+    const turnId = `turn:codex-child:${NodeCrypto.randomUUID()}`;
+    const executionId = NodeCrypto.randomUUID();
     const identities = childTurnIdentities(childThread, input.nativeTurnId);
     const action = this.resolveChildTriggerAction(input, delegation, childThread);
     const turn = newChildTurn(turnId, childThread.id, action, identities, now);
@@ -1121,11 +1121,11 @@ function isCodexSpawnRecord(record: Record<string, unknown>): boolean {
 }
 
 function hashCodexKey(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 32);
+  return NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
 }
 
 function deterministicUuid(value: string): string {
-  const hash = createHash("sha256").update(value).digest("hex");
+  const hash = NodeCrypto.createHash("sha256").update(value).digest("hex");
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
 }
 
@@ -1210,7 +1210,7 @@ function parentItemMetadataEventId(
 
 function newChildThread(parentThread: AgentThread, now: string): AgentThread {
   return {
-    id: `thread:codex-child:${randomUUID()}`,
+    id: `thread:codex-child:${NodeCrypto.randomUUID()}`,
     workspaceId: parentThread.workspaceId,
     parentThreadId: parentThread.id,
     rootThreadId: parentThread.rootThreadId,

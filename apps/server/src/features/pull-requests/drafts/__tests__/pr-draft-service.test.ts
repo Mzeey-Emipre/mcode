@@ -8,7 +8,7 @@ const { mockComplete, mockExistsSync, mockReadFileSync, mockStatSync } = vi.hois
   mockStatSync: vi.fn().mockReturnValue({ size: 1024 }),
 }));
 
-vi.mock("fs", () => ({
+vi.mock("node:fs", () => ({
   existsSync: mockExistsSync,
   readFileSync: mockReadFileSync,
   statSync: mockStatSync,

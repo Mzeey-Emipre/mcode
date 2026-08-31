@@ -7,7 +7,7 @@
 
 import "reflect-metadata";
 import { describe, it, expect, afterEach } from "vitest";
-import http from "http";
+import * as NodeHTTP from "node:http";
 import WebSocket from "ws";
 import { createWsServer } from "../../../../application/transport/ws-server.js";
 import type { RouterDeps } from "../../../../application/transport/ws-router.js";
@@ -57,7 +57,7 @@ function makeMinimalDeps(
 }
 
 /** Build a WebSocket URL with the auth token as a query param. */
-function wsUrl(server: http.Server): string {
+function wsUrl(server: NodeHTTP.Server): string {
   const addr = server.address();
   if (!addr || typeof addr === "string") throw new Error("Not bound to TCP");
   return `ws://127.0.0.1:${addr.port}/?token=${AUTH_TOKEN}`;
@@ -68,7 +68,7 @@ function wsUrl(server: http.Server): string {
  * Rejects if the socket emits an error before a message arrives.
  */
 function rpcCall(
-  server: http.Server,
+  server: NodeHTTP.Server,
   method: string,
   params: Record<string, unknown> = {},
 ): Promise<{ id: string; result?: unknown; error?: { code: string; message: string; data?: unknown } }> {
@@ -96,7 +96,7 @@ function rpcCall(
 }
 
 describe("providers.listAvailability RPC", () => {
-  let server: http.Server;
+  let server: NodeHTTP.Server;
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));

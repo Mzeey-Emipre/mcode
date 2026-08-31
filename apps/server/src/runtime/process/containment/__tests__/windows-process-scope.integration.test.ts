@@ -76,8 +76,8 @@ describe.runIf(process.platform === "win32")("WindowsProcessScope integration", 
   }, 15_000);
 });
 
-function spawnTree(): ChildProcess {
-  return spawn(
+function spawnTree(): NodeChildProcess.ChildProcess {
+  return NodeChildProcess.spawn(
     "powershell.exe",
     [
       "-NoLogo",
@@ -98,20 +98,20 @@ async function waitForMembership(
   while (Date.now() < deadline) {
     const snapshot = scope.queryProcessIds();
     if (snapshot.ok && snapshot.processIds.length >= expected) return;
-    await delay(20);
+    await NodeTimersPromises.setTimeout(20);
   }
   expect(scope.queryProcessIds().processIds.length).toBeGreaterThanOrEqual(expected);
 }
 
-async function hasExited(process: ChildProcess, timeoutMs: number): Promise<boolean> {
+async function hasExited(process: NodeChildProcess.ChildProcess, timeoutMs: number): Promise<boolean> {
   if (process.exitCode !== null || process.signalCode !== null) return true;
   return Promise.race([
     new Promise<true>((resolve) => process.once("exit", () => resolve(true))),
-    delay(timeoutMs).then(() => false),
+    NodeTimersPromises.setTimeout(timeoutMs).then(() => false),
   ]);
 }
 
-async function readFirstPid(process: ChildProcess): Promise<number> {
+async function readFirstPid(process: NodeChildProcess.ChildProcess): Promise<number> {
   return new Promise((resolve, reject) => {
     let output = "";
     const timeout = setTimeout(() => reject(new Error("child PID output timed out")), 3_000);

@@ -5,11 +5,11 @@
  */
 
 import { injectable } from "tsyringe";
-import { execFile as execFileCb } from "child_process";
-import { promisify } from "util";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import type { GitExecutor, GitExecOptions, GitExecResult } from "./types.js";
 
-const execFile = promisify(execFileCb);
+const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
 /** Noop used to suppress unhandled-rejection warnings on queue chains. */
 const noop = () => {};

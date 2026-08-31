@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { readFileSync } from "fs";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
@@ -12,14 +12,14 @@ import {
   LegacyConversationMigration,
 } from "../legacy-conversation-migration.js";
 
-const fixtureDirectory = join(
-  dirname(fileURLToPath(import.meta.url)),
+const fixtureDirectory = NodePath.join(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "fixtures",
   "legacy-conversations",
 );
 
 function applyFixture(db: Database.Database, name: string): void {
-  db.exec(readFileSync(join(fixtureDirectory, name), "utf8"));
+  db.exec(NodeFS.readFileSync(NodePath.join(fixtureDirectory, name), "utf8"));
 }
 
 describe("LegacyConversationMigration", () => {

@@ -50,7 +50,7 @@ export class ShellEnvResolver {
       return fromEnv;
     }
     try {
-      const fromOs = userInfo().shell?.trim();
+      const fromOs = NodeOS.userInfo().shell?.trim();
       if (fromOs) {
         return fromOs;
       }

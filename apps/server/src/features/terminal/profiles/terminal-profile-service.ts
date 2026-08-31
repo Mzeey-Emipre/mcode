@@ -1,6 +1,6 @@
-import { statSync } from "node:fs";
-import { isAbsolute } from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import which from "which";
 import {
   TerminalCustomProfileSchema,
@@ -107,7 +107,7 @@ export class TerminalProfileService {
   constructor(
     private readonly settings: SettingsService,
     private readonly workspacePreferences: WorkspaceTerminalPreferencesService,
-    private readonly options: TerminalProfileServiceOptions = createTerminalProfileServiceOptions(),
+    private readonly options: TerminalProfileServiceOptions,
   ) {}
 
   /** Lists available certified profiles and persisted custom profiles. */

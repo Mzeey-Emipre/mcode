@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { z } from "zod";
 import type {
   PullRequestBoundedDataMarker,
@@ -321,11 +321,11 @@ function requestFingerprint(request: PullRequestListRequest): string {
     search: request.search ?? "",
     limit: request.limit,
   });
-  return createHash("sha256").update(normalized).digest("base64url");
+  return NodeCrypto.createHash("sha256").update(normalized).digest("base64url");
 }
 
 function decodeCursor(cursor: string | undefined, fingerprint: string) {
-  if (!cursor) return { snapshotVersion: randomUUID(), cursors: {} };
+  if (!cursor) return { snapshotVersion: NodeCrypto.randomUUID(), cursors: {} };
   try {
     const decoded = Buffer.from(cursor, "base64url").toString("utf8");
     const parsed = inboxCursorSchema.parse(JSON.parse(decoded) as unknown);
@@ -399,7 +399,7 @@ function searchMatches(summary: PullRequestSummary, search: string | undefined):
 }
 
 function stableFingerprint(input: unknown): string {
-  return createHash("sha256").update(JSON.stringify(input)).digest("base64url");
+  return NodeCrypto.createHash("sha256").update(JSON.stringify(input)).digest("base64url");
 }
 
 function detailFingerprint(request: PullRequestGetRequest): string {
@@ -426,7 +426,7 @@ function filesFingerprint(request: PullRequestFilesRequest): string {
 }
 
 function snapshotVersion(marker: string): string {
-  return createHash("sha256").update(marker).digest("base64url");
+  return NodeCrypto.createHash("sha256").update(marker).digest("base64url");
 }
 
 function encodeOpaqueCursor(value: unknown): string {

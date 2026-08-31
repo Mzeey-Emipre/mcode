@@ -1,4 +1,4 @@
-import { performance } from "node:perf_hooks";
+import * as NodePerfHooks from "node:perf_hooks";
 import type Database from "better-sqlite3";
 
 /** Hard limits for one synchronous SQLite write transaction. */
@@ -52,7 +52,7 @@ export async function runBoundedWriteBatches<T>(
   const prepared = prepareBoundedWriteInput(input);
   if (input.items.length === 0) return { batches: 0, rows: 0, bytes: 0 };
 
-  const now = input.now ?? performance.now.bind(performance);
+  const now = input.now ?? NodePerfHooks.performance.now.bind(NodePerfHooks.performance);
   const yieldControl = input.yieldControl ?? (() => new Promise<void>((resolve) => setImmediate(resolve)));
   let cursor = 0;
   let batches = 0;
@@ -91,7 +91,7 @@ export function runBoundedWriteBatchesSync<T>(
   const prepared = prepareBoundedWriteInput(input);
   if (input.items.length === 0) return { batches: 0, rows: 0, bytes: 0 };
 
-  const now = input.now ?? performance.now.bind(performance);
+  const now = input.now ?? NodePerfHooks.performance.now.bind(NodePerfHooks.performance);
   let cursor = 0;
   let batches = 0;
   let totalBytes = 0;

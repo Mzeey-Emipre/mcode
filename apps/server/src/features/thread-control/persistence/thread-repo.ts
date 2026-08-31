@@ -3,7 +3,7 @@
  * Provides CRUD and lifecycle operations for thread records in SQLite.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import { ReasoningLevelSchema } from "@mcode/contracts";
@@ -370,7 +370,7 @@ export class ThreadRepo {
     checkoutState: "named" | "branchless" = "named",
     baseBranch: string | null = null,
   ): Thread {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const now = new Date().toISOString();
     const managedInt = worktreeManaged ? 1 : 0;
 

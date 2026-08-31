@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import type Database from "better-sqlite3";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../../persistence/workspace-repo.js";
@@ -37,7 +37,7 @@ class WorktreeCreatingGitExecutor extends FakeGitExecutor {
     if (worktreeIndex >= 0 && args[worktreeIndex + 1] === "add") {
       const hasBranch = args[worktreeIndex + 2] === "-b";
       const destination = args[worktreeIndex + (hasBranch ? 4 : 2)]!;
-      mkdirSync(destination, { recursive: true });
+      NodeFS.mkdirSync(destination, { recursive: true });
       this.createdPaths.push(destination);
       const result = await super.exec(args, opts);
       if (this.failWorktreeAdd) throw new Error("post-checkout hook failed");
@@ -56,11 +56,11 @@ describe("PullRequestReviewGitService", () => {
 
   beforeEach(() => {
     db = openMemoryDatabase();
-    repoPath = mkdtempSync(join(tmpdir(), "mcode-review-repo-"));
+    repoPath = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-review-repo-"));
     executor = new WorktreeCreatingGitExecutor();
     const workspaceRepo = new WorkspaceRepo(db);
     gitRepository = new GitRepositoryService(workspaceRepo, executor);
-    service = new PullRequestReviewGitService(executor, gitRepository);
+    service = new PullRequestReviewGitService(executor, gitRepository, TEST_HOST_RUNTIME);
     executor.setResponse(
       ["config", "--get-regexp", "^remote\\..*\\.url$"],
       {
@@ -78,8 +78,8 @@ describe("PullRequestReviewGitService", () => {
   });
 
   afterEach(() => {
-    for (const path of executor.createdPaths) rmSync(path, { recursive: true, force: true });
-    rmSync(repoPath, { recursive: true, force: true });
+    for (const path of executor.createdPaths) NodeFS.rmSync(path, { recursive: true, force: true });
+    NodeFS.rmSync(repoPath, { recursive: true, force: true });
     db.close();
   });
 
@@ -186,7 +186,7 @@ describe("PullRequestReviewGitService", () => {
   });
 
   it("offers a compatible occupied worktree through an opaque candidate id", async () => {
-    const existingPath = mkdtempSync(join(tmpdir(), "mcode-review-existing-"));
+    const existingPath = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-review-existing-"));
     const branchOutput = [
       "feature/review",
       headOid,
@@ -211,7 +211,7 @@ describe("PullRequestReviewGitService", () => {
     expect(result).toMatchObject({
       kind: "requires_reuse",
       candidate: {
-        path: realpathSync(existingPath),
+        path: NodeFS.realpathSync(existingPath),
         branch: "feature/review",
       },
     });
@@ -221,11 +221,11 @@ describe("PullRequestReviewGitService", () => {
     expect(
       executor.calls.some((call) => call.args.includes("worktree") && call.args.includes("add")),
     ).toBe(false);
-    rmSync(existingPath, { recursive: true, force: true });
+    NodeFS.rmSync(existingPath, { recursive: true, force: true });
   });
 
   it("ignores stale registered worktree paths", async () => {
-    const stalePath = join(tmpdir(), `mcode-missing-${Date.now()}`);
+    const stalePath = NodePath.join(NodeOS.tmpdir(), `mcode-missing-${Date.now()}`);
     executor.setResponse(
       [
         "for-each-ref",
@@ -248,9 +248,9 @@ describe("PullRequestReviewGitService", () => {
       repoPath,
       `junction-${Date.now()}`,
     );
-    const externalTarget = mkdtempSync(join(tmpdir(), "mcode-review-target-"));
-    mkdirSync(join(destination, ".."), { recursive: true });
-    symlinkSync(
+    const externalTarget = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-review-target-"));
+    NodeFS.mkdirSync(NodePath.join(destination, ".."), { recursive: true });
+    NodeFS.symlinkSync(
       externalTarget,
       destination,
       process.platform === "win32" ? "junction" : "dir",
@@ -273,11 +273,11 @@ describe("PullRequestReviewGitService", () => {
     );
 
     expect(candidate).toMatchObject({
-      path: realpathSync(externalTarget),
+      path: NodeFS.realpathSync(externalTarget),
       managed: false,
     });
-    rmSync(destination, { recursive: true, force: true });
-    rmSync(externalTarget, { recursive: true, force: true });
+    NodeFS.rmSync(destination, { recursive: true, force: true });
+    NodeFS.rmSync(externalTarget, { recursive: true, force: true });
   });
 
   it("cleans an exact partially-created branch and worktree without repository-wide prune", async () => {
@@ -330,7 +330,7 @@ describe("PullRequestReviewGitService", () => {
   });
 
   it("selects a later URL-equivalent remote whose effective push target is safe", async () => {
-    const existingPath = mkdtempSync(join(tmpdir(), "mcode-review-safe-remote-"));
+    const existingPath = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-review-safe-remote-"));
     executor.setResponse(
       ["config", "--get-regexp", "^remote\\..*\\.url$"],
       {
@@ -373,7 +373,7 @@ describe("PullRequestReviewGitService", () => {
     expect(
       executor.calls.some((call) => call.args.includes("remote") && call.args.includes("add")),
     ).toBe(false);
-    rmSync(existingPath, { recursive: true, force: true });
+    NodeFS.rmSync(existingPath, { recursive: true, force: true });
   });
 
   it("rejects a head that changed during fetch and does not create a worktree", async () => {

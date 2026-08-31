@@ -121,7 +121,7 @@ export class GithubService {
   }
 
   private trackProcess(
-    child: ChildProcess | undefined,
+    child: NodeChildProcess.ChildProcess | undefined,
     meta: { repoPath?: string | null; checkRunsKey?: string | null },
   ): TrackedGithubProcess | null {
     if (!child || typeof child.once !== "function") return null;
@@ -196,7 +196,7 @@ export class GithubService {
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null> {
     return new Promise((resolve) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         ["pr", "view", branch, "--json", "number,url,state"],
         { cwd, encoding: "utf-8", timeout: 10_000, windowsHide: true },
@@ -240,7 +240,7 @@ export class GithubService {
 
     return new Promise((resolve) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         [
           "pr",
@@ -287,7 +287,7 @@ export class GithubService {
 
     return new Promise((resolve, reject) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         args,
         { cwd: input.cwd, encoding: "utf-8", timeout: 30_000, windowsHide: true },
@@ -371,7 +371,7 @@ export class GithubService {
           return;
         }
 
-        const child = execFile(
+        const child = NodeChildProcess.execFile(
           "gh",
           [
             "api",
@@ -557,7 +557,7 @@ export class GithubService {
     if (this.isPullRequestWatchCancelled(request, repoPath)) return new Map();
     const stdout = await new Promise<string>((resolve, reject) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         args,
         {
@@ -603,7 +603,7 @@ export class GithubService {
 
     const pending = new Promise<string>((resolve, reject) => {
       let tracked: TrackedGithubProcess | null = null;
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
         { cwd: repoPath, encoding: "utf-8", timeout: 10_000, windowsHide: true },
@@ -640,7 +640,7 @@ export class GithubService {
     const prNumber = match[2];
 
     return new Promise((resolve) => {
-      execFile(
+      NodeChildProcess.execFile(
         "gh",
         [
           "pr",
@@ -661,7 +661,7 @@ export class GithubService {
 }
 
 interface TrackedGithubProcess {
-  child: ChildProcess;
+  child: NodeChildProcess.ChildProcess;
   repoPath: string | null;
   checkRunsKey: string | null;
   done: Promise<void>;

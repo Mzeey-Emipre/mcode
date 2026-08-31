@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { request, type Server } from "node:http";
+import * as NodeHTTP from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -12,7 +12,7 @@ import {
 
 function status(url: string, options: { headers?: Record<string, string>; body?: Buffer } = {}): Promise<number> {
   return new Promise((resolve, reject) => {
-    const outgoing = request(url, { method: "POST", headers: options.headers }, (response) => {
+    const outgoing = NodeHTTP.request(url, { method: "POST", headers: options.headers }, (response) => {
       response.resume();
       response.once("end", () => resolve(response.statusCode ?? 0));
     });
@@ -169,7 +169,7 @@ describe("InternalThreadControlMcpRuntime", () => {
 
     await expect(config).resolves.toBeUndefined();
     await expect(close).resolves.toBeUndefined();
-    const state = instance as unknown as { httpServer: Server | undefined; httpSessions: Map<string, unknown> };
+    const state = instance as unknown as { httpServer: NodeHTTP.Server | undefined; httpSessions: Map<string, unknown> };
     expect(server.close).toHaveBeenCalledOnce();
     expect(state.httpServer).toBeUndefined();
     expect(state.httpSessions).toHaveLength(0);
@@ -194,7 +194,7 @@ describe("InternalThreadControlMcpRuntime", () => {
     expect(oversized).toBe(413);
 
     const streamed = await new Promise<number>((resolve, reject) => {
-      const outgoing = request(connection!.url, {
+      const outgoing = NodeHTTP.request(connection!.url, {
         method: "POST",
         headers: {
           ...connection!.headers,
@@ -212,7 +212,7 @@ describe("InternalThreadControlMcpRuntime", () => {
     });
     expect(streamed).toBe(413);
 
-    const state = instance as unknown as { httpServer: Server & { requestTimeout: number; headersTimeout: number; timeout: number } };
+    const state = instance as unknown as { httpServer: NodeHTTP.Server & { requestTimeout: number; headersTimeout: number; timeout: number } };
     expect(state.httpServer.requestTimeout).toBe(INTERNAL_MCP_REQUEST_TIMEOUT_MS);
     expect(state.httpServer.headersTimeout).toBe(INTERNAL_MCP_REQUEST_TIMEOUT_MS);
     expect(state.httpServer.timeout).toBe(INTERNAL_MCP_REQUEST_TIMEOUT_MS);

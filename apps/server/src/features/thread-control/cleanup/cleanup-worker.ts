@@ -291,17 +291,17 @@ export class CleanupWorker {
   }
 
   private resolveCleanupPaths(job: CleanupJob): CleanupPaths {
-    const worktreeBase = resolve(getMcodeDir(), "worktrees");
-    const worktreePath = resolve(job.worktree_path!.replace(/\\/g, "/"));
-    const workspacePath = resolve(job.workspace_path.replace(/\\/g, "/"));
-    const relativePath = relative(worktreeBase, worktreePath);
+    const worktreeBase = NodePath.resolve(getMcodeDir(), "worktrees");
+    const worktreePath = NodePath.resolve(job.worktree_path!.replace(/\\/g, "/"));
+    const workspacePath = NodePath.resolve(job.workspace_path.replace(/\\/g, "/"));
+    const relativePath = NodePath.relative(worktreeBase, worktreePath);
     const lexicalCanonicalPath = relativePath !== ""
-      && !(relativePath === ".." || relativePath.startsWith(".." + sep) || isAbsolute(relativePath));
+      && !(relativePath === ".." || relativePath.startsWith(".." + NodePath.sep) || NodePath.isAbsolute(relativePath));
     return {
       workspacePath,
       worktreePath,
       worktreeName: worktreePath.replace(/\\/g, "/").split("/").pop() ?? worktreePath,
-      canonicalPath: !existsSync(worktreePath)
+      canonicalPath: !NodeFS.existsSync(worktreePath)
         ? lexicalCanonicalPath
         : this.isCanonicalWorktreePath(worktreeBase, worktreePath, lexicalCanonicalPath),
     };
@@ -316,12 +316,12 @@ export class CleanupWorker {
   }
 
   private async handleMissingWorkspace(job: CleanupJob, paths: CleanupPaths): Promise<boolean> {
-    if (existsSync(paths.workspacePath)) return false;
+    if (NodeFS.existsSync(paths.workspacePath)) return false;
     logger.info("Workspace directory gone, skipping filesystem cleanup", {
       threadId: job.thread_id,
       workspacePath: paths.workspacePath,
     });
-    if (job.kind === "retention" && existsSync(paths.worktreePath)) {
+    if (job.kind === "retention" && NodeFS.existsSync(paths.worktreePath)) {
       this.blockRetentionCleanup(job, "Mcode cannot access the Project repository.", "workspace-repository-inaccessible");
       return true;
     }
@@ -357,7 +357,7 @@ export class CleanupWorker {
   }
 
   private async completeIfWorktreeMissing(job: CleanupJob, paths: CleanupPaths): Promise<boolean> {
-    if (existsSync(paths.worktreePath)) return false;
+    if (NodeFS.existsSync(paths.worktreePath)) return false;
     logger.info("Worktree directory already removed, skipping filesystem cleanup", {
       threadId: job.thread_id,
       worktreePath: paths.worktreePath,
@@ -598,13 +598,13 @@ export class CleanupWorker {
   ): boolean {
     if (!lexicalCanonicalPath) return false;
     try {
-      const canonicalBase = realpathSync(worktreeBase);
-      const canonicalWorktree = realpathSync(worktreePath);
-      const relativePath = relative(canonicalBase, canonicalWorktree);
+      const canonicalBase = NodeFS.realpathSync(worktreeBase);
+      const canonicalWorktree = NodeFS.realpathSync(worktreePath);
+      const relativePath = NodePath.relative(canonicalBase, canonicalWorktree);
       return relativePath !== ""
         && relativePath !== ".."
-        && !relativePath.startsWith(".." + sep)
-        && !isAbsolute(relativePath);
+        && !relativePath.startsWith(".." + NodePath.sep)
+        && !NodePath.isAbsolute(relativePath);
     } catch {
       return false;
     }

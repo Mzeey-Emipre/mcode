@@ -62,7 +62,7 @@ export class FileService {
       threadId,
     );
 
-    return readFileSync(canonicalPath, "utf-8");
+    return NodeFS.readFileSync(canonicalPath, "utf-8");
   }
 
   /**

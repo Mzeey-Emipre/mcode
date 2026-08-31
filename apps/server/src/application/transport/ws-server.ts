@@ -4,19 +4,18 @@
  * and a WebSocket server on the same port for RPC + push events.
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "http";
+import * as NodeHTTP from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import type { Server } from "http";
 import { logger } from "@mcode/shared";
 import { TerminalBackendError } from "../../features/terminal/backends/terminal-backend.js";
 import { BinaryUploadHeaderSchema, TERMINAL_BINARY_MAGIC, type BinaryUploadHeader } from "@mcode/contracts";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
 import { addClient, removeClient } from "./push.js";
 import { handleBinaryUpload } from "../../features/attachments/transport/binary-upload.js";
-import { timingSafeEqual } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { extractToken, buildAuthCookie } from "./auth.js";
-import { createReadStream, existsSync } from "fs";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { getMcodeDir } from "@mcode/shared";
 import type {
   BrowserAutomationHostConnectionAuthorization,
@@ -28,7 +27,7 @@ import type { ReliabilityHarnessAdapter } from "../../runtime/reliability-harnes
 /** Constant-time string comparison to prevent timing attacks on token validation. */
 function safeTokenEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  return NodeCrypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
 /** Match stored thread IDs used for the custom attachment protocol (UUID, lowercase hex). */
@@ -98,7 +97,7 @@ export const WORKTREE_QUERY_PARAM = "worktree";
 
 /** Validates the single-instance token and worktree identity from a WebSocket request. */
 export function validateInstanceAttachment(
-  req: IncomingMessage,
+  req: NodeHTTP.IncomingMessage,
   expected: InstanceAttachmentExpectation,
 ): InstanceCheckResult {
   if (!expected.singleInstance) return { ok: true };
@@ -147,11 +146,11 @@ function matchesWorktreeIdentity(presented: string | null, expected: string | nu
 
 /** Create and configure the HTTP + WebSocket server. */
 export function createWsServer(deps: WsServerDeps): {
-  httpServer: Server;
+  httpServer: NodeHTTP.Server;
   wss: WebSocketServer;
 } {
   let wss: WebSocketServer;
-  const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+  const httpServer = NodeHTTP.createServer((req: NodeHTTP.IncomingMessage, res: NodeHTTP.ServerResponse) => {
     const requestPath = new URL(req.url ?? "/", "http://localhost").pathname;
     if (handleSpecialHttpRequest(req, res, requestPath, deps, wss)) return;
     if (handleHealthRequest(req, res, deps)) return;
@@ -190,7 +189,7 @@ export function createWsServer(deps: WsServerDeps): {
     });
   });
 
-  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+  wss.on("connection", (ws: WebSocket, req: NodeHTTP.IncomingMessage) => {
     const instanceCheck = validateInstanceAttachment(req, deps);
     if (!instanceCheck.ok) {
       logger.warn("WebSocket connection rejected: wrong dev instance", {
@@ -264,8 +263,8 @@ export function createWsServer(deps: WsServerDeps): {
 
 /** Routes authenticated HTTP endpoints that require an asynchronous handler. */
 function handleSpecialHttpRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
+  req: NodeHTTP.IncomingMessage,
+  res: NodeHTTP.ServerResponse,
   requestPath: string,
   deps: WsServerDeps,
   wss: WebSocketServer,
@@ -287,8 +286,8 @@ function handleSpecialHttpRequest(
 
 /** Starts a reliability control request and returns its existing failure response. */
 function handleReliabilityRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
+  req: NodeHTTP.IncomingMessage,
+  res: NodeHTTP.ServerResponse,
   reliabilityHarness: NonNullable<WsServerDeps["reliabilityHarness"]>,
   wss: WebSocketServer,
 ): void {
@@ -301,8 +300,8 @@ function handleReliabilityRequest(
 
 /** Starts a browser MCP request and returns its JSON-RPC failure response when required. */
 function handleBrowserAutomationMcpRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
+  req: NodeHTTP.IncomingMessage,
+  res: NodeHTTP.ServerResponse,
   handler: BrowserAutomationMcpHandler,
 ): void {
   void handler.handle(req, res).catch((error: unknown) => {
@@ -314,8 +313,8 @@ function handleBrowserAutomationMcpRequest(
 
 /** Starts an external thread-control MCP request and returns its failure response when required. */
 function handleThreadControlMcpRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
+  req: NodeHTTP.IncomingMessage,
+  res: NodeHTTP.ServerResponse,
   runtime: NonNullable<WsServerDeps["externalThreadControlMcpRuntime"]>,
 ): void {
   void runtime.handleRequest(req, res).catch((error: unknown) => {
@@ -326,7 +325,7 @@ function handleThreadControlMcpRequest(
 }
 
 /** Serves the server health endpoint. */
-function handleHealthRequest(req: IncomingMessage, res: ServerResponse, deps: WsServerDeps): boolean {
+function handleHealthRequest(req: NodeHTTP.IncomingMessage, res: NodeHTTP.ServerResponse, deps: WsServerDeps): boolean {
   if (req.method !== "GET" || !req.url?.startsWith("/health")) return false;
   const body = createHealthBody(deps);
   const headers = createHealthHeaders(deps);
@@ -360,7 +359,7 @@ function createHealthHeaders(deps: WsServerDeps): Record<string, string> {
 }
 
 /** Serves the authenticated shutdown endpoint. */
-function handleShutdownRequest(req: IncomingMessage, res: ServerResponse, deps: WsServerDeps): boolean {
+function handleShutdownRequest(req: NodeHTTP.IncomingMessage, res: NodeHTTP.ServerResponse, deps: WsServerDeps): boolean {
   if (req.method !== "POST" || req.url !== "/shutdown") return false;
   if (!matchesAuthToken(extractToken(req), deps.authToken)) {
     res.writeHead(401);
@@ -373,7 +372,7 @@ function handleShutdownRequest(req: IncomingMessage, res: ServerResponse, deps: 
 }
 
 /** Serves an authenticated attachment request after path validation. */
-function handleAttachmentRequest(req: IncomingMessage, res: ServerResponse, deps: WsServerDeps): boolean {
+function handleAttachmentRequest(req: NodeHTTP.IncomingMessage, res: NodeHTTP.ServerResponse, deps: WsServerDeps): boolean {
   if (req.method !== "GET" || !req.url?.startsWith("/attachments/")) return false;
   if (!matchesAuthToken(extractToken(req), deps.authToken)) {
     res.writeHead(401);
@@ -387,7 +386,7 @@ function handleAttachmentRequest(req: IncomingMessage, res: ServerResponse, deps
 }
 
 /** Parses and validates attachment path segments. */
-function parseAttachmentRequest(req: IncomingMessage, res: ServerResponse): { threadId: string; filename: string } | null {
+function parseAttachmentRequest(req: NodeHTTP.IncomingMessage, res: NodeHTTP.ServerResponse): { threadId: string; filename: string } | null {
   const segments = new URL(req.url ?? "/", "http://localhost").pathname.split("/").filter(Boolean);
   if (segments.length !== 3 || segments[0] !== "attachments") {
     res.writeHead(404);
@@ -404,15 +403,15 @@ function parseAttachmentRequest(req: IncomingMessage, res: ServerResponse): { th
 }
 
 /** Streams one validated attachment file to the HTTP response. */
-function serveAttachment(threadId: string, filename: string, res: ServerResponse): void {
-  const filePath = join(getMcodeDir(), "attachments", threadId, filename);
-  if (!existsSync(filePath)) {
+function serveAttachment(threadId: string, filename: string, res: NodeHTTP.ServerResponse): void {
+  const filePath = NodePath.join(getMcodeDir(), "attachments", threadId, filename);
+  if (!NodeFS.existsSync(filePath)) {
     res.writeHead(404);
     res.end("Not found");
     return;
   }
   const ext = filename.split(".").pop() ?? "";
-  const stream = createReadStream(filePath);
+  const stream = NodeFS.createReadStream(filePath);
   stream.on("error", () => handleAttachmentStreamError(res));
   res.writeHead(200, {
     "Content-Type": ATTACHMENT_EXT_MIME[ext] ?? "application/octet-stream",
@@ -423,7 +422,7 @@ function serveAttachment(threadId: string, filename: string, res: ServerResponse
 }
 
 /** Sends the attachment read failure response unless streaming already began. */
-function handleAttachmentStreamError(res: ServerResponse): void {
+function handleAttachmentStreamError(res: NodeHTTP.ServerResponse): void {
   if (!res.headersSent) res.writeHead(404);
   res.end();
 }

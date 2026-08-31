@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -319,7 +319,7 @@ describe("ThreadCompletionService", () => {
   });
 
   it("cancels running Setup and blocks a new attempt while completion is in progress", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-completion-setup-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-completion-setup-"));
     const teardownEntered = deferred();
     const releaseTeardown = deferred();
     const closeEntered = deferred();
@@ -379,7 +379,7 @@ describe("ThreadCompletionService", () => {
       await expect(environment.startSetup({ threadId })).resolves.toMatchObject({ status: "running" });
       await environment.cancelSetupForThread(threadId);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await NodeFSPromises.rm(root, { recursive: true, force: true });
     }
   });
 

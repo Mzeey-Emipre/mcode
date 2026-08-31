@@ -402,7 +402,7 @@ export class ModernTerminalBackend extends TerminalBackend {
   }
 
   private beginCheckpoint(input: Record<string, unknown>, client: WebSocket): unknown {
-    const uploadId = randomUUID();
+    const uploadId = NodeCrypto.randomUUID();
     this.uploads.set(uploadId, {
       owner: client,
       sessionId: String(input.sessionId),
@@ -451,7 +451,7 @@ export class ModernTerminalBackend extends TerminalBackend {
     }
     this.validateCheckpointCompleteness(upload);
     const data = concatBytes([...upload.chunks.entries()].sort(([a], [b]) => a - b).map(([, value]) => value));
-    const sha256 = createHash("sha256").update(data).digest("hex");
+    const sha256 = NodeCrypto.createHash("sha256").update(data).digest("hex");
     this.validateCheckpointContents(input, upload, data, sha256);
     await this.runtime.saveCheckpoint({
       sessionId: upload.sessionId,

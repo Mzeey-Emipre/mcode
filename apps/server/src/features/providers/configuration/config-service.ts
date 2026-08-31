@@ -5,9 +5,9 @@
  */
 
 import { injectable } from "tsyringe";
-import { existsSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import which from "which";
 
 /** Summary of discovered Claude Code configuration. */
@@ -25,9 +25,9 @@ export interface ConfigSummary {
 export class ConfigService {
   /** Discover Claude Code configuration for a given workspace path. */
   discover(workspacePath: string): ConfigSummary {
-    const home = homedir();
-    const userConfigDir = join(home, ".claude");
-    const projectConfigDir = join(workspacePath, ".claude");
+    const home = NodeOS.homedir();
+    const userConfigDir = NodePath.join(home, ".claude");
+    const projectConfigDir = NodePath.join(workspacePath, ".claude");
 
     const cliPath = process.env.MCODE_CLAUDE_PATH || "claude";
 
@@ -40,13 +40,13 @@ export class ConfigService {
     }
 
     const hasProjectClaudeMd =
-      existsSync(join(workspacePath, "CLAUDE.md")) ||
-      existsSync(join(projectConfigDir, "CLAUDE.md"));
+      NodeFS.existsSync(NodePath.join(workspacePath, "CLAUDE.md")) ||
+      NodeFS.existsSync(NodePath.join(projectConfigDir, "CLAUDE.md"));
 
     return {
-      has_user_config: existsSync(userConfigDir),
-      has_project_config: existsSync(projectConfigDir),
-      has_user_claude_md: existsSync(join(home, ".claude", "CLAUDE.md")),
+      has_user_config: NodeFS.existsSync(userConfigDir),
+      has_project_config: NodeFS.existsSync(projectConfigDir),
+      has_user_claude_md: NodeFS.existsSync(NodePath.join(home, ".claude", "CLAUDE.md")),
       has_project_claude_md: hasProjectClaudeMd,
       cli_path: cliPath,
       cli_available: cliAvailable,

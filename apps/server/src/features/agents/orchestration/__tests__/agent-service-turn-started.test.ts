@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -44,7 +44,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
   let turnSnapshotRepo: TurnSnapshotRepo;
   let svc: AgentService;
   let canonicalSink: CanonicalAgentEventSink;
-  let providerStub: EventEmitter & Partial<IAgentProvider> & {
+  let providerStub: NodeEvents.EventEmitter & Partial<IAgentProvider> & {
     sendTurn: ReturnType<typeof vi.fn>;
   };
   let capturedEvents: ProviderRuntimeEvent[];
@@ -63,7 +63,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     // Capture runtime envelopes emitted on the provider bus.
     capturedEvents = [];
     eventsLengthAtSendMessageEntry = -1;
-    providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+    providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
       id: "claude" as ProviderId,
       supportsCompletion: false,
       sessionForkOnResume: "unsupported" as const,

@@ -1,9 +1,9 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EventEmitter } from "events";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -137,7 +137,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 
 interface Built {
   service: AgentService;
-  providerEmitter: EventEmitter;
+  providerEmitter: NodeEvents.EventEmitter;
   canonicalSink: CanonicalAgentEventSink;
   db: Database.Database;
   thoughtBulk: ReturnType<typeof vi.fn>;
@@ -157,7 +157,7 @@ function build(options: {
   onProviderEvent?: (event: AgentEvent) => void;
 } = {}): Built {
   const thread = makeThread();
-  const providerEmitter = Object.assign(new EventEmitter(), {
+  const providerEmitter = Object.assign(new NodeEvents.EventEmitter(), {
     id: "codex" as const,
   });
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
@@ -753,10 +753,10 @@ describe("AgentService narrative persistence", () => {
   it("resumes a journal-blocked boundary after SQLite recovers without another provider event", async () => {
     const db = openMemoryDatabase();
     const now = "2026-08-24T10:00:00.000Z";
-    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-agent-journal-"));
+    const journalDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-agent-journal-"));
     const filesystem = await vi.importActual<typeof import("node:fs")>("node:fs");
-    vi.mocked(existsSync).mockImplementation(filesystem.existsSync);
-    vi.mocked(statSync).mockImplementation(filesystem.statSync);
+    vi.mocked(NodeFS.existsSync).mockImplementation(filesystem.existsSync);
+    vi.mocked(NodeFS.statSync).mockImplementation(filesystem.statSync);
     db.prepare(
       "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
     ).run("ws-1", "Workspace", "/workspace", now, now);
@@ -831,11 +831,11 @@ describe("AgentService narrative persistence", () => {
     } finally {
       appendChunkSpy.mockRestore();
       appendRecoveredChunkSpy.mockRestore();
-      vi.mocked(existsSync).mockImplementation(() => true);
-      vi.mocked(statSync).mockImplementation(() => ({ isDirectory: () => true }) as ReturnType<typeof statSync>);
+      vi.mocked(NodeFS.existsSync).mockImplementation(() => true);
+      vi.mocked(NodeFS.statSync).mockImplementation(() => ({ isDirectory: () => true }) as ReturnType<typeof NodeFS.statSync>);
       vi.useRealTimers();
       db.close();
-      rmSync(journalDirectory, { recursive: true, force: true });
+      NodeFS.rmSync(journalDirectory, { recursive: true, force: true });
     }
   });
 

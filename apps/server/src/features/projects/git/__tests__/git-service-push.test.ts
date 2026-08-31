@@ -86,7 +86,7 @@ describe("GitRepositoryService and GitWorktreeService branch creation", () => {
     execFn = mock.execFn;
     const workspaceRepo = {} as WorkspaceRepo;
     gitRepository = new GitRepositoryService(workspaceRepo, mock.executor);
-    gitWorktrees = new GitWorktreeService(workspaceRepo, mock.executor);
+    gitWorktrees = new GitWorktreeService(workspaceRepo, mock.executor, TEST_HOST_RUNTIME);
   });
 
   it("creates and checks out the branch with argv-safe git args", async () => {
@@ -107,7 +107,7 @@ describe("GitRepositoryService and GitWorktreeService branch creation", () => {
 
   it("creates a detached worktree from the selected base branch without creating a branch", async () => {
     execFn.mockResolvedValue({ stdout: "", stderr: "" });
-    vi.mocked(existsSync).mockImplementation((path) => path === "/repo");
+    vi.mocked(NodeFS.existsSync).mockImplementation((path) => path === "/repo");
 
     await expect(
       gitWorktrees.createWorktree("/repo", "main-branchless", "main", { branchless: true }),
@@ -122,7 +122,7 @@ describe("GitRepositoryService and GitWorktreeService branch creation", () => {
       "worktree",
       "add",
       "--detach",
-      path.join("/mock/mcode", "worktrees", "repo", "main-branchless"),
+      NodePath.join("/mock/mcode", "worktrees", "repo", "main-branchless"),
       "main",
     ]);
   });
@@ -132,7 +132,7 @@ describe("GitRepositoryService and GitWorktreeService branch creation", () => {
       if (args[2] === "rev-parse") throw new Error("missing branch");
       return { stdout: "", stderr: "" };
     });
-    vi.mocked(existsSync).mockImplementation((path) => path === "/repo");
+    vi.mocked(NodeFS.existsSync).mockImplementation((path) => path === "/repo");
 
     await expect(
       gitWorktrees.createWorktree(
@@ -151,7 +151,7 @@ describe("GitRepositoryService and GitWorktreeService branch creation", () => {
       "/repo",
       "worktree",
       "add",
-      path.join("/mock/mcode", "worktrees", "repo", "issue-960"),
+      NodePath.join("/mock/mcode", "worktrees", "repo", "issue-960"),
       "-b",
       "codex/issue-960",
       "origin/main",

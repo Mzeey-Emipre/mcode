@@ -34,7 +34,7 @@ export class PtyHostMessageQueue {
     if (serialized === undefined) {
       throw new Error("PTY host IPC message is not serializable");
     }
-    const messageBytes = Buffer.byteLength(serialized, "utf8");
+    const messageBytes = NodeBuffer.Buffer.byteLength(serialized, "utf8");
     if (
       messageBytes > PTY_HOST_MAX_MESSAGE_BYTES ||
       this.records >= PTY_HOST_MAX_RETAINED_RECORDS ||
@@ -90,7 +90,7 @@ export function runPtyHostProcess(hostRuntime: HostRuntime): PtyHostProcessRunti
     if (!process.connected || !process.send) {
       throw new Error("PTY host IPC channel is unavailable");
     }
-    const eventBytes = Buffer.byteLength(JSON.stringify(validated), "utf8");
+    const eventBytes = NodeBuffer.Buffer.byteLength(JSON.stringify(validated), "utf8");
     if (outboundBytes + eventBytes > MAX_IPC_QUEUE_BYTES) {
       throw new Error("PTY host event queue exceeds 1 MiB");
     }

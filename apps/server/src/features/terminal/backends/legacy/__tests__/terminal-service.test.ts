@@ -52,6 +52,7 @@ function terminalServiceWithReplay(
     {} as never,
     { clear: vi.fn() } as never,
     {} as never,
+    TEST_HOST_RUNTIME,
   );
   const internals = service as unknown as {
     replayBuffers: Map<string, TerminalReplayBuffer>;
@@ -151,6 +152,7 @@ describe("TerminalService Windows teardown", () => {
       {} as never,
       pidRegistry as never,
       {} as never,
+      TEST_HOST_RUNTIME,
     );
 
     const session = {
@@ -210,6 +212,7 @@ describe("TerminalService Windows teardown", () => {
       { getEnv: () => ({}) } as never,
       { register: vi.fn(), deregister: vi.fn(), clear: vi.fn() } as never,
       { assign: vi.fn(), setDescription: vi.fn() } as never,
+      TEST_HOST_RUNTIME,
     );
 
     for (let index = 0; index < 4; index += 1) service.create("thread-1");
@@ -642,6 +645,7 @@ describe("TerminalService Windows teardown", () => {
       { getEnv: () => environment } as never,
       { register: vi.fn(), deregister: vi.fn(), clear: vi.fn() } as never,
       jobObject as never,
+      TEST_HOST_RUNTIME,
       processScopeFactory as never,
     );
   }

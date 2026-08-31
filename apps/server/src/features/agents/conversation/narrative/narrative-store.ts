@@ -34,7 +34,7 @@
  *   the persisted rows verbatim and changes no counts.
  */
 import { injectable, inject } from "tsyringe";
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { logger } from "@mcode/shared";
 import {
   resolveBrowserNarrativeTool,
@@ -333,7 +333,7 @@ export class NarrativeStore {
     if (!open) {
       const sortOrder = this.nextSortOrder(threadId);
       this.turnOpenThought.set(threadId, {
-        id: randomUUID(),
+        id: NodeCrypto.randomUUID(),
         text: delta,
         startedAt: new Date().toISOString(),
         sortOrder,
@@ -939,7 +939,7 @@ export class NarrativeStore {
     }
     if (!text) return null;
     return {
-      id: randomUUID(),
+      id: NodeCrypto.randomUUID(),
       text,
       startedAt: endedAt,
       endedAt,
@@ -1168,7 +1168,7 @@ export class NarrativeStore {
     hook: { hookName: string; toolName: string | null; phase: string; payload: string; sortOrder: number },
   ): string {
     const map = this.turnOpenHooks.get(threadId) ?? new Map<string, OpenHook>();
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     map.set(hook.hookName, {
       id,
       hookName: hook.hookName,
@@ -1375,7 +1375,7 @@ export class NarrativeStore {
     const toolCalls = this.turnToolCalls.get(threadId) ?? [];
     const settledAt = new Date().toISOString();
     for (const toolCall of toolCalls) {
-      toolCall.toolCallId ??= randomUUID();
+      toolCall.toolCallId ??= NodeCrypto.randomUUID();
       this.settleRunningToolCall(toolCall, outcome, settledAt);
       toolCall.messageId = messageId;
       this.prepareToolCallInput(toolCall);
@@ -1453,7 +1453,7 @@ export class NarrativeStore {
     messageContent: string,
   ): CreateThoughtSegmentInput[] {
     const bufferedThoughts = this.turnThoughts.get(threadId) ?? [];
-    for (const thought of bufferedThoughts) thought.id ??= randomUUID();
+    for (const thought of bufferedThoughts) thought.id ??= NodeCrypto.randomUUID();
     const thoughts = bufferedThoughts.map((thought) => ({ ...thought, messageId }));
     const message = messageContent.trim();
     if (message.length > 0 && thoughts.length > 0) {
@@ -1491,7 +1491,7 @@ export class NarrativeStore {
     messageId: string,
   ): CreateHookExecutionInput[] {
     const bufferedHooks = this.turnHooks.get(threadId) ?? [];
-    for (const hook of bufferedHooks) hook.id ??= randomUUID();
+    for (const hook of bufferedHooks) hook.id ??= NodeCrypto.randomUUID();
     return bufferedHooks.map((hook) => ({ ...hook, messageId }));
   }
 

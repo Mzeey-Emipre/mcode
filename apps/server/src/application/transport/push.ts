@@ -4,7 +4,7 @@
  */
 
 import type { WebSocket } from "ws";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { WS_CHANNELS, type WsChannelName, type SetThreadSubscriptionsInput, encodeTerminalDataFrame } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import { getTransportPayloadValidator } from "./payload-validation.js";
@@ -18,7 +18,7 @@ const clients = new Set<WebSocket>();
 const threadSubscriptions = new Map<WebSocket, Set<string>>();
 const threadJournals = new Map<string, { events: unknown[] }>();
 const nextSequenceByThread = new Map<string, number>();
-const eventEpoch = randomUUID();
+const eventEpoch = NodeCrypto.randomUUID();
 const SUBSCRIPTION_SCOPED_CHANNELS = new Set<WsChannelName>([
   "agent.event",
   "agent.canonical",

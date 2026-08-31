@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
@@ -256,7 +256,7 @@ function evaluateReplayKey(providerId: string, request: Extract<BrowserAutomatio
 }
 
 function hashExpression(expression: string): string {
-  return createHash("sha256").update(expression, "utf8").digest("hex");
+  return NodeCrypto.createHash("sha256").update(expression, "utf8").digest("hex");
 }
 
 function tabsReplayKey(providerId: string, request: Extract<BrowserAutomationRequest, { operation: "tabs" }>): string {
@@ -487,7 +487,7 @@ function shapeNegotiatedResponse(
       tabs: inspectTabs(response.result.tabs, pending.target).slice(0, descriptor.constraints.maxTabs),
       snapshot: boundedInspectSnapshot(response.result.snapshot, descriptor.constraints.maxSnapshotChars),
       ...(diagnostics ? { diagnostics } : {}),
-      ...(observationRef ? { observationRef } : !negotiated.includes("act") ? { observationRef: randomUUID() } : {}),
+      ...(observationRef ? { observationRef } : !negotiated.includes("act") ? { observationRef: NodeCrypto.randomUUID() } : {}),
       capabilities,
       capabilityRevision: descriptor.capabilityRevision,
       guidance: inspectGuidance(descriptor, pending.target, capabilities).slice(0, 4_000),
@@ -967,7 +967,7 @@ export class BrowserAutomationBroker {
     if (this.browserMutations.has(sessionKey)) {
       return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
-    const mutationToken = randomUUID();
+    const mutationToken = NodeCrypto.randomUUID();
     this.browserMutations.set(sessionKey, mutationToken);
     const releaseMutation = (): void => {
       if (this.browserMutations.get(sessionKey) === mutationToken) this.browserMutations.delete(sessionKey);
@@ -1020,7 +1020,7 @@ export class BrowserAutomationBroker {
     if (this.browserMutations.has(sessionKey)) {
       return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
-    const token = randomUUID();
+    const token = NodeCrypto.randomUUID();
     this.browserMutations.set(sessionKey, token);
     const promise = this.executeInternal(claims, request)
       .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
@@ -1062,7 +1062,7 @@ export class BrowserAutomationBroker {
     if (this.browserMutations.has(sessionKey)) {
       return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
-    const token = randomUUID();
+    const token = NodeCrypto.randomUUID();
     this.browserMutations.set(sessionKey, token);
     const promise = this.executeInternal(claims, request)
       .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
@@ -1106,7 +1106,7 @@ export class BrowserAutomationBroker {
     if (this.browserMutations.has(sessionKey)) {
       return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
-    const token = randomUUID();
+    const token = NodeCrypto.randomUUID();
     this.browserMutations.set(sessionKey, token);
     const promise = this.executeInternal(claims, request)
       .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))

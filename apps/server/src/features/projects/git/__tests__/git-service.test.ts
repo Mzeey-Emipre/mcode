@@ -142,6 +142,7 @@ describe("GitWorktreeService.removeWorktree", () => {
     gitService = new GitWorktreeService(
       {} as WorkspaceRepo,
       mock.executor,
+      TEST_HOST_RUNTIME,
       { remove: mockRemove } as unknown as WorktreeDirectoryRemover,
     );
   });
@@ -423,7 +424,7 @@ describe("GitWorktreeService.listWorktrees", () => {
     const workspaceRepo = {
       findById: vi.fn().mockReturnValue({ path: "/repo" }),
     } as unknown as WorkspaceRepo;
-    const gitService = new GitWorktreeService(workspaceRepo, mock.executor);
+    const gitService = new GitWorktreeService(workspaceRepo, mock.executor, TEST_HOST_RUNTIME);
     mock.execFn.mockResolvedValue({
       stdout: [
         "worktree /repo",

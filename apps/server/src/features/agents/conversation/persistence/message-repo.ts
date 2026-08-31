@@ -3,7 +3,7 @@
  * Provides creation and retrieval operations for message records in SQLite.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type {
@@ -293,7 +293,7 @@ export class MessageRepo {
     messageId?: string,
     selectedTextComments?: SelectedTextComment[],
   ): Message {
-    const id = messageId ?? randomUUID();
+    const id = messageId ?? NodeCrypto.randomUUID();
     const now = new Date().toISOString();
     const attachmentsJson = this.serializeNonEmptyArray(attachments);
     const mentionsJson = this.serializeNonEmptyArray(mentions);

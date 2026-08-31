@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { reapOrphanedPtys } from "../../../../runtime/process/orphan-cleanup.js";
@@ -13,7 +13,7 @@ import type { TerminalCommandCompletion, TerminalCommandPreparation } from "../.
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
 });
 
 function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
@@ -41,7 +41,7 @@ async function automaticHarness({ setup = true, prepareFailure = false, attachme
   readonly prepareFailure?: boolean;
   readonly attachmentStorage?: { removeStoredAttachments: ReturnType<typeof vi.fn> };
 } = {}) {
-  const root = await mkdtemp(join(tmpdir(), "mcode-automatic-setup-"));
+  const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-automatic-setup-"));
   roots.push(root);
   const db = openMemoryDatabase();
   let milliseconds = Date.parse("2026-08-24T12:00:00.000Z");
@@ -196,11 +196,11 @@ describe("automatic Project Setup", () => {
   });
 
   it("re-resolves an approval-waiting shared Setup when the command is removed", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-automatic-approval-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-automatic-approval-"));
     roots.push(root);
-    const baseCheckout = join(root, "base");
-    const worktreeCheckout = join(root, "worktree");
-    await mkdir(worktreeCheckout, { recursive: true });
+    const baseCheckout = NodePath.join(root, "base");
+    const worktreeCheckout = NodePath.join(root, "worktree");
+    await NodeFSPromises.mkdir(worktreeCheckout, { recursive: true });
     const db = openMemoryDatabase();
     db.prepare("INSERT INTO workspaces (id, name, path, provider_config) VALUES ('workspace-1', 'Project', '/project', '{}')").run();
     db.prepare("INSERT INTO threads (id, workspace_id, title, mode, branch, worktree_managed, provider) VALUES ('thread-1', 'workspace-1', 'First Turn', 'worktree', 'main', 1, 'claude')").run();

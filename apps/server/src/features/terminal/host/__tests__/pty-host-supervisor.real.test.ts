@@ -1,14 +1,8 @@
 import type { TerminalPlatform } from "@mcode/contracts";
-import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { createRequire } from "node:module";
-import { delimiter, dirname, join, resolve } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import {
@@ -24,7 +18,7 @@ import type { PtyHostEvent } from "../pty-host-protocol.js";
 import { PtyHostSupervisor, type PtyHostChild } from "../pty-host-supervisor.js";
 
 const SECOND_SESSION_ID = "12345678-abcd-4abc-8abc-abcdefabcdef";
-const nativeRequire = createRequire(import.meta.url);
+const nativeRequire = NodeModule.createRequire(import.meta.url);
 const TEST_PLATFORM: TerminalPlatform =
   process.platform === "win32"
     ? "windows"
@@ -60,7 +54,7 @@ function resolveNodeExecutable(): string {
   if (/[\\/]node(?:\.exe)?$/i.test(process.execPath)) return process.execPath;
   const pathValue =
     TEST_PLATFORM === "windows"
-      ? execFileSync(
+      ? NodeChildProcess.execFileSync(
           "powershell.exe",
           [
             "-NoProfile",
@@ -70,15 +64,15 @@ function resolveNodeExecutable(): string {
           ],
           { encoding: "utf8", timeout: 5_000 },
         ).trim()
-      : execFileSync(process.env.SHELL ?? "/bin/sh", ["-ilc", "printf %s \"$PATH\""], {
+      : NodeChildProcess.execFileSync(process.env.SHELL ?? "/bin/sh", ["-ilc", "printf %s \"$PATH\""], {
           encoding: "utf8",
           timeout: 5_000,
         }).trim();
   if (pathValue) {
     const executableName = TEST_PLATFORM === "windows" ? "node.exe" : "node";
-    for (const directory of pathValue.split(delimiter)) {
-      const candidate = join(directory, executableName);
-      if (existsSync(candidate)) return candidate;
+    for (const directory of pathValue.split(NodePath.delimiter)) {
+      const candidate = NodePath.join(directory, executableName);
+      if (NodeFS.existsSync(candidate)) return candidate;
     }
   }
   throw new Error("Node.js is required for the PTY workload corpus");
@@ -91,7 +85,7 @@ function workloadCommand(scriptPath: string, nodeExecutable: string): Buffer {
       : `'${value.replace(/'/g, `'"'"'`)}'`;
   if (TEST_PLATFORM === "windows") {
     const wrapperPath = `${scriptPath}.cmd`;
-    writeFileSync(
+    NodeFS.writeFileSync(
       wrapperPath,
       `@echo off\r\n${quote(nodeExecutable)} ${quote(scriptPath)}\r\necho WF:runner-exit:%errorlevel%\r\n`,
       "utf8",
@@ -189,16 +183,16 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
   "isolated PTY host supervisor",
   () => {
     it("runs a real contained PTY through a separate versioned Node host", async () => {
-      const repoRoot = resolve(process.cwd(), "../..");
-      const devDir = join(repoRoot, ".dev");
-      mkdirSync(devDir, { recursive: true });
-      const tempDir = mkdtempSync(join(devDir, "pty-host-test-"));
-      const entryPath = join(tempDir, "pty-host.cjs");
+      const repoRoot = NodePath.resolve(process.cwd(), "../..");
+      const devDir = NodePath.join(repoRoot, ".dev");
+      NodeFS.mkdirSync(devDir, { recursive: true });
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(devDir, "pty-host-test-"));
+      const entryPath = NodePath.join(tempDir, "pty-host.cjs");
       let supervisor: PtyHostSupervisor | null = null;
       try {
         await build({
           entryPoints: [
-            resolve(process.cwd(), "src/features/terminal/host/pty-host-entry.ts"),
+            NodePath.resolve(process.cwd(), "src/features/terminal/host/pty-host-entry.ts"),
           ],
           outfile: entryPath,
           bundle: true,
@@ -279,8 +273,8 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           workload: ReturnType<typeof listTerminalWorkloads>[number],
         ): Promise<void> {
           const sessionId = corpusSessionId(index);
-          const scriptPath = join(tempDir, `${workload.id}.cjs`);
-          writeFileSync(scriptPath, workload.program.source, "utf8");
+          const scriptPath = NodePath.join(tempDir, `${workload.id}.cjs`);
+          NodeFS.writeFileSync(scriptPath, workload.program.source, "utf8");
           const running = await supervisor.create({
             sessionId,
             hostGeneration: "1",
@@ -515,8 +509,8 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           (workload) => workload.id === "process-cleanup",
         );
         if (!cleanupWorkload) throw new Error("Process cleanup corpus is missing");
-        const cleanupScriptPath = join(tempDir, "crash-process-cleanup.cjs");
-        writeFileSync(cleanupScriptPath, cleanupWorkload.program.source, "utf8");
+        const cleanupScriptPath = NodePath.join(tempDir, "crash-process-cleanup.cjs");
+        NodeFS.writeFileSync(cleanupScriptPath, cleanupWorkload.program.source, "utf8");
         await supervisor.create({
           sessionId: SECOND_SESSION_ID,
           hostGeneration: "1",
@@ -587,7 +581,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
         await runAllWorkloads();
       } finally {
         await supervisor?.shutdown();
-        rmSync(tempDir, { recursive: true, force: true });
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
     }, 120_000);
   },

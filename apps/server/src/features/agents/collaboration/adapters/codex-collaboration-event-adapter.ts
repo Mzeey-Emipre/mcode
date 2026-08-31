@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import {
   AgentEventType,
@@ -291,7 +291,7 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
       if (!context) return false;
       this.durability.startProviderContinuation({
         parentThreadId: context.parentThreadId,
-        turnId: randomUUID(),
+        turnId: NodeCrypto.randomUUID(),
         executionId,
         permissionMode: this.durability.loadLatestPermissionMode(context.parentThreadId) ?? "supervised",
         providerIdentities: context.providerIdentities,
@@ -891,7 +891,7 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
   }
 
   private actionId(sourceThreadId: string, sourceTurnId: string, sourceItemId: string, kind: CollaborationActionKind): string {
-    return `collaboration:codex:${createHash("sha256")
+    return `collaboration:codex:${NodeCrypto.createHash("sha256")
       .update(`${sourceThreadId}:${sourceTurnId}:${sourceItemId}:${kind}`)
       .digest("hex")}`;
   }

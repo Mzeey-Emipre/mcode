@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { getExtension, type WsMethodName, WS_METHODS } from "@mcode/contracts";
 import type { z } from "zod";
 
@@ -42,13 +42,13 @@ async function saveClipboardFile(
     throw new Error("clipboard.saveFile via JSON-RPC requires the data field; use binary upload instead");
   }
   const buffer = Buffer.from(params.data, "base64");
-  const id = randomUUID();
+  const id = NodeCrypto.randomUUID();
   const extension = getExtension(params.fileName);
   const suffix = extension ? `.${extension}` : "";
-  const tempDir = join(tmpdir(), "mcode-attachments");
-  await mkdir(tempDir, { recursive: true });
-  const tempPath = join(tempDir, `${id}${suffix}`);
-  await writeFile(tempPath, buffer);
+  const tempDir = NodePath.join(NodeOS.tmpdir(), "mcode-attachments");
+  await NodeFSPromises.mkdir(tempDir, { recursive: true });
+  const tempPath = NodePath.join(tempDir, `${id}${suffix}`);
+  await NodeFSPromises.writeFile(tempPath, buffer);
   return {
     id,
     name: params.fileName,

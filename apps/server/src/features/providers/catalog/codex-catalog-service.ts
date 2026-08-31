@@ -1,4 +1,4 @@
-import { basename } from "path";
+import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
 import type {
   ProviderCatalogDiagnosticSourceKind,
@@ -278,7 +278,7 @@ function pluginLoadDiagnostics(result: CodexCatalogPluginsResult): ProviderCatal
     if (!error || typeof error.marketplacePath !== "string" || typeof error.message !== "string") return [];
     return [sourceDiagnostic(
       "appServerPlugins",
-      basename(error.marketplacePath),
+      NodePath.basename(error.marketplacePath),
       "discovery-error",
       "Codex could not load one plugin marketplace source.",
     )];

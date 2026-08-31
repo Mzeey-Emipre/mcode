@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import {
   AgentItemSchema,
@@ -277,7 +277,7 @@ interface RetainedVolatileIngestEvents {
 }
 
 function hashCodexKey(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 32);
+  return NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
 }
 
 function narrativeItemKind(entryKind: Exclude<NarrativeEntry["kind"], "assistantMessage">): AgentItem["kind"] {

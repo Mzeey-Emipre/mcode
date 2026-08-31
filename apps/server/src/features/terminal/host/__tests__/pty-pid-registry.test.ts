@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 import { PtyPidRegistry } from "../pty-pid-registry.js";
 
 // ---------------------------------------------------------------------------
@@ -9,13 +9,13 @@ import { PtyPidRegistry } from "../pty-pid-registry.js";
 // ---------------------------------------------------------------------------
 
 function makeTmpDir(): string {
-  const dir = join(tmpdir(), `pty-pid-registry-test-${process.pid}-${Date.now()}`);
-  mkdirSync(dir, { recursive: true });
+  const dir = NodePath.join(NodeOS.tmpdir(), `pty-pid-registry-test-${process.pid}-${Date.now()}`);
+  NodeFS.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 function registryFilePath(dir: string): string {
-  return join(dir, "pty-pids.json");
+  return NodePath.join(dir, "pty-pids.json");
 }
 
 // ---------------------------------------------------------------------------
@@ -33,12 +33,12 @@ describe("PtyPidRegistry", () => {
 
   afterEach(() => {
     try {
-      unlinkSync(registryFilePath(tmpDir));
+      NodeFS.unlinkSync(registryFilePath(tmpDir));
     } catch {
       /* ok - file may not exist */
     }
     try {
-      unlinkSync(registryFilePath(tmpDir) + ".tmp");
+      NodeFS.unlinkSync(registryFilePath(tmpDir) + ".tmp");
     } catch {
       /* ok */
     }
@@ -74,14 +74,14 @@ describe("PtyPidRegistry", () => {
     expect(stale).toHaveLength(2);
     const ids = stale.map((e) => e.ptyId).sort();
     expect(ids).toEqual(["pty-1", "pty-2"]);
-    expect(existsSync(registryFilePath(tmpDir))).toBe(false);
+    expect(NodeFS.existsSync(registryFilePath(tmpDir))).toBe(false);
   });
 
   it("clear empties all entries and removes file", () => {
     registry.register("pty-1", 1111, "bash");
     registry.clear();
 
-    expect(existsSync(registryFilePath(tmpDir))).toBe(false);
+    expect(NodeFS.existsSync(registryFilePath(tmpDir))).toBe(false);
   });
 
   it("register is idempotent for same ptyId", () => {
@@ -102,7 +102,7 @@ describe("PtyPidRegistry", () => {
   });
 
   it("loadStale on corrupted file returns empty array", () => {
-    writeFileSync(registryFilePath(tmpDir), "not valid json }{", "utf-8");
+    NodeFS.writeFileSync(registryFilePath(tmpDir), "not valid json }{", "utf-8");
     const result = registry.loadStale();
     expect(result).toEqual([]);
   });

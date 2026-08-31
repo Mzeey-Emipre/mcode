@@ -56,8 +56,8 @@ const { mockExecFile, mockClient, MockCopilotClient } = vi.hoisted(() => {
 
 vi.mock("which", () => ({ default: vi.fn() }));
 
-vi.mock("child_process", async (importOriginal) => {
-  const original = await importOriginal<typeof import("child_process")>();
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
   return { ...original, execFile: mockExecFile };
 });
 

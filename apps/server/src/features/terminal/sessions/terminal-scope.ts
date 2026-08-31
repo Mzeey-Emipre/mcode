@@ -1,5 +1,5 @@
-import { existsSync, statSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { TerminalScopeSchema, type TerminalScope } from "@mcode/contracts";
 
 /** Dependencies that resolve a Terminal scope to its current checkout. */
@@ -47,9 +47,9 @@ export function resolveTerminalScope(
 }
 
 function isExistingAbsoluteDirectory(path: string): boolean {
-  if (!isAbsolute(path) || !existsSync(path)) return false;
+  if (!NodePath.isAbsolute(path) || !NodeFS.existsSync(path)) return false;
   try {
-    return statSync(path).isDirectory();
+    return NodeFS.statSync(path).isDirectory();
   } catch {
     return false;
   }

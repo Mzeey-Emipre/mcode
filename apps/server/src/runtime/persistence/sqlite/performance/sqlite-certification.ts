@@ -1,15 +1,6 @@
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { fileURLToPath } from "node:url";
-import { basename, dirname, join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
+import * as NodePath from "node:path";
 import Database from "better-sqlite3";
 import {
   SQLITE_PROFILE_WORKLOADS,
@@ -84,7 +75,7 @@ const PUBLIC_TEXT_IDENTIFIER = "thread-public-id";
 const RETENTION_UPGRADE_COUNT = MIGRATION_BACKUP_RETENTION + 2;
 const MAX_DRIZZLE_JOURNAL_BYTES = 1_048_576;
 const MAX_DRIZZLE_JOURNAL_ENTRIES = 10_000;
-const ACTUAL_MIGRATIONS_DIRECTORY = fileURLToPath(
+const ACTUAL_MIGRATIONS_DIRECTORY = NodeURL.fileURLToPath(
   new URL("../../../../../drizzle", import.meta.url),
 );
 const EXPECTED_PRAGMAS = {
@@ -100,15 +91,15 @@ const EXPECTED_PRAGMAS = {
 export function runSQLiteRecoveryCertification(
   certificationDirectory: string,
 ): SQLiteRecoveryCertification {
-  mkdirSync(certificationDirectory, { recursive: true });
+  NodeFS.mkdirSync(certificationDirectory, { recursive: true });
   return {
     forcedMigrationFailure: runForcedMigrationFailureScenario(
-      join(certificationDirectory, "forced-migration-failure"),
+      NodePath.join(certificationDirectory, "forced-migration-failure"),
     ),
     insufficientDisk: runInsufficientDiskScenario(
-      join(certificationDirectory, "insufficient-disk"),
+      NodePath.join(certificationDirectory, "insufficient-disk"),
     ),
-    retention: runRetentionScenario(join(certificationDirectory, "retention")),
+    retention: runRetentionScenario(NodePath.join(certificationDirectory, "retention")),
   };
 }
 
@@ -136,8 +127,8 @@ export function createSQLiteCertificationReport(
 export function runSQLiteCacheBudgetCertification(
   certificationDirectory: string,
 ): SQLiteCacheBudgetCertification {
-  mkdirSync(certificationDirectory, { recursive: true });
-  const databasePath = join(certificationDirectory, "mcode.db");
+  NodeFS.mkdirSync(certificationDirectory, { recursive: true });
+  const databasePath = NodePath.join(certificationDirectory, "mcode.db");
   return withMigrationsDirectory(ACTUAL_MIGRATIONS_DIRECTORY, () => {
     const database = openDatabase({ dbPath: databasePath });
     try {
@@ -156,11 +147,11 @@ function runForcedMigrationFailureScenario(
   scenarioDirectory: string,
 ): SQLiteForcedMigrationFailureCertification {
   const { databasePath, originalBytes } = createScenarioDatabase(scenarioDirectory);
-  const migrationsDirectory = join(scenarioDirectory, "drizzle");
+  const migrationsDirectory = NodePath.join(scenarioDirectory, "drizzle");
   const forcedMigrationTag = "0000_forced_failure";
-  mkdirSync(join(migrationsDirectory, "meta"), { recursive: true });
-  writeFileSync(
-    join(migrationsDirectory, "meta", "_journal.json"),
+  NodeFS.mkdirSync(NodePath.join(migrationsDirectory, "meta"), { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(migrationsDirectory, "meta", "_journal.json"),
     JSON.stringify({
       version: "7",
       dialect: "sqlite",
@@ -189,7 +180,7 @@ function runForcedMigrationFailureScenario(
     }
   });
 
-  const restoredDatabase = readFileSync(databasePath).equals(originalBytes);
+  const restoredDatabase = NodeFS.readFileSync(databasePath).equals(originalBytes);
   const backupGenerations = countBackupGenerations(databasePath);
   if (!migrationFailed || !restoredDatabase || backupGenerations !== 1) {
     return {
@@ -225,7 +216,7 @@ function runInsufficientDiskScenario(
   }
 
   const rejectedBeforeMutation = rejected
-    && readFileSync(databasePath).equals(originalBytes);
+    && NodeFS.readFileSync(databasePath).equals(originalBytes);
   const backupGenerations = countBackupGenerations(databasePath);
   if (!rejectedBeforeMutation || backupGenerations !== 0) {
     return {
@@ -241,15 +232,15 @@ function runRetentionScenario(
 ): SQLiteRetentionCertification {
   const { databasePath } = createScenarioDatabase(scenarioDirectory);
   removeSyntheticDatabase(databasePath);
-  const migrationsDirectory = join(scenarioDirectory, "drizzle");
-  cpSync(ACTUAL_MIGRATIONS_DIRECTORY, migrationsDirectory, { recursive: true });
-  const journalPath = join(migrationsDirectory, "meta", "_journal.json");
+  const migrationsDirectory = NodePath.join(scenarioDirectory, "drizzle");
+  NodeFS.cpSync(ACTUAL_MIGRATIONS_DIRECTORY, migrationsDirectory, { recursive: true });
+  const journalPath = NodePath.join(migrationsDirectory, "meta", "_journal.json");
   const journal = readDrizzleJournal(journalPath);
   if (journal.entries.length <= RETENTION_UPGRADE_COUNT) {
     throw new Error(`Retention certification requires more than ${RETENTION_UPGRADE_COUNT} production migrations.`);
   }
   const pendingEntries = journal.entries.splice(-RETENTION_UPGRADE_COUNT);
-  writeFileSync(journalPath, JSON.stringify(journal, null, 2));
+  NodeFS.writeFileSync(journalPath, JSON.stringify(journal, null, 2));
   const initialMigrationCount = createProductionDatabase(
     databasePath,
     migrationsDirectory,
@@ -258,7 +249,7 @@ function runRetentionScenario(
   withMigrationsDirectory(migrationsDirectory, () => {
     for (const pendingEntry of pendingEntries) {
       journal.entries.push(pendingEntry);
-      writeFileSync(journalPath, JSON.stringify(journal, null, 2));
+      NodeFS.writeFileSync(journalPath, JSON.stringify(journal, null, 2));
       openDatabase({ dbPath: databasePath }).close();
     }
   });
@@ -300,16 +291,16 @@ function createScenarioDatabase(scenarioDirectory: string): {
   databasePath: string;
   originalBytes: Buffer;
 } {
-  mkdirSync(scenarioDirectory, { recursive: true });
-  const databasePath = join(scenarioDirectory, "mcode.db");
+  NodeFS.mkdirSync(scenarioDirectory, { recursive: true });
+  const databasePath = NodePath.join(scenarioDirectory, "mcode.db");
   createDatabaseWithPublicIdentifier(databasePath);
-  return { databasePath, originalBytes: readFileSync(databasePath) };
+  return { databasePath, originalBytes: NodeFS.readFileSync(databasePath) };
 }
 
 function removeSyntheticDatabase(databasePath: string): void {
   for (const suffix of ["", "-wal", "-shm"]) {
     const path = `${databasePath}${suffix}`;
-    if (existsSync(path)) unlinkSync(path);
+    if (NodeFS.existsSync(path)) NodeFS.unlinkSync(path);
   }
 }
 
@@ -349,11 +340,11 @@ interface DrizzleJournal {
 }
 
 function readDrizzleJournal(journalPath: string): DrizzleJournal {
-  const journalBytes = statSync(journalPath).size;
+  const journalBytes = NodeFS.statSync(journalPath).size;
   if (journalBytes > MAX_DRIZZLE_JOURNAL_BYTES) {
     throw new Error(`Drizzle journal exceeds ${MAX_DRIZZLE_JOURNAL_BYTES} bytes.`);
   }
-  const value: unknown = JSON.parse(readFileSync(journalPath, "utf8"));
+  const value: unknown = JSON.parse(NodeFS.readFileSync(journalPath, "utf8"));
   if (!isRecord(value) || value.dialect !== "sqlite" || typeof value.version !== "string") {
     throw new Error("Drizzle journal has an invalid header.");
   }
@@ -430,10 +421,10 @@ function countBackupGenerations(databasePath: string): number {
 }
 
 function listBackupGenerations(databasePath: string): string[] {
-  const prefix = `${basename(databasePath)}.bak-`;
-  return readdirSync(dirname(databasePath))
+  const prefix = `${NodePath.basename(databasePath)}.bak-`;
+  return NodeFS.readdirSync(NodePath.dirname(databasePath))
     .filter((entry) => entry.startsWith(prefix) && !entry.endsWith("-wal"))
-    .map((entry) => join(dirname(databasePath), entry));
+    .map((entry) => NodePath.join(NodePath.dirname(databasePath), entry));
 }
 
 function databaseContainsPublicIdentifier(databasePath: string): boolean {

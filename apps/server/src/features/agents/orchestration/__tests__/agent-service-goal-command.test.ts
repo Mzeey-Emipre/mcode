@@ -24,7 +24,7 @@ import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
-import { EventEmitter } from "events";
+import * as NodeEvents from "node:events";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 import { broadcast } from "../../../../application/transport/push.js";
@@ -91,7 +91,7 @@ function buildService(db: Database.Database) {
     controls: { canInspect: true, canClear: true },
   });
 
-  const providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+  const providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
     id: "claude" as const,
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,
@@ -117,7 +117,7 @@ function buildService(db: Database.Database) {
   }));
   // A provider lacking the goal capability (no setGoal/clearGoal/getGoal).
   // `/goal` must pass through to this provider as plain text.
-  const nonGoalStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
+  const nonGoalStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new NodeEvents.EventEmitter(), {
     id: "gemini" as const,
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,

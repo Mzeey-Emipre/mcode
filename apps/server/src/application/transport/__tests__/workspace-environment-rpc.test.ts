@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { routeMessage, type RouterDeps } from "../ws-router.js";
 import { WorkspaceEnvironmentService } from "../../../features/projects/environment/workspace-environment-service.js";
@@ -9,7 +9,7 @@ import { openMemoryDatabase } from "../../../runtime/persistence/sqlite/database
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
 });
 
 describe("workspace environment RPC", () => {
@@ -38,7 +38,7 @@ describe("workspace environment RPC", () => {
   };
 
   it("serves valid read/save calls and reports malformed payloads structurally", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);
     const workspaceEnvironmentService = new WorkspaceEnvironmentService(root);
     const deps = {
@@ -76,9 +76,9 @@ describe("workspace environment RPC", () => {
   });
 
   it("routes storage selection and approval clearing through the workspace environment boundary", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);
-    const baseCheckout = join(root, "base");
+    const baseCheckout = NodePath.join(root, "base");
     const workspace = { id: "workspace-1", path: baseCheckout };
     const workspaceEnvironmentService = new WorkspaceEnvironmentService({
       mcodeDir: root,
@@ -233,7 +233,7 @@ describe("workspace environment RPC", () => {
   });
 
   it("starts and reads the typed transient manual Setup attempt", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);
     const workspaceEnvironmentService = new WorkspaceEnvironmentService({
       mcodeDir: root,
@@ -289,7 +289,7 @@ describe("workspace environment RPC", () => {
   });
 
   it("routes strict automatic Setup lifecycle reads and recovery mutations", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);
     const database = openMemoryDatabase();
     const workspaceEnvironmentService = new WorkspaceEnvironmentService({

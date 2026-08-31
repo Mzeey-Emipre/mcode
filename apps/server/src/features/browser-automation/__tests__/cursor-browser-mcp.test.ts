@@ -1,6 +1,6 @@
 import "reflect-metadata";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import * as NodeEvents from "node:events";
+import * as NodeStream from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -320,8 +320,8 @@ describe("Cursor browser MCP configuration", () => {
   });
 
   it("propagates an ACP handshake failure before spawn returns", async () => {
-    const child = Object.assign(new EventEmitter(), {
-      stderr: new PassThrough(),
+    const child = Object.assign(new NodeEvents.EventEmitter(), {
+      stderr: new NodeStream.PassThrough(),
       pid: 104,
       kill: vi.fn(),
     });
@@ -347,9 +347,9 @@ describe("Cursor browser MCP configuration", () => {
   });
 
   it("terminates the side-channel process tree when its handshake fails", async () => {
-    const child = Object.assign(new EventEmitter(), {
-      stdin: new PassThrough(),
-      stdout: new PassThrough(),
+    const child = Object.assign(new NodeEvents.EventEmitter(), {
+      stdin: new NodeStream.PassThrough(),
+      stdout: new NodeStream.PassThrough(),
       pid: 109,
       kill: vi.fn(),
     });

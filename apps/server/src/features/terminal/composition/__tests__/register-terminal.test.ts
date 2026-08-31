@@ -18,7 +18,7 @@ import { registerTerminalBackends } from "../register-terminal.js";
 describe("registerTerminalBackends", () => {
   it("registers one Terminal command service through the container", () => {
     const terminalContainer = container.createChildContainer();
-    const pidRegistryDir = mkdtempSync(join(tmpdir(), "mcode-terminal-composition-"));
+    const pidRegistryDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-terminal-composition-"));
     terminalContainer.register(TerminalProfileService, { useValue: {} as TerminalProfileService });
     terminalContainer.register(EnvService, { useValue: {} as EnvService });
     terminalContainer.register(SettingsService, { useValue: {} as SettingsService });
@@ -35,7 +35,7 @@ describe("registerTerminalBackends", () => {
         terminalContainer.resolve(TerminalCommandService),
       );
     } finally {
-      rmSync(pidRegistryDir, { recursive: true, force: true });
+      NodeFS.rmSync(pidRegistryDir, { recursive: true, force: true });
     }
   });
 });

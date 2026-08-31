@@ -5,9 +5,8 @@
  */
 
 import { injectable } from "tsyringe";
-import { copyFileSync, readFileSync, writeFileSync, renameSync, mkdirSync, watch, existsSync, unlinkSync } from "fs";
-import { join, dirname } from "path";
-import type { FSWatcher } from "fs";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import {
   SettingsSchema,
@@ -128,7 +127,7 @@ function getSettingsDefaults(): Settings {
 @injectable()
 export class SettingsService {
   private readonly filePath: string;
-  private watcher: FSWatcher | null = null;
+  private watcher: NodeFS.FSWatcher | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Whether the last write originated from this process (used to skip self-triggered watch events). */
@@ -157,7 +156,7 @@ export class SettingsService {
   private blockedTerminalProfileReference: TerminalProfileRecovery["unavailableProfileId"] = null;
 
   constructor() {
-    this.filePath = join(getMcodeDir(), "settings.json");
+    this.filePath = NodePath.join(getMcodeDir(), "settings.json");
     this.startWatching();
   }
 
@@ -295,7 +294,7 @@ export class SettingsService {
   }
 
   private readSettingsFile(): Settings | null {
-    const raw = readFileSync(this.filePath, "utf-8");
+    const raw = NodeFS.readFileSync(this.filePath, "utf-8");
     if (Buffer.byteLength(raw, "utf8") > SETTINGS_MAX_BYTES) {
       this.blockTerminalMigration("malformed");
       return null;
@@ -371,7 +370,7 @@ export class SettingsService {
   }
 
   private handleSettingsReadFailure(): Settings {
-    this.terminalMigrationStatus = existsSync(this.filePath)
+    this.terminalMigrationStatus = NodeFS.existsSync(this.filePath)
       ? { status: "blocked", reason: "malformed" }
       : { status: "current" };
     this.clearBlockedTerminalRecovery();
@@ -386,15 +385,15 @@ export class SettingsService {
   }
 
   private preserveTerminalMigrationBackup(): void {
-    const backupPath = join(dirname(this.filePath), TERMINAL_SETTINGS_BACKUP_NAME);
-    if (!existsSync(backupPath)) {
-      copyFileSync(this.filePath, backupPath);
+    const backupPath = NodePath.join(NodePath.dirname(this.filePath), TERMINAL_SETTINGS_BACKUP_NAME);
+    if (!NodeFS.existsSync(backupPath)) {
+      NodeFS.copyFileSync(this.filePath, backupPath);
     }
   }
 
   private writeAtomically(document: unknown): void {
     if (!this.dirEnsured) {
-      mkdirSync(dirname(this.filePath), { recursive: true });
+      NodeFS.mkdirSync(NodePath.dirname(this.filePath), { recursive: true });
       this.dirEnsured = true;
       // If the directory didn't exist at startup, startWatching() will have
       // failed and left this.watcher null. Now that the directory exists,
@@ -408,14 +407,14 @@ export class SettingsService {
     const tmpPath = this.filePath + ".tmp";
     this.selfWrite = true;
     try {
-      writeFileSync(tmpPath, JSON.stringify(document, null, 2), "utf-8");
-      renameSync(tmpPath, this.filePath);
+      NodeFS.writeFileSync(tmpPath, JSON.stringify(document, null, 2), "utf-8");
+      NodeFS.renameSync(tmpPath, this.filePath);
       // Safety: clear selfWrite after a window in case fs.watch never fires.
       setTimeout(() => { this.selfWrite = false; }, 500);
     } catch (err) {
       // Ensure selfWrite is always cleared and temp file cleaned up on failure.
       this.selfWrite = false;
-      try { unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
+      try { NodeFS.unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
       throw err;
     }
   }
@@ -463,12 +462,12 @@ export class SettingsService {
    * Debounced at 100ms to avoid double-fires from editors that write + rename.
    */
   private startWatching(): void {
-    const watchTarget = existsSync(this.filePath)
+    const watchTarget = NodeFS.existsSync(this.filePath)
       ? this.filePath
-      : dirname(this.filePath);
+      : NodePath.dirname(this.filePath);
 
     try {
-      this.watcher = watch(watchTarget, (_eventType, filename) => {
+      this.watcher = NodeFS.watch(watchTarget, (_eventType, filename) => {
         // When watching the directory, only react to the settings file.
         // `filename` can be null on some platforms (e.g. Linux inotify edge cases);
         // treat null as "unknown file" and let it through rather than silently dropping.
@@ -494,7 +493,7 @@ export class SettingsService {
           // If we were watching the file directly but it no longer exists
           // (e.g. the user deleted or replaced it), fall back to watching
           // the parent directory so we can recover when it reappears.
-          if (watchTarget === this.filePath && !existsSync(this.filePath)) {
+          if (watchTarget === this.filePath && !NodeFS.existsSync(this.filePath)) {
             this.dispose();
             this.startWatching();
             return;
@@ -508,7 +507,7 @@ export class SettingsService {
 
           // If we started watching the directory and the file now exists,
           // switch to watching the file directly for more precise events.
-          if (watchTarget !== this.filePath && existsSync(this.filePath)) {
+          if (watchTarget !== this.filePath && NodeFS.existsSync(this.filePath)) {
             this.dispose();
             this.startWatching();
           }

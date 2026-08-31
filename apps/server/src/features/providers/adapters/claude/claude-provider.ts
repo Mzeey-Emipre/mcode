@@ -5,8 +5,8 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { EventEmitter } from "events";
-import { readFile } from "fs/promises";
+import * as NodeEvents from "node:events";
+import * as NodeFSPromises from "node:fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type {
   Query,
@@ -480,7 +480,7 @@ interface ClaudeStreamLoopState {
 /** Claude Agent SDK adapter implementing IAgentProvider with prompt queue pattern. */
 @injectable()
 export class ClaudeProvider
-  extends EventEmitter
+  extends NodeEvents.EventEmitter
   implements
     IAgentProvider,
     IGoalCapable,
@@ -588,11 +588,11 @@ export class ClaudeProvider
     @inject(InternalThreadControlMcpRuntime)
     private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
     @inject("ProviderHostPorts")
-    host?: ProviderHostPorts,
+    private readonly host?: ProviderHostPorts,
   ) {
     super();
-    this.canonicalEventPublisher = host
-      ? new ClaudeCanonicalEventPublisher(host.events)
+    this.canonicalEventPublisher = this.host
+      ? new ClaudeCanonicalEventPublisher(this.host.events)
       : undefined;
     this.runtime = new SessionRuntime<ClaudeSessionState>(this, {
       jobObject: this.jobObject,
@@ -2434,7 +2434,7 @@ export class ClaudeProvider
     for (const att of attachments) {
       if (isVirtualBrowserContextAttachment(att.mimeType)) continue;
       try {
-        const data = await readFile(att.sourcePath);
+        const data = await NodeFSPromises.readFile(att.sourcePath);
 
         if (att.mimeType.startsWith("image/")) {
           contentBlocks.push({

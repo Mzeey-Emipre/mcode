@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type {
   TerminalAttachmentDescriptor,
   TerminalErrorCode,
@@ -233,7 +233,7 @@ export class TerminalSessionRuntimeError extends Error {
   constructor(
     readonly code: TerminalErrorCode,
     readonly retry: TerminalRetryClass,
-    createCorrelationId: () => string = () => `corr-${randomUUID()}`,
+    createCorrelationId: () => string = () => `corr-${NodeCrypto.randomUUID()}`,
   ) {
     super(ERROR_MESSAGES[code] ?? "The Terminal runtime rejected the operation");
     this.name = "TerminalSessionRuntimeError";
@@ -254,8 +254,8 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
 
   constructor(private readonly options: ModernTerminalSessionRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
-    this.createHydrationId = options.createHydrationId ?? randomUUID;
-    this.createCorrelationId = options.createCorrelationId ?? (() => `corr-${randomUUID()}`);
+    this.createHydrationId = options.createHydrationId ?? NodeCrypto.randomUUID;
+    this.createCorrelationId = options.createCorrelationId ?? (() => `corr-${NodeCrypto.randomUUID()}`);
     this.initialDimensions = options.initialDimensions ?? DEFAULT_INITIAL_DIMENSIONS;
     validateDimensions(this.initialDimensions, this.protocolError.bind(this));
     this.unsubscribeHost = options.host.subscribe((event) => this.onHostEvent(event));
@@ -494,7 +494,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       checkpoint.data.byteLength > MAX_CHECKPOINT_BYTES ||
       baseOutputSeq > record.receivedOutputSeq ||
       !/^[a-f0-9]{64}$/.test(checkpoint.sha256) ||
-      createHash("sha256").update(checkpoint.data).digest("hex") !== checkpoint.sha256
+      NodeCrypto.createHash("sha256").update(checkpoint.data).digest("hex") !== checkpoint.sha256
     ) {
       throw this.error("CHECKPOINT_REJECTED", "REATTACH");
     }

@@ -26,6 +26,7 @@ export function createProviderHostPorts(
   dependencies: ProviderHostPortDependencies,
 ): ProviderHostPorts {
   return {
+    runtime: dependencies.runtime,
     environment: {
       snapshot: () => dependencies.envService.getEnv(),
     },

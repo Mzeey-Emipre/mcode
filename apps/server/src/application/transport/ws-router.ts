@@ -5,7 +5,7 @@
  */
 
 import type { WebSocket } from "ws";
-import type { IncomingMessage } from "http";
+import * as NodeHTTP from "node:http";
 import type { z } from "zod";
 
 import {

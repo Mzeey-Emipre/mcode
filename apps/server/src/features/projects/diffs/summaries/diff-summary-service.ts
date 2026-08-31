@@ -4,7 +4,7 @@
  * and the diff_summaries DB table into a single orchestration layer.
  */
 
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import { logger } from "@mcode/shared";
@@ -108,7 +108,7 @@ export class DiffSummaryService {
     const { text: content, model } = await this.utilityCompletion.complete(prompt, cwd);
 
     const record: DiffSummaryRecord = {
-      id: randomUUID(),
+      id: NodeCrypto.randomUUID(),
       threadId,
       content,
       turnCount: payload.turnCount,

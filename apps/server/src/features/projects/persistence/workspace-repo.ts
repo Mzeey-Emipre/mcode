@@ -3,7 +3,7 @@
  * Provides CRUD operations for workspace records in SQLite.
  */
 
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { Workspace } from "@mcode/contracts";
@@ -48,7 +48,7 @@ export class WorkspaceRepo {
 
   /** Create a new workspace and return the fully-populated record. */
   create(name: string, path: string, isGitRepo = true): Workspace {
-    const id = randomUUID();
+    const id = NodeCrypto.randomUUID();
     const now = new Date().toISOString();
 
     const trx = this.db.transaction(() => {

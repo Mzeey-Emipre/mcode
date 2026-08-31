@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import type {
   AgentEvent,
   AgentEventType,
@@ -36,7 +36,7 @@ export class TurnRuntimeRegistry {
   start(threadId: string): TurnRuntimeSnapshot {
     const snapshot: RuntimeState = {
       threadId,
-      turnExecutionId: randomUUID(),
+      turnExecutionId: NodeCrypto.randomUUID(),
       phase: "running",
       terminalized: false,
     };

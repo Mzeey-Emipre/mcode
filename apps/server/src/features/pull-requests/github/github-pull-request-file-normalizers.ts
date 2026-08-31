@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { z } from "zod";
 import {
   PULL_REQUEST_FILE_LOCATOR_MAX_LENGTH,
@@ -117,7 +117,7 @@ function hasValidGithubPullRequestFilePaths(
 
 /** Return a stable metadata fingerprint for a global-position file locator. */
 export function pullRequestRemoteFileFingerprint(file: PullRequestRemoteFile): string {
-  return createHash("sha256").update(JSON.stringify({
+  return NodeCrypto.createHash("sha256").update(JSON.stringify({
     globalPosition: file.globalPosition,
     path: file.path,
     previousPath: file.previousPath,

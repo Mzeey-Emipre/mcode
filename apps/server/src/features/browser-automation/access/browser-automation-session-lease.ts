@@ -2,7 +2,7 @@ import {
   BROWSER_V2_CORE_OPERATIONS,
   type BrowserAutomationPublicOperation,
 } from "@mcode/contracts";
-import { randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BrowserAutomationCredentialRegistry,
   type BrowserAutomationCredentialScope,
@@ -204,7 +204,7 @@ export class BrowserAutomationSessionLease {
     this.cleanupPending();
     if (this.pending.size >= this.maxPending) this.evictOldestPending();
     const scope = normalizeRequest(request);
-    const leaseId = randomUUID();
+    const leaseId = NodeCrypto.randomUUID();
     const sessionKey = this.sessionKey(scope.providerId, scope.mcodeSessionId);
     const expiresAt = this.now() + this.pendingTtlMs;
     this.pending.set(leaseId, { scope, sessionKey, expiresAt });

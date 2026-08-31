@@ -13,9 +13,9 @@
  */
 
 import "reflect-metadata";
-import { mkdtempSync, rmSync, existsSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { HandoffPipelineService } from "../handoff-pipeline.js";
 import { HandoffStorage } from "../../persistence/handoff-storage.js";
@@ -107,13 +107,13 @@ describe("fork flow with handoff pipeline (e2e)", () => {
   let storage: HandoffStorage;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "branch-e2e-"));
+    dataDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "branch-e2e-"));
     storage = HandoffStorage.forTesting({ mcodeDirFn: () => dataDir });
     vi.clearAllMocks();
   });
 
   afterEach(() => {
-    rmSync(dataDir, { recursive: true, force: true });
+    NodeFS.rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("path B success persists artifact to disk with generatedBy=provider and ladderStep=B", async () => {
@@ -146,8 +146,8 @@ describe("fork flow with handoff pipeline (e2e)", () => {
     expect(persisted!.meta.ladderStep).toBe("B");
 
     // Handoff directory must exist on disk.
-    const handoffsRoot = join(dataDir, "threads", BASE_REQ.childThreadId, "handoffs");
-    expect(existsSync(handoffsRoot)).toBe(true);
+    const handoffsRoot = NodePath.join(dataDir, "threads", BASE_REQ.childThreadId, "handoffs");
+    expect(NodeFS.existsSync(handoffsRoot)).toBe(true);
   });
 
   it("path B success: simulated internal system message at sequence 1 is isInternal", () => {
@@ -239,8 +239,8 @@ describe("fork flow with handoff pipeline (e2e)", () => {
     expect(persisted!.meta.providerErrorOnGenerate).toBe("transient");
 
     // Confirm the artifact directory exists on disk.
-    const handoffsRoot = join(dataDir, "threads", BASE_REQ.childThreadId, "handoffs");
-    expect(existsSync(handoffsRoot)).toBe(true);
+    const handoffsRoot = NodePath.join(dataDir, "threads", BASE_REQ.childThreadId, "handoffs");
+    expect(NodeFS.existsSync(handoffsRoot)).toBe(true);
   });
 
   it("path B quota failure (429) falls to D and artifact has ladderStep=D", async () => {

@@ -1,15 +1,7 @@
-import { createHash } from "crypto";
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join, resolve } from "path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
@@ -37,13 +29,13 @@ type MigrationJournal = {
 
 function readJournal(directory: string): MigrationJournal {
   return JSON.parse(
-    readFileSync(join(directory, "meta", "_journal.json"), "utf8"),
+    NodeFS.readFileSync(NodePath.join(directory, "meta", "_journal.json"), "utf8"),
   ) as MigrationJournal;
 }
 
 function migrationHash(directory: string, tag: string): string {
-  return createHash("sha256")
-    .update(readFileSync(join(directory, `${tag}.sql`), "utf8"))
+  return NodeCrypto.createHash("sha256")
+    .update(NodeFS.readFileSync(NodePath.join(directory, `${tag}.sql`), "utf8"))
     .digest("hex");
 }
 
@@ -65,15 +57,15 @@ function copyMigrationsThrough(
   if (cutoff === -1) throw new Error(`Missing migration journal entry: ${lastTag}`);
 
   const entries = journal.entries.slice(0, cutoff + 1);
-  mkdirSync(join(destinationDirectory, "meta"), { recursive: true });
-  writeFileSync(
-    join(destinationDirectory, "meta", "_journal.json"),
+  NodeFS.mkdirSync(NodePath.join(destinationDirectory, "meta"), { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(destinationDirectory, "meta", "_journal.json"),
     JSON.stringify({ ...journal, entries }),
   );
   for (const entry of entries) {
-    copyFileSync(
-      join(sourceDirectory, `${entry.tag}.sql`),
-      join(destinationDirectory, `${entry.tag}.sql`),
+    NodeFS.copyFileSync(
+      NodePath.join(sourceDirectory, `${entry.tag}.sql`),
+      NodePath.join(destinationDirectory, `${entry.tag}.sql`),
     );
   }
 }
@@ -85,7 +77,7 @@ function columnNames(db: Database.Database, table: string): string[] {
 }
 
 function migrationsFolderForDrizzle(directory: string): string {
-  return resolve(directory).replace(/\\/g, "/");
+  return NodePath.resolve(directory).replace(/\\/g, "/");
 }
 
 describe("successful database migration recovery", () => {
@@ -94,9 +86,9 @@ describe("successful database migration recovery", () => {
   const originalMigrationsDirectory = process.env.MCODE_DRIZZLE_MIGRATIONS_DIR;
 
   beforeEach(() => {
-    directory = mkdtempSync(join(tmpdir(), "mcode-migration-success-"));
-    databasePath = join(directory, "mcode.db");
-    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = join(process.cwd(), "drizzle");
+    directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-migration-success-"));
+    databasePath = NodePath.join(directory, "mcode.db");
+    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = NodePath.join(process.cwd(), "drizzle");
   });
 
   afterEach(() => {
@@ -105,7 +97,7 @@ describe("successful database migration recovery", () => {
     } else {
       process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = originalMigrationsDirectory;
     }
-    rmSync(directory, { recursive: true, force: true });
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   });
 
   it("keeps five generations and preserves public text identifiers", () => {
@@ -126,7 +118,7 @@ describe("successful database migration recovery", () => {
       upgradedDatabase.close();
     }
 
-    const generations = readdirSync(directory).filter(
+    const generations = NodeFS.readdirSync(directory).filter(
       (name) => name.startsWith("mcode.db.bak-") && !name.endsWith("-wal"),
     );
     expect(generations).toHaveLength(5);
@@ -135,9 +127,9 @@ describe("successful database migration recovery", () => {
   it("creates the complete automatic Setup lifecycle in one migration", () => {
     const database = openDatabase({ dbPath: databasePath });
     try {
-      expect(readJournal(join(process.cwd(), "drizzle")).entries.filter(
+      expect(readJournal(NodePath.join(process.cwd(), "drizzle")).entries.filter(
         (entry) => entry.tag.startsWith("0044_"),
-      )).toEqual([migrationEntry(join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION)]);
+      )).toEqual([migrationEntry(NodePath.join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION)]);
       expect(columnNames(database, "workspace_environment_automatic_setup_attempts")).toEqual(expect.arrayContaining([
         "launch_snapshot_json",
         "outcome",
@@ -147,9 +139,9 @@ describe("successful database migration recovery", () => {
       ]));
       expect(columnNames(database, "workspace_environment_queued_turns")).toContain("dispatched_at");
       expect(database.prepare("SELECT created_at FROM __drizzle_migrations WHERE hash = ?").all(
-        migrationHash(join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION),
+        migrationHash(NodePath.join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION),
       )).toEqual([{
-        created_at: migrationEntry(join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION).when,
+        created_at: migrationEntry(NodePath.join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION).when,
       }]);
     } finally {
       database.close();
@@ -159,9 +151,9 @@ describe("successful database migration recovery", () => {
   it("creates the retained Project Action slot table after automatic Setup migrations", () => {
     const database = openDatabase({ dbPath: databasePath });
     try {
-      expect(readJournal(join(process.cwd(), "drizzle")).entries.filter(
+      expect(readJournal(NodePath.join(process.cwd(), "drizzle")).entries.filter(
         (entry) => entry.tag.startsWith("0047_"),
-      )).toEqual([migrationEntry(join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION)]);
+      )).toEqual([migrationEntry(NodePath.join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION)]);
       expect(columnNames(database, "project_action_runs")).toEqual([
         "thread_id",
         "action_id",
@@ -184,9 +176,9 @@ describe("successful database migration recovery", () => {
         expect.objectContaining({ name: "idx_project_action_runs_thread", unique: 0 }),
       ]));
       expect(database.prepare("SELECT created_at FROM __drizzle_migrations WHERE hash = ?").all(
-        migrationHash(join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION),
+        migrationHash(NodePath.join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION),
       )).toEqual([{
-        created_at: migrationEntry(join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION).when,
+        created_at: migrationEntry(NodePath.join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION).when,
       }]);
     } finally {
       database.close();
@@ -194,8 +186,8 @@ describe("successful database migration recovery", () => {
   });
 
   it("upgrades a production-shaped 0044 database without changing existing data", () => {
-    const currentMigrationsDirectory = join(process.cwd(), "drizzle");
-    const previousMigrationsDirectory = join(directory, "drizzle-through-0044");
+    const currentMigrationsDirectory = NodePath.join(process.cwd(), "drizzle");
+    const previousMigrationsDirectory = NodePath.join(directory, "drizzle-through-0044");
     copyMigrationsThrough(
       currentMigrationsDirectory,
       previousMigrationsDirectory,
@@ -308,8 +300,8 @@ describe("successful database migration recovery", () => {
   });
 
   it("upgrades the queued Turn table with durable FIFO positions and a non-unique per-Thread index", () => {
-    const currentMigrationsDirectory = join(process.cwd(), "drizzle");
-    const previousMigrationsDirectory = join(directory, "drizzle-through-0045");
+    const currentMigrationsDirectory = NodePath.join(process.cwd(), "drizzle");
+    const previousMigrationsDirectory = NodePath.join(directory, "drizzle-through-0045");
     copyMigrationsThrough(
       currentMigrationsDirectory,
       previousMigrationsDirectory,
@@ -370,8 +362,8 @@ describe("successful database migration recovery", () => {
   });
 
   it("upgrades a 0041 database that the legacy fallback already patched", () => {
-    const currentMigrationsDirectory = join(process.cwd(), "drizzle");
-    const previousMigrationsDirectory = join(directory, "drizzle-through-0041");
+    const currentMigrationsDirectory = NodePath.join(process.cwd(), "drizzle");
+    const previousMigrationsDirectory = NodePath.join(directory, "drizzle-through-0041");
     copyMigrationsThrough(
       currentMigrationsDirectory,
       previousMigrationsDirectory,
@@ -422,8 +414,8 @@ describe("successful database migration recovery", () => {
   });
 
   it("upgrades an unpatched 0041 database", () => {
-    const currentMigrationsDirectory = join(process.cwd(), "drizzle");
-    const previousMigrationsDirectory = join(directory, "drizzle-through-0041");
+    const currentMigrationsDirectory = NodePath.join(process.cwd(), "drizzle");
+    const previousMigrationsDirectory = NodePath.join(directory, "drizzle-through-0041");
     copyMigrationsThrough(
       currentMigrationsDirectory,
       previousMigrationsDirectory,

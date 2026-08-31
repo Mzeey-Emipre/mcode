@@ -1,4 +1,4 @@
-import { execFile, type ExecFileException } from "child_process";
+import * as NodeChildProcess from "node:child_process";
 import { z } from "zod";
 import {
   PULL_REQUEST_CURSOR_COMPONENT_MAX_LENGTH,
@@ -866,7 +866,7 @@ class ExecFileGithubCommandRunner implements GithubPullRequestCommandRunner {
     },
   ): Promise<GithubPullRequestCommandResult> {
     return new Promise((resolve, reject) => {
-      const child = execFile(
+      const child = NodeChildProcess.execFile(
         "gh",
         [...args],
         {
@@ -1130,7 +1130,7 @@ function safeErrorMessage(code: PullRequestErrorCode): string {
 }
 
 function normalizeCommandError(error: unknown, signal: AbortSignal): GithubPullRequestClientError {
-  const commandError = error as ExecFileException & { stderr?: string };
+  const commandError = error as NodeChildProcess.ExecFileException & { stderr?: string };
   if (isAbortedCommand(signal, commandError)) {
     return new GithubPullRequestClientError("cancelled", safeErrorMessage("cancelled"));
   }
@@ -1141,12 +1141,12 @@ function normalizeCommandError(error: unknown, signal: AbortSignal): GithubPullR
 
 function isAbortedCommand(
   signal: AbortSignal,
-  error: ExecFileException & { stderr?: string },
+  error: NodeChildProcess.ExecFileException & { stderr?: string },
 ): boolean {
   return signal.aborted || error?.code === "ABORT_ERR" || error?.name === "AbortError";
 }
 
-function commandErrorDiagnostic(error: ExecFileException & { stderr?: string }): string {
+function commandErrorDiagnostic(error: NodeChildProcess.ExecFileException & { stderr?: string }): string {
   return `${error?.message ?? ""}\n${error?.stderr ?? ""}`.slice(0, 8_192);
 }
 

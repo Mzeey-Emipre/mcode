@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -43,17 +43,17 @@ describe("completed thread cleanup Git safety", () => {
   let escapingLinkContainerPath: string | null;
 
   beforeEach(() => {
-    const worktreesPath = join(getMcodeDir(), "worktrees");
-    mkdirSync(worktreesPath, { recursive: true });
-    repositoryPath = mkdtempSync(join(worktreesPath, "mcode-completed-cleanup-"));
-    worktreePath = join(repositoryPath, "worktree");
-    execFileSync("git", ["-C", repositoryPath, "init", "-b", "main"]);
-    execFileSync("git", ["-C", repositoryPath, "config", "user.email", "test@mcode.test"]);
-    execFileSync("git", ["-C", repositoryPath, "config", "user.name", "Mcode Test"]);
-    writeFileSync(join(repositoryPath, "tracked.txt"), "initial\n");
-    execFileSync("git", ["-C", repositoryPath, "add", "tracked.txt"]);
-    execFileSync("git", ["-C", repositoryPath, "commit", "-m", "initial"]);
-    execFileSync("git", ["-C", repositoryPath, "worktree", "add", "--detach", worktreePath, "main"]);
+    const worktreesPath = NodePath.join(getMcodeDir(), "worktrees");
+    NodeFS.mkdirSync(worktreesPath, { recursive: true });
+    repositoryPath = NodeFS.mkdtempSync(NodePath.join(worktreesPath, "mcode-completed-cleanup-"));
+    worktreePath = NodePath.join(repositoryPath, "worktree");
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "init", "-b", "main"]);
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "config", "user.email", "test@mcode.test"]);
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "config", "user.name", "Mcode Test"]);
+    NodeFS.writeFileSync(NodePath.join(repositoryPath, "tracked.txt"), "initial\n");
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "add", "tracked.txt"]);
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "commit", "-m", "initial"]);
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "worktree", "add", "--detach", worktreePath, "main"]);
     database = openMemoryDatabase();
     workspaceRepo = new WorkspaceRepo(database);
     threadRepo = new ThreadRepo(database);
@@ -62,17 +62,17 @@ describe("completed thread cleanup Git safety", () => {
     escapingLinkContainerPath = null;
     const executor = new RealGitExecutor();
     const gitRepository = new GitRepositoryService(workspaceRepo, executor);
-    gitWorktrees = new GitWorktreeService(workspaceRepo, executor, undefined, undefined, gitRepository);
-    worktreeSafety = new WorktreeSafetyService(executor);
+    gitWorktrees = new GitWorktreeService(workspaceRepo, executor, TEST_HOST_RUNTIME, undefined, undefined, gitRepository);
+    worktreeSafety = new WorktreeSafetyService(executor, TEST_HOST_RUNTIME);
     worker = createWorker();
   }, 30_000);
 
   afterEach(() => {
     worker.dispose();
     database.close();
-    rmSync(repositoryPath, { recursive: true, force: true });
-    if (escapingLinkContainerPath) rmSync(escapingLinkContainerPath, { recursive: true, force: true });
-    if (externalTargetPath) rmSync(externalTargetPath, { recursive: true, force: true });
+    NodeFS.rmSync(repositoryPath, { recursive: true, force: true });
+    if (escapingLinkContainerPath) NodeFS.rmSync(escapingLinkContainerPath, { recursive: true, force: true });
+    if (externalTargetPath) NodeFS.rmSync(externalTargetPath, { recursive: true, force: true });
   }, 30_000);
 
   function createWorker(): CleanupWorker {
@@ -84,7 +84,7 @@ describe("completed thread cleanup Git safety", () => {
       { killByThread: vi.fn().mockResolvedValue(undefined) } as unknown as TerminalBackend,
       gitWorktrees,
       worktreeSafety,
-      new RepositoryGitMutationLock(),
+      new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
@@ -92,6 +92,7 @@ describe("completed thread cleanup Git safety", () => {
         beginThreadDeletion: () => () => undefined,
         cancelSetupForThread: vi.fn().mockResolvedValue(undefined),
       } as unknown as WorkspaceEnvironmentService,
+      TEST_HOST_RUNTIME,
       undefined,
       undefined,
     );
@@ -139,7 +140,7 @@ describe("completed thread cleanup Git safety", () => {
   }, 30_000);
 
   it("rejects a worktree with uncommitted changes", async () => {
-    writeFileSync(join(worktreePath, "tracked.txt"), "changed\n");
+    NodeFS.writeFileSync(NodePath.join(worktreePath, "tracked.txt"), "changed\n");
 
     await expect(worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
       safe: false,
@@ -148,9 +149,9 @@ describe("completed thread cleanup Git safety", () => {
   }, 30_000);
 
   it("rejects a branchless worktree with a unique commit", async () => {
-    writeFileSync(join(worktreePath, "unique.txt"), "unique\n");
-    execFileSync("git", ["-C", worktreePath, "add", "unique.txt"]);
-    execFileSync("git", ["-C", worktreePath, "commit", "-m", "unique"]);
+    NodeFS.writeFileSync(NodePath.join(worktreePath, "unique.txt"), "unique\n");
+    NodeChildProcess.execFileSync("git", ["-C", worktreePath, "add", "unique.txt"]);
+    NodeChildProcess.execFileSync("git", ["-C", worktreePath, "commit", "-m", "unique"]);
 
     await expect(worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
       safe: false,
@@ -164,7 +165,7 @@ describe("completed thread cleanup Git safety", () => {
     await worker.poll();
 
     expect(threadRepo.findById(thread.id)).toBeNull();
-    expect(existsSync(worktreePath)).toBe(true);
+    expect(NodeFS.existsSync(worktreePath)).toBe(true);
   }, 30_000);
 
   it("removes a clean managed branchless worktree without deleting a branch", async () => {
@@ -173,8 +174,8 @@ describe("completed thread cleanup Git safety", () => {
     await worker.poll();
 
     expect(threadRepo.findById(thread.id)).toBeNull();
-    expect(existsSync(worktreePath)).toBe(false);
-    expect(execFileSync("git", ["-C", repositoryPath, "branch", "--list", "main"], { encoding: "utf8" }))
+    expect(NodeFS.existsSync(worktreePath)).toBe(false);
+    expect(NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "--list", "main"], { encoding: "utf8" }))
       .toContain("main");
   }, 30_000);
 
@@ -193,24 +194,24 @@ describe("completed thread cleanup Git safety", () => {
       "main",
     );
     database.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?").run(
-      join(repositoryPath, "missing-worktree"),
+      NodePath.join(repositoryPath, "missing-worktree"),
       sibling.id,
     );
 
     await worker.poll();
 
     expect(threadRepo.findById(thread.id)).toBeNull();
-    expect(existsSync(worktreePath)).toBe(false);
+    expect(NodeFS.existsSync(worktreePath)).toBe(false);
     expect(threadRepo.findById(sibling.id)).not.toBeNull();
   }, 30_000);
 
   it("removes a managed directory after Git no longer registers the worktree", async () => {
     const thread = addCompletedThread({ title: "Git-pruned directory" });
-    rmSync(join(worktreePath, ".git"), { force: true });
-    execFileSync("git", ["-C", repositoryPath, "worktree", "prune"]);
+    NodeFS.rmSync(NodePath.join(worktreePath, ".git"), { force: true });
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "worktree", "prune"]);
 
     expect(
-      execFileSync("git", ["-C", repositoryPath, "worktree", "list", "--porcelain"], {
+      NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "worktree", "list", "--porcelain"], {
         encoding: "utf8",
       }),
     ).not.toContain(worktreePath);
@@ -218,11 +219,11 @@ describe("completed thread cleanup Git safety", () => {
     await worker.poll();
 
     expect(threadRepo.findById(thread.id)).toBeNull();
-    expect(existsSync(worktreePath)).toBe(false);
+    expect(NodeFS.existsSync(worktreePath)).toBe(false);
   }, 30_000);
 
   it("keeps a dirty managed worktree and blocks cleanup", async () => {
-    writeFileSync(join(worktreePath, "tracked.txt"), "changed\n");
+    NodeFS.writeFileSync(NodePath.join(worktreePath, "tracked.txt"), "changed\n");
     const thread = addCompletedThread({ title: "Dirty" });
 
     await expect(gitWorktrees.isRegisteredWorktreePath(repositoryPath, worktreePath)).resolves.toBe(true);
@@ -232,7 +233,7 @@ describe("completed thread cleanup Git safety", () => {
       cleanup_state: "blocked",
       cleanup_reason: "The worktree has uncommitted changes.",
     });
-    expect(existsSync(worktreePath)).toBe(true);
+    expect(NodeFS.existsSync(worktreePath)).toBe(true);
   }, 30_000);
 
   it("keeps a shared worktree while another linked thread remains", async () => {
@@ -246,11 +247,11 @@ describe("completed thread cleanup Git safety", () => {
 
     expect(threadRepo.findById(due.id)).toBeNull();
     expect(threadRepo.findById(remaining.id)).not.toBeNull();
-    expect(existsSync(worktreePath)).toBe(true);
+    expect(NodeFS.existsSync(worktreePath)).toBe(true);
   }, 30_000);
 
   it("removes named checkouts while preserving their exact branch", async () => {
-    execFileSync("git", ["-C", repositoryPath, "branch", "mcode/named", "main"]);
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "mcode/named", "main"]);
     const thread = addCompletedThread({
       title: "Named",
       checkoutState: "named",
@@ -261,17 +262,17 @@ describe("completed thread cleanup Git safety", () => {
     await worker.poll();
 
     expect(threadRepo.findById(thread.id)).toBeNull();
-    expect(existsSync(worktreePath)).toBe(false);
-    expect(execFileSync("git", ["-C", repositoryPath, "branch", "--list", "mcode/named"], { encoding: "utf8" }))
+    expect(NodeFS.existsSync(worktreePath)).toBe(false);
+    expect(NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "--list", "mcode/named"], { encoding: "utf8" }))
       .toContain("mcode/named");
   }, 30_000);
 
   it("preserves a canonical link that resolves outside Mcode worktrees", async ({ skip }) => {
-    externalTargetPath = mkdtempSync(join(getMcodeDir(), "mcode-external-cleanup-"));
-    escapingLinkContainerPath = mkdtempSync(join(getMcodeDir(), "worktrees", "mcode-escaping-link-"));
-    const escapingLink = join(escapingLinkContainerPath, "worktree");
+    externalTargetPath = NodeFS.mkdtempSync(NodePath.join(getMcodeDir(), "mcode-external-cleanup-"));
+    escapingLinkContainerPath = NodeFS.mkdtempSync(NodePath.join(getMcodeDir(), "worktrees", "mcode-escaping-link-"));
+    const escapingLink = NodePath.join(escapingLinkContainerPath, "worktree");
     try {
-      symlinkSync(externalTargetPath, escapingLink, "junction");
+      NodeFS.symlinkSync(externalTargetPath, escapingLink, "junction");
     } catch {
       skip();
       return;
@@ -281,16 +282,16 @@ describe("completed thread cleanup Git safety", () => {
     await worker.poll();
 
     expect(threadRepo.findById(thread.id)).toBeNull();
-    expect(existsSync(escapingLink)).toBe(true);
-    expect(existsSync(externalTargetPath)).toBe(true);
+    expect(NodeFS.existsSync(escapingLink)).toBe(true);
+    expect(NodeFS.existsSync(externalTargetPath)).toBe(true);
   }, 30_000);
 
   it("rejects an escaping link at the worktree removal boundary", async ({ skip }) => {
-    externalTargetPath = mkdtempSync(join(getMcodeDir(), "mcode-external-git-service-"));
-    escapingLinkContainerPath = mkdtempSync(join(getMcodeDir(), "worktrees", "mcode-git-service-link-"));
-    const escapingLink = join(escapingLinkContainerPath, "worktree");
+    externalTargetPath = NodeFS.mkdtempSync(NodePath.join(getMcodeDir(), "mcode-external-git-service-"));
+    escapingLinkContainerPath = NodeFS.mkdtempSync(NodePath.join(getMcodeDir(), "worktrees", "mcode-git-service-link-"));
+    const escapingLink = NodePath.join(escapingLinkContainerPath, "worktree");
     try {
-      symlinkSync(externalTargetPath, escapingLink, "junction");
+      NodeFS.symlinkSync(externalTargetPath, escapingLink, "junction");
     } catch {
       skip();
       return;
@@ -303,14 +304,14 @@ describe("completed thread cleanup Git safety", () => {
         managedCanonicalOnly: true,
       }),
     ).rejects.toThrow("canonical managed worktree");
-    expect(existsSync(escapingLink)).toBe(true);
-    expect(existsSync(externalTargetPath)).toBe(true);
+    expect(NodeFS.existsSync(escapingLink)).toBe(true);
+    expect(NodeFS.existsSync(externalTargetPath)).toBe(true);
   }, 30_000);
 
   it("blocks branchless worktrees with unique commits", async () => {
-    writeFileSync(join(worktreePath, "unique.txt"), "unique\n");
-    execFileSync("git", ["-C", worktreePath, "add", "unique.txt"]);
-    execFileSync("git", ["-C", worktreePath, "commit", "-m", "unique"]);
+    NodeFS.writeFileSync(NodePath.join(worktreePath, "unique.txt"), "unique\n");
+    NodeChildProcess.execFileSync("git", ["-C", worktreePath, "add", "unique.txt"]);
+    NodeChildProcess.execFileSync("git", ["-C", worktreePath, "commit", "-m", "unique"]);
     const thread = addCompletedThread({ title: "Unique" });
 
     await worker.poll();
@@ -319,12 +320,12 @@ describe("completed thread cleanup Git safety", () => {
       cleanup_state: "blocked",
       cleanup_reason: "The branchless worktree has commits that are not in its base branch.",
     });
-    expect(existsSync(worktreePath)).toBe(true);
+    expect(NodeFS.existsSync(worktreePath)).toBe(true);
   }, 30_000);
 
   it("deletes a thread when its registered worktree path is already missing", async () => {
     const thread = addCompletedThread({ title: "Missing" });
-    rmSync(worktreePath, { recursive: true, force: true });
+    NodeFS.rmSync(worktreePath, { recursive: true, force: true });
 
     await worker.poll();
 
@@ -350,7 +351,7 @@ describe("completed thread cleanup Git safety", () => {
       cleanup_state: "blocked",
       cleanup_reason: `Cleanup failed after ${MAX_CLEANUP_ATTEMPTS} attempts.`,
     });
-    expect(existsSync(worktreePath)).toBe(true);
+    expect(NodeFS.existsSync(worktreePath)).toBe(true);
 
     expect(threadRepo.reopen(thread.id)).toMatchObject({
       cleanup_state: null,

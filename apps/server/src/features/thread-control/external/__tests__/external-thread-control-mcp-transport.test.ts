@@ -2,9 +2,9 @@ import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer } from "node:http";
-import { Readable } from "node:stream";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import * as NodeHTTP from "node:http";
+import * as NodeStream from "node:stream";
+
 import { ExternalThreadControlMcpRuntime } from "../external-thread-control-mcp-runtime.js";
 import { createExternalThreadControlMcpSession } from "../external-thread-control-mcp-transport.js";
 
@@ -68,7 +68,7 @@ function initializeBody(id: number) {
 }
 
 async function withRuntimeServer(runtime: ExternalThreadControlMcpRuntime, callback: (port: number) => Promise<void>): Promise<void> {
-  const server = createServer((request, response) => {
+  const server = NodeHTTP.createServer((request, response) => {
     void runtime.handleRequest(request, response);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -182,9 +182,9 @@ describe("external thread-control MCP transport", () => {
   it("enforces loopback and bounded body checks before authentication", async () => {
     const pairings = { authenticate: vi.fn() };
     const runtime = new ExternalThreadControlMcpRuntime({} as never, pairings as never);
-    const response = () => ({ writeHead: vi.fn().mockReturnThis(), end: vi.fn(), headersSent: false }) as unknown as ServerResponse;
+    const response = () => ({ writeHead: vi.fn().mockReturnThis(), end: vi.fn(), headersSent: false }) as unknown as NodeHTTP.ServerResponse;
     const makeRequest = (address: string, body: string, headers: Record<string, string> = {}) => {
-      const request = Readable.from([Buffer.from(body)]) as unknown as IncomingMessage;
+      const request = NodeStream.Readable.from([Buffer.from(body)]) as unknown as NodeHTTP.IncomingMessage;
       Object.assign(request, {
         method: "POST",
         headers: { authorization: "Bearer credential", ...headers },
@@ -208,13 +208,13 @@ describe("external thread-control MCP transport", () => {
   it("rejects chunked body overflow without invoking the MCP transport", async () => {
     const pairings = { authenticate: vi.fn() };
     const runtime = new ExternalThreadControlMcpRuntime({} as never, pairings as never);
-    const request = Readable.from([Buffer.alloc(256 * 1_024), Buffer.from("x")]) as unknown as IncomingMessage;
+    const request = NodeStream.Readable.from([Buffer.alloc(256 * 1_024), Buffer.from("x")]) as unknown as NodeHTTP.IncomingMessage;
     Object.assign(request, {
       method: "POST",
       headers: { authorization: "Bearer credential", "transfer-encoding": "chunked" },
       socket: { remoteAddress: "::1" },
     });
-    const response = { writeHead: vi.fn().mockReturnThis(), end: vi.fn(), headersSent: false } as unknown as ServerResponse;
+    const response = { writeHead: vi.fn().mockReturnThis(), end: vi.fn(), headersSent: false } as unknown as NodeHTTP.ServerResponse;
     await runtime.handleRequest(request, response);
     expect(response.writeHead).toHaveBeenCalledWith(413);
     await runtime.close();

@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { lstat, readFile, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import type { FileEffect, TurnFileEffectSummary } from "@mcode/contracts";
 import { MAX_TURN_FILE_EFFECTS } from "@mcode/contracts";
 import { normalizeFilesystemPath } from "../../../shared/filesystem/path-identity.js";
@@ -739,16 +739,16 @@ async function canonicalizePotentialPath(
 
 async function readBoundedState(path: string): Promise<FileState> {
   try {
-    const stat = await lstat(path);
+    const stat = await NodeFSPromises.lstat(path);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
       return unknownExistingState();
     }
-    const bytes = await readFile(path);
+    const bytes = await NodeFSPromises.readFile(path);
     const binary = bytes.includes(0);
     return {
       known: true,
       exists: true,
-      hash: createHash("sha256").update(bytes).digest("hex"),
+      hash: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
       text: binary ? null : bytes.toString("utf8"),
       binary,
     };
@@ -762,17 +762,17 @@ async function readBoundedState(path: string): Promise<FileState> {
 
 function readBoundedStateSynchronously(path: string, budget: SyncObservationBudget): FileState {
   try {
-    const stat = lstatSync(path);
+    const stat = NodeFS.lstatSync(path);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES || stat.size > budget.remainingBytes) {
       return unknownExistingState();
     }
     budget.remainingBytes -= stat.size;
-    const bytes = readFileSync(path);
+    const bytes = NodeFS.readFileSync(path);
     const binary = bytes.includes(0);
     return {
       known: true,
       exists: true,
-      hash: createHash("sha256").update(bytes).digest("hex"),
+      hash: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
       text: binary ? null : bytes.toString("utf8"),
       binary,
     };
@@ -789,7 +789,7 @@ function stateFromEvidenceText(text: string): FileState {
   return {
     known: true,
     exists: true,
-    hash: createHash("sha256").update(bytes).digest("hex"),
+    hash: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
     text,
     binary: false,
   };
