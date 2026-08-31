@@ -138,7 +138,7 @@ function toolResultMetadata(event: Extract<AgentEvent, { type: "toolResult" }>):
   };
 }
 
-function endedOutcome(outcome: Extract<AgentEvent, { type: "ended" }>['outcome']): TurnOutcome {
+function endedOutcome(outcome: Exclude<Extract<AgentEvent, { type: "ended" }>['outcome'], undefined>): TurnOutcome {
   if (outcome === "completed") return "completed";
   if (outcome === "errored") return "errored";
   return "interrupted";
@@ -393,11 +393,11 @@ export class AgentService {
         this.parentAssistantText.durabilityMode(executionId) === "unsaved"
       ),
       interruptForAssistantTextFailure: (event, reason) => (
-        this.interruptForParentAssistantTextCheckpointFailure(event, reason)
+        this.stopForParentAssistantTextCheckpointFailure(event, reason)
       ),
       checkpointNarrative: (event) => this.parentNarrativeRecovery.checkpoint(event),
       interruptForNarrativeFailure: (event, error) => (
-        this.interruptForNarrativeRecoveryCheckpointFailure(event, error)
+        this.stopForNarrativeRecoveryCheckpointFailure(event, error)
       ),
       isLateHook: (event) => this.isLateHook(event),
       ownsLateHookPublication: (event) => this.ownedLateHookCompletions.delete(event as object),
@@ -415,7 +415,7 @@ export class AgentService {
       event,
       terminal: event.type === AgentEventType.TurnComplete
         || event.type === AgentEventType.Error
-        || event.type === AgentEventType.Ended,
+        || (event.type === AgentEventType.Ended && event.outcome !== undefined),
     });
   }
 
@@ -728,6 +728,7 @@ export class AgentService {
 
   /** Apply a provider stream end only when it still owns the active execution. */
   private applyEnded(event: Extract<AgentEvent, { type: "ended" }>): boolean {
+    if (event.outcome === undefined) return false;
     if (this.shouldSuppressStoppingTerminal(event.threadId, event.turnExecutionId)) return false;
     if (this.shouldSuppressTurnEnded(event.threadId)) return false;
     const runtime = this.turnRuntime.snapshot(event.threadId);
@@ -1146,7 +1147,7 @@ export class AgentService {
     const executionId = prepared.runtime.turnExecutionId!;
     if (this.parentAssistantText.finish(executionId)) return null;
     if (!this.parentAssistantText.hasStoppedForStorageFailure(executionId)) {
-      this.interruptForParentAssistantTextCheckpointFailure({
+      this.stopForParentAssistantTextCheckpointFailure({
         type: AgentEventType.TextDelta,
         threadId: prepared.threadId,
         turnExecutionId: executionId,
@@ -1777,7 +1778,7 @@ export class AgentService {
       observeFileMutation: (event) => {
         this.turnFileEffects.observeProviderMutation(event);
       },
-      rejectForQueueCapacity: (event) => this.interruptForParentAssistantTextCheckpointFailure(
+      rejectForQueueCapacity: (event) => this.stopForParentAssistantTextCheckpointFailure(
         event,
         "Assistant text event retention capacity reached",
       ),
@@ -1866,7 +1867,7 @@ export class AgentService {
     return this.parentAssistantText.queueText(
       event,
       publish,
-      (reason) => this.interruptForParentAssistantTextCheckpointFailure(event, reason),
+      (reason) => this.stopForParentAssistantTextCheckpointFailure(event, reason),
     );
   }
 
@@ -1936,7 +1937,7 @@ export class AgentService {
         confirmRecoveryCheckpoint = recoveryCheckpoint?.confirm;
       })();
     } catch (error) {
-      this.interruptForNarrativeRecoveryCheckpointFailure(event, error);
+      this.stopForNarrativeRecoveryCheckpointFailure(event, error);
       return false;
     }
     this.parentAssistantText.checkpoints.discardRecoveryJournal(executionId);
@@ -1956,43 +1957,44 @@ export class AgentService {
     this.lateHookCompletions.schedule(threadId, hook, this.turnFileEffects.previousFinalization(threadId));
   }
 
-  /** Stop a turn whose visible assistant text cannot be made durable. */
-  private interruptForParentAssistantTextCheckpointFailure(event: AgentEvent, reason: string): void {
+  /** Stop the provider when visible assistant text cannot be made durable. */
+  private stopForParentAssistantTextCheckpointFailure(event: AgentEvent, reason: string): void {
     const executionId = event.turnExecutionId;
-    if (!executionId || !this.turnRuntime.terminalize(event.threadId, executionId, "interrupted")) return;
+    if (!executionId || !this.isActiveRuntimeExecution(this.turnRuntime.snapshot(event.threadId) ?? null, executionId)) return;
     logger.error("Parent assistant text checkpoint failed", {
       threadId: event.threadId,
       turnExecutionId: executionId,
       reason,
     });
-    const providerId = this.runtimePersistence.load(event.threadId)?.provider as ProviderId | undefined;
-    if (providerId) {
-      const provider = this.providerRegistry.resolve(providerId);
-      void Promise.resolve(provider.stopSession(`mcode-${event.threadId}`)).catch((error) => {
-        logger.warn("Provider stop failed after assistant text checkpoint failure", {
-          threadId: event.threadId,
-          turnExecutionId: executionId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }
-    void this.finalizeTerminalTurn(event.threadId, "interrupted", "assistant text checkpoint failure");
-    this.trackSessionEnded(event.threadId, executionId);
+    this.requestProviderStopAfterCheckpointFailure(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);
   }
 
-  /** Stop publication when a visible structured narrative record cannot commit. */
-  private interruptForNarrativeRecoveryCheckpointFailure(event: AgentEvent, error: unknown): void {
+  /** Stop the provider when a visible structured narrative record cannot commit. */
+  private stopForNarrativeRecoveryCheckpointFailure(event: AgentEvent, error: unknown): void {
     const executionId = event.turnExecutionId;
-    if (!executionId || !this.turnRuntime.terminalize(event.threadId, executionId, "interrupted")) return;
+    if (!executionId || !this.isActiveRuntimeExecution(this.turnRuntime.snapshot(event.threadId) ?? null, executionId)) return;
     logger.error("Parent narrative recovery checkpoint failed", {
       threadId: event.threadId,
       turnExecutionId: executionId,
       error: error instanceof Error ? error.message : String(error),
     });
-    void this.finalizeTerminalTurn(event.threadId, "interrupted", "narrative recovery checkpoint failure");
-    this.trackSessionEnded(event.threadId, executionId);
+    this.requestProviderStopAfterCheckpointFailure(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);
+  }
+
+  /** Request a provider stop, then wait for its terminal event to state the outcome. */
+  private requestProviderStopAfterCheckpointFailure(threadId: string, executionId: string): void {
+    const providerId = this.runtimePersistence.load(threadId)?.provider as ProviderId | undefined;
+    if (!providerId) return;
+    const provider = this.providerRegistry.resolve(providerId);
+    void Promise.resolve(provider.stopSession(`mcode-${threadId}`)).catch((error) => {
+      logger.warn("Provider stop failed after checkpoint failure", {
+        threadId,
+        turnExecutionId: executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private handleMemoryPressure(snapshot: MemoryPressureSnapshot): void {

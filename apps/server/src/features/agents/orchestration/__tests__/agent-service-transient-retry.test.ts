@@ -522,7 +522,7 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
   });
 
-  it("persists a full-looking response as interrupted when the provider ends without terminal proof", async () => {
+  it("leaves a full-looking response unresolved when the provider ends without terminal proof", async () => {
     const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
     providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
@@ -553,16 +553,13 @@ describe("AgentService transient-failure auto-retry", () => {
     });
 
     const executionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
-    await vi.waitFor(() => {
-      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "interrupted", executionId);
-    });
+    await Promise.resolve();
+    expect(messageRepo.setAssistantOutcome).not.toHaveBeenCalledWith(expect.any(String), expect.any(String), executionId);
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
     expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
-    expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
-      expect.objectContaining({ content: "done" }),
-    );
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("interrupted");
+    expect(messageRepo.createAssistantIdempotent).not.toHaveBeenCalled();
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
   });
 
   it("does not synthesize a terminal event after an explicit completion", async () => {
@@ -642,6 +639,7 @@ describe("AgentService transient-failure auto-retry", () => {
         type: "ended",
         threadId: THREAD_ID,
         turnExecutionId: request.turnExecutionId,
+        outcome: "completed",
       });
       return Promise.resolve();
     });
@@ -659,7 +657,7 @@ describe("AgentService transient-failure auto-retry", () => {
     await service.sendMessage(command);
 
     await vi.waitFor(() => {
-      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "interrupted", firstExecutionId);
+      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "completed", firstExecutionId);
     });
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
@@ -668,7 +666,7 @@ describe("AgentService transient-failure auto-retry", () => {
     // for each root execution; only the matching root Ended terminalizes.
     expect(events.filter((event) => event.type === "ended")).toHaveLength(3);
     await vi.waitFor(() => {
-      expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("interrupted");
+      expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
     });
   });
 
@@ -767,16 +765,17 @@ describe("AgentService transient-failure auto-retry", () => {
       type: "ended",
       threadId: THREAD_ID,
       turnExecutionId: executionId,
+      outcome: "completed",
     });
     await vi.waitFor(() => {
-      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "interrupted", executionId);
+      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "completed", executionId);
     });
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
     expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
       expect.objectContaining({ content: "root" }),
     );
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("interrupted");
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("does not treat a post-turn goal receipt as a new completion", async () => {
@@ -819,15 +818,16 @@ describe("AgentService transient-failure auto-retry", () => {
       type: "ended",
       threadId: THREAD_ID,
       turnExecutionId: executionId,
+      outcome: "completed",
     });
     await vi.waitFor(() => {
-      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "interrupted", executionId);
+      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "completed", executionId);
     });
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
     expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
       expect.objectContaining({ content: "Goal achieved in 1s." }),
     );
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("interrupted");
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("leaves compaction-owned messages running until compaction finishes", async () => {

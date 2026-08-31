@@ -131,6 +131,36 @@ describe("handleTurnPersisted", () => {
     expect(readThreadField(THREAD_ID, (record) => record.agentStartTime)).toBe(agentStartTime);
   });
 
+  it("closes the matching active runtime with its persisted terminal outcome", () => {
+    useThreadStore.setState({
+      records: seedThreadRecord(THREAD_ID, {
+        runtimePhase: "running",
+        turnExecutionId: "execution-1",
+        currentTurnMessageId: "assistant-1",
+        messages: [createMockMessage({
+          id: "assistant-1",
+          thread_id: THREAD_ID,
+          role: "assistant",
+          content: "partial answer",
+        })],
+      }),
+      runningThreadIds: new Set([THREAD_ID]),
+    });
+
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: THREAD_ID,
+      messageId: "assistant-1",
+      toolCallCount: 0,
+      filesChanged: [],
+      outcome: "interrupted",
+      executionId: "execution-1",
+    });
+
+    expect(readThreadField(THREAD_ID, (record) => record.runtimePhase)).toBe("interrupted");
+    expect(readThreadField(THREAD_ID, (record) => record.messages[0]?.outcome)).toBe("interrupted");
+    expect(useThreadStore.getState().runningThreadIds.has(THREAD_ID)).toBe(false);
+  });
+
   it("materializes an empty assistant row for tools-only turns", () => {
     useThreadStore.setState({
       records: seedThreadRecord(THREAD_ID, {

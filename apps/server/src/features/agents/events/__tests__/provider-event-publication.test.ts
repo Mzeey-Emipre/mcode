@@ -67,7 +67,6 @@ describe("provider event publication ownership", () => {
   });
 
   it.each([
-    [undefined, "interrupted"],
     ["interrupted", "interrupted"],
     ["cancelled", "interrupted"],
     ["completed", "completed"],
@@ -78,7 +77,7 @@ describe("provider event publication ownership", () => {
       type: AgentEventType.Ended,
       threadId: "parent-thread",
       turnExecutionId: "00000000-0000-4000-8000-000000000001",
-      ...(outcome ? { outcome } : {}),
+      outcome,
     };
 
     expect(publishParentProviderEvent(event, event, deps)).toBe(true);
@@ -87,5 +86,19 @@ describe("provider event publication ownership", () => {
       threadId: "parent-thread",
       status,
     });
+  });
+
+  it("does not publish a terminal status for an outcome-less Ended", () => {
+    const deps = buildPublicationDeps();
+    const event: AgentEvent = {
+      type: AgentEventType.Ended,
+      threadId: "parent-thread",
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
+    };
+
+    expect(publishParentProviderEvent(event, event, deps)).toBe(false);
+    expect(deps.publishAgentEvent).not.toHaveBeenCalled();
+    expect(deps.updateThreadStatus).not.toHaveBeenCalled();
+    expect(deps.publishThreadStatus).not.toHaveBeenCalled();
   });
 });

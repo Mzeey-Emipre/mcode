@@ -1741,8 +1741,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
   const terminalPhaseFor = (
     event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
-  ): ThreadRecord["runtimePhase"] => {
+  ): ThreadRecord["runtimePhase"] | undefined => {
     if (event.type === "turnComplete" || event.outcome === "completed") return "completed";
+    if (event.outcome === undefined) return undefined;
     if (event.outcome === "errored") return "errored";
     return event.outcome === "cancelled" ? "cancelled" : "interrupted";
   };
@@ -1889,10 +1890,12 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
     runtime: { incomingExecutionId: string | undefined; runtimeActive: boolean; runtimeRecord: ThreadRecord },
   ): void => {
+    if (event.type === "ended" && event.outcome === undefined) return;
     if (!runtime.runtimeActive || (runtime.incomingExecutionId && runtime.runtimeRecord.turnExecutionId !== runtime.incomingExecutionId)) return;
+    const phase = terminalPhaseFor(event);
+    if (!phase) return;
     clearStreamingTextUsage(event.threadId);
     useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(event.threadId);
-    const phase = terminalPhaseFor(event);
     const guardrail = guardrailMessageFor(event);
     patchRec(event.threadId, (record) => appendTerminalMessages(record, event, phase, guardrail));
     conversationResidency.retainInactiveConversation(event.threadId);
@@ -2200,6 +2203,18 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     return { fileEffectSummary: payload.fileEffects };
   };
 
+  const persistedTerminalPhase = (
+    record: ThreadRecord,
+    payload: TurnPersistedPayload,
+  ): ThreadRecord["runtimePhase"] | undefined => {
+    if (payload.outcome === undefined
+      || payload.executionId !== record.turnExecutionId
+      || (record.runtimePhase !== "running" && record.runtimePhase !== "finalizing")) return undefined;
+    if (payload.outcome === "completed") return "completed";
+    if (payload.outcome === "errored") return "errored";
+    return payload.outcome === "cancelled" ? "cancelled" : "interrupted";
+  };
+
   const projectPersistedTurn = (
     record: ThreadRecord,
     payload: TurnPersistedPayload,
@@ -2208,6 +2223,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     const localMessageId = resolveTurnPersistLocalMessageId(record, payload.messageId);
     const messages = persistedTurnMessages(record, payload, localMessageId);
     const stopState = turnPersistStopState(record, payload);
+    const terminalPhase = persistedTerminalPhase(record, payload);
     return {
       ...(messages ? { messages } : {}),
       persistedToolCallCounts: { ...record.persistedToolCallCounts, [localMessageId]: payload.toolCallCount },
@@ -2218,6 +2234,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       serverMessageIds: { ...record.serverMessageIds, [localMessageId]: payload.messageId },
       ...clearPendingTurnPersistMessage(record, localMessageId),
       ...stopState,
+      ...(terminalPhase ? { runtimePhase: terminalPhase } : {}),
       ...persistedTurnFileEffects(record, payload, localMessageId),
     };
   };

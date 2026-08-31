@@ -50,7 +50,6 @@ import type { ProviderAvailabilityService } from "../../../providers/availabilit
 import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
-import { TurnRecoveryService } from "../../recovery/turn-recovery-service.js";
 import { SubagentLifecycleService } from "../../collaboration/subagent-lifecycle-service.js";
 import type { TurnEventDiagnosticProvenance } from "../../turns/turn-event-application.js";
 
@@ -543,7 +542,7 @@ describe("AgentService turn cleanup", () => {
     expect(completed).toBe(true);
   });
 
-  it("resolves queued automatic completion when a narrative checkpoint failure terminalizes its execution", async () => {
+  it("waits for a provider outcome after a narrative checkpoint failure", async () => {
     const { service, providerEmitter, messageRepo } = buildService();
     startAgentServiceIngressForTest(service, );
     vi.mocked(messageRepo.findByIdInThread).mockReturnValue({ id: "queued-checkpoint-failure", sequence: 1 } as never);
@@ -562,8 +561,13 @@ describe("AgentService turn cleanup", () => {
     const recovery = (service as unknown as {
       parentNarrativeRecovery: { checkpoint: (event: AgentEvent) => void };
     }).parentNarrativeRecovery;
-    vi.spyOn(recovery, "checkpoint").mockImplementation(() => {
+    const checkpoint = vi.spyOn(recovery, "checkpoint").mockImplementation(() => {
       throw new Error("narrative checkpoint unavailable");
+    });
+
+    let completed = false;
+    void accepted.completion.then(() => {
+      completed = true;
     });
 
     providerEmitter.emit("event", {
@@ -571,6 +575,20 @@ describe("AgentService turn cleanup", () => {
       threadId: THREAD_ID,
       turnExecutionId: activeExecutionId(service),
       delta: "durability boundary",
+    } satisfies AgentEvent);
+
+    await vi.waitFor(() => {
+      expect(providerEmitter.stopSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
+    });
+    expect(completed).toBe(false);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+
+    checkpoint.mockRestore();
+    providerEmitter.emit("event", {
+      type: AgentEventType.Ended,
+      threadId: THREAD_ID,
+      turnExecutionId: activeExecutionId(service),
+      outcome: "cancelled",
     } satisfies AgentEvent);
 
     await expect(accepted.completion).resolves.toBeUndefined();
@@ -1067,6 +1085,7 @@ describe("AgentService turn cleanup", () => {
       type: AgentEventType.Ended,
       threadId: THREAD_ID,
       turnExecutionId: resumedExecutionId,
+      outcome: "cancelled",
     } satisfies AgentEvent);
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
     expect(mutationReservations.owns(THREAD_ID, "pending-approval", "pendingApproval")).toBe(true);
@@ -1346,6 +1365,7 @@ describe("AgentService turn cleanup", () => {
       type: AgentEventType.Ended,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
+      outcome: "completed",
     } satisfies AgentEvent);
 
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
@@ -1778,7 +1798,7 @@ describe("AgentService Ended finalization", () => {
     expect(providerEmitter.stopSession).toHaveBeenCalledWith(`mcode-${thread.id}`);
   });
 
-  it("persists partial assistant text when a running turn ends with only Ended", async () => {
+  it("does not persist an interruption when a running turn ends without an outcome", async () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "codex");
 
@@ -1805,22 +1825,19 @@ describe("AgentService Ended finalization", () => {
       turnExecutionId: executionId,
     } satisfies AgentEvent);
 
-    await vi.waitFor(() => {
-      const { messages } = messageRepo.listByThread(thread.id, 10);
-      const assistant = messages.find((message) => message.role === "assistant");
-
-      expect(assistant?.content).toBe("partial answer before the provider stopped");
-      expect(assistant?.outcome).toBe("interrupted");
-      expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
-        threadId: thread.id,
-        messageId: assistant?.id,
-        outcome: "interrupted",
-        executionId,
-      }));
-    });
+    await Promise.resolve();
+    const assistant = messageRepo.listByThread(thread.id, 10).messages
+      .find((message) => message.role === "assistant");
+    expect(assistant?.outcome).toBeUndefined();
+    expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: thread.id,
+      outcome: expect.any(String),
+      executionId,
+    }));
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id)?.phase).toBe("running");
   });
 
-  it("makes a matching outcome-less Ended recoverable as Interrupted", async () => {
+  it("leaves a matching outcome-less Ended unresolved", async () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Recovery thread", "direct", "main", true, "codex");
 
@@ -1839,35 +1856,12 @@ describe("AgentService Ended finalization", () => {
       turnExecutionId: executionId,
     } satisfies AgentEvent);
 
-    await vi.waitFor(() => {
-      expect(canonicalSink.loadCheckpoint(executionId)).toMatchObject({
-        phase: "interrupted",
-        terminalOutcome: "interrupted",
-      });
+    await Promise.resolve();
+    expect(canonicalSink.loadCheckpoint(executionId)).toMatchObject({
+      phase: "running",
+      terminalOutcome: null,
     });
-    expect(threadRepo.findById(thread.id)?.status).toBe("interrupted");
-
-    const recovery = new TurnRecoveryService(canonicalSink, threadRepo, {
-      persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
-      prepareRetryAttachments: vi.fn(() => []),
-    } as unknown as AttachmentService, new ParentAssistantTextCheckpointService(db), messageRepo,
-    (service as unknown as { narrativeStore: NarrativeStore }).narrativeStore);
-    const dispatch = vi.fn(async () => undefined);
-    await recovery.retry(executionId, dispatch);
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
-      threadId: thread.id,
-      retryOfExecutionId: executionId,
-      forceFreshSession: true,
-    }));
-
-    await expect(service.sendMessage({
-      threadId: thread.id,
-      content: "start a fresh turn after recovery",
-      permissionMode: "default",
-      model: "gpt-5",
-      attachments: [],
-      provider: "codex",
-    })).resolves.toBeUndefined();
+    expect(threadRepo.findById(thread.id)?.status).toBe("active");
     expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
       .toMatchObject({ phase: "running" });
   });
@@ -1905,7 +1899,7 @@ describe("AgentService Ended finalization", () => {
     });
   });
 
-  it("does not infer completion from a full-looking response without terminal proof", async () => {
+  it("leaves a full-looking response unresolved without terminal proof", async () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "cursor");
 
@@ -1931,18 +1925,16 @@ describe("AgentService Ended finalization", () => {
       threadId: thread.id,
       turnExecutionId: executionId,
     } satisfies AgentEvent);
-    await vi.waitFor(() => {
-      const assistant = messageRepo.listByThread(thread.id, 10).messages
-        .find((message) => message.role === "assistant");
-      expect(assistant).toMatchObject({ outcome: "interrupted" });
-    });
-
-    const { messages } = messageRepo.listByThread(thread.id, 10);
-    const assistant = messages.find((message) => message.role === "assistant");
-    expect(assistant).toMatchObject({ outcome: "interrupted" });
-    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
-      outcome: "interrupted",
+    await Promise.resolve();
+    const assistant = messageRepo.listByThread(thread.id, 10).messages
+      .find((message) => message.role === "assistant");
+    expect(assistant?.outcome).toBeUndefined();
+    expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: thread.id,
+      outcome: expect.any(String),
+      executionId,
     }));
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id)?.phase).toBe("running");
   });
 
   it("keeps a provider Error consistent across canonical, legacy, and renderer state", async () => {

@@ -13,7 +13,7 @@ export function publishParentProviderEvent(
   enrichedEvent: AgentEvent,
   deps: ParentProviderEventPublicationDeps,
 ): boolean {
-  if (event.type === "generatedAttachment") return false;
+  if (event.type === "generatedAttachment" || (event.type === "ended" && event.outcome === undefined)) return false;
 
   deps.publishAgentEvent(enrichedEvent);
   if (event.type === "turnComplete") {
@@ -22,7 +22,7 @@ export function publishParentProviderEvent(
   } else if (event.type === "error") {
     deps.updateThreadStatus(event.threadId, "errored");
     deps.publishThreadStatus({ threadId: event.threadId, status: "errored" });
-  } else if (event.type === "ended") {
+  } else if (event.type === "ended" && event.outcome !== undefined) {
     const status = event.outcome === "completed"
       ? "completed"
       : event.outcome === "errored"
