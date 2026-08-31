@@ -1,4 +1,4 @@
-/** Tests that repository workflows use Bun with a packaging-only Node exception. */
+/** Tests that repository workflows use Bun by default with narrowly allowlisted Node exceptions. */
 import * as NodeAssertStrict from "node:assert/strict";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -7,6 +7,15 @@ import * as NodeTest from "node:test";
 const workflowDirectory = NodePath.join(process.cwd(), ".github", "workflows");
 const packagingWorkflowAllowlist = new Set([
   "desktop-package-target.yml",
+]);
+const nodeSetupWorkflowJobs = new Map([
+  ["ci.yml", new Map([
+    ["test", {
+      nodeVersion: "22",
+      nodeGypStep: "Configure node-gyp headers",
+      testCommand: "bun run test",
+    }],
+  ])],
 ]);
 const bunCheckoutJobs = new Map();
 const directNodeCommandPattern = /(?:^|(?:&&|\|\||;)\s*)node(?:\.exe)?(?=\s|$)/m;
@@ -43,6 +52,41 @@ function extractRunCommands(source) {
     }
   }
   return commands.join("\n");
+}
+
+function verifyAllowedNodeSetupJobs(source, workflowFile) {
+  const nodeSetupJobs = nodeSetupWorkflowJobs.get(workflowFile);
+  if (!nodeSetupJobs) return false;
+
+  NodeAssertStrict.default.equal((source.match(/actions\/setup-node@/gi) ?? []).length, nodeSetupJobs.size, workflowFile);
+  for (const [jobName, expected] of nodeSetupJobs) {
+    const jobSource = extractWorkflowJob(source, jobName);
+    NodeAssertStrict.default.ok(jobSource, `${workflowFile}: ${jobName} job missing`);
+    const checkoutIndex = jobSource.indexOf("actions/checkout@v4");
+    const setupNodeIndex = jobSource.indexOf("actions/setup-node@");
+    const nodeGypIndex = jobSource.indexOf(expected.nodeGypStep);
+    const testCommandIndex = jobSource.indexOf(expected.testCommand);
+    NodeAssertStrict.default.equal(
+      (jobSource.match(/actions\/setup-node@/gi) ?? []).length,
+      1,
+      `${workflowFile}: ${jobName}`,
+    );
+    NodeAssertStrict.default.match(
+      jobSource,
+      new RegExp(`node-version:\\s*["']?${expected.nodeVersion}["']?(?:\\s|$)`, "i"),
+      `${workflowFile}: ${jobName}`,
+    );
+    NodeAssertStrict.default.ok(checkoutIndex >= 0, `${workflowFile}: ${jobName} must checkout repository`);
+    NodeAssertStrict.default.ok(setupNodeIndex >= 0, `${workflowFile}: ${jobName} must setup Node`);
+    NodeAssertStrict.default.ok(nodeGypIndex >= 0, `${workflowFile}: ${jobName} must configure node-gyp headers`);
+    NodeAssertStrict.default.ok(testCommandIndex >= 0, `${workflowFile}: ${jobName} must run tests`);
+    NodeAssertStrict.default.ok(
+      checkoutIndex < setupNodeIndex && setupNodeIndex < nodeGypIndex && nodeGypIndex < testCommandIndex,
+      `${workflowFile}: ${jobName} must setup Node before node-gyp and tests`,
+    );
+  }
+
+  return true;
 }
 
 NodeTest.test("direct Node detection only matches shell command tokens", () => {
@@ -127,7 +171,7 @@ NodeTest.test("workflows use Bun runtime and repository commands", () => {
         source.indexOf("actions/setup-node@") < source.indexOf("ci-package.mjs"),
         `${file}: Node setup must precede ci-package`,
       );
-    } else {
+    } else if (!verifyAllowedNodeSetupJobs(source, file)) {
       NodeAssertStrict.default.doesNotMatch(source, /actions\/setup-node@/i, file);
       NodeAssertStrict.default.doesNotMatch(source, /\bnode-version\s*:/i, file);
       NodeAssertStrict.default.doesNotMatch(extractRunCommands(source), directNodeCommandPattern, file);
