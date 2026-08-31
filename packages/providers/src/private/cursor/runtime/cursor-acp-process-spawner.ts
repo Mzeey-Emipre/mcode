@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import type * as NodeChildProcess from "node:child_process";
 import { logger } from "@mcode/shared";
 import { getCatalogEntry, type Settings } from "@mcode/contracts";
 import type { ProviderHostPorts } from "../../../host-ports.js";
@@ -20,7 +20,7 @@ export interface CursorAcpProcessSpawnerDeps {
   getBrowserContext: (sessionId: string) => CursorBrowserContext | undefined;
   registerOpening: (sessionId: string, runtime: AcpSessionRuntime) => void;
   clearOpening: (sessionId: string) => void;
-  onChildExit: (sessionId: string, child: ChildProcess) => void;
+  onChildExit: (sessionId: string, child: NodeChildProcess.ChildProcess) => void;
   bridge: CursorAcpClientBridge;
 }
 

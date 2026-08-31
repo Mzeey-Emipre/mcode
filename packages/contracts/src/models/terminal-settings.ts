@@ -21,19 +21,16 @@ export const TERMINAL_DEFAULT_SCROLLBACK_LINES = 1_000;
 export const TERMINAL_DEFAULT_FONT_FAMILY =
   '"JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", "Consolas", monospace';
 
-const fontFamilySchema = () =>
-  z
-    .string()
-    .trim()
-    .min(1)
-    .max(128)
-    .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "Control characters are forbidden");
-
 /** Terminal presentation preferences. */
 export const TerminalPresentationSettingsSchema = lazySchema(() =>
   z
     .object({
-      fontFamily: fontFamilySchema(),
+      fontFamily: z
+        .string()
+        .trim()
+        .min(1)
+        .max(128)
+        .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "Control characters are forbidden"),
       fontSize: z.enum(["xs", "sm", "md", "lg", "xl"]),
       lineHeight: z.enum(["compact", "normal", "relaxed"]),
       cursorStyle: z.enum(["block", "underline", "bar"]),

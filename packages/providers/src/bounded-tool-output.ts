@@ -1,14 +1,6 @@
-import { createHash } from "node:crypto";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { getMcodeDir, logger } from "@mcode/shared";
 
 /** Maximum tool or sub-agent output bytes sent through the live event stream. */
@@ -42,7 +34,7 @@ export interface BoundedToolOutputResult {
  * Resolve the full-output artifact path for one tool result.
  */
 export function resolveToolOutputArtifactPath(threadId: string, toolCallId: string): string {
-  return join(
+  return NodePath.join(
     getMcodeDir(),
     "artifacts",
     "tool-output",
@@ -125,7 +117,7 @@ export class BoundedToolOutputBuffer {
     this.artifactChunks = [];
     this.artifactChunkBytes = 0;
     if (this.artifactStarted && this.artifactPath) {
-      writeFileSync(this.artifactPath, "", { encoding: "utf8", mode: 0o600 });
+      NodeFS.writeFileSync(this.artifactPath, "", { encoding: "utf8", mode: 0o600 });
     }
     this.append(text);
   }
@@ -157,7 +149,7 @@ export class BoundedToolOutputBuffer {
     } else if (this.artifactStarted && this.artifactPath) {
       this.artifactChunks = [];
       this.artifactChunkBytes = 0;
-      rmSync(this.artifactPath, { force: true });
+      NodeFS.rmSync(this.artifactPath, { force: true });
       this.artifactStarted = false;
       this.artifactPath = undefined;
     }
@@ -206,8 +198,8 @@ export class BoundedToolOutputBuffer {
 
   private startArtifact(): void {
     this.artifactPath = resolveToolOutputArtifactPath(this.threadId, this.toolCallId);
-    mkdirSync(dirname(this.artifactPath), { recursive: true, mode: 0o700 });
-    writeFileSync(this.artifactPath, "", { encoding: "utf8", mode: 0o600 });
+    NodeFS.mkdirSync(NodePath.dirname(this.artifactPath), { recursive: true, mode: 0o700 });
+    NodeFS.writeFileSync(this.artifactPath, "", { encoding: "utf8", mode: 0o600 });
     this.artifactStarted = true;
   }
 
@@ -222,8 +214,8 @@ export class BoundedToolOutputBuffer {
 
   private flushArtifactChunks(): void {
     if (!this.artifactPath || this.artifactChunks.length === 0) return;
-    mkdirSync(dirname(this.artifactPath), { recursive: true, mode: 0o700 });
-    appendFileSync(this.artifactPath, this.artifactChunks.join(""), {
+    NodeFS.mkdirSync(NodePath.dirname(this.artifactPath), { recursive: true, mode: 0o700 });
+    NodeFS.appendFileSync(this.artifactPath, this.artifactChunks.join(""), {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -243,18 +235,18 @@ export function pruneStaleToolOutputArtifacts(
   now = Date.now(),
   ttlMs = TOOL_OUTPUT_ARTIFACT_TTL_MS,
 ): number {
-  const root = join(getMcodeDir(), "artifacts", "tool-output");
-  if (!existsSync(root)) return 0;
+  const root = NodePath.join(getMcodeDir(), "artifacts", "tool-output");
+  if (!NodeFS.existsSync(root)) return 0;
   const cutoff = now - ttlMs;
   let removed = 0;
 
   const walk = (dir: string): boolean => {
     let empty = true;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
+    for (const entry of NodeFS.readdirSync(dir, { withFileTypes: true })) {
+      const path = NodePath.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (walk(path)) {
-          rmSync(path, { recursive: true, force: true });
+          NodeFS.rmSync(path, { recursive: true, force: true });
         } else {
           empty = false;
         }
@@ -264,9 +256,9 @@ export function pruneStaleToolOutputArtifacts(
         empty = false;
         continue;
       }
-      const stat = statSync(path);
+      const stat = NodeFS.statSync(path);
       if (stat.mtimeMs < cutoff) {
-        rmSync(path, { force: true });
+        NodeFS.rmSync(path, { force: true });
         removed++;
       } else {
         empty = false;
@@ -288,7 +280,7 @@ export function pruneStaleToolOutputArtifacts(
 function safeArtifactSegment(value: string, fallback: string): string {
   const trimmed = value.trim();
   if (/^(?=.*[a-zA-Z0-9])[a-zA-Z0-9._-]{1,160}$/.test(trimmed)) return trimmed;
-  const hash = createHash("sha256").update(trimmed || fallback).digest("hex").slice(0, 24);
+  const hash = NodeCrypto.createHash("sha256").update(trimmed || fallback).digest("hex").slice(0, 24);
   return `${fallback}-${hash}`;
 }
 

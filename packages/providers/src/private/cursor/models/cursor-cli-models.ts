@@ -3,12 +3,12 @@
  * Discovers Cursor Agent models by parsing `cursor-agent models` / `agent models` stdout.
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import { logger } from "@mcode/shared";
 import type { ProviderModelInfo } from "@mcode/contracts";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 
 /** Separator between model id and label in `agent models` output lines. */
 const MODEL_LINE_SEP = " - ";

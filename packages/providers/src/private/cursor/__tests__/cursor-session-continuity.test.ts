@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
+import * as NodeEvents from "node:events";
+import type * as NodeChildProcess from "node:child_process";
 import type { ClientSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
 import { getDefaultSettings, type TurnRequest } from "@mcode/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -53,12 +53,12 @@ function createHost(): ProviderHostPorts {
 }
 
 function createFakeRuntime(sessionId: string, pid: number): FakeRuntime {
-  const child = Object.assign(new EventEmitter(), {
+  const child = Object.assign(new NodeEvents.EventEmitter(), {
     pid,
     exitCode: null,
     signalCode: null,
     kill: vi.fn(() => true),
-  }) as unknown as ChildProcess;
+  }) as unknown as NodeChildProcess.ChildProcess;
   const connection = {
     newSession: vi.fn(async () => ({ sessionId })),
     unstable_setSessionModel: vi.fn(async () => ({})),

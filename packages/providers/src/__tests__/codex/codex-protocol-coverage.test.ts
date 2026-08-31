@@ -4,18 +4,18 @@
  *
  * Fixture: `fixtures/codex-protocol-golden.ndjson` (optional).
  * Generate with:
- *   node scripts/codex-protocol-capture.mjs <cwd> packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson
+ *   node scripts/providers/codex/codex-protocol-capture.mjs <cwd> packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson
  */
-import { readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { describe, it, expect } from "vitest";
 import { AgentEventType, type AgentEvent, type ProviderRuntimeEvent } from "@mcode/contracts";
 import { CodexEventMapper } from "../../private/codex/codex-event-mapper.js";
 import type { CodexNotification } from "../../private/codex/codex-types.js";
 
-const __dir = dirname(fileURLToPath(import.meta.url));
-const FIXTURE_PATH = join(__dir, "fixtures", "codex-protocol-golden.ndjson");
+const __dir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const FIXTURE_PATH = NodePath.join(__dir, "fixtures", "codex-protocol-golden.ndjson");
 const GOLDEN_REPLAY_TIMEOUT_MS = 60_000;
 
 /** Methods the mapper must handle without logging "unrecognized". */
@@ -100,8 +100,8 @@ type NdjsonRow = {
 };
 
 function loadNotifications(): { label: string; notifications: CodexNotification[] } {
-  if (existsSync(FIXTURE_PATH)) {
-    const lines = readFileSync(FIXTURE_PATH, "utf8").split("\n").filter(Boolean);
+  if (NodeFS.existsSync(FIXTURE_PATH)) {
+    const lines = NodeFS.readFileSync(FIXTURE_PATH, "utf8").split("\n").filter(Boolean);
     const notifications: CodexNotification[] = [];
     for (const line of lines) {
       const row = JSON.parse(line) as NdjsonRow;
@@ -131,8 +131,8 @@ function replay(notifications: CodexNotification[]) {
 }
 
 function loadGoldenScenario(id: string): CodexNotification[] {
-  if (!existsSync(FIXTURE_PATH)) return [];
-  const lines = readFileSync(FIXTURE_PATH, "utf8").split("\n").filter(Boolean);
+  if (!NodeFS.existsSync(FIXTURE_PATH)) return [];
+  const lines = NodeFS.readFileSync(FIXTURE_PATH, "utf8").split("\n").filter(Boolean);
   const notifications: CodexNotification[] = [];
   for (const line of lines) {
     const row = JSON.parse(line) as NdjsonRow & { scenario?: string };
@@ -236,7 +236,7 @@ describe("Codex protocol coverage", () => {
 
   it("golden fixture documents sub-agent scenario when captured", () => {
     if (label !== "golden") return;
-    const lines = readFileSync(FIXTURE_PATH, "utf8").split("\n").filter(Boolean);
+    const lines = NodeFS.readFileSync(FIXTURE_PATH, "utf8").split("\n").filter(Boolean);
     const scenarioEnd = lines
       .map((l) => JSON.parse(l) as { type?: string; id?: string; methods?: string[] })
       .find((r) => r.type === "scenario_end" && r.id === "D_subagents");

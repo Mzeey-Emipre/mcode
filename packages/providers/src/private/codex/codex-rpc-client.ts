@@ -6,8 +6,8 @@
  * and emitting events for server-initiated messages.
  */
 
-import { EventEmitter } from "events";
-import type { Writable, Readable } from "stream";
+import * as NodeEvents from "node:events";
+import type * as NodeStream from "node:stream";
 import { logger } from "@mcode/shared";
 
 /** Default timeout in milliseconds for RPC requests. */
@@ -28,9 +28,9 @@ interface PendingRequest {
  * - `notification` - a JSON-RPC notification pushed by the server (no `id`)
  * - `serverRequest` - a server-initiated JSON-RPC request (has both `id` and `method`)
  */
-export class CodexRpcClient extends EventEmitter {
-  private readonly stdin: Writable;
-  private readonly stdout: Readable;
+export class CodexRpcClient extends NodeEvents.EventEmitter {
+  private readonly stdin: NodeStream.Writable;
+  private readonly stdout: NodeStream.Readable;
   private readonly pending = new Map<number, PendingRequest>();
   private nextId = 1;
   private disposed = false;
@@ -48,7 +48,7 @@ export class CodexRpcClient extends EventEmitter {
    * @param stdin - Writable stream connected to the codex app-server process stdin.
    * @param stdout - Readable stream connected to the codex app-server process stdout.
    */
-  constructor(stdin: Writable, stdout: Readable) {
+  constructor(stdin: NodeStream.Writable, stdout: NodeStream.Readable) {
     super();
     this.stdin = stdin;
     this.stdout = stdout;

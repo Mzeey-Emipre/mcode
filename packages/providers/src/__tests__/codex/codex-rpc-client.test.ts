@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { PassThrough } from "stream";
+import * as NodeStream from "node:stream";
 
 vi.mock("@mcode/shared", () => ({
   logger: {
@@ -14,8 +14,8 @@ import { CodexRpcClient } from "../../private/codex/codex-rpc-client.js";
 
 /** Creates a fresh pair of PassThrough streams and a CodexRpcClient for each test. */
 function makeClient() {
-  const stdin = new PassThrough();
-  const stdout = new PassThrough();
+  const stdin = new NodeStream.PassThrough();
+  const stdout = new NodeStream.PassThrough();
   const client = new CodexRpcClient(stdin, stdout);
   return { stdin, stdout, client };
 }

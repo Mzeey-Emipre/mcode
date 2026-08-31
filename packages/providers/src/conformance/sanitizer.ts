@@ -1,5 +1,5 @@
-import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { createProviderFixtureManifest } from "./fixture-safety.js";
 import type {
   FixtureExpectedSemantics,
@@ -34,16 +34,16 @@ export function sanitizeProviderFixtureFile(input: {
   outputFile: string;
   metadata: ProviderFixtureSanitizerMetadata;
 }): ProviderFixtureManifest {
-  const rawFile = requireContainedPath(input.rawFile, resolve(".conformance-raw"), "raw capture");
+  const rawFile = requireContainedPath(input.rawFile, NodePath.resolve(".conformance-raw"), "raw capture");
   const outputFile = requireContainedPath(
     input.outputFile,
-    resolve("src/conformance/fixtures"),
+    NodePath.resolve("src/conformance/fixtures"),
     "fixture output",
   );
-  if (statSync(rawFile).size > MAX_RAW_CAPTURE_BYTES) {
+  if (NodeFS.statSync(rawFile).size > MAX_RAW_CAPTURE_BYTES) {
     throw new TypeError("Provider raw capture exceeds the size limit");
   }
-  const rows = readFileSync(rawFile, "utf8")
+  const rows = NodeFS.readFileSync(rawFile, "utf8")
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0)
     .map((line, index) => sanitizeRawRow(JSON.parse(line) as unknown, index + 1));
@@ -58,7 +58,7 @@ export function sanitizeProviderFixtureFile(input: {
     },
     input: { events: rows },
   });
-  writeFileSync(outputFile, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  NodeFS.writeFileSync(outputFile, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
   return manifest;
 }
 

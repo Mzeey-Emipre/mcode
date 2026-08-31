@@ -6,11 +6,10 @@
  * and forwards server notifications to consumers via EventEmitter.
  */
 
-import { spawn } from "child_process";
-import type { ChildProcess } from "child_process";
-import { createInterface } from "readline";
-import { EventEmitter } from "events";
-import { isAbsolute } from "path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeReadline from "node:readline";
+import * as NodeEvents from "node:events";
+import * as NodePath from "node:path";
 import which from "which";
 import { resolveSubagentDisplayName } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
@@ -79,7 +78,7 @@ async function resolveCodexAppServerPath(cliPath: string): Promise<string> {
   }
 }
 
-function waitForCodexAppServerSpawn(child: ChildProcess): Promise<Error | null> {
+function waitForCodexAppServerSpawn(child: NodeChildProcess.ChildProcess): Promise<Error | null> {
   return new Promise<Error | null>((resolve) => {
     child.once("error", (error) => resolve(error));
     child.once("spawn", () => resolve(null));
@@ -878,7 +877,7 @@ export async function warmCodexAppServer(
  * - `fatal(error: string)` - unrecoverable error from stderr, unexpected exit, or handshake failure
  * - `exit(code: number | null, signal: string | null)` - child process exit
  */
-export class CodexAppServer extends EventEmitter {
+export class CodexAppServer extends NodeEvents.EventEmitter {
   /** `true` after spawn, `false` after exit or kill. */
   private _isAlive = false;
   /** Whether the child process is currently alive. */
@@ -898,7 +897,7 @@ export class CodexAppServer extends EventEmitter {
   public readonly cliPath: string;
 
   private rpc!: CodexRpcClient;
-  private child!: ChildProcess;
+  private child!: NodeChildProcess.ChildProcess;
   private killRequested = false;
   /** Shared in-flight teardown so concurrent `kill()` callers await the same work. */
   private teardownPromise: Promise<void> | null = null;
@@ -967,9 +966,9 @@ export class CodexAppServer extends EventEmitter {
     }
   }
 
-  private spawnAppServer(command: CodexAppServerCommand): ChildProcess {
+  private spawnAppServer(command: CodexAppServerCommand): NodeChildProcess.ChildProcess {
     const configArgs = (this.options.configOverrides ?? []).flatMap((override) => ["-c", override]);
-    return spawn(command.cliPath, ["app-server", ...configArgs], {
+    return NodeChildProcess.spawn(command.cliPath, ["app-server", ...configArgs], {
       stdio: ["pipe", "pipe", "pipe"],
       shell: command.needsShell,
       cwd: this.options.workingDirectory,
@@ -1114,7 +1113,7 @@ export class CodexAppServer extends EventEmitter {
     }
   }
 
-  private async terminatePosixChild(child: ChildProcess): Promise<void> {
+  private async terminatePosixChild(child: NodeChildProcess.ChildProcess): Promise<void> {
     child.kill("SIGTERM");
     const exited = await Promise.race([
       new Promise<boolean>((resolve) => child.once("exit", () => resolve(true))),
@@ -1359,7 +1358,7 @@ export class CodexAppServer extends EventEmitter {
 
   /** Attaches a readline interface to stderr and classifies each line. */
   private wireStderr(): void {
-    const rl = createInterface({ input: this.child.stderr! });
+    const rl = NodeReadline.createInterface({ input: this.child.stderr! });
 
     rl.on("line", (raw: string) => {
       const line = raw.replace(ANSI_RE, "").trim();

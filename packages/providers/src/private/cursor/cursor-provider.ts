@@ -6,7 +6,7 @@
  * Cursor recovers persisted sessions only through advertised ACP capabilities.
  */
 
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import { logger } from "@mcode/shared";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import type { ProviderIdentity } from "@mcode/agent-model";
@@ -137,7 +137,7 @@ export function carryCursorMcodeSentState(
 
 /** Cursor ACP adapter implementing IAgentProvider through one private MCP subprocess per session. */
 export class CursorProvider
-  extends EventEmitter
+  extends NodeEvents.EventEmitter
   implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CursorSessionState>
 {
   readonly id = "cursor" as const;

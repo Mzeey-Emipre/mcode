@@ -4,10 +4,10 @@
  * `~/.mcode` (production) or `~/.mcode-dev` (development).
  */
 
-import { createHash } from "crypto";
-import { lstatSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 /**
  * Resolve the absolute path to the Mcode data directory.
@@ -21,7 +21,7 @@ export function getMcodeDir(): string {
   if (process.env.MCODE_DATA_DIR) return process.env.MCODE_DATA_DIR;
   const dirName =
     process.env.NODE_ENV !== "production" ? ".mcode-dev" : ".mcode";
-  return join(homedir(), dirName);
+  return NodePath.join(NodeOS.homedir(), dirName);
 }
 
 /**
@@ -32,7 +32,7 @@ export function spillWorkspaceDirSegment(workspaceId: string): string {
   const t = workspaceId.trim();
   if (t.length === 0) return "unknown";
   if (/^[a-zA-Z0-9_-]{1,80}$/.test(t)) return t;
-  return createHash("sha256").update(t).digest("hex").slice(0, 24);
+  return NodeCrypto.createHash("sha256").update(t).digest("hex").slice(0, 24);
 }
 
 /**
@@ -40,9 +40,9 @@ export function spillWorkspaceDirSegment(workspaceId: string): string {
  * rather than the primary repository directory.
  */
 export function isLinkedGitWorktree(repoRoot: string): boolean {
-  const gitPath = join(repoRoot, ".git");
+  const gitPath = NodePath.join(repoRoot, ".git");
   try {
-    return lstatSync(gitPath).isFile();
+    return NodeFS.lstatSync(gitPath).isFile();
   } catch {
     return false;
   }
@@ -64,13 +64,13 @@ export function resolveDbPath(
   const isProduction = process.env.NODE_ENV === "production";
   const gitToplevel = opts?.gitToplevel?.trim();
   if (!isProduction && gitToplevel && isLinkedGitWorktree(gitToplevel)) {
-    return join(gitToplevel, ".mcode-local", "mcode.db");
+    return NodePath.join(gitToplevel, ".mcode-local", "mcode.db");
   }
 
   const branch = opts?.branch?.trim();
   if (isProduction || !branch) {
-    return join(mcodeDir, "mcode.db");
+    return NodePath.join(mcodeDir, "mcode.db");
   }
-  const hash = createHash("sha256").update(branch).digest("hex").slice(0, 12);
-  return join(mcodeDir, "dbs", `dev-${hash}.db`);
+  const hash = NodeCrypto.createHash("sha256").update(branch).digest("hex").slice(0, 12);
+  return NodePath.join(mcodeDir, "dbs", `dev-${hash}.db`);
 }

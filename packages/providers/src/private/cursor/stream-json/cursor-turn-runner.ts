@@ -1,7 +1,6 @@
 /** @internal Runs one Cursor CLI stream-JSON turn. */
 
-import { spawn as nodeSpawn } from "node:child_process";
-import type { ChildProcess, SpawnOptions } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import { logger } from "@mcode/shared";
 import type { AgentEvent } from "@mcode/contracts";
 import { CursorStreamJsonParser } from "./cursor-stream-json-parser.js";
@@ -17,8 +16,8 @@ import type { CursorStreamEvent } from "./cursor-stream-json-types.js";
 export type SpawnLike = (
   command: string,
   args: readonly string[],
-  options: SpawnOptions,
-) => ChildProcess;
+  options: NodeChildProcess.SpawnOptions,
+) => NodeChildProcess.ChildProcess;
 
 /** Supplies process dependencies for the runner. */
 export interface CursorTurnRunnerDeps {

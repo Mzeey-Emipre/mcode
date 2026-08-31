@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "vitest";
 
-const REPOSITORY_ROOT = resolve(import.meta.dirname, "../../../../../");
+const REPOSITORY_ROOT = NodePath.resolve(import.meta.dirname, "../../../../../");
 const SOURCE_ROOTS = [
   "apps/server/src",
   "apps/web/src",
@@ -23,7 +23,7 @@ const ALLOWED_LEGACY_IMPORTERS = new Set([
 
 function listLegacyImportCandidates(): string[] {
   try {
-    return execFileSync(
+    return NodeChildProcess.execFileSync(
       "git",
       [
         "grep",
@@ -52,7 +52,7 @@ describe("Terminal legacy import boundary", () => {
   it("rejects new dependencies on legacy Terminal modules outside approved adapters", () => {
     const unexpectedImporters = listLegacyImportCandidates()
       .filter((path) => {
-        const source = readFileSync(resolve(REPOSITORY_ROOT, path), "utf8");
+        const source = NodeFS.readFileSync(NodePath.resolve(REPOSITORY_ROOT, path), "utf8");
         return /(?:from\s+|import\()["'][^"']*(?:\/legacy\/|terminal-legacy)/.test(source);
       })
       .map((path) => path.replaceAll("\\", "/"))

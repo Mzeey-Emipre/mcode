@@ -1,5 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { Readable, Writable } from "node:stream";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeStream from "node:stream";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -19,7 +19,7 @@ import { createAcpClientHandlers } from "./acp-client-handlers.js";
 
 /** Result of opening package-private ACP transport before protocol negotiation. */
 export type AcpTransport = {
-  child: ChildProcess;
+  child: NodeChildProcess.ChildProcess;
   connection: ClientSideConnection;
 };
 
@@ -464,7 +464,7 @@ function invalidAcpPayload(message: string): TypeError & { code: "INVALID_ACP_PA
   return Object.assign(new TypeError(message), { code: "INVALID_ACP_PAYLOAD" as const });
 }
 
-async function terminateAcpChild(processes: ProviderProcessPort, child: ChildProcess | undefined): Promise<void> {
+async function terminateAcpChild(processes: ProviderProcessPort, child: NodeChildProcess.ChildProcess | undefined): Promise<void> {
   if (child?.pid === undefined) return;
   await processes.terminateTree(child.pid).catch(() => undefined);
 }

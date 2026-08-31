@@ -1,4 +1,4 @@
-import { readFile, stat } from "fs/promises";
+import * as NodeFSPromises from "node:fs/promises";
 import type { SkillInfo } from "@mcode/contracts";
 
 const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
@@ -120,7 +120,7 @@ function parsePromptArguments(raw: string): ParsedPromptArguments {
 }
 
 async function readCodexPromptTemplate(path: string): Promise<string> {
-  const templateStats = await stat(path);
+  const templateStats = await NodeFSPromises.stat(path);
   if (templateStats.size > MAX_PROMPT_TEMPLATE_BYTES) {
     throw new Error(`Codex prompt template is too large: ${path}`);
   }
@@ -136,7 +136,7 @@ async function readCodexPromptTemplate(path: string): Promise<string> {
     return cached.template;
   }
 
-  const template = stripFrontmatter(await readFile(path, "utf8"));
+  const template = stripFrontmatter(await NodeFSPromises.readFile(path, "utf8"));
   promptTemplateCache.set(path, {
     size: templateStats.size,
     mtimeMs: templateStats.mtimeMs,

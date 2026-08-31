@@ -11,8 +11,8 @@
  * suggestion. A missing name falls back to the filename. Rejected files produce
  * source-scoped diagnostics without exposing absolute paths, while valid siblings remain available.
  */
-import { open, opendir } from "fs/promises";
-import { basename, join } from "path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import { parse } from "smol-toml";
 import {
   PROVIDER_CATALOG_MAX_CODEX_AGENT_FILE_BYTES,
@@ -96,14 +96,14 @@ export function resolveCodexAgentDiscoveryRoots(
           ?? nonEmptyEnvironmentPath(environment.HOME)
         : nonEmptyEnvironmentPath(environment.HOME)
           ?? nonEmptyEnvironmentPath(environment.USERPROFILE);
-      return home ? join(home, ".codex") : undefined;
+      return home ? NodePath.join(home, ".codex") : undefined;
     })();
   const roots: CodexAgentDiscoveryRoot[] = [];
   if (codexHome) {
-    roots.push({ scope: "global", directory: join(codexHome, CODEX_GLOBAL_AGENT_DIRECTORY) });
+    roots.push({ scope: "global", directory: NodePath.join(codexHome, CODEX_GLOBAL_AGENT_DIRECTORY) });
   }
   if (cwd) {
-    roots.push({ scope: "project", directory: join(cwd, ...CODEX_PROJECT_AGENT_DIRECTORY) });
+    roots.push({ scope: "project", directory: NodePath.join(cwd, ...CODEX_PROJECT_AGENT_DIRECTORY) });
   }
   return roots.filter((root, index) => (
     roots.findIndex((candidate) => candidate.directory === root.directory) === index
@@ -111,7 +111,7 @@ export function resolveCodexAgentDiscoveryRoots(
 }
 
 function diagnosticSource(path: string): string {
-  return basename(path)
+  return NodePath.basename(path)
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .trim()
     .slice(0, DIAGNOSTIC_SOURCE_MAX_CHARS) || "unknown agent source";
@@ -149,7 +149,7 @@ async function readBoundedAgentFile(
 ): Promise<CodexAgentFileReadResult> {
   let file;
   try {
-    file = await open(path, "r");
+    file = await NodeFSPromises.open(path, "r");
     const buffer = Buffer.allocUnsafe(maxBytes + 1);
     let totalBytesRead = 0;
     while (totalBytesRead < buffer.length) {
@@ -236,7 +236,7 @@ async function directTomlFiles(
       excessiveFiles = true;
       break;
     }
-    files.push(join(root.directory, entry.name));
+    files.push(NodePath.join(root.directory, entry.name));
   }
   files.sort((left, right) => left.localeCompare(right));
   return { files, excessiveFiles, excessiveEntries };
@@ -272,7 +272,7 @@ function createCodexAgentScan(input: DiscoverCodexStandaloneAgentsInput): CodexA
   return {
     limits: input.limits ?? DEFAULT_LIMITS,
     readFile: input.readFile ?? readBoundedAgentFile,
-    openDirectory: input.openDirectory ?? opendir,
+    openDirectory: input.openDirectory ?? NodeFSPromises.opendir,
     maxDirectoryEntriesPerRoot: input.limits?.maxDirectoryEntriesPerRoot ?? DEFAULT_LIMITS.maxFiles,
     byName: new Map<string, SelectableProviderAgent>(),
     diagnostics: [],

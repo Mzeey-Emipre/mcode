@@ -189,10 +189,10 @@ describe("buildCursorTurnArgs", () => {
 
 // ── runCursorTurn (mocked child) ──────────────────────────────────────────
 
-class FakeChild extends EventEmitter {
-  stdin = new PassThrough();
-  stdout = new PassThrough();
-  stderr = new PassThrough();
+class FakeChild extends NodeEvents.EventEmitter {
+  stdin = new NodeStream.PassThrough();
+  stdout = new NodeStream.PassThrough();
+  stderr = new NodeStream.PassThrough();
   pid: number | undefined = 12345;
   killed = false;
   kill = vi.fn((_signal?: string) => {
@@ -214,7 +214,7 @@ function fakeSpawn(): FakeSpawnHarness {
     calls.push({ command, args });
     // The "spawn" event is what node would emit asynchronously after fork.
     queueMicrotask(() => child.emit("spawn"));
-    return child as unknown as ChildProcess;
+    return child as unknown as NodeChildProcess.ChildProcess;
   };
   return { spawn, child, calls };
 }

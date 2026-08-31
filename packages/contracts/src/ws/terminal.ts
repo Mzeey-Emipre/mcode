@@ -221,10 +221,14 @@ export const TERMINAL_V1_METHODS = {
 
 /** Strict discriminated request schema for all Terminal v1 methods. */
 export const TerminalRpcRequestSchema = lazySchema(() => {
-  const variants = TERMINAL_V1_METHOD_NAMES.map((method) =>
-    z.object({ id, method: z.literal(method), params: TERMINAL_V1_METHODS[method].params }).strict(),
-  ) as unknown as [z.ZodDiscriminatedUnionOption<"method">, ...z.ZodDiscriminatedUnionOption<"method">[]];
-  return z.discriminatedUnion("method", variants).refine(
+  const variants: z.ZodDiscriminatedUnionOption<"method">[] = [];
+  for (const method of TERMINAL_V1_METHOD_NAMES) {
+    variants.push(z.object({ id, method: z.literal(method), params: TERMINAL_V1_METHODS[method].params }).strict());
+  }
+  return z.discriminatedUnion(
+    "method",
+    variants as unknown as [z.ZodDiscriminatedUnionOption<"method">, ...z.ZodDiscriminatedUnionOption<"method">[]],
+  ).refine(
     (value) => new TextEncoder().encode(JSON.stringify(value)).length <= TERMINAL_RPC_MAX_BYTES,
     "Terminal request exceeds 128 KiB",
   );
@@ -246,39 +250,37 @@ export function parseTerminalRpcRequest(raw: string): z.infer<ReturnType<typeof 
 
 const terminalRpcResponseSchemas = new Map<TerminalV1MethodName, () => z.ZodTypeAny>();
 
-const buildTerminalRpcResponseSchema = (method: TerminalV1MethodName): z.ZodTypeAny => {
-  const methodContract = TERMINAL_V1_METHODS[method];
-  const methodError = TerminalErrorSchema().superRefine((error, context) => {
-    const expectedRetry = methodContract.errors[error.code];
-    if (expectedRetry === undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Error ${error.code} is not valid for ${method}`,
-      });
-    } else if (error.retry !== expectedRetry) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Error ${error.code} requires retry class ${expectedRetry}`,
-      });
-    }
-  });
-  const maxResponseBytes = method === "terminal.diagnostics.getBundle"
-    ? TERMINAL_DIAGNOSTICS_RESPONSE_MAX_BYTES
-    : TERMINAL_RPC_MAX_BYTES;
-  return z.union([
-    z.object({ id, result: methodContract.result }).strict(),
-    z.object({ id, error: methodError }).strict(),
-  ]).refine(
-    (value) => new TextEncoder().encode(JSON.stringify(value)).length <= maxResponseBytes,
-    `Terminal response exceeds ${maxResponseBytes} bytes`,
-  );
-};
-
 /** Returns the cached strict response envelope schema for one Terminal v1 method. */
 export function TerminalRpcResponseSchema(method: TerminalV1MethodName): z.ZodTypeAny {
   let schema = terminalRpcResponseSchemas.get(method);
   if (!schema) {
-    schema = lazySchema(() => buildTerminalRpcResponseSchema(method));
+    schema = lazySchema(() => {
+      const methodContract = TERMINAL_V1_METHODS[method];
+      const methodError = TerminalErrorSchema().superRefine((error, context) => {
+        const expectedRetry = methodContract.errors[error.code];
+        if (expectedRetry === undefined) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Error ${error.code} is not valid for ${method}`,
+          });
+        } else if (error.retry !== expectedRetry) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Error ${error.code} requires retry class ${expectedRetry}`,
+          });
+        }
+      });
+      const maxResponseBytes = method === "terminal.diagnostics.getBundle"
+        ? TERMINAL_DIAGNOSTICS_RESPONSE_MAX_BYTES
+        : TERMINAL_RPC_MAX_BYTES;
+      return z.union([
+        z.object({ id, result: methodContract.result }).strict(),
+        z.object({ id, error: methodError }).strict(),
+      ]).refine(
+        (value) => new TextEncoder().encode(JSON.stringify(value)).length <= maxResponseBytes,
+        `Terminal response exceeds ${maxResponseBytes} bytes`,
+      );
+    });
     terminalRpcResponseSchemas.set(method, schema);
   }
   return schema();

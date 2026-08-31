@@ -5,8 +5,8 @@ const { mockSpawn, mockWhich } = vi.hoisted(() => ({
   mockWhich: vi.fn(),
 }));
 
-vi.mock("child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("child_process")>();
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: mockSpawn };
 });
 

@@ -9,8 +9,8 @@
  *   sendMessage → server.sendTurn → notifications stream in → turn.completed/failed
  */
 
-import { EventEmitter } from "events";
-import { createHash, randomUUID } from "crypto";
+import * as NodeEvents from "node:events";
+import * as NodeCrypto from "node:crypto";
 import { logger } from "@mcode/shared";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 import {
@@ -526,7 +526,7 @@ function childEventIdentity(event: ProviderRuntimeEvent): string | undefined {
   const evidence = event.extension?.child;
   if (!evidence) return undefined;
   if (evidence.nativeEventId) return evidence.nativeEventId;
-  return `codex-child:${createHash("sha256").update(JSON.stringify([
+  return `codex-child:${NodeCrypto.createHash("sha256").update(JSON.stringify([
     event.event.type,
     evidence.nativeThreadId,
     evidence.nativeTurnId ?? "",
@@ -560,7 +560,7 @@ function completedAssistantText(item: CompletedItem | undefined): string {
 }
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
-export class CodexProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
+export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
   readonly id = "codex" as const;
   readonly descriptor = Object.freeze({
     id: "codex" as const,
@@ -2414,7 +2414,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     threadId: string,
     request: CodexApprovalRequest,
   ): Promise<unknown> {
-    const requestId = randomUUID();
+    const requestId = NodeCrypto.randomUUID();
     const synthesized = synthesizeCodexPermissionRequest({
       threadId,
       requestId,

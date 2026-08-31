@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 import {
   BROWSER_CONFORMANCE_GENERATOR_VERSION,
   BROWSER_CONFORMANCE_SCENARIO_VERSION,
@@ -127,13 +127,13 @@ export async function writeBrowserConformanceReplayBundle(
   options: { readonly workspaceRoot: string; readonly fileName?: string },
 ): Promise<string> {
   const fileName = safeFileName(options.fileName ?? `replay-${bundle.seed}.json`);
-  const directory = resolve(options.workspaceRoot, BROWSER_CONFORMANCE_REPLAY_DIRECTORY);
-  const filePath = join(directory, fileName);
+  const directory = NodePath.resolve(options.workspaceRoot, BROWSER_CONFORMANCE_REPLAY_DIRECTORY);
+  const filePath = NodePath.join(directory, fileName);
   if (!filePath.startsWith(`${directory}\\`) && !filePath.startsWith(`${directory}/`)) {
     throw new RangeError("Replay path must remain inside the conformance verification directory");
   }
-  await mkdir(directory, { recursive: true });
-  await writeFile(filePath, serializeBrowserConformanceReplayBundle(bundle), "utf8");
+  await NodeFSPromises.mkdir(directory, { recursive: true });
+  await NodeFSPromises.writeFile(filePath, serializeBrowserConformanceReplayBundle(bundle), "utf8");
   return filePath;
 }
 

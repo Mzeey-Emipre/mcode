@@ -1,6 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { Readable, Writable } from "node:stream";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeStream from "node:stream";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -70,7 +70,7 @@ export class CursorSideChannel {
 
     const turnState = createCursorAcpTurnState();
     const todoSnapshot = createCursorTodoSnapshot();
-    const sideChannelThreadId = `sidechannel-${randomUUID()}`;
+    const sideChannelThreadId = `sidechannel-${NodeCrypto.randomUUID()}`;
     const client: Client = {
       // The throwaway summary process must never modify user state.
       requestPermission: async () => ({ outcome: { outcome: "cancelled" } }),
@@ -132,8 +132,8 @@ export class CursorSideChannel {
     if (!child.stdin || !child.stdout) {
       throw new Error("Failed to spawn cursor-agent: stdio pipes unavailable");
     }
-    const out = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
-    const input = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
+    const out = NodeStream.Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
+    const input = NodeStream.Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
     const connection = new ClientSideConnection(() => args.client, ndJsonStream(out, input));
     try {
       await this.acpHandshake(connection, "cursor-side-channel");

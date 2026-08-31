@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { getCatalogEntry, type Settings } from "@mcode/contracts";
 import { buildCursorAcpArgs } from "./cursor-acp-spawn-args.js";
 

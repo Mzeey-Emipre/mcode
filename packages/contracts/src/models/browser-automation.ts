@@ -875,6 +875,7 @@ const requestBase = {
   deadline: z.number().int().positive(),
   expectedControlEpoch: z.number().int().nonnegative(),
 };
+const requestVariantBaseSchema = z.object(requestBase).strict();
 
 const actTarget = z.object({ target: BrowserAutomationTargetSchema() }).strict();
 const actTimeout = z.number().int().min(1).max(BROWSER_AUTOMATION_MAX_TIMEOUT_MS).optional();
@@ -963,7 +964,7 @@ export type BrowserAutomationTabsArgs = z.infer<ReturnType<typeof BrowserAutomat
 const requestVariant = <T extends BrowserAutomationRequestOperation>(
   operation: T,
   args: z.ZodTypeAny,
-) => z.object({ ...requestBase, operation: z.literal(operation), args }).strict();
+) => requestVariantBaseSchema.extend({ operation: z.literal(operation), args });
 
 /** Versioned, scoped request envelope for every browser operation. */
 export const BrowserAutomationRequestSchema = lazySchema(() =>
@@ -1067,8 +1068,9 @@ const actionResultFields = {
   title: z.string().max(4_096),
   controlEpoch: z.number().int().nonnegative(),
 };
+const actionResultBaseSchema = z.object({ operation: z.never(), ...actionResultFields }).strict();
 const actionResult = <T extends BrowserAutomationRequestOperation>(operation: T) =>
-  z.object({ operation: z.literal(operation), ...actionResultFields }).strict();
+  actionResultBaseSchema.extend({ operation: z.literal(operation) });
 
 /** One content-free receipt for a bounded Browser mutation step. */
 export const BrowserAutomationMutationReceiptSchema = lazySchema(() => z.object({

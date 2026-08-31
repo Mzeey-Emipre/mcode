@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EventEmitter } from "events";
-import { PassThrough } from "stream";
+import * as NodeEvents from "node:events";
+import * as NodeStream from "node:stream";
 
 /**
  * Exercises the Codex `app-server` initialize handshake through a fake RPC
@@ -14,13 +14,13 @@ const { mockSpawn, mockExecFile, mockWhich } = vi.hoisted(() => ({
   mockWhich: vi.fn(),
 }));
 
-vi.mock("child_process", () => ({
+vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
   execFile: vi.fn(),
 }));
 
-vi.mock("util", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("util")>();
+vi.mock("node:util", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:util")>();
   return { ...actual, promisify: () => mockExecFile };
 });
 
@@ -163,10 +163,10 @@ describe("performInitialize", () => {
   });
 });
 
-type FakeChild = EventEmitter & {
-  stdin: PassThrough;
-  stdout: PassThrough;
-  stderr: PassThrough;
+type FakeChild = NodeEvents.EventEmitter & {
+  stdin: NodeStream.PassThrough;
+  stdout: NodeStream.PassThrough;
+  stderr: NodeStream.PassThrough;
   pid: number;
   kill: ReturnType<typeof vi.fn>;
 };
@@ -186,11 +186,11 @@ function findUnexpectedExitLogFields(): { stderrTail?: string[] } | undefined {
 }
 
 /** Builds an EventEmitter-backed fake child with stream-backed stdio. */
-function makeFakeChild(): { child: FakeChild; stdin: PassThrough; stdout: PassThrough; stderr: PassThrough } {
-  const stdin = new PassThrough();
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  const child = new EventEmitter() as FakeChild;
+function makeFakeChild(): { child: FakeChild; stdin: NodeStream.PassThrough; stdout: NodeStream.PassThrough; stderr: NodeStream.PassThrough } {
+  const stdin = new NodeStream.PassThrough();
+  const stdout = new NodeStream.PassThrough();
+  const stderr = new NodeStream.PassThrough();
+  const child = new NodeEvents.EventEmitter() as FakeChild;
   child.stdin = stdin;
   child.stdout = stdout;
   child.stderr = stderr;
@@ -207,7 +207,7 @@ function makeFakeChild(): { child: FakeChild; stdin: PassThrough; stdout: PassTh
  */
 function harnessFakeServer(
   respond: (req: RpcRequest) => Record<string, unknown> | null,
-): { child: FakeChild; stderr: PassThrough } {
+): { child: FakeChild; stderr: NodeStream.PassThrough } {
   const { child, stdin, stdout, stderr } = makeFakeChild();
 
   mockWhich.mockResolvedValue("/usr/bin/codex");

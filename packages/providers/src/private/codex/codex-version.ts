@@ -1,4 +1,4 @@
-import { spawnSync, execFile } from "child_process";
+import * as NodeChildProcess from "node:child_process";
 
 /** Shell metacharacters that must not appear in a CLI path passed to `shell: true`. */
 const SHELL_METACHAR_RE = /[;&|`$(){}!<>"'\s\n\r]/;
@@ -41,7 +41,7 @@ export function checkCodexVersion(
     return cached.result;
   }
 
-  const result = spawnSync(cliPath, ["--version"], {
+  const result = NodeChildProcess.spawnSync(cliPath, ["--version"], {
     shell: true,
     timeout: 5000,
     encoding: "utf8",
@@ -93,7 +93,7 @@ export function warmCodexVersionCache(cliPath: string): Promise<void> {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
-    execFile(
+    NodeChildProcess.execFile(
       cliPath,
       ["--version"],
       { shell: true, timeout: 5000, windowsHide: true, encoding: "utf8" },

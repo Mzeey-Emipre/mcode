@@ -1,4 +1,4 @@
-import { fileURLToPath } from "node:url";
+import * as NodeURL from "node:url";
 import {
   createClaudeProvider,
   createCodexProvider,
@@ -8,11 +8,11 @@ import {
 import type { ProviderConformanceRegistration } from "./types.js";
 
 function fixtureFile(providerId: ProviderConformanceRegistration["providerId"]): string {
-  return fileURLToPath(new URL(`./fixtures/${providerId}-core.synthetic.json`, import.meta.url));
+  return NodeURL.fileURLToPath(new URL(`./fixtures/${providerId}-core.synthetic.json`, import.meta.url));
 }
 
 function namedFixtureFile(fileName: string): string {
-  return fileURLToPath(new URL(`./fixtures/${fileName}`, import.meta.url));
+  return NodeURL.fileURLToPath(new URL(`./fixtures/${fileName}`, import.meta.url));
 }
 
 /** Enabled Provider factories and the offline evidence required for each one. */

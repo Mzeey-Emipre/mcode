@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BROWSER_CONFORMANCE_REPLAY_DIRECTORY,
@@ -18,7 +18,7 @@ import {
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(temporaryRoots.splice(0).map((root) => NodeFSPromises.rm(root, { recursive: true, force: true })));
 });
 
 function createReplayInput() {
@@ -117,10 +117,10 @@ describe("Browser conformance replay bundles", () => {
     expect(JSON.stringify(sanitized)).not.toContain("secret");
     expect((sanitized as { nested: readonly unknown[] }).nested).toHaveLength(128);
 
-    const root = await mkdtemp(join(tmpdir(), "mcode-browser-conformance-"));
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-browser-conformance-"));
     temporaryRoots.push(root);
     const path = await writeBrowserConformanceReplayBundle(createBrowserConformanceReplayBundle(createReplayInput()), { workspaceRoot: root });
-    expect(path.startsWith(join(root, BROWSER_CONFORMANCE_REPLAY_DIRECTORY))).toBe(true);
-    expect(JSON.parse(await readFile(path, "utf8")).seed).toBe(42);
+    expect(path.startsWith(NodePath.join(root, BROWSER_CONFORMANCE_REPLAY_DIRECTORY))).toBe(true);
+    expect(JSON.parse(await NodeFSPromises.readFile(path, "utf8")).seed).toBe(42);
   });
 });

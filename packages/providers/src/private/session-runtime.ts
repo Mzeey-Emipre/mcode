@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import type { ProviderProcessPort } from "../host-ports.js";
 
 const DEFAULT_IDLE_TTL_MS = 10 * 60 * 1_000;

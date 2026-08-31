@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
+import * as NodeEvents from "node:events";
+import type * as NodeChildProcess from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import type { Client, ClientSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
 import { AgentEventType } from "@mcode/contracts";
@@ -11,11 +11,11 @@ import {
 } from "../cursor-acp-event-mapper.js";
 import { resolveCursorAssistantMessageContent } from "../../stream-json/cursor-stream-event-mapper.js";
 
-function fakeChild(): ChildProcess {
-  return Object.assign(new EventEmitter(), {
+function fakeChild(): NodeChildProcess.ChildProcess {
+  return Object.assign(new NodeEvents.EventEmitter(), {
     kill: vi.fn(() => true),
     pid: 1234,
-  }) as unknown as ChildProcess;
+  }) as unknown as NodeChildProcess.ChildProcess;
 }
 
 describe("mapCursorAcpSessionNotification", () => {

@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
 import {
   BoundedToolOutputBuffer,
@@ -16,7 +16,7 @@ describe("bounded tool output", () => {
 
   beforeAll(() => {
     originalDataDir = process.env.MCODE_DATA_DIR;
-    testDataDir = mkdtempSync(join(tmpdir(), "mcode-bounded-output-"));
+    testDataDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-bounded-output-"));
     process.env.MCODE_DATA_DIR = testDataDir;
   });
 
@@ -26,11 +26,11 @@ describe("bounded tool output", () => {
     } else {
       process.env.MCODE_DATA_DIR = originalDataDir;
     }
-    rmSync(testDataDir, { recursive: true, force: true });
+    NodeFS.rmSync(testDataDir, { recursive: true, force: true });
   });
 
   beforeEach(() => {
-    rmSync(join(testDataDir, "artifacts", "tool-output"), {
+    NodeFS.rmSync(NodePath.join(testDataDir, "artifacts", "tool-output"), {
       recursive: true,
       force: true,
     });
@@ -66,18 +66,18 @@ describe("bounded tool output", () => {
     expect(Buffer.byteLength(result.output, "utf8")).toBe(TOOL_OUTPUT_PREVIEW_BYTES);
     expect(result.output.startsWith("A".repeat(1024))).toBe(true);
     expect(result.output.endsWith("Z".repeat(1024))).toBe(true);
-    expect(readFileSync(result.outputArtifactPath!, "utf8")).toBe(fullOutput);
+    expect(NodeFS.readFileSync(result.outputArtifactPath!, "utf8")).toBe(fullOutput);
   });
 
   it("sanitizes artifact path segments", () => {
     const path = resolveToolOutputArtifactPath("../thread", "../tool");
     const dotPath = resolveToolOutputArtifactPath("..", ".");
 
-    expect(path).toContain(join("artifacts", "tool-output"));
+    expect(path).toContain(NodePath.join("artifacts", "tool-output"));
     expect(path).not.toContain("..");
-    expect(dotPath).toContain(join("artifacts", "tool-output"));
-    expect(basename(dirname(dotPath))).toMatch(/^thread-[a-f0-9]{24}$/);
-    expect(basename(dotPath)).toMatch(/^tool-[a-f0-9]{24}\.txt$/);
+    expect(dotPath).toContain(NodePath.join("artifacts", "tool-output"));
+    expect(NodePath.basename(NodePath.dirname(dotPath))).toMatch(/^thread-[a-f0-9]{24}$/);
+    expect(NodePath.basename(dotPath)).toMatch(/^tool-[a-f0-9]{24}\.txt$/);
   });
 
   it("drops forced artifacts for small untruncated output", () => {
@@ -118,11 +118,11 @@ describe("bounded tool output", () => {
     const largeOutput = "x".repeat(300 * 1024);
 
     buffer.append("small");
-    rmSync(dirname(artifactPath), { recursive: true, force: true });
+    NodeFS.rmSync(NodePath.dirname(artifactPath), { recursive: true, force: true });
     buffer.append(largeOutput);
     const result = buffer.finalize();
 
-    expect(readFileSync(result.outputArtifactPath!, "utf8")).toBe(`small${largeOutput}`);
+    expect(NodeFS.readFileSync(result.outputArtifactPath!, "utf8")).toBe(`small${largeOutput}`);
   });
 
   it("prunes stale artifacts and keeps fresh artifacts", () => {
@@ -137,13 +137,13 @@ describe("bounded tool output", () => {
       output: "y".repeat(300 * 1024),
     });
     const oldTime = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
-    utimesSync(stale.outputArtifactPath!, oldTime, oldTime);
+    NodeFS.utimesSync(stale.outputArtifactPath!, oldTime, oldTime);
 
     const removed = pruneStaleToolOutputArtifacts();
 
     expect(removed).toBe(1);
-    expect(existsSync(stale.outputArtifactPath!)).toBe(false);
-    expect(existsSync(fresh.outputArtifactPath!)).toBe(true);
-    expect(statSync(fresh.outputArtifactPath!).isFile()).toBe(true);
+    expect(NodeFS.existsSync(stale.outputArtifactPath!)).toBe(false);
+    expect(NodeFS.existsSync(fresh.outputArtifactPath!)).toBe(true);
+    expect(NodeFS.statSync(fresh.outputArtifactPath!).isFile()).toBe(true);
   });
 });

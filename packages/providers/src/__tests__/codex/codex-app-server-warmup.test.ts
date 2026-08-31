@@ -5,8 +5,8 @@ const boundaries = vi.hoisted(() => ({
   which: vi.fn(),
 }));
 
-vi.mock("child_process", async () => {
-  const actual = await vi.importActual<typeof import("child_process")>("child_process");
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
   return { ...actual, spawn: boundaries.spawn };
 });
 

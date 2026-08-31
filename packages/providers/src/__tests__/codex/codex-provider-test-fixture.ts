@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { CodexProvider as PackageCodexProvider } from "../../private/codex/codex-provider.js";
 import type { CodexProviderPorts } from "../../factory-types.js";
 import type {
@@ -71,7 +71,7 @@ export class BrowserAutomationSessionLease {
 
   /** Stages one browser scope. */
   stage(scope: TestBrowserScope): ProviderBrowserLeaseHandle {
-    const leaseId = randomUUID();
+    const leaseId = NodeCrypto.randomUUID();
     this.pending.set(leaseId, { scope });
     return { leaseId, expiresAt: Date.now() + 30_000 };
   }
@@ -84,8 +84,8 @@ export class BrowserAutomationSessionLease {
     const pending = this.pending.get(stage.leaseId);
     this.pending.delete(stage.leaseId);
     if (!pending || !this.configured) return null;
-    const token = randomBytes(32).toString("base64url");
-    const credentialId = randomUUID();
+    const token = NodeCrypto.randomBytes(32).toString("base64url");
+    const credentialId = NodeCrypto.randomUUID();
     this.credentials.add(token);
     this.active.set(stage.leaseId, { token, credentialId, scope: pending.scope });
     return {

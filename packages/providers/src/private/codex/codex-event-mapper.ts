@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "crypto";
+import * as NodeCrypto from "node:crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -394,7 +394,7 @@ export class CodexEventMapper {
       evidence.nativeItemId ?? "",
       evidence.itemEventKey ?? "",
     ]);
-    return `codex-child:${createHash("sha256").update(structuralEvidence).digest("hex")}`;
+    return `codex-child:${NodeCrypto.createHash("sha256").update(structuralEvidence).digest("hex")}`;
   }
 
   private dedupeChildEvents(events: CodexMappedEvent[]): CodexMappedEvent[] {
@@ -1912,12 +1912,12 @@ export class CodexEventMapper {
   }
 
   private mapCompletedFunctionCall(item: CompletedItem, notification: CodexNotification): CodexMappedEvent[] {
-    const toolCallId = item.id ?? `fc-${randomUUID()}`;
+    const toolCallId = item.id ?? `fc-${NodeCrypto.randomUUID()}`;
     return this.completedToolEvents(item, toolCallId, notification, { isError: false, output: typeof item.output === "string" ? item.output : "" });
   }
 
   private mapCompletedCommand(item: CompletedItem, notification: CodexNotification): CodexMappedEvent[] {
-    const toolCallId = item.id ?? `cmd-${randomUUID()}`;
+    const toolCallId = item.id ?? `cmd-${NodeCrypto.randomUUID()}`;
     const bufferedOutput = this.takeCommandOutputBuffer(item, toolCallId);
     const fallback = this.commandCompletionOutput(item);
     const exitCode = typeof item.exitCode === "number" && Number.isInteger(item.exitCode) ? item.exitCode : undefined;
@@ -1945,12 +1945,12 @@ export class CodexEventMapper {
   }
 
   private mapCompletedFileChange(item: CompletedItem, notification: CodexNotification): CodexMappedEvent[] {
-    const toolCallId = item.id ?? `fchg-${randomUUID()}`;
+    const toolCallId = item.id ?? `fchg-${NodeCrypto.randomUUID()}`;
     return this.completedToolEvents(item, toolCallId, notification, { isError: false, output: (item.changes ?? []).map((change) => change.path).join(", ") });
   }
 
   private mapCompletedMcpTool(item: CompletedItem, notification: CodexNotification): CodexMappedEvent[] {
-    const toolCallId = item.id ?? `mcp-${randomUUID()}`;
+    const toolCallId = item.id ?? `mcp-${NodeCrypto.randomUUID()}`;
     return this.completedToolEvents(item, toolCallId, notification, { isError: Boolean(item.error), output: String(item.error ?? item.result ?? "") });
   }
 
@@ -1966,7 +1966,7 @@ export class CodexEventMapper {
   }
 
   private mapCompletedCollab(item: CompletedItem, notification: CodexNotification, route: "main" | "child"): CodexMappedEvent[] {
-    const toolCallId = item.id ?? `collab-${randomUUID()}`;
+    const toolCallId = item.id ?? `collab-${NodeCrypto.randomUUID()}`;
     if (this.isWaitCollab(item)) return this.mapWaitStates(item);
     const isSpawn = this.isSpawnAgentCollab(item);
     if (route === "main") this.rememberPendingChildPrompt(item);
