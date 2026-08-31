@@ -64,6 +64,11 @@ const PROVIDER_SUBAGENT_BLOCK = [
   "A child-agent request does not authorize Mcode thread control; use thread tools only for an explicit Mcode thread request.",
 ].join(" ");
 
+const REPOSITORY_SEARCH_BLOCK = [
+  "For broad repository searches, first list files with rg -l.",
+  "Exclude fixtures and captured traces (*.ndjson) unless the task targets them, and bound line output with rg --max-columns 240 before reading matches.",
+].join(" ");
+
 function nestedDelegationBlock(model: string | undefined): string | undefined {
   const candidate = model?.trim();
   if (!candidate) return undefined;
@@ -80,6 +85,10 @@ function capInstructionText(text: string): string {
   if (text.length <= MCODE_INSTRUCTIONS_MAX_CHARS) return text;
   const marker = "\n[ Mcode runtime guidance truncated at 4000 characters. ]";
   return text.slice(0, MCODE_INSTRUCTIONS_MAX_CHARS - marker.length) + marker;
+}
+
+function appendBlockIfItFits(blocks: string[], block: string): void {
+  if ([...blocks, block].join("\n\n").length <= MCODE_INSTRUCTIONS_MAX_CHARS) blocks.push(block);
 }
 
 const SAFE_THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
@@ -105,6 +114,7 @@ export function buildMcodeInstructionPlan(
     blocks.push(`${THREAD_CONTROL_BLOCK} Source thread: ${capabilities.threadControl.sourceThreadId}.`);
   }
   if (capabilities.browserAutomation) blocks.push(BROWSER_BLOCK);
+  appendBlockIfItFits(blocks, REPOSITORY_SEARCH_BLOCK);
   return { capabilities, text: capInstructionText(blocks.join("\n\n")) };
 }
 

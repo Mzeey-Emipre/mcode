@@ -30,6 +30,17 @@ describe("Mcode runtime instruction plan", () => {
     expect(plan.text).not.toContain("mcode-browser");
   });
 
+  it("bounds broad repository searches before they print captured traces", () => {
+    const plan = buildMcodeInstructionPlan({
+      threadControlGranted: false,
+      browserAutomationGranted: false,
+    });
+
+    expect(plan.text).toContain("first list files with rg -l");
+    expect(plan.text).toContain("fixtures and captured traces (*.ndjson)");
+    expect(plan.text).toContain("rg --max-columns 240");
+  });
+
   it("includes only capabilities proven available", () => {
     const plan = buildMcodeInstructionPlan({
       sourceThreadId: "thread-source",
@@ -44,6 +55,7 @@ describe("Mcode runtime instruction plan", () => {
     expect(plan.text).toContain("manage Mcode threads only when explicitly asked by the user");
     expect(plan.text).not.toMatch(/delegat(?:e|ed|ion|ing)/i);
     expect(plan.text).toContain(MCODE_BROWSER_GUIDE.trim());
+    expect(plan.text).not.toContain("first list files with rg -l");
     expect(plan.text).toContain("thread-source");
     expect(plan.text).not.toContain("http://");
     expect(plan.text).not.toContain("Bearer");
