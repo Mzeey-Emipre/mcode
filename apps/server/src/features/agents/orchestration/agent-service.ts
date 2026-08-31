@@ -754,15 +754,6 @@ export class AgentService {
     this.eventPublication.publish(published);
   }
 
-  /**
-   * Admit a complete turn command, then retain only runtime-owned provider dispatch.
-   */
-  async sendMessage(command: SendMessageCommand): Promise<void> {
-    const admitted = await this.turnAdmissions.admit(command, this.runtimeAdmissionAuthority());
-    if (admitted.kind !== "dispatch") return;
-    await this.dispatchPreparedTurn(admitted);
-  }
-
   /** Expose AgentService's runtime state without giving admission independent lifecycle authority. */
   private runtimeAdmissionAuthority(): TurnRuntimeAdmissionAuthority {
     return {
@@ -1034,72 +1025,6 @@ export class AgentService {
     };
   }
 
-  /** Dispatch a queued Turn that the automatic Setup lifecycle claimed after commit. */
-  async dispatchQueuedAutomaticTurn(
-    submission: WorkspaceEnvironmentQueuedTurnSubmission,
-  ): Promise<WorkspaceEnvironmentAutomaticSetupDispatch> {
-    let resolveStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      resolveStarted = resolve;
-    });
-    let resolveCompletion!: () => void;
-    const completion = new Promise<void>((resolve) => {
-      resolveCompletion = resolve;
-    });
-    const send = this.sendMessage({
-      ...this.turnAdmissions.queuedCommand(submission),
-      onTurnStarted: (runtime) => {
-        this.automaticQueuedTurnCompletionResolvers.set(runtime.turnExecutionId!, resolveCompletion);
-        resolveStarted();
-      },
-    });
-    await Promise.race([
-      started,
-      send.then(() => {
-        throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
-      }),
-    ]);
-    return { completion };
-  }
-
-  /** Provision a thread through its coordinator, then start its generic first-turn command. */
-  async createAndSend(command: CreateAndSendCommand): Promise<Thread & { runtimeSnapshot: TurnRuntimeSnapshot; warnings?: string[] }> {
-    const created = await this.threadCreation.createInitialTurn(command);
-    if (created.kind === "queued") {
-      return {
-        ...created.thread,
-        runtimeSnapshot: { threadId: created.thread.id, turnExecutionId: null, phase: "idle" },
-        ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
-      };
-    }
-    const runtimeSnapshot = await this.sendInitialMessageAndSnapshot(created.command, (err) => {
-      logger.error("createAndSend initial send failed", {
-        threadId: created.thread.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    return {
-      ...created.thread,
-      runtimeSnapshot,
-      ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
-    };
-  }
-
-  /** Stop exact active turn, sharing one in-flight operation per thread. */
-  async stopSession(threadId: string): Promise<AgentStopResult> {
-    const existing = this.stopOperationsByThread.get(threadId);
-    if (existing) return existing;
-    const operation = this.stopSessionInternal(threadId);
-    this.stopOperationsByThread.set(threadId, operation);
-    try {
-      return await operation;
-    } finally {
-      if (this.stopOperationsByThread.get(threadId) === operation) {
-        this.stopOperationsByThread.delete(threadId);
-      }
-    }
-  }
-
   /** Stop exact active turn, preserving provider failure as retryable RPC error. */
   private async stopSessionInternal(threadId: string): Promise<AgentStopResult> {
     const prepared = this.prepareStop(threadId);
@@ -1185,36 +1110,6 @@ export class AgentService {
       status: "already-terminal",
       dispatchState: prepared.dispatchState,
     };
-  }
-
-  /** Stop the active turn and discard any pooled provider session for a deleted thread. */
-  async teardownSession(threadId: string): Promise<void> {
-    const sessionId = `mcode-${threadId}`;
-    const thread = this.runtimePersistence.load(threadId);
-    const providerId = thread?.provider as ProviderId | undefined;
-    const wasActive = this.activeSessionIds.has(threadId);
-
-    if (wasActive) {
-      await this.stopSession(threadId);
-    }
-
-    if (!providerId) return;
-    let provider: import("@mcode/contracts").IAgentProvider;
-    try {
-      provider = this.providerRegistry.resolve(providerId);
-    } catch (err) {
-      logger.warn("Provider unavailable during thread teardown", {
-        threadId,
-        providerId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-    if (isSessionEvictable(provider)) {
-      await this.evictPooledSession(provider, sessionId);
-    } else if (!wasActive) {
-      await provider.stopSession(sessionId);
-    }
   }
 
   /** Number of currently active sessions. */
@@ -1770,15 +1665,6 @@ export class AgentService {
     return queued;
   }
 
-  /** Return narrow runtime capabilities for server-owned diagnostics and recovery infrastructure. */
-  runtimeAccess(): AgentRuntimeAccess {
-    return {
-      activeCount: () => this.activeCount(),
-      activeThreadIds: () => this.activeThreadIds(),
-      runtimeSnapshots: () => this.runtimeSnapshots(),
-    };
-  }
-
   /** Publish one unfinished deterministic assistant prefix for the private reliability harness. */
   private streamReliabilityAssistantText(threadId: string): { threadId: string; executionId: string; text: string } {
     if (!this.eventPublication.isBound()) {
@@ -1996,6 +1882,120 @@ export class AgentService {
   ): void {
     const parentToolCallId = this.narrativeStore.bufferToolCall(threadId, event);
     this.featureEffects?.onToolUse(threadId, { ...event, parentToolCallId });
+  }
+
+  /**
+   * Admit a complete turn command, then retain only runtime-owned provider dispatch.
+   */
+  async sendMessage(command: SendMessageCommand): Promise<void> {
+    const admitted = await this.turnAdmissions.admit(command, this.runtimeAdmissionAuthority());
+    if (admitted.kind !== "dispatch") return;
+    await this.dispatchPreparedTurn(admitted);
+  }
+
+  /** Provision a thread through its coordinator, then start its generic first-turn command. */
+  async createAndSend(command: CreateAndSendCommand): Promise<Thread & { runtimeSnapshot: TurnRuntimeSnapshot; warnings?: string[] }> {
+    const created = await this.threadCreation.createInitialTurn(command);
+    if (created.kind === "queued") {
+      return {
+        ...created.thread,
+        runtimeSnapshot: { threadId: created.thread.id, turnExecutionId: null, phase: "idle" },
+        ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
+      };
+    }
+    const runtimeSnapshot = await this.sendInitialMessageAndSnapshot(created.command, (err) => {
+      logger.error("createAndSend initial send failed", {
+        threadId: created.thread.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    return {
+      ...created.thread,
+      runtimeSnapshot,
+      ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
+    };
+  }
+
+  /** Dispatch a queued Turn that the automatic Setup lifecycle claimed after commit. */
+  async dispatchQueuedAutomaticTurn(
+    submission: WorkspaceEnvironmentQueuedTurnSubmission,
+  ): Promise<WorkspaceEnvironmentAutomaticSetupDispatch> {
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const send = this.sendMessage({
+      ...this.turnAdmissions.queuedCommand(submission),
+      onTurnStarted: (runtime) => {
+        this.automaticQueuedTurnCompletionResolvers.set(runtime.turnExecutionId!, resolveCompletion);
+        resolveStarted();
+      },
+    });
+    await Promise.race([
+      started,
+      send.then(() => {
+        throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
+      }),
+    ]);
+    return { completion };
+  }
+
+  /** Stop exact active turn, sharing one in-flight operation per thread. */
+  async stopSession(threadId: string): Promise<AgentStopResult> {
+    const existing = this.stopOperationsByThread.get(threadId);
+    if (existing) return existing;
+    const operation = this.stopSessionInternal(threadId);
+    this.stopOperationsByThread.set(threadId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.stopOperationsByThread.get(threadId) === operation) {
+        this.stopOperationsByThread.delete(threadId);
+      }
+    }
+  }
+
+  /** Stop the active turn and discard any pooled provider session for a deleted thread. */
+  async teardownSession(threadId: string): Promise<void> {
+    const sessionId = `mcode-${threadId}`;
+    const thread = this.runtimePersistence.load(threadId);
+    const providerId = thread?.provider as ProviderId | undefined;
+    const wasActive = this.activeSessionIds.has(threadId);
+
+    if (wasActive) {
+      await this.stopSession(threadId);
+    }
+
+    if (!providerId) return;
+    let provider: import("@mcode/contracts").IAgentProvider;
+    try {
+      provider = this.providerRegistry.resolve(providerId);
+    } catch (err) {
+      logger.warn("Provider unavailable during thread teardown", {
+        threadId,
+        providerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    if (isSessionEvictable(provider)) {
+      await this.evictPooledSession(provider, sessionId);
+    } else if (!wasActive) {
+      await provider.stopSession(sessionId);
+    }
+  }
+
+  /** Return narrow runtime capabilities for server-owned diagnostics and recovery infrastructure. */
+  runtimeAccess(): AgentRuntimeAccess {
+    return {
+      activeCount: () => this.activeCount(),
+      activeThreadIds: () => this.activeThreadIds(),
+      runtimeSnapshots: () => this.runtimeSnapshots(),
+    };
   }
 
   /** Stop all active agent sessions (for graceful shutdown). */
