@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MarkdownContent } from "../components/chat/MarkdownContent";
 import { CodeBlock } from "../components/chat/CodeBlock";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
@@ -96,13 +97,22 @@ describe("MarkdownContent link handling", () => {
     expect(screen.queryByTestId("markdown-link-favicon-frame")).not.toBeInTheDocument();
   });
 
-  it("shows a bare GitHub repo URL as owner/repo but opens the full URL", () => {
+  it("shows a bare GitHub repo URL as owner/repo but opens the full URL", async () => {
     render(<MarkdownContent content="https://github.com/milex-consulting/CaravanFE" />);
-    const link = screen.getByText("milex-consulting/CaravanFE");
+    const url = "https://github.com/milex-consulting/CaravanFE";
+    const link = screen.getByRole("link", { name: "milex-consulting/CaravanFE" });
+    const user = userEvent.setup();
 
-    expect(link.closest("a")).toHaveAttribute("title", "https://github.com/milex-consulting/CaravanFE");
-    fireEvent.click(link);
-    expect(mockOpenExternalUrl).toHaveBeenCalledWith("https://github.com/milex-consulting/CaravanFE");
+    expect(link).toHaveAttribute("href", url);
+    await user.hover(link);
+    await waitFor(() => {
+      const tooltip = document.querySelector<HTMLElement>("[data-slot='tooltip-content']");
+      expect(tooltip).toBeVisible();
+      expect(tooltip).toHaveTextContent(url);
+    });
+
+    await user.click(link);
+    expect(mockOpenExternalUrl).toHaveBeenCalledWith(url);
   });
 
   it("shows a bare GitHub issue URL as owner/repo#number", () => {
