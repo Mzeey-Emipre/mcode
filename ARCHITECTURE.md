@@ -848,7 +848,7 @@ Behavior changes are also exercised against the running app. Agents prefer brows
 | `test-frontend` | Runs Vitest on `apps/web` |
 | `build-check` | Builds both packages |
 
-All CI jobs use `oven-sh/setup-bun@v2`, Bun 1.2.14, and `bun install --frozen-lockfile`.
+All CI jobs use `oven-sh/setup-bun@v2`, Bun 1.4.0, and `bun install --frozen-lockfile`.
 
 ### Release Pipeline
 
