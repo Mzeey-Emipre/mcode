@@ -317,14 +317,13 @@ function VisibleBrowserHeader({ onStopAutomation }: { readonly onStopAutomation?
   );
 }
 
-function visibleBrowserRun() {
+function visibleBrowserRun(currentUrl: string | null) {
   const urlInput = screen.getByRole("textbox", { name: "Preview URL" }) as HTMLInputElement;
   const menu = screen.queryByTestId("browser-overflow-menu");
   const ownsBrowser = menu
     ? Boolean(within(menu).queryByRole("menuitem", { name: "Take control" }))
     : false;
   const controlOwner = ownsBrowser ? "agent" : "none";
-  const currentUrl = urlInput.getAttribute("title");
   return normalizeBrowserConformanceRun({
     outcome: { status: "completed", effect: "none", recovery: "none", ownership: controlOwner },
     finalState: {
@@ -345,6 +344,12 @@ function visibleBrowserRun() {
       truncated: false,
     }],
   });
+}
+
+async function visibleBrowserCurrentUrl(user: ReturnType<typeof userEvent.setup>): Promise<string> {
+  const urlInput = screen.getByRole("textbox", { name: "Preview URL" }) as HTMLInputElement;
+  await user.click(urlInput);
+  return urlInput.value;
 }
 
 function browserCall(output: string, isError = false): ToolCall {
@@ -477,10 +482,12 @@ describe("visible Browser conformance observer", () => {
     const onStopAutomation = vi.fn();
     render(<VisibleBrowserHeader onStopAutomation={onStopAutomation} />);
 
+    const initialUrl = await visibleBrowserCurrentUrl(user);
+    expect(initialUrl).toBe("https://example.test/checkout?token=redacted");
     await user.click(screen.getByRole("button", { name: "More browser tools" }));
     const takeover = await screen.findByRole("menuitem", { name: "Take control" });
     expect(takeover).toBeInTheDocument();
-    const agentRun = visibleBrowserRun();
+    const agentRun = visibleBrowserRun(initialUrl);
     expect(agentRun.visibleObservations[0]).toMatchObject({
       surface: "browser",
       controlOwner: "agent",
@@ -500,9 +507,11 @@ describe("visible Browser conformance observer", () => {
       });
       await Promise.resolve();
     });
+    const releasedUrl = await visibleBrowserCurrentUrl(user);
+    expect(releasedUrl).toBe(initialUrl);
     await user.click(screen.getByRole("button", { name: "More browser tools" }));
     expect(screen.queryByRole("menuitem", { name: "Take control" })).not.toBeInTheDocument();
-    expect(visibleBrowserRun().visibleObservations[0]?.controlOwner).toBe("none");
+    expect(visibleBrowserRun(releasedUrl).visibleObservations[0]?.controlOwner).toBe("none");
   });
 
   it("preserves partial receipts and the interrupted terminal meaning in narrative rows", () => {
