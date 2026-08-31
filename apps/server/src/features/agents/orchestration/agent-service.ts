@@ -1682,7 +1682,7 @@ export class AgentService {
     // only here, after the retry budget is spent; transient retries keep it.
     await this.turnAdmissions.rollbackCommandEffect(commandEffect);
     const rawMessage = err instanceof Error ? err.message : String(err);
-    const errorMessage = this.normalizeProviderError(rawMessage, effectiveProvider);
+    const errorMessage = normalizeAgentProviderError(effectiveProvider, rawMessage);
     const turnExecutionId = dispatch.turnRequest.turnExecutionId;
     logger.error("Provider send failed", { threadId, error: rawMessage });
 
@@ -1975,14 +1975,6 @@ export class AgentService {
         });
       });
     }
-  }
-
-  /**
-   * Normalize a raw provider error into clearer user-facing strings (CLI ENOENT,
-   * opaque upstream 5xx payloads, etc.).
-   */
-  private normalizeProviderError(message: string, provider: string): string {
-    return normalizeAgentProviderError(provider, message);
   }
 
   /**
