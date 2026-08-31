@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import * as NodeEvents from "node:events";
 import * as NodeStream from "node:stream";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -20,6 +21,12 @@ const spawnMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
   return { ...actual, spawn: spawnMock };
+});
+
+const TEST_HOST_RUNTIME: HostRuntime = Object.freeze({
+  platform: "win32",
+  architecture: "x64",
+  nodeAbi: "127",
 });
 
 const browserScope = (overrides: Partial<BrowserAutomationSessionLeaseScope> = {}) => ({
@@ -332,7 +339,10 @@ describe("Cursor browser MCP configuration", () => {
     const start = vi.spyOn(AcpSessionRuntime, "start").mockResolvedValue(runtime);
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.envService = { getEnv: vi.fn(() => ({})) };
-    provider.host = { processes: { attach: vi.fn(), terminateTree: vi.fn(async () => undefined) } };
+    provider.host = {
+      runtime: TEST_HOST_RUNTIME,
+      processes: { attach: vi.fn(), terminateTree: vi.fn(async () => undefined) },
+    };
     provider.settingsService = { get: vi.fn(() => ({ provider: { cursor: { verboseFailureLogs: false } } })) };
     provider.pendingBrowserContext = new Map();
 
@@ -358,7 +368,7 @@ describe("Cursor browser MCP configuration", () => {
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.envService = { getEnv: vi.fn(() => ({})) };
     provider.settingsService = { get: vi.fn(() => ({ provider: { cli: {}, cursor: {} } })) };
-    provider.host = { processes: { terminateTree } };
+    provider.host = { runtime: TEST_HOST_RUNTIME, processes: { terminateTree } };
     const sideChannel = provider.getSideChannel();
     sideChannel.acpHandshake = vi.fn().mockRejectedValue(
       Object.assign(new TypeError("invalid ACP payload"), { code: "INVALID_ACP_PAYLOAD" }),

@@ -1,10 +1,17 @@
 import "reflect-metadata";
+import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { describe, expect, it } from "vitest";
 import { container } from "tsyringe";
 import { openMemoryDatabase } from "../../../runtime/persistence/sqlite/database.js";
 import { TerminalCommandService } from "../../terminal/commands/terminal-command-service.js";
 import * as projects from "../index.js";
 import { registerProjectServices } from "../composition/register-projects.js";
+
+const TEST_HOST_RUNTIME: HostRuntime = Object.freeze({
+  platform: "win32",
+  architecture: "x64",
+  nodeAbi: "127",
+});
 
 describe("projects feature boundary", () => {
   it("exposes only the composition-root project symbols", () => {
@@ -34,6 +41,7 @@ describe("projects feature boundary", () => {
     const database = openMemoryDatabase();
     const child = container.createChildContainer();
     child.register("Database", { useValue: database });
+    child.register<HostRuntime>("HostRuntime", { useValue: TEST_HOST_RUNTIME });
     child.register(TerminalCommandService, {
       useValue: {
         prepare: async () => { throw new Error("Terminal execution is outside this composition test"); },
