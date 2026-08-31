@@ -166,17 +166,6 @@ export class ThreadService {
     this.threadRepo.updateStatus(threadId, "paused");
   }
 
-  /** Mark all active threads as interrupted (for graceful shutdown). */
-  markActiveThreadsInterrupted(activeThreadIds: string[]): void {
-    for (const threadId of activeThreadIds) {
-      try {
-        this.threadRepo.updateStatus(threadId, "interrupted");
-      } catch {
-        // best-effort
-      }
-    }
-  }
-
   /** Find a thread by its primary key. */
   findById(threadId: string): Thread | null {
     return this.threadRepo.findById(threadId);
