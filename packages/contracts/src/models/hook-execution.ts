@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { lazySchema } from "../utils/lazySchema.js";
 
 /** Persisted hook execution (PreToolUse / PostToolUse / Stop etc.) linked to
  * an assistant message. */
-export const HookExecutionRecordSchema = z.object({
+export const HookExecutionRecordSchema = lazySchema(() => z.object({
   id: z.string(),
   message_id: z.string(),
   hook_name: z.string(),
@@ -14,7 +15,7 @@ export const HookExecutionRecordSchema = z.object({
   started_at: z.string(),
   ended_at: z.string().nullable(),
   sort_order: z.number(),
-});
+}));
 
 /** Persisted hook execution linked to an assistant message. */
-export type HookExecutionRecord = z.infer<typeof HookExecutionRecordSchema>;
+export type HookExecutionRecord = z.infer<ReturnType<typeof HookExecutionRecordSchema>>;

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentTurnExecutionIdSchema } from "../compat/agent-model.js";
+import { lazySchema } from "../utils/lazySchema.js";
 
 /** Stable identity assigned by Mcode to one logical provider turn. */
 export const TurnExecutionIdSchema = AgentTurnExecutionIdSchema;
@@ -20,23 +21,23 @@ export const TurnRuntimePhaseSchema = z.enum([
 export type TurnRuntimePhase = z.infer<typeof TurnRuntimePhaseSchema>;
 
 /** Server-authoritative assistant-text saving state for one active execution. */
-export const TurnSavingStatusSchema = z.object({
+export const TurnSavingStatusSchema = lazySchema(() => z.object({
   threadId: z.string().min(1),
   executionId: TurnExecutionIdSchema,
   mode: z.enum(["durable", "saving-delayed", "unsaved", "stopping"]),
-}).strict();
+}).strict());
 /** Server-authoritative assistant-text saving state for one active execution. */
-export type TurnSavingStatus = z.infer<typeof TurnSavingStatusSchema>;
+export type TurnSavingStatus = z.infer<ReturnType<typeof TurnSavingStatusSchema>>;
 
 /** Authoritative reconnect snapshot for one thread. */
-export const TurnRuntimeSnapshotSchema = z.object({
+export const TurnRuntimeSnapshotSchema = lazySchema(() => z.object({
   threadId: z.string().min(1),
   turnExecutionId: TurnExecutionIdSchema.nullable(),
   phase: TurnRuntimePhaseSchema,
-  savingStatus: TurnSavingStatusSchema.shape.mode.nullable().optional(),
-});
+  savingStatus: TurnSavingStatusSchema().shape.mode.nullable().optional(),
+}));
 /** Authoritative reconnect snapshot for one thread. */
-export type TurnRuntimeSnapshot = z.infer<typeof TurnRuntimeSnapshotSchema>;
+export type TurnRuntimeSnapshot = z.infer<ReturnType<typeof TurnRuntimeSnapshotSchema>>;
 
 /** Provider dispatch boundary observed while servicing a user stop. */
 export const AgentStopDispatchStateSchema = z.enum([
@@ -48,12 +49,12 @@ export const AgentStopDispatchStateSchema = z.enum([
 export type AgentStopDispatchState = z.infer<typeof AgentStopDispatchStateSchema>;
 
 /** Authoritative result returned by an agent.stop RPC. */
-export const AgentStopResultSchema = z.object({
+export const AgentStopResultSchema = lazySchema(() => z.object({
   threadId: z.string().min(1),
   turnExecutionId: TurnExecutionIdSchema.nullable(),
-  snapshot: TurnRuntimeSnapshotSchema,
+  snapshot: TurnRuntimeSnapshotSchema(),
   status: z.enum(["cancelled", "already-terminal"]),
   dispatchState: AgentStopDispatchStateSchema,
-}).strict();
+}).strict());
 /** Authoritative result returned by an agent.stop RPC. */
-export type AgentStopResult = z.infer<typeof AgentStopResultSchema>;
+export type AgentStopResult = z.infer<ReturnType<typeof AgentStopResultSchema>>;

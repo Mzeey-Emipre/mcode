@@ -9,26 +9,26 @@ import { ProviderIdentitySchema } from "../compat/agent-model.js";
 import { TurnOutcomeSchema } from "./turn-outcome.js";
 
 /** Canonical provenance for a user-side message sent by a parent agent. */
-export const ParentAgentMessageProvenanceSchema = z.object({
+export const ParentAgentMessageProvenanceSchema = lazySchema(() => z.object({
   parentThreadId: z.string().trim().min(1).max(256),
   parentTurnId: z.string().trim().min(1).max(256),
   parentItemId: z.string().trim().min(1).max(256),
   providerIdentities: z.array(ProviderIdentitySchema).max(16),
-}).strict();
+}).strict());
 
 /** Canonical provenance for a user-side message sent by a parent agent. */
-export type ParentAgentMessageProvenance = z.infer<typeof ParentAgentMessageProvenanceSchema>;
+export type ParentAgentMessageProvenance = z.infer<ReturnType<typeof ParentAgentMessageProvenanceSchema>>;
 
 /** Provenance for a retained message that originated in the legacy conversation store. */
-export const LegacyMessageProvenanceSchema = z.object({
+export const LegacyMessageProvenanceSchema = lazySchema(() => z.object({
   source: z.literal("messages"),
   migrationVersion: z.number().int().positive().nullable(),
   mapping: z.enum(["canonical", "legacy"]),
   reason: z.string().optional(),
-});
+}));
 
 /** Provenance for a retained message that originated in the legacy conversation store. */
-export type LegacyMessageProvenance = z.infer<typeof LegacyMessageProvenanceSchema>;
+export type LegacyMessageProvenance = z.infer<ReturnType<typeof LegacyMessageProvenanceSchema>>;
 
 /** Message schema matching the SQLite row shape. */
 export const MessageSchema = lazySchema(() =>
@@ -43,9 +43,9 @@ export const MessageSchema = lazySchema(() =>
     tokens_used: z.number().nullable(),
     timestamp: z.string(),
     sequence: z.number(),
-    attachments: z.array(StoredAttachmentSchema).nullable(),
+    attachments: z.array(StoredAttachmentSchema()).nullable(),
     previewAnnotations: PreviewAnnotationBundleSchema().nullable().optional(),
-    mentions: MessageMentionsSchema.nullable().optional(),
+    mentions: MessageMentionsSchema().nullable().optional(),
     selectedTextComments: SelectedTextCommentsSchema().nullable().optional(),
     tool_call_count: z.number().optional(),
     reply_to_message_id: z.string().nullable().optional(),
@@ -67,8 +67,8 @@ export const MessageSchema = lazySchema(() =>
      * Omitted or false for all legacy rows that predate this column.
      */
     is_internal: z.boolean().optional(),
-    legacyProvenance: LegacyMessageProvenanceSchema.optional(),
-    parentAgentProvenance: ParentAgentMessageProvenanceSchema.optional(),
+    legacyProvenance: LegacyMessageProvenanceSchema().optional(),
+    parentAgentProvenance: ParentAgentMessageProvenanceSchema().optional(),
   }),
 );
 /** Message record from the database. */

@@ -246,7 +246,7 @@ export class CanonicalConversationProjectionReader {
   ): void {
     const nativeItemId = payload.nativeItemId ?? row.payload_json;
     const sortOrder = state.childThoughtOrderByMessage.get(childAnchor) ?? 0;
-    state.narrativeByMessage[childAnchor]!.thoughts.push(ThoughtSegmentRecordSchema.parse({
+    state.narrativeByMessage[childAnchor]!.thoughts.push(ThoughtSegmentRecordSchema().parse({
       id: `codex-child-reasoning:${hashCodexKey(`${nativeItemId}:${row.id}`)}`,
       message_id: childAnchor,
       text: typeof payload.content === "string" ? payload.content : "",
@@ -318,7 +318,7 @@ export class CanonicalConversationProjectionReader {
     existing: ConversationNarrativeBatch["tools"][number] | undefined,
     sortOrder: number,
   ): ConversationNarrativeBatch["tools"][number] {
-    return ToolCallRecordSchema.parse({
+    return ToolCallRecordSchema().parse({
       ...this.childToolBase(existing, nativeItemId, childAnchor),
       ...this.childToolCallDetails(row, payload, existing, sortOrder),
     });
@@ -332,7 +332,7 @@ export class CanonicalConversationProjectionReader {
     existing: ConversationNarrativeBatch["tools"][number] | undefined,
     sortOrder: number,
   ): ConversationNarrativeBatch["tools"][number] {
-    return ToolCallRecordSchema.parse({
+    return ToolCallRecordSchema().parse({
       ...this.childToolBase(existing, nativeItemId, childAnchor),
       ...this.childToolResultDetails(row, payload, existing, sortOrder),
     });

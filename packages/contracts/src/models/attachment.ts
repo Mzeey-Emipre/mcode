@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { lazySchema } from "../utils/lazySchema.js";
 
 /**
  * MIME marker for composer rows that carry only structured browser capture JSON in the
@@ -22,25 +23,25 @@ export function shouldPersistAttachmentWithoutFile(att: AttachmentMeta): boolean
 }
 
 /** Metadata for an image or file attachment. No binary data, just a pointer. */
-export const AttachmentMetaSchema = z.object({
+export const AttachmentMetaSchema = lazySchema(() => z.object({
   id: z.string(),
   name: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number(),
   sourcePath: z.string(),
-});
+}));
 /** Metadata for an image or file attachment including its source path. */
-export type AttachmentMeta = z.infer<typeof AttachmentMetaSchema>;
+export type AttachmentMeta = z.infer<ReturnType<typeof AttachmentMetaSchema>>;
 
 /** Stored attachment metadata (no sourcePath, since files live at a known location). */
-export const StoredAttachmentSchema = z.object({
+export const StoredAttachmentSchema = lazySchema(() => z.object({
   id: z.string(),
   name: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number(),
-});
+}));
 /** Stored attachment metadata without a source path. */
-export type StoredAttachment = z.infer<typeof StoredAttachmentSchema>;
+export type StoredAttachment = z.infer<ReturnType<typeof StoredAttachmentSchema>>;
 
 /**
  * Returns the file suffix (including the leading dot) used when persisting an attachment

@@ -532,7 +532,7 @@ function handleTextWsMessage(raw: string, context: WsMessageContext): void {
 /** Parses a text frame as a binary-upload header. */
 function parseBinaryUploadHeader(raw: string): BinaryUploadHeader | null {
   try {
-    const headerResult = BinaryUploadHeaderSchema.safeParse(JSON.parse(raw));
+    const headerResult = BinaryUploadHeaderSchema().safeParse(JSON.parse(raw));
     return headerResult.success ? headerResult.data : null;
   } catch {
     return null;

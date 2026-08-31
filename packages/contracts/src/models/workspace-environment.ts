@@ -33,14 +33,14 @@ export type WorkspaceEnvironmentValidationReason = z.infer<
 >;
 
 /** A structured field-level workspace environment validation issue. */
-export const WorkspaceEnvironmentValidationIssueSchema = z.object({
+export const WorkspaceEnvironmentValidationIssueSchema = lazySchema(() => z.object({
   path: z.array(z.union([z.string(), z.number()])),
   code: z.string().min(1),
   reason: WorkspaceEnvironmentValidationReasonSchema,
   message: z.string().min(1),
-}).strict();
+}).strict());
 export type WorkspaceEnvironmentValidationIssue = z.infer<
-  typeof WorkspaceEnvironmentValidationIssueSchema
+  ReturnType<typeof WorkspaceEnvironmentValidationIssueSchema>
 >;
 
 const scriptSchema = z.string().superRefine((value, ctx) => {
@@ -769,7 +769,7 @@ export type WorkspaceEnvironmentCommandApprovalClearInput = z.infer<
 >;
 
 /** Structured errors exposed by the workspace environment lifecycle boundary. */
-export const WorkspaceEnvironmentErrorSchema = z.object({
+export const WorkspaceEnvironmentErrorSchema = lazySchema(() => z.object({
   code: z.enum([
     "WORKSPACE_ENVIRONMENT_VALIDATION",
     "WORKSPACE_ENVIRONMENT_UNSUPPORTED_VERSION",
@@ -783,8 +783,8 @@ export const WorkspaceEnvironmentErrorSchema = z.object({
     "WORKSPACE_ENVIRONMENT_APPROVAL_NOT_REQUIRED",
   ]),
   message: z.string().min(1),
-  issues: z.array(WorkspaceEnvironmentValidationIssueSchema).optional(),
-}).strict();
+  issues: z.array(WorkspaceEnvironmentValidationIssueSchema()).optional(),
+}).strict());
 
 /** Convert a Zod result into the stable field-level error shape used by transport. */
 export function workspaceEnvironmentValidationIssues(

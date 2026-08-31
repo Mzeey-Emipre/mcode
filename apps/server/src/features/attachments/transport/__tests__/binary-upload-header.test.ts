@@ -9,13 +9,13 @@ describe("BinaryUploadHeader parsing", () => {
       method: "clipboard.saveFile",
       meta: { mimeType: "text/plain", fileName: "test.txt" },
     };
-    const result = BinaryUploadHeaderSchema.safeParse(header);
+    const result = BinaryUploadHeaderSchema().safeParse(header);
     expect(result.success).toBe(true);
   });
 
   it("rejects a header with missing fields", () => {
     const header = { type: "binary-upload", id: "req_1" };
-    const result = BinaryUploadHeaderSchema.safeParse(header);
+    const result = BinaryUploadHeaderSchema().safeParse(header);
     expect(result.success).toBe(false);
   });
 
@@ -26,7 +26,7 @@ describe("BinaryUploadHeader parsing", () => {
       method: "clipboard.saveFile",
       meta: {},
     };
-    const result = BinaryUploadHeaderSchema.safeParse(header);
+    const result = BinaryUploadHeaderSchema().safeParse(header);
     expect(result.success).toBe(false);
   });
 });

@@ -379,7 +379,7 @@ type ValidatedRpcParameters =
 function parseWebSocketRequest(raw: string): ParsedWebSocketRequest {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    const validated = WebSocketRequestSchema.safeParse(parsed);
+    const validated = WebSocketRequestSchema().safeParse(parsed);
     if (validated.success) return { ok: true, request: validated.data };
     return {
       ok: false,

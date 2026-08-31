@@ -1974,8 +1974,8 @@ describe("CanonicalAgentEventSink", () => {
     expect(projection.messages[1]).not.toHaveProperty("parentAgentProvenance");
     expect(JSON.stringify(projection.narrativeByMessage)).not.toContain("Unrelated turn");
     const childNarrative = projection.narrativeByMessage[projection.messages[1]!.id]!;
-    childNarrative.tools.forEach((record) => ToolCallRecordSchema.parse(record));
-    childNarrative.thoughts.forEach((record) => ThoughtSegmentRecordSchema.parse(record));
+    childNarrative.tools.forEach((record) => ToolCallRecordSchema().parse(record));
+    childNarrative.thoughts.forEach((record) => ThoughtSegmentRecordSchema().parse(record));
     expect(childNarrative.tools).toEqual([expect.objectContaining({
       tool_name: "Read",
       input_summary: JSON.stringify({ path: "src/app.ts" }),

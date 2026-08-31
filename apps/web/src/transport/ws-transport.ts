@@ -260,7 +260,7 @@ export async function hydrateRunningThreadsFromServer(
   );
   try {
     const result = await rpcCall("agent.listRunning", {});
-    const snapshots = TurnRuntimeSnapshotSchema.array().parse(result);
+    const snapshots = TurnRuntimeSnapshotSchema().array().parse(result);
     useThreadStore.getState().hydrateThreadRuntimes(snapshots, observed);
   } catch {
     // Best-effort; optimistic state remains if the call fails.

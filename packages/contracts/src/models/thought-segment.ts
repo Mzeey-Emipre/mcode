@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { lazySchema } from "../utils/lazySchema.js";
 
 /** Persisted thought segment (a contiguous stretch of assistant text deltas
  * captured between tool calls) linked to an assistant message. */
-export const ThoughtSegmentRecordSchema = z.object({
+export const ThoughtSegmentRecordSchema = lazySchema(() => z.object({
   id: z.string(),
   message_id: z.string(),
   text: z.string(),
@@ -15,7 +16,7 @@ export const ThoughtSegmentRecordSchema = z.object({
    * duplicating text already visible in the assistant message body.
    */
   is_final_response: z.number().optional(),
-});
+}));
 
 /** Persisted thought segment linked to an assistant message. */
-export type ThoughtSegmentRecord = z.infer<typeof ThoughtSegmentRecordSchema>;
+export type ThoughtSegmentRecord = z.infer<ReturnType<typeof ThoughtSegmentRecordSchema>>;

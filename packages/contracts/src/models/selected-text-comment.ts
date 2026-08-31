@@ -16,7 +16,8 @@ const CommentTextSchema = z.string()
     message: "Selected text comments require visible text",
   });
 
-const buildSelectedTextCommentSourceSchema = () =>
+/** Durable source coordinates for one selected-text comment. */
+export const SelectedTextCommentSourceSchema = lazySchema(() =>
   z.object({
     threadId: SourceIdentitySchema,
     messageId: SourceIdentitySchema,
@@ -27,39 +28,23 @@ const buildSelectedTextCommentSourceSchema = () =>
   }).strict().refine((source) => source.end > source.start, {
     message: "Selected text comment end must be greater than start",
     path: ["end"],
-  });
-
-type SelectedTextCommentSourceZodSchema = ReturnType<typeof buildSelectedTextCommentSourceSchema>;
-
-/** Durable source coordinates for one selected-text comment. */
-export const SelectedTextCommentSourceSchema: () => SelectedTextCommentSourceZodSchema = lazySchema(
-  buildSelectedTextCommentSourceSchema,
+  }),
 );
 
-const buildSelectedTextCommentSchema = () =>
+/** Durable selected-text comment attached to a user Message. */
+export const SelectedTextCommentSchema = lazySchema(() =>
   z.object({
     id: z.string().uuid(),
     displayNumber: z.literal(1),
     source: SelectedTextCommentSourceSchema(),
     note: CommentTextSchema,
-    mentions: MessageMentionsSchema,
-  }).strict();
-
-type SelectedTextCommentZodSchema = ReturnType<typeof buildSelectedTextCommentSchema>;
-
-/** Durable selected-text comment attached to a user Message. */
-export const SelectedTextCommentSchema: () => SelectedTextCommentZodSchema = lazySchema(
-  buildSelectedTextCommentSchema,
+    mentions: MessageMentionsSchema(),
+  }).strict(),
 );
 
-const buildSelectedTextCommentsSchema = () =>
-  z.array(SelectedTextCommentSchema()).max(MAX_SELECTED_TEXT_COMMENTS);
-
-type SelectedTextCommentsZodSchema = ReturnType<typeof buildSelectedTextCommentsSchema>;
-
 /** One-comment collection carried unchanged across renderer, transport, and persistence. */
-export const SelectedTextCommentsSchema: () => SelectedTextCommentsZodSchema = lazySchema(
-  buildSelectedTextCommentsSchema,
+export const SelectedTextCommentsSchema = lazySchema(() =>
+  z.array(SelectedTextCommentSchema()).max(MAX_SELECTED_TEXT_COMMENTS),
 );
 
 /** Durable source coordinates for one selected-text comment. */

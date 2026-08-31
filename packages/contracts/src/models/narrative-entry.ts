@@ -28,19 +28,19 @@ export const NarrativeEntrySchema = lazySchema(() =>
       kind: z.literal("toolCall"),
       sequence: z.number(),
       sortOrder: z.number(),
-      record: ToolCallRecordSchema,
+      record: ToolCallRecordSchema(),
     }),
     z.object({
       kind: z.literal("narrationSegment"),
       sequence: z.number(),
       sortOrder: z.number(),
-      record: ThoughtSegmentRecordSchema,
+      record: ThoughtSegmentRecordSchema(),
     }),
     z.object({
       kind: z.literal("hook"),
       sequence: z.number(),
       sortOrder: z.number(),
-      record: HookExecutionRecordSchema,
+      record: HookExecutionRecordSchema(),
     }),
   ]),
 );
