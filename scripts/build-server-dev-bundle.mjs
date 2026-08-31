@@ -305,13 +305,18 @@ export function copilotSdkPlatformPackageName(platform, arch) {
  */
 export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
   const platformPkg = copilotSdkPlatformPackageName(platform, arch);
+  const binName = platform === "win32" ? "copilot.exe" : "copilot";
   try {
     const serverRequire = NodeModule.createRequire(NodePath.resolve(serverPackageRoot, "package.json"));
     const sdkEntry = serverRequire.resolve("@github/copilot-sdk");
     const sdkRequire = NodeModule.createRequire(sdkEntry);
     const copilotPackageDir = NodeFS.realpathSync(NodePath.resolve(NodePath.dirname(sdkEntry), "..", "..", "..", "copilot"));
-    const platformEntry = sdkRequire.resolve(platformPkg);
-    const platformPackageDir = NodeFS.realpathSync(NodePath.dirname(platformEntry));
+    const platformPackageDir = resolveCopilotSdkPlatformPackageDir(
+      sdkRequire,
+      sdkEntry,
+      platformPkg,
+      binName,
+    );
     return { platformPkg, copilotPackageDir, platformPackageDir };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -319,6 +324,31 @@ export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
       `${platformPkg} not installed - run 'bun install' or node apps/desktop/scripts/desktop-packaging/target-package/target-package.mjs (Copilot SDK dependencies are out of sync): ${detail}`,
     );
   }
+}
+
+function resolveCopilotSdkPlatformPackageDir(sdkRequire, sdkEntry, platformPkg, binName) {
+  try {
+    return NodeFS.realpathSync(NodePath.dirname(sdkRequire.resolve(platformPkg)));
+  } catch (error) {
+    // Cross-target packages live in Bun's isolated store, but the host resolver can reject their export.
+    const packageDir = NodePath.resolve(resolveSdkStoreRoot(sdkEntry), platformPkg);
+    if (
+      NodeFS.existsSync(NodePath.join(packageDir, "package.json"))
+      && NodeFS.existsSync(NodePath.join(packageDir, binName))
+    ) {
+      return NodeFS.realpathSync(packageDir);
+    }
+    throw error;
+  }
+}
+
+function resolveSdkStoreRoot(sdkEntry) {
+  let current = NodePath.resolve(sdkEntry);
+  while (current !== NodePath.dirname(current)) {
+    if (NodePath.basename(current) === "node_modules") return current;
+    current = NodePath.dirname(current);
+  }
+  throw new Error(`Cannot locate the SDK package store for ${sdkEntry}`);
 }
 
 /** Compare two complete package trees without mutating either destination. */
