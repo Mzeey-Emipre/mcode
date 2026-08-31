@@ -138,12 +138,6 @@ function toolResultMetadata(event: Extract<AgentEvent, { type: "toolResult" }>):
   };
 }
 
-function endedOutcome(outcome: Exclude<Extract<AgentEvent, { type: "ended" }>['outcome'], undefined>): TurnOutcome {
-  if (outcome === "completed") return "completed";
-  if (outcome === "errored") return "errored";
-  return "interrupted";
-}
-
 /** Orchestrates agent sessions, message sending, and event forwarding. */
 @injectable()
 export class AgentService {
@@ -734,7 +728,7 @@ export class AgentService {
     const runtime = this.turnRuntime.snapshot(event.threadId);
     const executionId = runtime?.turnExecutionId;
     if (!executionId || !this.isActiveRuntimeExecution(runtime, event.turnExecutionId)) return false;
-    const outcome = endedOutcome(event.outcome);
+    const outcome: TurnOutcome = event.outcome === "cancelled" ? "interrupted" : event.outcome;
     if (!this.turnRuntime.terminalize(event.threadId, executionId, outcome)) return false;
     void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
     this.trackSessionEnded(event.threadId, executionId);
