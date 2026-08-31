@@ -15,7 +15,7 @@ vi.mock("@mcode/shared", async (importOriginal) => {
 import { ClaudeProvider } from "../claude-provider.js";
 import { stubEnvService } from "../../../../../runtime/environment/__tests__/stub-env-service.js";
 import { stubJobObject } from "../../../../../runtime/process/containment/__tests__/stub-job-object.js";
-import { queryMethodStubs } from "./helpers/mock-sdk-query.js";
+import { mockProviderHost, queryMethodStubs } from "./helpers/mock-sdk-query.js";
 import { AgentEventType, type ProviderRuntimeEvent } from "@mcode/contracts";
 
 /** Build a minimal mock Query that yields init, assistant messages, then result. */
@@ -263,15 +263,22 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
       return Object.assign(gen, { ...queryMethodStubs(), close: vi.fn() });
     });
 
-    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => {
-      events.push(runtimeEvent);
-      if (runtimeEvent.event.type === AgentEventType.TurnComplete && runtimeEvent.event.turnExecutionId === "A") {
-        resolveTurnComplete();
-      }
-      if (runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "B started") {
-        resolveBText();
-      }
-    });
+    provider = new ClaudeProvider(
+      stubEnvService(),
+      stubJobObject(),
+      undefined,
+      undefined,
+      undefined,
+      mockProviderHost((runtimeEvent) => {
+        events.push(runtimeEvent);
+        if (runtimeEvent.event.type === AgentEventType.TurnComplete && runtimeEvent.event.turnExecutionId === "A") {
+          resolveTurnComplete();
+        }
+        if (runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "B started") {
+          resolveBText();
+        }
+      }),
+    );
 
     await provider.sendTurn({
       turnExecutionId: "A",

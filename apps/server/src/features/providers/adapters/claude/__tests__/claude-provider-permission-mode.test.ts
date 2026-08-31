@@ -86,6 +86,7 @@ import {
   BrowserAutomationCredentialRegistry,
   BrowserAutomationSessionLease,
 } from "../../../../browser-automation/index.js";
+import { mockProviderHost } from "./helpers/mock-sdk-query.js";
 
 describe("ClaudeProvider permission mode changes", () => {
   let provider: ClaudeProvider;
@@ -96,7 +97,14 @@ describe("ClaudeProvider permission mode changes", () => {
     sdkCalls.length = 0;
     flagSettingsCalls.length = 0;
     mockQuery.mockImplementation(makeFakeSdkQuery(sdkCalls, flagSettingsCalls));
-    provider = new ClaudeProvider(stubEnvService(), stubJobObject());
+    provider = new ClaudeProvider(
+      stubEnvService(),
+      stubJobObject(),
+      undefined,
+      undefined,
+      undefined,
+      mockProviderHost(),
+    );
   });
 
   it("passes browser MCP through query options without touching process.env", async () => {
@@ -106,7 +114,14 @@ describe("ClaudeProvider permission mode changes", () => {
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
-    provider = new ClaudeProvider(stubEnvService(), stubJobObject(), undefined, lease);
+    provider = new ClaudeProvider(
+      stubEnvService(),
+      stubJobObject(),
+      undefined,
+      lease,
+      undefined,
+      mockProviderHost(),
+    );
 
     try {
       await provider.sendTurn({

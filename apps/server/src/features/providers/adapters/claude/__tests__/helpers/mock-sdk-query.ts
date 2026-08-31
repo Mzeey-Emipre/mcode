@@ -6,6 +6,50 @@
  */
 
 import { vi } from "vitest";
+import type { ProviderRuntimeEvent } from "@mcode/contracts";
+import type {
+  ProviderEventSubmissionReceipt,
+  ProviderHostPorts,
+} from "@mcode/providers";
+
+/** Deterministic host facts for provider tests that exercise successful results. */
+export const mockProviderHostRuntime = {
+  platform: "linux",
+  architecture: "x64",
+  nodeAbi: "127",
+} as const;
+
+const acceptedProviderEventReceipt = {
+  commit: {
+    outcome: "committed",
+    conversationRevision: 0,
+    rosterRevision: 0,
+    acceptedThrough: 0,
+    durableThrough: 0,
+    eventCount: 1,
+  },
+  delivery: { ingress: "queued" },
+} as const satisfies ProviderEventSubmissionReceipt;
+
+/** Creates the provider's canonical host boundary and captures its published runtime events. */
+export function mockProviderHost(
+  onEvent: (event: ProviderRuntimeEvent) => void = () => undefined,
+): Pick<ProviderHostPorts, "runtime" | "events"> {
+  return {
+    runtime: mockProviderHostRuntime,
+    events: {
+      submit: async (batch) => {
+        for (const draft of batch.events) {
+          if (draft.payload.type !== "item.recorded") continue;
+          const payload = draft.payload.item.payload;
+          if (payload.projection !== "providerRuntimeEvent") continue;
+          onEvent(payload.runtimeEvent);
+        }
+        return acceptedProviderEventReceipt;
+      },
+    },
+  };
+}
 
 /**
  * Returns a fresh map of `vi.fn()` stubs for every non-iterator method on

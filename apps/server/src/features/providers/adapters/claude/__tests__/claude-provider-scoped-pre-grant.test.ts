@@ -78,6 +78,7 @@ import { ClaudeProvider } from "../claude-provider.js";
 import { ScopedPreGrantService } from "../../../../agents/permissions/scoped-pre-grant.js";
 import { stubEnvService } from "../../../../../runtime/environment/__tests__/stub-env-service.js";
 import { stubJobObject } from "../../../../../runtime/process/containment/__tests__/stub-job-object.js";
+import { mockProviderHostRuntime } from "./helpers/mock-sdk-query.js";
 
 describe("ClaudeProvider scoped pre-grant (off-band handoff Read)", () => {
   let provider: ClaudeProvider;
@@ -87,7 +88,7 @@ describe("ClaudeProvider scoped pre-grant (off-band handoff Read)", () => {
     vi.clearAllMocks();
     captured.canUseTool = undefined;
     mockQuery.mockImplementation(makeFakeSdkQuery(captured));
-    scopedPreGrant = new ScopedPreGrantService();
+    scopedPreGrant = new ScopedPreGrantService(mockProviderHostRuntime);
     provider = new ClaudeProvider(stubEnvService(), stubJobObject(), scopedPreGrant);
   });
 

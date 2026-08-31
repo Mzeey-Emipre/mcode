@@ -588,7 +588,7 @@ export class ClaudeProvider
     @inject(InternalThreadControlMcpRuntime)
     private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
     @inject("ProviderHostPorts")
-    private readonly host?: ProviderHostPorts,
+    private readonly host?: Pick<ProviderHostPorts, "runtime" | "events">,
   ) {
     super();
     this.canonicalEventPublisher = this.host
@@ -1835,7 +1835,7 @@ export class ClaudeProvider
     }
   }
 
-  private requireHostRuntime(): ProviderHostPorts["runtime"] {
+  private requireHostRuntime(): Pick<ProviderHostPorts, "runtime">["runtime"] {
     if (!this.host) throw new Error("Claude Provider host runtime is required");
     return this.host.runtime;
   }

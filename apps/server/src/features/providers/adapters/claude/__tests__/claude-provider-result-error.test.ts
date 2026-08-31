@@ -15,9 +15,8 @@ vi.mock("@mcode/shared", async (importOriginal) => {
 import { ClaudeProvider } from "../claude-provider.js";
 import { stubEnvService } from "../../../../../runtime/environment/__tests__/stub-env-service.js";
 import { stubJobObject } from "../../../../../runtime/process/containment/__tests__/stub-job-object.js";
-import { queryMethodStubs } from "./helpers/mock-sdk-query.js";
+import { mockProviderHost, queryMethodStubs } from "./helpers/mock-sdk-query.js";
 import { AgentEventType, type ProviderRuntimeEvent } from "@mcode/contracts";
-import type { ProviderEventBatch, ProviderHostPorts } from "@mcode/providers";
 
 /** Build a minimal mock Query that yields one non-result message (so sessionInitialized=true), then the requested result. */
 function mockSdkStream(results: Array<Record<string, unknown>>) {
@@ -196,7 +195,14 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     ]));
 
     const events: ProviderRuntimeEvent[] = [];
-    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
+    provider = new ClaudeProvider(
+      stubEnvService(),
+      stubJobObject(),
+      undefined,
+      undefined,
+      undefined,
+      mockProviderHost((runtimeEvent) => events.push(runtimeEvent)),
+    );
 
     await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -244,17 +250,14 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
   });
 
   it("submits Claude terminal evidence through the canonical host without direct EventEmitter delivery", async () => {
-    const submit = vi.fn<(batch: ProviderEventBatch) => Promise<void>>().mockResolvedValue(undefined);
+    const submittedEvents: ProviderRuntimeEvent[] = [];
     provider = new ClaudeProvider(
       stubEnvService(),
       stubJobObject(),
       undefined,
       undefined,
       undefined,
-      {
-        runtime: { platform: "linux", architecture: "x64", nodeAbi: "127" },
-        events: { submit },
-      } as ProviderHostPorts,
+      mockProviderHost((runtimeEvent) => submittedEvents.push(runtimeEvent)),
     );
     mockQuery.mockImplementation(mockSdkStream([
       { type: "result", is_error: true, errors: ["rate_limit_exceeded"] },
@@ -276,18 +279,16 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
       providerOptions: {},
     });
 
-    await vi.waitFor(() => expect(submit.mock.calls.flatMap(([batch]) => batch.events)
-      .some((event) => event.payload.type === "item.recorded"
-        && event.payload.item.payload.runtimeEvent.event.type === AgentEventType.Error)).toBe(true));
-    const submittedEvents = submit.mock.calls.flatMap(([batch]) => batch.events)
-      .map((event) => event.payload.type === "item.recorded" ? event.payload.item.payload.runtimeEvent.event : undefined);
+    await vi.waitFor(() => expect(submittedEvents.map((runtimeEvent) => runtimeEvent.event))
+      .toContainEqual(expect.objectContaining({ type: AgentEventType.Error })));
 
     expect(directEvents).not.toHaveBeenCalled();
-    expect(submittedEvents).toContainEqual(expect.objectContaining({
+    expect(submittedEvents.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: AgentEventType.Error,
       error: "rate_limit_exceeded",
       turnExecutionId: "test-execution",
     }));
-    expect(submittedEvents).not.toContainEqual(expect.objectContaining({ type: AgentEventType.TurnComplete }));
+    expect(submittedEvents.map((runtimeEvent) => runtimeEvent.event))
+      .not.toContainEqual(expect.objectContaining({ type: AgentEventType.TurnComplete }));
   });
 });
