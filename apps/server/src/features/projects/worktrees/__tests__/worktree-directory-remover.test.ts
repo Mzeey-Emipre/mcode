@@ -4,6 +4,7 @@ import type * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import { describe, expect, it, vi } from "vitest";
 import {
   WorktreeDirectoryRemover,
@@ -83,10 +84,10 @@ describe("WorktreeDirectoryRemover", () => {
   });
 
   it("rejects invalid, protected, and ancestor targets before spawning", () => {
-    expect(() => validateRemovalTarget("relative/worktree", "win32")).toThrow(/absolute/);
-    expect(() => validateRemovalTarget(process.cwd(), "win32")).toThrow(/working directory/);
-    expect(() => validateRemovalTarget(NodePath.resolve(process.cwd(), ".."), "win32")).toThrow(/working directory/);
-    expect(() => validateRemovalTarget(NodePath.resolve(process.execPath, ".."), "win32")).toThrow(/server executable/);
-    expect(() => validateRemovalTarget(NodePath.resolve(process.cwd(), "..", "sibling-worktree"), "win32")).not.toThrow();
+    expect(() => validateRemovalTarget("relative/worktree", hostRuntime.platform)).toThrow(/absolute/);
+    expect(() => validateRemovalTarget(process.cwd(), hostRuntime.platform)).toThrow(/working directory/);
+    expect(() => validateRemovalTarget(NodePath.resolve(process.cwd(), ".."), hostRuntime.platform)).toThrow(/working directory/);
+    expect(() => validateRemovalTarget(NodePath.resolve(process.execPath, ".."), hostRuntime.platform)).toThrow(/server executable/);
+    expect(() => validateRemovalTarget(NodePath.resolve(process.cwd(), "..", "sibling-worktree"), hostRuntime.platform)).not.toThrow();
   });
 });
