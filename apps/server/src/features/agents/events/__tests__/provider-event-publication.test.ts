@@ -101,4 +101,19 @@ describe("provider event publication ownership", () => {
     expect(deps.updateThreadStatus).not.toHaveBeenCalled();
     expect(deps.publishThreadStatus).not.toHaveBeenCalled();
   });
+
+  it("publishes provider_lost without changing the parent status", () => {
+    const deps = buildPublicationDeps();
+    const event: AgentEvent = {
+      type: AgentEventType.Ended,
+      threadId: "parent-thread",
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
+      reason: "provider_lost",
+    };
+
+    expect(publishParentProviderEvent(event, event, deps)).toBe(true);
+    expect(deps.publishAgentEvent).toHaveBeenCalledWith(event);
+    expect(deps.updateThreadStatus).not.toHaveBeenCalled();
+    expect(deps.publishThreadStatus).not.toHaveBeenCalled();
+  });
 });

@@ -10,7 +10,79 @@ class CodexAppServer extends NativeCodexAppServer {
   }
 }
 
-describe("CodexAppServer.interruptChildTurn", () => {
+describe("CodexAppServer interrupt drains", () => {
+  it("drains the matching main terminal notification after acknowledgement", async () => {
+    const sendRequest = vi.fn().mockResolvedValue({});
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: process.cwd(),
+    });
+    (server as unknown as { _threadId: string })._threadId = "native-main-thread";
+    (server as unknown as { rpc: { sendRequest: typeof sendRequest } }).rpc = { sendRequest };
+
+    let settled = false;
+    const stopping = server.interruptTurnAndDrain("native-main-turn")
+      .then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    server.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: "native-main-thread",
+        turn: { id: "other-turn", status: "interrupted" },
+      },
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    server.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: "other-main-thread",
+        turn: { id: "native-main-turn", status: "interrupted" },
+      },
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    server.emit("notification", {
+      method: "turn/completed",
+      params: {
+        turn: { id: "native-main-turn", status: "interrupted" },
+      },
+    });
+    await stopping;
+
+    expect(sendRequest).toHaveBeenCalledWith(
+      "turn/interrupt",
+      { threadId: "native-main-thread", turnId: "native-main-turn" },
+      5_000,
+    );
+  });
+
+  it("rejects when main acknowledgement is not followed by its terminal notification", async () => {
+    vi.useFakeTimers();
+    try {
+      const sendRequest = vi.fn().mockResolvedValue({});
+      const server = new CodexAppServer({
+        cliPath: "codex",
+        workingDirectory: process.cwd(),
+      });
+      (server as unknown as { _threadId: string })._threadId = "native-main-thread";
+      (server as unknown as { rpc: { sendRequest: typeof sendRequest } }).rpc = { sendRequest };
+
+      const stopping = server.interruptTurnAndDrain("native-main-turn");
+      const rejection = expect(stopping).rejects.toThrow(
+        "Main interruption timed out waiting for terminal completion.",
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends the exact native thread and turn identifiers", async () => {
     const sendRequest = vi.fn().mockResolvedValue({});
     const server = new CodexAppServer({

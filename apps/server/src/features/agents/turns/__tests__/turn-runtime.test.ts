@@ -132,6 +132,23 @@ describe("TurnRuntimeRegistry", () => {
     expect(runtime.snapshot("thread-1")?.phase).toBe("interrupted");
   });
 
+  it("releases only the exact active execution without terminalizing it", () => {
+    const runtime = new TurnRuntimeRegistry();
+    const first = runtime.start("thread-1");
+
+    expect(runtime.release("thread-1", first.turnExecutionId!)).toBe(true);
+    expect(runtime.snapshot("thread-1")).toBeUndefined();
+
+    const replacement = runtime.start("thread-1");
+    expect(runtime.release("thread-1", first.turnExecutionId!)).toBe(false);
+    expect(runtime.snapshot("thread-1")).toMatchObject({
+      phase: "running",
+      turnExecutionId: replacement.turnExecutionId,
+    });
+    expect(runtime.terminalize("thread-1", replacement.turnExecutionId!, "completed")).toBe(true);
+    expect(runtime.release("thread-1", replacement.turnExecutionId!)).toBe(false);
+  });
+
   it("bounds terminal retention without evicting active turns", () => {
     const runtime = new TurnRuntimeRegistry();
     const active = runtime.start("active");
