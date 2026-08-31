@@ -22,6 +22,7 @@ import { seedFixtureRepo } from "./fixture-repo.mjs";
 import { stopRecordedPidFile } from "./runtime-processes.mjs";
 import { stopRecordedRuntimePids } from "./agent-down.mjs";
 import { ensureDependencies } from "./ensure-dependencies.mjs";
+import { seedDatabaseForStartup } from "../db-seed.mjs";
 import {
   prepareRuntimeDirectories as prepareSharedRuntimeDirectories,
   resolveElectronBinary as resolveSharedElectronBinary,
@@ -55,6 +56,7 @@ export function buildWebAutomationEnv(env = process.env) {
  *
  * @param {Partial<{
  *   stopRecordedRuntimePids: typeof stopRecordedRuntimePids,
+ *   seedDatabaseForStartup: typeof seedDatabaseForStartup,
  *   seedFixtureRepo: typeof seedFixtureRepo,
  *   computeAvailablePorts: typeof computeAvailablePorts,
  *   getElectronBinary: typeof getElectronBinary,
@@ -81,6 +83,8 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
   prepareSharedRuntimeDirectories(paths);
   const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
   await stopRuntimePids(repoRoot);
+  const seedRuntimeDatabase = agentUpTestHooks.seedDatabaseForStartup ?? seedDatabaseForStartup;
+  seedRuntimeDatabase({ repoRoot });
 
   const runtime = await prepareRuntime(repoRoot);
   const electronBin = resolveElectronBinary();

@@ -15,6 +15,7 @@ import * as NodeURL from "node:url";
 import { resolveServerOnlyExitCode } from "./dev-web-lifecycle.mjs";
 import { prepareRuntimeDirectories, resolveElectronBinary, resolveElectronBinding, waitForHttpOk } from "./runtime/launch-mechanics.mjs";
 import { ensureDependencies } from "./agent/ensure-dependencies.mjs";
+import { seedDatabaseForStartup } from "./db-seed.mjs";
 import { killProcessTree } from "./kill-process-tree.mjs";
 import {
   buildPortsContract,
@@ -44,6 +45,7 @@ const { rebuildServerDevBundle } = await import("./build-server-dev-bundle.mjs")
  */
 const paths = ensureRuntimeRoot(repoRoot);
 prepareRuntimeDirectories(paths);
+seedDatabaseForStartup({ repoRoot, preserveExistingTarget: true });
 const fixtureRepo = seedFixtureRepo(repoRoot);
 const runtimeStateEnv = buildRuntimeStateEnv(repoRoot, {
   MCODE_AGENT_FIXTURE_REPO: fixtureRepo,

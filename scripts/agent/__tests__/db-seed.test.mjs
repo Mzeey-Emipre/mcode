@@ -8,7 +8,7 @@ import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 import { Database } from "bun:sqlite";
 
-import { seedDatabase } from "../../db-seed.mjs";
+import { seedDatabase, seedDatabaseForStartup } from "../../db-seed.mjs";
 
 function safeCleanup(dir) {
   try {
@@ -18,10 +18,20 @@ function safeCleanup(dir) {
   }
 }
 
-NodeTest.test("seedDatabase snapshots a SQLite database using VACUUM INTO", () => {
+function withoutWarnings(callback) {
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    callback();
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
+NodeTest.test("seedDatabaseForStartup snapshots an available SQLite database", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-db-seed-test-"));
   const sourcePath = NodePath.join(tempDir, "source.db");
-  const targetPath = NodePath.join(tempDir, "target.db");
+  const targetPath = NodePath.join(tempDir, "target", "target.db");
 
   try {
     const sourceDb = new Database(sourcePath);
@@ -31,21 +41,16 @@ NodeTest.test("seedDatabase snapshots a SQLite database using VACUUM INTO", () =
     sourceDb.run("INSERT INTO threads VALUES ('th-1'), ('th-2'), ('th-3');");
     sourceDb.close(true);
 
-    const result = seedDatabase({ source: sourcePath, target: targetPath });
-
-    NodeAssertStrict.default.equal(result.sourcePath, sourcePath);
-    NodeAssertStrict.default.equal(result.targetPath, targetPath);
+    seedDatabaseForStartup({ source: sourcePath, target: targetPath });
     NodeAssertStrict.default.equal(NodeFS.existsSync(targetPath), true);
-    NodeAssertStrict.default.equal(result.stats.workspaces, 2);
-    NodeAssertStrict.default.equal(result.stats.threads, 3);
 
-    // Verify target can be read independently
     const targetDb = new Database(targetPath, { readonly: true });
-    const stmt = targetDb.prepare("SELECT COUNT(*) as count FROM workspaces");
-    const row = stmt.get();
-    stmt.finalize();
-    NodeAssertStrict.default.equal(row.count, 2);
-    targetDb.close(true);
+    try {
+      NodeAssertStrict.default.equal(targetDb.query("SELECT COUNT(*) as count FROM workspaces").get().count, 2);
+      NodeAssertStrict.default.equal(targetDb.query("SELECT COUNT(*) as count FROM threads").get().count, 3);
+    } finally {
+      targetDb.close(true);
+    }
   } finally {
     safeCleanup(tempDir);
   }
@@ -73,3 +78,49 @@ NodeTest.test("seedDatabase overwrites existing target cleanly without throwing"
     safeCleanup(tempDir);
   }
 });
+
+NodeTest.test("seedDatabaseForStartup keeps an existing development database for dev:web", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-db-seed-existing-"));
+  const sourcePath = NodePath.join(tempDir, "source.db");
+  const targetPath = NodePath.join(tempDir, "target.db");
+
+  try {
+    const sourceDb = new Database(sourcePath);
+    sourceDb.run("CREATE TABLE workspaces (id TEXT PRIMARY KEY);");
+    sourceDb.run("INSERT INTO workspaces VALUES ('from-source');");
+    sourceDb.close(true);
+    NodeFS.writeFileSync(targetPath, "existing-development-data");
+
+    withoutWarnings(() => seedDatabaseForStartup({
+      source: sourcePath,
+      target: targetPath,
+      preserveExistingTarget: true,
+    }));
+
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(targetPath, "utf8"), "existing-development-data");
+  } finally {
+    safeCleanup(tempDir);
+  }
+});
+
+for (const { name, prepareSource } of [
+  { name: "unavailable", prepareSource: () => {} },
+  { name: "invalid", prepareSource: (sourcePath) => NodeFS.writeFileSync(sourcePath, "not a SQLite database") },
+]) {
+  NodeTest.test(`seedDatabaseForStartup keeps an existing database when the source is ${name}`, () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), `mcode-db-seed-${name}-`));
+    const sourcePath = NodePath.join(tempDir, "source.db");
+    const targetPath = NodePath.join(tempDir, "target.db");
+
+    try {
+      prepareSource(sourcePath);
+      NodeFS.writeFileSync(targetPath, "existing-development-data");
+
+      withoutWarnings(() => seedDatabaseForStartup({ source: sourcePath, target: targetPath }));
+
+      NodeAssertStrict.default.equal(NodeFS.readFileSync(targetPath, "utf8"), "existing-development-data");
+    } finally {
+      safeCleanup(tempDir);
+    }
+  });
+}
