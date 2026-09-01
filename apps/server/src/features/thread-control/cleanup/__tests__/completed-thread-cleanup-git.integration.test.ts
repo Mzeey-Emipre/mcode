@@ -19,10 +19,8 @@ import { RepositoryGitMutationLock } from "../../../projects/git/repository-git-
 import { RealGitExecutor } from "../../../projects/git/execution/real-git-executor.js";
 import { getMcodeDir } from "@mcode/shared";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
-import type { TerminalBackend } from "../../../terminal/backends/terminal-backend.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { HandoffStorage } from "../../../handoff/index.js";
-import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
 const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
@@ -244,6 +242,7 @@ describe("completed thread cleanup Git safety", () => {
 
   it("removes a named sandbox checkout and its branch", async () => {
     NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "mcode/named", "main"]);
+    NodeChildProcess.execFileSync("git", ["-C", worktreePath, "checkout", "mcode/named"]);
     const thread = addCompletedThread({
       title: "Named",
       checkoutState: "named",

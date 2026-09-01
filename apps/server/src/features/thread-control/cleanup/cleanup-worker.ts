@@ -268,16 +268,6 @@ export class CleanupWorker {
       await this.completeThreadOnly(job);
       return;
     }
-
-    const decision = await this.cleanupPolicy.decide({
-      workspacePath: job.workspace_path,
-      worktreePath,
-    });
-    if (decision.action === "retain") {
-      await this.completeThreadOnly(job);
-      return;
-    }
-
     const removal = await this.repositoryMutationLock.run(
       job.workspace_path,
       () => this.removeLockedWorktree(job, worktreePath),
@@ -300,29 +290,21 @@ export class CleanupWorker {
     worktreePath: string,
   ): Promise<LockedRemovalResult> {
     const sourceThread = this.threadRepo.findById(job.thread_id);
-    if (!sourceThread || !await this.matchesJobWorktree(sourceThread, job)) {
-      await this.teardownThreadRuntime(job.thread_id);
-      return { removed: true, threadIds: sourceThread ? [job.thread_id] : [] };
-    }
+    if (!sourceThread) return { removed: true, threadIds: [] };
+    if (!await this.matchesJobWorktree(sourceThread, job)) return this.keepWorktree(job);
 
     const decision = await this.cleanupPolicy.decide({
       workspacePath: job.workspace_path,
       worktreePath,
     });
-    if (decision.action === "retain") {
-      await this.teardownThreadRuntime(job.thread_id);
-      return { removed: true, threadIds: [job.thread_id] };
-    }
+    if (decision.action === "retain") return this.keepWorktree(job);
 
     const linkedThreads = await this.findLinkedThreads(
       sourceThread.workspace_id,
       worktreePath,
       decision.worktreePath,
     );
-    if (linkedThreads.length === 0 || this.hasOtherActiveThread(linkedThreads, job.thread_id)) {
-      await this.teardownThreadRuntime(job.thread_id);
-      return { removed: true, threadIds: [job.thread_id] };
-    }
+    if (this.mustKeepWorktree(linkedThreads, job.thread_id)) return this.keepWorktree(job);
 
     const threadIds = linkedThreads.map((thread) => thread.id);
     await Promise.all(threadIds.map((threadId) => this.teardownThreadRuntime(threadId)));
@@ -339,6 +321,15 @@ export class CleanupWorker {
       }),
       threadIds,
     };
+  }
+
+  private async keepWorktree(job: CleanupJob): Promise<LockedRemovalResult> {
+    await this.teardownThreadRuntime(job.thread_id);
+    return { removed: true, threadIds: [job.thread_id] };
+  }
+
+  private mustKeepWorktree(threads: readonly Thread[], threadId: string): boolean {
+    return threads.length === 0 || this.hasOtherActiveThread(threads, threadId);
   }
 
   private async findLinkedThreads(

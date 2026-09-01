@@ -390,9 +390,6 @@ function warmCodexVersionGate(s = settingsService.get()): void {
   }
 }
 
-const cleanupWorker = container.resolve(CleanupWorker);
-const threadDeletionTeardownService = container.resolve(ThreadDeletionTeardownService);
-const threadCompletionService = container.resolve(ThreadCompletionService);
 const prDraftService = container.resolve(PrDraftService);
 const diffSummaryService = container.resolve(DiffSummaryService);
 const recapService = container.resolve(RecapService);
@@ -429,6 +426,10 @@ const ciWatcherService = new CiWatcherService(githubService, (channel, data) => 
   broadcast("thread.prLinked", payload);
   portPush.send("thread.prLinked", payload);
 });
+container.registerInstance(CiWatcherService, ciWatcherService);
+const threadDeletionTeardownService = container.resolve(ThreadDeletionTeardownService);
+const cleanupWorker = container.resolve(CleanupWorker);
+const threadCompletionService = container.resolve(ThreadCompletionService);
 const pullRequestCompletionEffect = new TurnPullRequestCompletionEffect(
   threadRepo,
   workspaceRepo,

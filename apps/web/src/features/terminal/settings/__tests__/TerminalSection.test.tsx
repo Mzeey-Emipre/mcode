@@ -96,10 +96,8 @@ describe("TerminalSection", () => {
     const trigger = screen.getByRole("combobox", { name: "Workspace Terminal profile" });
     expect(trigger).toHaveTextContent("Use inherited global profile");
     await user.click(trigger);
-    expect(screen.getByRole("option", { name: "Use inherited global profile" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Automatic" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("option", { name: "Automatic" }));
+    await screen.findByRole("option", { name: "Use inherited global profile" });
+    await user.click(await screen.findByRole("option", { name: "Automatic" }));
     const setWorkspaceDefault = useTerminalSettingsStore.getState().setWorkspaceDefault as ReturnType<typeof vi.fn>;
     expect(setWorkspaceDefault).toHaveBeenCalledWith(workspaceId, "automatic");
   });

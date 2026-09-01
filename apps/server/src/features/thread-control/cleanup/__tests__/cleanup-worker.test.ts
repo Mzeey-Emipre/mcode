@@ -26,6 +26,7 @@ describe("CleanupWorker sandbox worktrees", () => {
   let workspaces: WorkspaceRepo;
   let gitWorktrees: GitWorktreeService;
   let cleanupPolicy: SandboxWorktreeCleanupPolicy;
+  let mutationLock: RepositoryGitMutationLock;
   let threadDeletion: ThreadDeletionTeardownService;
   let worker: CleanupWorker;
 
@@ -50,6 +51,7 @@ describe("CleanupWorker sandbox worktrees", () => {
     threadDeletion = {
       teardownThread: vi.fn().mockResolvedValue(undefined),
     } as unknown as ThreadDeletionTeardownService;
+    mutationLock = new RepositoryGitMutationLock(HOST_RUNTIME);
     worker = new CleanupWorker(
       database,
       cleanupJobs,
@@ -57,7 +59,7 @@ describe("CleanupWorker sandbox worktrees", () => {
       { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider,
       gitWorktrees,
       cleanupPolicy,
-      new RepositoryGitMutationLock(HOST_RUNTIME),
+      mutationLock,
       workspaces,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
@@ -157,16 +159,16 @@ describe("CleanupWorker sandbox worktrees", () => {
       worktree_path: stalePath,
       branch: "feature/stale",
     });
-    vi.mocked(cleanupPolicy.decide).mockImplementationOnce(async ({ worktreePath }) => {
+    vi.spyOn(mutationLock, "run").mockImplementationOnce(async (_workspacePath, work) => {
       database.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?").run(currentPath, "expired");
-      return { action: "remove", worktreePath, branch: "feature/stale" };
+      return await work();
     });
 
     await worker.poll();
 
     expect(threads.findById("expired")).toBeNull();
     expect(gitWorktrees.removeWorktree).not.toHaveBeenCalled();
-    expect(cleanupPolicy.decide).toHaveBeenCalledTimes(1);
+    expect(cleanupPolicy.decide).not.toHaveBeenCalled();
   });
 
   it("keeps a default-branch checkout and removes only the expired thread", async () => {

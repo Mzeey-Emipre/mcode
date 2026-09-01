@@ -15,6 +15,11 @@ import { ThreadRepo } from "../../../features/thread-control/persistence/thread-
 import { WorkspaceRepo } from "../../../features/projects/persistence/workspace-repo.js";
 import type { ProjectActionService } from "../../../features/projects/environment/project-action-service.js";
 import { WorkspaceEnvironmentService } from "../../../features/projects/environment/workspace-environment-service.js";
+import { ThreadDeletionTeardownService } from "../../../features/thread-control/lifecycle/thread-deletion-teardown-service.js";
+import { ThreadTeardownService } from "../../../features/thread-control/lifecycle/thread-teardown-service.js";
+import type { GithubService } from "../../../features/pull-requests/github/github-service.js";
+import type { CiWatcherService } from "../../../features/pull-requests/status/ci-watcher.js";
+import type { GitWatcherService } from "../../../features/projects/git/git-watcher-service.js";
 import { _resetForTest, addClient } from "../push.js";
 import {
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
@@ -1392,11 +1397,6 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       teardownThread.mock.invocationCallOrder[0],
     );
     expect(projectActions.beginWorkspaceTeardown).toHaveBeenCalledWith("ws-1");
-    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-1");
-    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-2");
-    expect(projectActions.stopForThread.mock.invocationCallOrder[0]).toBeLessThan(
-      teardownThread.mock.invocationCallOrder[0],
-    );
   });
 });
 
@@ -1458,21 +1458,7 @@ describe("routeMessage thread.delete watcher teardown", () => {
     const deleteThread = vi
       .fn()
       .mockImplementation(options.deleteThread ?? (() => Promise.resolve(true)));
-    const cancelSetupForThread = vi.fn().mockResolvedValue(undefined);
-    const projectActions = createProjectActionServiceMock();
     const deps = {
-      ciWatcherService: {
-        teardownThread: vi.fn().mockResolvedValue(undefined),
-      },
-      githubService: {
-        cancelForRepoPath: vi.fn().mockResolvedValue(undefined),
-      },
-      threadRepo: {
-        findById: vi.fn().mockReturnValue({
-          id: "thread-1",
-          worktree_path: "C:/repo-worktree",
-        }),
-      },
       gitWatcherService: {
         unwatchThreadWorktree,
       },
@@ -1482,19 +1468,12 @@ describe("routeMessage thread.delete watcher teardown", () => {
       threadService: {
         delete: deleteThread,
       },
-      workspaceEnvironmentService: {
-        cancelSetupForThread,
-        beginThreadDeletion: vi.fn(() => () => undefined),
-      },
-      projectActionService: projectActions.service,
     } as unknown as RouterDeps;
     return {
       deps,
       unwatchThreadWorktree,
       teardownThread,
       deleteThread,
-      cancelSetupForThread,
-      projectActions,
     };
   }
 
@@ -1541,8 +1520,6 @@ describe("routeMessage thread.delete watcher teardown", () => {
       unwatchThreadWorktree,
       teardownThread,
       deleteThread,
-      cancelSetupForThread,
-      projectActions,
     } = createThreadDeleteDeps();
 
     const response = await routeMessage(
@@ -1562,13 +1539,6 @@ describe("routeMessage thread.delete watcher teardown", () => {
     expect(deleteThread.mock.invocationCallOrder[0]).toBeLessThan(
       unwatchThreadWorktree.mock.invocationCallOrder[0],
     );
-    expect(cancelSetupForThread.mock.invocationCallOrder[0]).toBeLessThan(
-      teardownThread.mock.invocationCallOrder[0],
-    );
-    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-1");
-    expect(projectActions.stopForThread.mock.invocationCallOrder[0]).toBeLessThan(
-      teardownThread.mock.invocationCallOrder[0],
-    );
   });
 });
 
@@ -1585,17 +1555,21 @@ describe("routeMessage Setup deletion barriers", () => {
     const teardown = deferred<void>();
     const projectActions = createProjectActionServiceMock();
     const deps = {
-      ciWatcherService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
-      githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
-      threadRepo: { findById: vi.fn().mockReturnValue({ ...thread, worktree_path: null }) },
-      threadDeletionTeardownService: {
-        teardownThread: vi.fn(() => {
-          teardownEntered.resolve();
-          return teardown.promise;
-        }),
-      },
+      threadDeletionTeardownService: new ThreadDeletionTeardownService(
+        { findById: vi.fn().mockReturnValue({ ...thread, worktree_path: null }) } as unknown as ThreadRepo,
+        environment,
+        projectActions.service,
+        { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) } as unknown as GithubService,
+        { teardownThread: vi.fn().mockResolvedValue(undefined) } as unknown as CiWatcherService,
+        {
+          teardownThread: vi.fn(() => {
+            teardownEntered.resolve();
+            return teardown.promise;
+          }),
+        } as unknown as ThreadTeardownService,
+        { unwatchThreadWorktree: vi.fn() } as unknown as GitWatcherService,
+      ),
       threadService: { delete: vi.fn().mockResolvedValue(true) },
-      workspaceEnvironmentService: environment,
       projectActionService: projectActions.service,
     } as unknown as RouterDeps;
 

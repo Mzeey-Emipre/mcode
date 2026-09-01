@@ -28,7 +28,6 @@ import type { ThreadDeletionTeardownService } from "../../lifecycle/thread-delet
 import type { AgentService } from "../../../agents/index.js";
 import { killDescendantsByName } from "../../../../runtime/process/containment/process-kill.js";
 import { getMcodeDir } from "@mcode/shared";
-import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
 const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
