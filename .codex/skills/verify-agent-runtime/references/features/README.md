@@ -27,7 +27,7 @@ The harness uses a 15-second health limit from `scripts/dev-web.mjs` and one sha
 | --- | --- | --- |
 | A thread starts, runs, stops, clears active state, and retains a cancelled reconnect snapshot | [Thread lifecycle](thread-lifecycle.md) | `live --scenario stop` |
 | Provider events become durable assistant conversation data | [Provider events and durability](provider-events-and-durability.md) | `live --scenario completion` |
-| Thread deletion and provider-session cleanup retain runtime ownership | [Resource lifecycle](resource-lifecycle.md) | `check` plus controlled direct-thread cleanup |
+| Thread deletion and provider-session cleanup retain runtime ownership | [Resource lifecycle](resource-lifecycle.md) | focused checks and controlled thread cleanup |
 
 ## Regression order
 
@@ -42,7 +42,7 @@ The matrix intentionally covers Codex, Claude, and Cursor, the provider adapter 
 ## Coverage gaps
 
 - 32-argument fixture instead of owner fixture
-- direct handoff-lineage creation is not available through public RPC without a provider turn
+- no teardown path coverage
 - no memory-pressure integration coverage
 - ingress Error normalization gaps
 - diagnostic dedup/checkpoint failure gaps
