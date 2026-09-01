@@ -2,7 +2,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceEnvironmentAutomaticSetupSnapshot } from "@mcode/contracts";
-import { ProjectAutomaticSetupCard, useProjectAutomaticSetup } from "../ProjectAutomaticSetupControl";
+import { getThreadStateMarker, ThreadStateMarker } from "@/components/sidebar/ThreadStateMarker";
+import { ProjectAutomaticSetupCard, useProjectAutomaticSetup, useProjectAutomaticSetupStore } from "../ProjectAutomaticSetupControl";
 
 const transport = vi.hoisted(() => ({
   getAutomaticSetup: vi.fn(),
@@ -45,6 +46,7 @@ const failed: WorkspaceEnvironmentAutomaticSetupSnapshot = {
 afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
+  useProjectAutomaticSetupStore.setState({ snapshotsByThread: {}, updateEpochByThread: {} });
 });
 
 describe("ProjectAutomaticSetupControl", () => {
@@ -108,6 +110,51 @@ describe("ProjectAutomaticSetupControl", () => {
 
     expect(transport.continueAutomaticSetup).toHaveBeenCalledWith("thread-1");
     await waitFor(() => expect(screen.queryByLabelText("Environment setup")).not.toBeInTheDocument());
+  });
+
+  it("updates the project tree marker when the user continues without setup", async () => {
+    const user = userEvent.setup();
+    let resolveStaleRead: (snapshot: WorkspaceEnvironmentAutomaticSetupSnapshot) => void;
+    const staleRead = new Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>((resolve) => {
+      resolveStaleRead = resolve;
+    });
+    transport.getAutomaticSetup
+      .mockResolvedValueOnce(failed)
+      .mockReturnValueOnce(staleRead);
+    transport.continueAutomaticSetup.mockResolvedValue({ ...failed, gate: "released-by-continue" });
+
+    function ChatSetup() {
+      const automaticSetup = useProjectAutomaticSetup("thread-1");
+      return <ProjectAutomaticSetupCard snapshot={automaticSetup.snapshot} busy={automaticSetup.busy} error={automaticSetup.error} onRetry={automaticSetup.retrySetup} onContinue={automaticSetup.continueWithoutSetup} />;
+    }
+
+    function ProjectTreeMarker() {
+      const automaticSetup = useProjectAutomaticSetup("thread-1");
+      const setupState = automaticSetup.snapshot.attempt?.state;
+      const marker = getThreadStateMarker({
+        thread: { status: "completed", updated_at: "2026-08-22T12:00:00.000Z" },
+        checks: undefined,
+        isRunning: false,
+        isSetupAwaitingResponse: automaticSetup.snapshot.gate === "blocked"
+          && (setupState === "failed" || setupState === "interrupted"),
+        hasPendingPermission: false,
+      });
+      return <ThreadStateMarker marker={marker} />;
+    }
+
+    render(<><ChatSetup /><ProjectTreeMarker /></>);
+
+    await screen.findByRole("heading", { name: "Environment setup failed" });
+    await waitFor(() => expect(transport.getAutomaticSetup).toHaveBeenCalledTimes(2));
+    expect(await screen.findByLabelText("Awaiting response")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Continue without setup" }));
+
+    await waitFor(() => expect(screen.queryByLabelText("Environment setup")).not.toBeInTheDocument());
+    await act(async () => {
+      resolveStaleRead!(failed);
+      await staleRead;
+    });
+    expect(screen.getByLabelText("Completed")).toBeVisible();
   });
 
   it("refreshes a running setup so its terminal output stays current", async () => {

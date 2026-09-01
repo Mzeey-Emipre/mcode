@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { create } from "zustand";
 import type { WorkspaceEnvironmentAutomaticSetupSnapshot } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -13,9 +14,35 @@ const NO_AUTOMATIC_SETUP: WorkspaceEnvironmentAutomaticSetupSnapshot = {
   queuedTurns: [],
 };
 
+interface AutomaticSetupSnapshotState {
+  readonly snapshotsByThread: Readonly<Record<string, WorkspaceEnvironmentAutomaticSetupSnapshot>>;
+  readonly updateEpochByThread: Readonly<Record<string, number>>;
+  hydrateSnapshot: (threadId: string, snapshot: WorkspaceEnvironmentAutomaticSetupSnapshot, requestEpoch: number) => void;
+  applySnapshot: (threadId: string, snapshot: WorkspaceEnvironmentAutomaticSetupSnapshot) => void;
+}
+
+/** Holds the one automatic Setup snapshot that every surface reads for each Thread. */
+export const useProjectAutomaticSetupStore = create<AutomaticSetupSnapshotState>((set) => ({
+  snapshotsByThread: {},
+  updateEpochByThread: {},
+  hydrateSnapshot: (threadId, snapshot, requestEpoch) => set((state) => (
+    (state.updateEpochByThread[threadId] ?? 0) !== requestEpoch ? state : {
+      snapshotsByThread: { ...state.snapshotsByThread, [threadId]: snapshot },
+    }
+  )),
+  applySnapshot: (threadId, snapshot) => set((state) => ({
+    snapshotsByThread: { ...state.snapshotsByThread, [threadId]: snapshot },
+    updateEpochByThread: {
+      ...state.updateEpochByThread,
+      [threadId]: (state.updateEpochByThread[threadId] ?? 0) + 1,
+    },
+  })),
+}));
+
 /** Reads and mutates one Thread's automatic Setup gate. */
 export function useProjectAutomaticSetup(threadId: string, enabled = true) {
-  const [snapshot, setSnapshot] = useState(NO_AUTOMATIC_SETUP);
+  const storedSnapshot = useProjectAutomaticSetupStore((state) => state.snapshotsByThread[threadId]);
+  const snapshot = enabled ? storedSnapshot ?? NO_AUTOMATIC_SETUP : NO_AUTOMATIC_SETUP;
   const [busy, setBusy] = useState<AutomaticSetupAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
@@ -23,9 +50,12 @@ export function useProjectAutomaticSetup(threadId: string, enabled = true) {
   const refresh = useCallback(async (): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot | null> => {
     const current = request.current + 1;
     request.current = current;
+    const requestEpoch = useProjectAutomaticSetupStore.getState().updateEpochByThread[threadId] ?? 0;
     try {
       const next = await getTransport().getAutomaticSetup(threadId);
-      if (request.current === current) setSnapshot(next);
+      if (request.current === current) {
+        useProjectAutomaticSetupStore.getState().hydrateSnapshot(threadId, next, requestEpoch);
+      }
       return next;
     } catch {
       if (request.current === current) setError("Could not refresh setup status");
@@ -35,7 +65,6 @@ export function useProjectAutomaticSetup(threadId: string, enabled = true) {
 
   useEffect(() => {
     request.current += 1;
-    setSnapshot(NO_AUTOMATIC_SETUP);
     setBusy(null);
     setError(null);
     if (enabled) void refresh();
@@ -57,13 +86,13 @@ export function useProjectAutomaticSetup(threadId: string, enabled = true) {
     setBusy(action);
     setError(null);
     try {
-      setSnapshot(await operation());
+      useProjectAutomaticSetupStore.getState().applySnapshot(threadId, await operation());
     } catch {
       setError(failureMessage);
     } finally {
       setBusy(null);
     }
-  }, [busy]);
+  }, [busy, threadId]);
 
   const continueWithoutSetup = useCallback(async () => {
     await run(
