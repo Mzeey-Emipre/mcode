@@ -681,9 +681,12 @@ describe("CanonicalAgentEventSink", () => {
     const messageRepo = new MessageRepo(db);
     let interruptPublication = false;
     let interrupted = false;
-    const batches: number[] = [];
+    const batchRows: number[] = [];
     sink = new CanonicalAgentEventSink(db, (events) => {
-      batches.push(events.length);
+      batchRows.push(3 + events.reduce(
+        (rows, event) => rows + (event.payload.type === "item.recorded" ? 2 : 1),
+        0,
+      ));
       if (interruptPublication && !interrupted) {
         interrupted = true;
         throw new Error("simulated interruption");
@@ -763,10 +766,7 @@ describe("CanonicalAgentEventSink", () => {
     expect(sink.loadConversationProjection(THREAD_ID, 10).messages).toHaveLength(2);
     expect(sink.loadConversationProjection(THREAD_ID, 10).narrativeByMessage[message.id]?.tools)
       .toContainEqual(expect.objectContaining({ id: "tool-0", output_summary: "final" }));
-    const maximumItemEventsPerBatch = Math.floor(
-      (ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 3) / 2,
-    );
-    expect(Math.max(...batches)).toBeLessThanOrEqual(maximumItemEventsPerBatch);
+    expect(Math.max(...batchRows)).toBeLessThanOrEqual(ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows);
     expect(db.prepare(`
       SELECT DISTINCT durable_revision
       FROM canonical_agent_events
