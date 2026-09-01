@@ -32,7 +32,7 @@ import type { ToolCallRecordRepo } from "../tools/persistence/tool-call-record-r
 
 type AgentRpcMethod =
   | "agent.send"
-  | "agent.recoveries"
+  | "agent.recoveryIncident"
   | "agent.retry"
   | "agent.continueWithoutSaving"
   | "agent.createAndSend"
@@ -93,7 +93,7 @@ export interface AgentRouterDeps {
     "respondToApproval" | "listPendingApprovals"
   >;
   toolCallRecordRepo: Pick<ToolCallRecordRepo, "listByMessage" | "listByParent">;
-  turnRecoveryService: Pick<TurnRecoveryService, "listRecoveries" | "retry">;
+  turnRecoveryService: Pick<TurnRecoveryService, "currentRecoveryIncident" | "retry">;
 }
 
 type AgentRpcHandlerMap = {
@@ -114,7 +114,7 @@ const agentHandlers: AgentRpcHandlerMap = {
       displayContent: params.displayContent ?? params.content,
     });
   },
-  "agent.recoveries": (deps) => deps.turnRecoveryService.listRecoveries(),
+  "agent.recoveryIncident": (deps) => deps.turnRecoveryService.currentRecoveryIncident(),
   "agent.retry": async (deps, params) => {
     await deps.turnRecoveryService.retry(params.executionId, (command) =>
       deps.agentService.sendMessage({

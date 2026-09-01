@@ -845,8 +845,8 @@ export function createWsTransport(
         ...guardrails,
       });
     },
-    listTurnRecoveries: () =>
-      rpc<import("@mcode/contracts").TurnRecovery[]>("agent.recoveries", {}),
+    getRecoveryIncident: () =>
+      rpc<import("@mcode/contracts").RecoveryIncident | null>("agent.recoveryIncident", {}),
     retryTurn: (executionId) => rpc<void>("agent.retry", { executionId }),
     createAndSendMessage: (input: CreateAndSendInput) => {
       const state = useSettingsStore.getState();

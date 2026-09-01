@@ -15,6 +15,7 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "./state/workspaceStore";
+import { hasRecoveryEntry, useRecoveryIncidentStore } from "@/features/recovery/state/recoveryIncidentStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
@@ -1049,6 +1050,9 @@ const ThreadRow = memo(function ThreadRow({
     && (automaticSetupState === "failed" || automaticSetupState === "interrupted");
   const isSetupAwaitingApproval = automaticSetup.snapshot.gate === "blocked"
     && automaticSetupState === "awaiting-approval";
+  const isRecoveryInterrupted = useRecoveryIncidentStore((state) =>
+    hasRecoveryEntry(state, thread.workspace_id, thread.id),
+  );
   const presentation = createThreadRowPresentation(
     thread,
     checks,
@@ -1056,6 +1060,7 @@ const ThreadRow = memo(function ThreadRow({
     isSetupRunning,
     isSetupAwaitingResponse,
     hasPendingPermission,
+    isRecoveryInterrupted,
     isSetupAwaitingApproval,
     worktreesLoadedFor,
     validWorktreePaths,
@@ -1145,6 +1150,7 @@ function createThreadRowPresentation(
   isSetupRunning: boolean,
   isSetupAwaitingResponse: boolean,
   hasPendingPermission: boolean,
+  isRecoveryInterrupted: boolean,
   isSetupAwaitingApproval: boolean,
   worktreesLoadedFor: string | null,
   validWorktreePaths: Set<string>,
@@ -1157,6 +1163,7 @@ function createThreadRowPresentation(
     isSetupRunning,
     isSetupAwaitingResponse,
     hasPendingPermission: hasPendingPermission || isSetupAwaitingApproval,
+    isRecoveryInterrupted,
   });
   const showPrCi = shouldShowThreadPrCi(thread, checks, marker);
   const isUserCompleted = thread.user_completed_at !== null;

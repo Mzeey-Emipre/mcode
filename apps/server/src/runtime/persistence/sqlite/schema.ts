@@ -651,9 +651,13 @@ export const canonicalAgentIngestCheckpoints = sqliteTable(
     phase: text("phase").notNull(),
     terminalOutcome: text("terminal_outcome"),
     error: text("error"),
+    recoveryIncidentId: text("recovery_incident_id"),
     updatedAt: text("updated_at").notNull(),
   },
-  (table) => [index("idx_canonical_agent_checkpoints_thread").on(table.threadId, table.updatedAt)],
+  (table) => [
+    index("idx_canonical_agent_checkpoints_thread").on(table.threadId, table.updatedAt),
+    index("idx_canonical_agent_checkpoints_recovery_incident").on(table.recoveryIncidentId, table.updatedAt),
+  ],
 );
 
 /** Temporary durable text headers for unfinished parent assistant responses. */

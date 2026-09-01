@@ -1,0 +1,2 @@
+ALTER TABLE `canonical_agent_ingest_checkpoints` ADD `recovery_incident_id` text;--> statement-breakpoint
+CREATE INDEX `idx_canonical_agent_checkpoints_recovery_incident` ON `canonical_agent_ingest_checkpoints` (`recovery_incident_id`,`updated_at`);

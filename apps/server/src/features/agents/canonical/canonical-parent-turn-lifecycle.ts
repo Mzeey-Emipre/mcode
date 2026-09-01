@@ -62,6 +62,7 @@ export interface CanonicalParentTurnLifecycleOperations {
     narrative: readonly ParentNarrativeRecoveryItem[];
     endedAt: string;
   }): CanonicalAgentEventDraft[];
+  stampRecoveryIncident(executionId: string, recoveryIncidentId: string): void;
 }
 
 /** Canonical alias for the parent-turn interruption durability input. */
@@ -335,11 +336,12 @@ export class CanonicalParentTurnLifecycle {
       terminalOutcome: "interrupted",
       error: input.reason,
       nativeCursor: context.checkpoint.nativeCursor ?? undefined,
-      projectCompatibility: () => this.projectInterruption(
-        input,
-        assistant,
-        narrative,
-      ),
+      projectCompatibility: () => {
+        this.projectInterruption(input, assistant, narrative);
+        if (input.recoveryIncidentId) {
+          this.operations.stampRecoveryIncident(input.executionId, input.recoveryIncidentId);
+        }
+      },
       events: () => this.interruptionEvents(input.reason, context, assistant, narrative, endedAt),
     };
   }
