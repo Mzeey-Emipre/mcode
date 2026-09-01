@@ -25,6 +25,7 @@
 | Provider events become durable assistant conversation data | [Provider events and durability](provider-events-and-durability.md) | `runtime live --scenario completion` |
 | Thread deletion and provider-session cleanup retain runtime ownership | [Resource lifecycle](resource-lifecycle.md) | `runtime check` and controlled thread cleanup |
 | Selected assistant text exposes comment and native copy actions separately | [Selected text comments](selected-text-comments.md) | Electron public UI proof |
+| A New worktree completes checkout before automatic Setup starts | [Managed-worktree Setup readiness](managed-worktree-setup.md) | `runtime worktree-setup --confirm-cleanup` and `runtime check` |
 | A user completes a worktree thread and the app schedules its cleanup | [Completed-thread cleanup](completed-thread-cleanup.md) | `thread-lifecycle proof --confirm-cleanup` and `thread-lifecycle check` |
 
 Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that crosses the server, web or Electron UI, provider adapters, persistence, or managed worktrees.
@@ -34,8 +35,9 @@ Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that cro
 1. Run `runtime health`, then `runtime inspect`.
 2. Run `runtime check`, then the affected completion or stop provider proofs.
 3. Run the selected-text-comments workflow when its desktop surface changed.
-4. Run `thread-lifecycle health`, `thread-lifecycle check`, and the completed-thread proof when thread completion or worktree cleanup changed.
-5. Run the applicable multi-surface journey last, inspect receipts, then run cleanup.
+4. Run `runtime worktree-setup --confirm-cleanup` when managed-worktree checkout or automatic Setup changed.
+5. Run `thread-lifecycle health`, `thread-lifecycle check`, and the completed-thread proof when thread completion or worktree cleanup changed.
+6. Run the applicable multi-surface journey last, inspect receipts, then run cleanup.
 
 ## Coverage gaps
 
