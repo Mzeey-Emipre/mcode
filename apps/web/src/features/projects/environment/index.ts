@@ -15,6 +15,5 @@ export {
 /** Automatic Project Setup gate controls rendered in the Thread transcript. */
 export {
   ProjectAutomaticSetupCard,
-  ProjectAutomaticSetupThreadBlock,
   useProjectAutomaticSetup,
 } from "./ProjectAutomaticSetupControl";
