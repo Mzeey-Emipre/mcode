@@ -101,6 +101,7 @@ describe("Cleanup integration", () => {
       projectWorktreeService,
       mockAttachmentService,
       mockHandoffStorage,
+      mockThreadDeletion,
     );
 
     worker = new CleanupWorker(

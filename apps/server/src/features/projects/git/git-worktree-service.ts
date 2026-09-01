@@ -246,7 +246,7 @@ export class GitWorktreeService {
     const managedCanonicalOnly = options.managedCanonicalOnly === true;
     const requestedPath = options.worktreePath ?? NodePath.join(getManagedWorktreeBaseDir(repoPath), name);
     const path = managedCanonicalOnly
-      ? await this.worktreeSafety.resolveManagedCanonicalWorktreePath(requestedPath)
+      ? await this.worktreeSafety.resolveManagedWorktreeRemovalPath(requestedPath)
       : requestedPath;
     const branch = resolveWorktreeBranch(name, options);
     await this.assertRemovableWorktreePath(repoPath, path, managedCanonicalOnly);

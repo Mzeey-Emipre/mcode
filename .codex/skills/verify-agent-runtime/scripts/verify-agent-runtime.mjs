@@ -48,6 +48,12 @@ const FOCUSED_TEST_FILES = [
   "src/features/agents/turns/__tests__/turn-finalizer.test.ts",
   "src/features/agents/turns/__tests__/turn-runtime.test.ts",
   "src/features/providers/composition/__tests__/provider-event-ingress.test.ts",
+  "src/features/projects/worktrees/__tests__/sandbox-worktree-cleanup-policy.test.ts",
+  "src/features/thread-control/cleanup/__tests__/cleanup-integration.test.ts",
+  "src/features/thread-control/cleanup/__tests__/cleanup-worker.test.ts",
+  "src/features/thread-control/cleanup/__tests__/completed-thread-cleanup-git.integration.test.ts",
+  "src/features/thread-control/lifecycle/__tests__/thread-deletion-teardown-service.test.ts",
+  "src/features/thread-control/lifecycle/__tests__/thread-service.test.ts",
 ];
 const FIXED_PROMPTS = {
   completion: "Reply with exactly: Agent runtime verification complete. Do not edit files or invoke tools.",

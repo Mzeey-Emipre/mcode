@@ -252,7 +252,6 @@ async function deleteThread(
   deps: WorkspaceThreadRouterDeps,
   params: { threadId: string; cleanupWorktree: boolean },
 ): Promise<boolean> {
-  await deps.threadDeletionTeardownService.teardownThread(params.threadId);
   return await deps.threadService.delete(params.threadId, params.cleanupWorktree);
 }
 

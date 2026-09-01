@@ -15,11 +15,6 @@ import { ThreadRepo } from "../../../features/thread-control/persistence/thread-
 import { WorkspaceRepo } from "../../../features/projects/persistence/workspace-repo.js";
 import type { ProjectActionService } from "../../../features/projects/environment/project-action-service.js";
 import { WorkspaceEnvironmentService } from "../../../features/projects/environment/workspace-environment-service.js";
-import { ThreadDeletionTeardownService } from "../../../features/thread-control/lifecycle/thread-deletion-teardown-service.js";
-import { ThreadTeardownService } from "../../../features/thread-control/lifecycle/thread-teardown-service.js";
-import type { GithubService } from "../../../features/pull-requests/github/github-service.js";
-import type { CiWatcherService } from "../../../features/pull-requests/status/ci-watcher.js";
-import type { GitWatcherService } from "../../../features/projects/git/git-watcher-service.js";
 import { _resetForTest, addClient } from "../push.js";
 import {
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
@@ -1448,33 +1443,25 @@ describe("routeMessage thread completion lifecycle", () => {
 
 describe("routeMessage thread.delete teardown", () => {
   function createThreadDeleteDeps(options: {
-    teardown?: () => Promise<void>;
     deleteThread?: () => Promise<boolean>;
   } = {}) {
-    const teardownThread = vi
-      .fn()
-      .mockImplementation(options.teardown ?? (() => Promise.resolve()));
     const deleteThread = vi
       .fn()
       .mockImplementation(options.deleteThread ?? (() => Promise.resolve(true)));
     const deps = {
-      threadDeletionTeardownService: {
-        teardownThread,
-      },
       threadService: {
         delete: deleteThread,
       },
     } as unknown as RouterDeps;
     return {
       deps,
-      teardownThread,
       deleteThread,
     };
   }
 
-  it("does not delete the thread when teardown fails", async () => {
+  it("returns a lifecycle deletion failure", async () => {
     const { deps, deleteThread } = createThreadDeleteDeps({
-      teardown: () => Promise.reject(new Error("teardown failed")),
+      deleteThread: () => Promise.reject(new Error("teardown failed")),
     });
 
     const response = await routeMessage(
@@ -1487,11 +1474,11 @@ describe("routeMessage thread.delete teardown", () => {
     );
 
     expect(response.error?.message).toContain("teardown failed");
-    expect(deleteThread).not.toHaveBeenCalled();
+    expect(deleteThread).toHaveBeenCalledExactlyOnceWith("thread-1", true);
   });
 
-  it("returns false when deletion declines after teardown", async () => {
-    const { deps, teardownThread } = createThreadDeleteDeps({
+  it("returns false when lifecycle deletion declines", async () => {
+    const { deps, deleteThread } = createThreadDeleteDeps({
       deleteThread: () => Promise.resolve(false),
     });
 
@@ -1505,15 +1492,11 @@ describe("routeMessage thread.delete teardown", () => {
     );
 
     expect(response.result).toBe(false);
-    expect(teardownThread).toHaveBeenCalledWith("thread-1");
+    expect(deleteThread).toHaveBeenCalledExactlyOnceWith("thread-1", true);
   });
 
-  it("deletes only after thread teardown succeeds", async () => {
-    const {
-      deps,
-      teardownThread,
-      deleteThread,
-    } = createThreadDeleteDeps();
+  it("delegates deletion once with the requested cleanup behavior", async () => {
+    const { deps, deleteThread } = createThreadDeleteDeps();
 
     const response = await routeMessage(
       JSON.stringify({
@@ -1525,63 +1508,11 @@ describe("routeMessage thread.delete teardown", () => {
     );
 
     expect(response.result).toBe(true);
-    expect(teardownThread.mock.invocationCallOrder[0]).toBeLessThan(
-      deleteThread.mock.invocationCallOrder[0],
-    );
+    expect(deleteThread).toHaveBeenCalledExactlyOnceWith("thread-1", true);
   });
 });
 
 describe("routeMessage Setup deletion barriers", () => {
-  it("rejects Setup during a Thread deletion and releases the barrier after teardown fails", async () => {
-    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-setup-thread-delete-"));
-    const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
-    const environment = new WorkspaceEnvironmentService({
-      mcodeDir: root,
-      threads: { findById: (threadId) => threadId === thread.id ? thread : null },
-      platform: hostRuntime.platform,
-    });
-    const teardownEntered = deferred<void>();
-    const teardown = deferred<void>();
-    const projectActions = createProjectActionServiceMock();
-    const deps = {
-      threadDeletionTeardownService: new ThreadDeletionTeardownService(
-        { findById: vi.fn().mockReturnValue({ ...thread, worktree_path: null }) } as unknown as ThreadRepo,
-        environment,
-        projectActions.service,
-        { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) } as unknown as GithubService,
-        { teardownThread: vi.fn().mockResolvedValue(undefined) } as unknown as CiWatcherService,
-        {
-          teardownThread: vi.fn(() => {
-            teardownEntered.resolve();
-            return teardown.promise;
-          }),
-        } as unknown as ThreadTeardownService,
-        { unwatchThreadWorktree: vi.fn() } as unknown as GitWatcherService,
-      ),
-      threadService: { delete: vi.fn().mockResolvedValue(true) },
-      projectActionService: projectActions.service,
-    } as unknown as RouterDeps;
-
-    try {
-      const deletion = routeMessage(JSON.stringify({
-        id: "thread-delete-barrier",
-        method: "thread.delete",
-        params: { threadId: thread.id, cleanupWorktree: false },
-      }), deps);
-      await teardownEntered.promise;
-
-      await expect(environment.startSetup({ threadId: thread.id })).rejects.toMatchObject({
-        code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
-      });
-
-      teardown.reject(new Error("teardown failed"));
-      await expect(deletion).resolves.toMatchObject({ error: { message: "teardown failed" } });
-      await expect(environment.startSetup({ threadId: thread.id })).resolves.toMatchObject({ status: "unavailable" });
-    } finally {
-      await NodeFSPromises.rm(root, { recursive: true, force: true });
-    }
-  });
-
   it("rejects Setup during a workspace deletion and falls back to not found after deletion", async () => {
     const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-setup-workspace-delete-"));
     const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };

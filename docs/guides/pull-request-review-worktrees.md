@@ -20,12 +20,13 @@ head OID, and push target for an active canonical thread.
 
 ## Completed-thread retention ownership
 
-Automatic cleanup may remove a worktree filesystem only when the completed
-thread records `worktree_managed=true` and its resolved path is a descendant of
-the canonical Mcode `worktrees` directory. An external, unmanaged, shared, or
-non-descendant worktree keeps its filesystem and Git state; only the thread's
-database row and generated artifacts expire. Retention cleanup never deletes a
-local branch, including branches associated with an open pull request.
+Automatic cleanup may remove a worktree filesystem only when its resolved path
+is a descendant of the canonical Mcode `worktrees` directory and no active
+thread shares it. A missing managed checkout is pruned from Git and its saved
+named branch is removed. An external, unmanaged, shared, or non-descendant
+worktree keeps its filesystem and Git state; only the thread's database row and
+generated artifacts expire. Cleanup also keeps a named checkout when the
+repository default branch cannot be identified.
 
 ## Repository mapping
 

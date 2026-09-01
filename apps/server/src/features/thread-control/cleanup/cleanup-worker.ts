@@ -49,8 +49,8 @@ type JobExecutionContext = {
   mutationToken: string | null;
 };
 
-type LockedRemovalResult = {
-  removed: boolean;
+type LockedCleanupResult = {
+  completed: boolean;
   threadIds: string[];
 };
 
@@ -272,7 +272,7 @@ export class CleanupWorker {
       job.workspace_path,
       () => this.removeLockedWorktree(job, worktreePath),
     );
-    if (!removal.removed) {
+    if (!removal.completed) {
       throw new Error(`Worktree directory still exists after removal: ${worktreePath}`);
     }
     await this.completeThreads(job, removal.threadIds);
@@ -288,14 +288,16 @@ export class CleanupWorker {
   private async removeLockedWorktree(
     job: CleanupJob,
     worktreePath: string,
-  ): Promise<LockedRemovalResult> {
+  ): Promise<LockedCleanupResult> {
     const sourceThread = this.threadRepo.findById(job.thread_id);
-    if (!sourceThread) return { removed: true, threadIds: [] };
+    if (!sourceThread) return { completed: true, threadIds: [] };
     if (!await this.matchesJobWorktree(sourceThread, job)) return this.keepWorktree(job);
 
     const decision = await this.cleanupPolicy.decide({
       workspacePath: job.workspace_path,
       worktreePath,
+      branch: job.branch,
+      checkoutState: sourceThread.checkout_state,
     });
     if (decision.action === "retain") return this.keepWorktree(job);
 
@@ -308,24 +310,23 @@ export class CleanupWorker {
 
     const threadIds = linkedThreads.map((thread) => thread.id);
     await Promise.all(threadIds.map((threadId) => this.teardownThreadRuntime(threadId)));
-    if (!decision.worktreePath) return { removed: true, threadIds };
-
-    const worktreeName = decision.worktreePath.replace(/\\/g, "/").split("/").pop() ?? decision.worktreePath;
+    const removalPath = decision.worktreePath ?? worktreePath;
+    const worktreeName = removalPath.replace(/\\/g, "/").split("/").pop() ?? removalPath;
     return {
-      removed: await this.gitWorktrees.removeWorktree(job.workspace_path, worktreeName, {
+      completed: await this.gitWorktrees.removeWorktree(job.workspace_path, worktreeName, {
         branchName: decision.branch ?? undefined,
         deleteBranch: decision.branch ? undefined : false,
         forceDeleteBranch: true,
         managedCanonicalOnly: true,
-        worktreePath: decision.worktreePath,
+        worktreePath: removalPath,
       }),
       threadIds,
     };
   }
 
-  private async keepWorktree(job: CleanupJob): Promise<LockedRemovalResult> {
+  private async keepWorktree(job: CleanupJob): Promise<LockedCleanupResult> {
     await this.teardownThreadRuntime(job.thread_id);
-    return { removed: true, threadIds: [job.thread_id] };
+    return { completed: true, threadIds: [job.thread_id] };
   }
 
   private mustKeepWorktree(threads: readonly Thread[], threadId: string): boolean {

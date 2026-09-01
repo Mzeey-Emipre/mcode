@@ -128,6 +128,8 @@ export class ProjectWorktreeService {
     const firstDecision = await this.cleanupPolicy.decide({
       workspacePath: workspace.path,
       worktreePath,
+      branch: thread.branch,
+      checkoutState: thread.checkout_state,
     });
     if (firstDecision.action === "retain") return false;
 
@@ -136,6 +138,8 @@ export class ProjectWorktreeService {
     const currentDecision = await this.cleanupPolicy.decide({
       workspacePath: workspace.path,
       worktreePath: current.worktree_path,
+      branch: current.branch,
+      checkoutState: current.checkout_state,
     });
     if (currentDecision.action === "retain") return false;
     this.cleanupJobRepo.insert({

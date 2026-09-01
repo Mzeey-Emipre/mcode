@@ -12,6 +12,7 @@ import {
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { CleanupJobRepo } from "../../cleanup/persistence/cleanup-job-repo.js";
 import { ThreadRepo } from "../../persistence/thread-repo.js";
+import type { ThreadDeletionTeardownService } from "../thread-deletion-teardown-service.js";
 import { ThreadService } from "../thread-service.js";
 
 describe("ThreadService.delete", () => {
@@ -21,6 +22,7 @@ describe("ThreadService.delete", () => {
   let cleanupJobs: CleanupJobRepo;
   let cleanupPolicy: SandboxWorktreeCleanupPolicy;
   let threadService: ThreadService;
+  let teardownThread: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     database = openMemoryDatabase();
@@ -38,11 +40,13 @@ describe("ThreadService.delete", () => {
       createWorktree: vi.fn(),
       removeWorktree: vi.fn().mockResolvedValue(true),
     } as unknown as GitWorktreeService;
+    teardownThread = vi.fn().mockResolvedValue(undefined);
     threadService = new ThreadService(
       threads,
       new ProjectWorktreeService(threads, workspaces, cleanupJobs, worktrees, cleanupPolicy),
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
+      { teardownThread } as unknown as ThreadDeletionTeardownService,
     );
   });
 
@@ -104,5 +108,29 @@ describe("ThreadService.delete", () => {
 
     expect(cleanupJobs.count()).toBe(0);
     expect(threads.findById("thread-3")).toBeNull();
+    expect(teardownThread).toHaveBeenCalledExactlyOnceWith("thread-3");
+  });
+
+  it("detaches an active handoff descendant when deleting its parent directly", async () => {
+    const workspace = workspaces.create("Project", "/repo");
+    const parent = threads.create(workspace.id, "Parent", "direct", "main");
+    const descendant = threads.create(
+      workspace.id,
+      "Active handoff",
+      "direct",
+      "main",
+      true,
+      "claude",
+      { parentThreadId: parent.id, forkedFromMessageId: "message-1" },
+    );
+
+    await threadService.delete(parent.id, false);
+
+    expect(threads.findById(parent.id)).toBeNull();
+    expect(threads.findById(descendant.id)).toMatchObject({
+      parent_thread_id: null,
+      forked_from_message_id: null,
+    });
+    expect(teardownThread).toHaveBeenCalledExactlyOnceWith(parent.id);
   });
 });

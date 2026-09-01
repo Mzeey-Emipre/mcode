@@ -22,6 +22,7 @@ import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { HandoffStorage } from "../../../handoff/index.js";
+import type { ThreadDeletionTeardownService } from "../../lifecycle/thread-deletion-teardown-service.js";
 
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
@@ -89,7 +90,7 @@ describe("completed thread cleanup Git safety", () => {
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
-      { teardownThread: vi.fn().mockResolvedValue(undefined) } as any,
+      { teardownThread: vi.fn().mockResolvedValue(undefined) } as unknown as ThreadDeletionTeardownService,
       hostRuntime,
     );
   }
@@ -320,6 +321,41 @@ describe("completed thread cleanup Git safety", () => {
     await worker.poll();
 
     expect(threadRepo.findById(thread.id)).toBeNull();
+  }, 30_000);
+
+  it("prunes a missing named sandbox checkout and removes its saved branch", async () => {
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "mcode/missing", "main"]);
+    NodeChildProcess.execFileSync("git", ["-C", worktreePath, "checkout", "mcode/missing"]);
+    const thread = addCompletedThread({
+      title: "Missing named",
+      checkoutState: "named",
+      baseBranch: null,
+      branch: "mcode/missing",
+    });
+    NodeFS.rmSync(worktreePath, { recursive: true, force: true });
+
+    await worker.poll();
+
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "--list", "mcode/missing"], { encoding: "utf8" }))
+      .not.toContain("mcode/missing");
+  }, 30_000);
+
+  it("keeps a branchless checkout's saved non-default base branch", async () => {
+    NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "release", "main"]);
+    const thread = addCompletedThread({
+      title: "Missing branchless",
+      checkoutState: "branchless",
+      baseBranch: "release",
+      branch: "release",
+    });
+    NodeFS.rmSync(worktreePath, { recursive: true, force: true });
+
+    await worker.poll();
+
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "--list", "release"], { encoding: "utf8" }))
+      .toContain("release");
   }, 30_000);
 
   it("preserves retry state across worker restart and blocks after exhaustion", async () => {
