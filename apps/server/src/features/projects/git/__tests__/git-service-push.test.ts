@@ -124,7 +124,7 @@ describe("GitRepositoryService and GitWorktreeService branch creation", () => {
       "--detach",
       NodePath.join("/mock/mcode", "worktrees", "repo", "main-branchless"),
       "main",
-    ]);
+    ], { timeout: 0 });
   });
 
   it("creates a named worktree branch from the exact requested base ref", async () => {
@@ -155,7 +155,23 @@ describe("GitRepositoryService and GitWorktreeService branch creation", () => {
       "-b",
       "codex/issue-960",
       "origin/main",
-    ]);
+    ], { timeout: 0 });
+  });
+
+  it("does not return a worktree after Git reports an incomplete checkout", async () => {
+    const checkoutError = new Error("checkout did not finish");
+    execFn.mockImplementation(async (args) => {
+      if (args.includes("worktree") && args.includes("add")) throw checkoutError;
+      return { stdout: "", stderr: "" };
+    });
+    const worktreePath = NodePath.join("/mock/mcode", "worktrees", "repo", "incomplete-checkout");
+    vi.mocked(NodeFS.existsSync).mockImplementation((path) =>
+      path === "/repo" || path === NodePath.join(worktreePath, ".git"),
+    );
+
+    await expect(
+      gitWorktrees.createWorktree("/repo", "incomplete-checkout", "main", { branchless: true }),
+    ).rejects.toBe(checkoutError);
   });
 
   it.each([

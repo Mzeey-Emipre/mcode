@@ -91,14 +91,14 @@ export class GitWorktreeService {
   ): Promise<WorktreeInfo & { createdBranch: boolean; warnings: string[] }> {
     const request = this.createWorktreeRequest(repoPath, name, branchName, options);
     const createdBranch = await this.shouldCreateBranch(request);
-    const warning = await this.createGitWorktree(request, createdBranch);
+    await this.createGitWorktree(request, createdBranch);
     return {
       name: request.name,
       path: request.path,
       branch: request.branch,
       managed: true,
       createdBranch,
-      warnings: warning ? [warning] : [],
+      warnings: [],
     };
   }
 
@@ -217,24 +217,8 @@ export class GitWorktreeService {
   private async createGitWorktree(
     request: WorktreeCreationRequest,
     createdBranch: boolean,
-  ): Promise<string | null> {
-    try {
-      await this.gitExecutor.exec(createWorktreeArgs(request, createdBranch));
-      return null;
-    } catch (error) {
-      return this.handleWorktreeCreateFailure(request, error);
-    }
-  }
-
-  private handleWorktreeCreateFailure(request: WorktreeCreationRequest, error: unknown): string {
-    if (!NodeFS.existsSync(NodePath.join(request.path, ".git"))) throw error;
-    const message = gitErrorMessage(error);
-    logger.warn("Worktree created but post-checkout hook failed", {
-      wtPath: request.path,
-      branch: request.branch,
-      error: message,
-    });
-    return message;
+  ): Promise<void> {
+    await this.gitExecutor.exec(createWorktreeArgs(request, createdBranch), { timeout: 0 });
   }
 
   private async createWorktreeRemovalRequest(

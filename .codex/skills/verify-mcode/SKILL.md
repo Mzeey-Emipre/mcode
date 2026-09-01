@@ -24,12 +24,14 @@ Run `thread-lifecycle health` before the completed-thread workflow. It also chec
 The public commands use these namespaces:
 
 ```sh
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime <health|check|inspect|live|diagnostics|cleanup>
+bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime <health|check|inspect|live|worktree-setup|worktree-setup-cleanup|diagnostics|cleanup>
 bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle <health|check|proof|inspect|cleanup>
 bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments <setup|proof|cleanup>
 ```
 
 Runtime live proof requires `--confirm-provider-call`. It creates and normally deletes one direct thread. Thread-lifecycle proof and cleanup require `--confirm-cleanup`. The selected-text-comments setup and cleanup require a stopped Electron session.
+
+Run `runtime worktree-setup --confirm-cleanup` after changes to managed-worktree creation or automatic Setup. It creates an owned Git project, starts a queued New-worktree turn, proves automatic Setup reads the completed checkout, and removes all generated state without making a provider call. If a proof is interrupted, run `runtime worktree-setup-cleanup --confirm-cleanup` before retrying.
 
 ## Evidence and cleanup
 
