@@ -27,10 +27,6 @@ export interface TranscriptItemRendererProps {
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's subagent roster. */
   onOpenSubagents?: (target: SubagentRosterTarget) => void;
-  /** Prefills the composer for an interrupted turn. */
-  onContinue?: () => void | Promise<void>;
-  /** Retries a turn by execution identity. */
-  onRetry?: (executionId: string) => void | Promise<void>;
   /** Scrolls to the referenced message. */
   onScrollToMessage?: (messageId: string) => void;
   /** Current persisted assistant message id for each displayed thread. */
@@ -163,15 +159,13 @@ function PersistedLateHooksTranscriptItemRenderer({ item, threadId }: Transcript
 }
 
 /** Renders the durable turn footer. */
-function PersistedTurnFooterTranscriptItemRenderer({ item, threadId, onContinue, onRetry }: TranscriptItemRendererProps) {
+function PersistedTurnFooterTranscriptItemRenderer({ item, threadId }: TranscriptItemRendererProps) {
   const footer = item as Extract<ChatVirtualItem, { type: "persisted-turn-footer" }>;
   return (
     <PersistedTurnFooter
       threadId={threadId}
       messageId={footer.messageId}
       summary={footer.summary}
-      onContinue={onContinue}
-      onRetry={onRetry}
     />
   );
 }
@@ -225,8 +219,6 @@ function sameTranscriptItemHandlers(
     && previous.onReply === next.onReply
     && previous.onSubagentSelect === next.onSubagentSelect
     && previous.onOpenSubagents === next.onOpenSubagents
-    && previous.onContinue === next.onContinue
-    && previous.onRetry === next.onRetry
     && previous.onScrollToMessage === next.onScrollToMessage;
 }
 
@@ -249,8 +241,6 @@ export const TranscriptItemRenderer = memo(function TranscriptItemRenderer({
   onReply,
   onSubagentSelect,
   onOpenSubagents,
-  onContinue,
-  onRetry,
   onScrollToMessage,
   currentTurnMessageIdByThread,
   threadId,
@@ -265,8 +255,6 @@ export const TranscriptItemRenderer = memo(function TranscriptItemRenderer({
       onReply={onReply}
       onSubagentSelect={onSubagentSelect}
       onOpenSubagents={onOpenSubagents}
-      onContinue={onContinue}
-      onRetry={onRetry}
       onScrollToMessage={onScrollToMessage}
       currentTurnMessageIdByThread={currentTurnMessageIdByThread}
       threadId={threadId}

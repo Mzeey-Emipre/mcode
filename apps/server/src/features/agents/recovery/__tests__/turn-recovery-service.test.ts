@@ -73,6 +73,35 @@ describe("TurnRecoveryService", () => {
     });
   });
 
+  function startUnfinishedTurn(input: {
+    workspaceId: string;
+    workspaceName: string;
+    threadId: string;
+    threadTitle: string;
+    turnId: string;
+    executionId: string;
+  }): void {
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(input.workspaceId, input.workspaceName, `C:/${input.workspaceId}`, NOW, NOW);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(input.threadId, input.workspaceId, input.threadTitle, "main", "codex", "active", NOW, NOW);
+    sink.startParentTurn({
+      thread: {
+        id: input.threadId,
+        workspaceId: input.workspaceId,
+        providerId: "codex",
+        createdAt: NOW,
+      },
+      turnId: input.turnId,
+      executionId: input.executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messageRepo.create(input.threadId, "user", "recover this turn", 1),
+    });
+  }
+
   it("interrupts every execution that lacks exact provider proof at startup", () => {
     const service = new TurnRecoveryService(
       sink,
@@ -520,7 +549,53 @@ describe("TurnRecoveryService", () => {
     }).mode).toBe("snapshot");
   });
 
-  it("offers Retry but never Resume for an unproved native cursor", () => {
+  it("reports only the exact turns interrupted by the current restart", () => {
+    const other = {
+      workspaceId: "workspace-other",
+      workspaceName: "Other workspace",
+      threadId: "thread-other",
+      threadTitle: "Other recovery",
+      turnId: "turn-other",
+      executionId: "00000000-0000-4000-8000-000000000016",
+    };
+    const completed = {
+      workspaceId: "workspace-completed",
+      workspaceName: "Completed workspace",
+      threadId: "thread-completed",
+      threadTitle: "Completed recovery",
+      turnId: "turn-completed",
+      executionId: "00000000-0000-4000-8000-000000000017",
+    };
+    const historic = {
+      workspaceId: "workspace-historic",
+      workspaceName: "Historic workspace",
+      threadId: "thread-historic",
+      threadTitle: "Historic error",
+      turnId: "turn-historic",
+      executionId: "00000000-0000-4000-8000-000000000018",
+    };
+    startUnfinishedTurn(other);
+    startUnfinishedTurn(completed);
+    startUnfinishedTurn(historic);
+    sink.finishParentTurn({
+      threadId: historic.threadId,
+      turnId: historic.turnId,
+      executionId: historic.executionId,
+      providerId: "codex",
+      providerIdentities: [],
+      outcome: "errored",
+      error: "historic provider failure",
+      projectTurn: () => ({ message: null, narrative: [] }),
+    });
+    db.prepare("UPDATE threads SET user_completed_at = ? WHERE id = ?").run(NOW, completed.threadId);
+    db.prepare("UPDATE canonical_agent_turns SET started_at = ? WHERE execution_id = ?")
+      .run("2026-08-10T09:00:00.000Z", EXECUTION_ID);
+    db.prepare("UPDATE canonical_agent_turns SET started_at = ? WHERE execution_id = ?")
+      .run("2026-08-10T09:02:00.000Z", other.executionId);
+    db.prepare("UPDATE canonical_agent_turns SET started_at = ? WHERE execution_id = ?")
+      .run("2026-08-10T09:01:00.000Z", completed.executionId);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-10T09:03:00.000Z"));
     const service = new TurnRecoveryService(
       sink,
       threadRepo,
@@ -529,17 +604,51 @@ describe("TurnRecoveryService", () => {
       messageRepo,
       narrativeStore,
     );
-    service.reconcileOnStartup();
+    try {
+      expect(service.reconcileOnStartup()).toEqual({
+        interrupted: [EXECUTION_ID, other.executionId, completed.executionId],
+      });
+      const incident = service.currentRecoveryIncident();
+      expect(incident).toMatchObject({
+        createdAt: "2026-08-10T09:03:00.000Z",
+        entries: [
+          {
+            workspaceId: "workspace-recovery",
+            workspaceName: "Workspace",
+            threadId: THREAD_ID,
+            threadTitle: "Recovery",
+            executionId: EXECUTION_ID,
+            startedAt: "2026-08-10T09:00:00.000Z",
+            interruptedAt: "2026-08-10T09:03:00.000Z",
+            durationMs: 180_000,
+          },
+          {
+            workspaceId: other.workspaceId,
+            workspaceName: other.workspaceName,
+            threadId: other.threadId,
+            threadTitle: other.threadTitle,
+            executionId: other.executionId,
+            startedAt: "2026-08-10T09:02:00.000Z",
+            interruptedAt: "2026-08-10T09:03:00.000Z",
+            durationMs: 60_000,
+          },
+        ],
+      });
+      expect(incident?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 
-    expect(service.listRecoveries()).toEqual([{
-      threadId: THREAD_ID,
-      executionId: EXECUTION_ID,
-      acceptedThrough: 6,
-      durableThrough: 6,
-      phase: "interrupted",
-      error: "The provider could not prove that this execution was still active after restart.",
-      actions: ["retry"],
-    }]);
+      const cleanRestart = new TurnRecoveryService(
+        sink,
+        threadRepo,
+        new AttachmentService(),
+        defaultCheckpoints,
+        messageRepo,
+        narrativeStore,
+      );
+      expect(cleanRestart.reconcileOnStartup()).toEqual({ interrupted: [] });
+      expect(cleanRestart.currentRecoveryIncident()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("dispatches an explicit Retry as a fresh execution with the accepted user input", async () => {
@@ -590,9 +699,10 @@ describe("TurnRecoveryService", () => {
 
     expect(sink.listInterruptedCheckpoints()).toEqual([]);
     expect(sink.loadCheckpoint(EXECUTION_ID)?.phase).toBe("retried");
+    expect(service.currentRecoveryIncident()).toBeNull();
   });
 
-  it("offers Retry for a known terminal provider failure", async () => {
+  it("rejects a provider failure outside the current restart incident", async () => {
     sink.finishParentTurn({
       threadId: THREAD_ID,
       turnId: TURN_ID,
@@ -613,18 +723,8 @@ describe("TurnRecoveryService", () => {
       messageRepo,
       narrativeStore,
     );
-    expect(service.listRecoveries()).toEqual([expect.objectContaining({
-      executionId: EXECUTION_ID,
-      phase: "errored",
-      error: "provider failed",
-      actions: ["retry"],
-    })]);
-
     const dispatch = vi.fn(async () => undefined);
-    await service.retry(EXECUTION_ID, dispatch);
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
-      retryOfExecutionId: EXECUTION_ID,
-      forceFreshSession: true,
-    }));
+    await expect(service.retry(EXECUTION_ID, dispatch)).rejects.toThrow();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

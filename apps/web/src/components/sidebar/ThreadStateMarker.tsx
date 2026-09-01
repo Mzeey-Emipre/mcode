@@ -8,6 +8,7 @@ import type { Thread } from "@/transport/types";
 /** Compact state model shared by thread rows outside the chat transcript. */
 export type ThreadStateMarkerModel =
   | { kind: "action"; label: "Action required" }
+  | { kind: "setup-response"; label: "Awaiting response" }
   | { kind: "setup"; label: "Setup running" }
   | { kind: "running"; label: "Running" }
   | { kind: "ci"; label: string; aggregate: "failing" | "pending" }
@@ -16,14 +17,19 @@ export type ThreadStateMarkerModel =
   | { kind: "interrupted"; label: "Interrupted" }
   | { kind: "time"; label: string };
 
-function getThreadStatusMarker(thread: Pick<Thread, "status" | "updated_at">): ThreadStateMarkerModel {
+function getThreadStatusMarker(
+  thread: Pick<Thread, "status" | "updated_at">,
+  isRecoveryInterrupted: boolean | undefined,
+): ThreadStateMarkerModel {
+  if (isRecoveryInterrupted) return { kind: "interrupted", label: "Interrupted" };
+  if (thread.status === "interrupted" && isRecoveryInterrupted === undefined) {
+    return { kind: "interrupted", label: "Interrupted" };
+  }
   switch (thread.status) {
     case "completed":
       return { kind: "completed", label: "Completed" };
     case "errored":
       return { kind: "errored", label: "Errored" };
-    case "interrupted":
-      return { kind: "interrupted", label: "Interrupted" };
     default:
       return { kind: "time", label: relativeTime(thread.updated_at) };
   }
@@ -42,18 +48,23 @@ export function getThreadStateMarker({
   checks,
   isRunning,
   isSetupRunning = false,
+  isSetupAwaitingResponse = false,
   hasPendingPermission,
+  isRecoveryInterrupted,
 }: {
   thread: Pick<Thread, "status" | "updated_at">;
   checks: ChecksStatus | undefined;
   isRunning: boolean;
   isSetupRunning?: boolean;
+  isSetupAwaitingResponse?: boolean;
   hasPendingPermission: boolean;
+  isRecoveryInterrupted?: boolean;
 }): ThreadStateMarkerModel {
   if (hasPendingPermission) return { kind: "action", label: "Action required" };
+  if (isSetupAwaitingResponse) return { kind: "setup-response", label: "Awaiting response" };
   if (isSetupRunning) return { kind: "setup", label: "Setup running" };
   if (isRunning) return { kind: "running", label: "Running" };
-  return getCiMarker(checks) ?? getThreadStatusMarker(thread);
+  return getCiMarker(checks) ?? getThreadStatusMarker(thread, isRecoveryInterrupted);
 }
 
 function ThreadStateSpinner({ marker, dim }: { marker: Extract<ThreadStateMarkerModel, { kind: "setup" | "running" }>; dim: boolean }) {
@@ -69,11 +80,12 @@ function CiStateMarker({ marker, dim }: { marker: Extract<ThreadStateMarkerModel
 function ThreadStatusDot({ marker, dim }: { marker: Exclude<ThreadStateMarkerModel, { kind: "time" | "setup" | "running" | "ci" }>; dim: boolean }) {
   const markerClasses = {
     action: "ring-2 ring-inset ring-amber-500 bg-transparent status-pulse",
+    "setup-response": "ring-2 ring-inset ring-amber-500 bg-transparent status-pulse",
     completed: "bg-[var(--diff-add-strong)]/80",
     errored: "bg-[var(--diff-remove-strong)]/85",
     interrupted: "bg-amber-500/85 status-pulse",
   };
-  return <span aria-label={marker.label} className={cn("shrink-0 rounded-full", marker.kind === "action" ? "h-2 w-2" : "h-1.5 w-1.5", markerClasses[marker.kind], dim && "opacity-[0.72]")} />;
+  return <span aria-label={marker.label} className={cn("shrink-0 rounded-full", marker.kind === "action" || marker.kind === "setup-response" ? "h-2 w-2" : "h-1.5 w-1.5", markerClasses[marker.kind], dim && "opacity-[0.72]")} />;
 }
 
 /** Renders a compact thread state marker without competing with its title. */

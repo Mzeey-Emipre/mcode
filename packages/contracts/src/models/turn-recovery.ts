@@ -4,37 +4,29 @@ import { lazySchema } from "../utils/lazySchema.js";
 /** Maximum recovery records returned or reconciled in one bounded operation. */
 export const MAX_TURN_RECOVERIES = 100;
 
-/** User-authorized action for one interrupted execution. */
-export const TurnRecoveryActionSchema = z.enum(["retry", "resume"]);
-/** User-authorized action for one interrupted execution. */
-export type TurnRecoveryAction = z.infer<typeof TurnRecoveryActionSchema>;
-
-/** Durable recovery state for one interrupted execution. */
-export const TurnRecoverySchema = lazySchema(() =>
+/** One turn interrupted by a specific backend restart. */
+export const RecoveryIncidentEntrySchema = lazySchema(() =>
   z.object({
+    workspaceId: z.string().trim().min(1).max(256),
+    workspaceName: z.string().trim().min(1).max(256),
     threadId: z.string().trim().min(1).max(256),
+    threadTitle: z.string().trim().min(1).max(512),
     executionId: z.string().uuid(),
-    acceptedThrough: z.number().int().nonnegative(),
-    durableThrough: z.number().int().nonnegative(),
-    phase: z.string().trim().min(1).max(64),
-    error: z.string().max(2_000).nullable(),
-    actions: z.array(TurnRecoveryActionSchema).min(1).max(2),
-  }).strict().superRefine((recovery, context) => {
-    if (recovery.durableThrough > recovery.acceptedThrough) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Durable progress cannot exceed accepted progress",
-        path: ["durableThrough"],
-      });
-    }
-    if (new Set(recovery.actions).size !== recovery.actions.length) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Recovery actions must be unique",
-        path: ["actions"],
-      });
-    }
-  }),
+    startedAt: z.string().datetime({ offset: true }),
+    interruptedAt: z.string().datetime({ offset: true }),
+    durationMs: z.number().int().nonnegative(),
+  }).strict(),
 );
-/** Durable recovery state for one interrupted execution. */
-export type TurnRecovery = z.infer<ReturnType<typeof TurnRecoverySchema>>;
+/** One turn interrupted by a specific backend restart. */
+export type RecoveryIncidentEntry = z.infer<ReturnType<typeof RecoveryIncidentEntrySchema>>;
+
+/** Restart-scoped recovery state that remains stable for the current server run. */
+export const RecoveryIncidentSchema = lazySchema(() =>
+  z.object({
+    id: z.string().uuid(),
+    createdAt: z.string().datetime({ offset: true }),
+    entries: z.array(RecoveryIncidentEntrySchema()).min(1).max(MAX_TURN_RECOVERIES),
+  }).strict(),
+);
+/** Restart-scoped recovery state that remains stable for the current server run. */
+export type RecoveryIncident = z.infer<ReturnType<typeof RecoveryIncidentSchema>>;

@@ -1,6 +1,6 @@
-import { useMemo, type ComponentProps, type ReactNode } from "react";
+import { type ComponentProps, type ReactNode } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
-import type { SelectedTextComment, TurnRecovery } from "@mcode/contracts";
+import type { RecoveryIncident, SelectedTextComment } from "@mcode/contracts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -8,7 +8,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CliErrorBanner, isCliError } from "@/components/chat/CliErrorBanner";
 import { CollapsibleError } from "@/components/chat/CollapsibleError";
 import { ConversationHoldOverlay } from "@/components/chat/ConversationHoldOverlay";
-import { ErroredSessionsBanner } from "@/components/chat/ErroredSessionsBanner";
 import { HandoffFallbackBanner } from "@/components/chat/HandoffFallbackBanner";
 import { HeaderActions } from "@/components/chat/HeaderActions";
 import { InterruptedSessionsBanner } from "@/components/chat/InterruptedSessionsBanner";
@@ -19,7 +18,7 @@ import { ThreadWarningBanner } from "@/components/chat/ThreadWarningBanner";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { SidebarRevealButton } from "@/components/sidebar/SidebarRevealButton";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import { ProjectAutomaticSetupThreadBlock } from "@/features/projects/environment";
+import { ProjectAutomaticSetupCard, useProjectAutomaticSetup } from "@/features/projects/environment";
 import { preparingStatusLabel, type WorkspaceThread } from "@/lib/workspace-thread";
 import type { SubagentRosterTarget } from "../../narrative";
 import { Composer } from "../../composer/Composer";
@@ -62,10 +61,6 @@ export interface ChatViewInteractions {
   onSelectedTextCommentConsumed: () => void;
   /** Prefills the new-thread composer with a starter prompt. */
   onPromptSelect: (text: string) => void;
-  /** Prefills the composer for a persisted interrupted turn. */
-  onContinue: () => void;
-  /** Retries a persisted turn by execution identity. */
-  onRetry: (executionId: string) => void;
   /** Stops the active agent after saving has stalled. */
   onStopSafely: () => Promise<void>;
   /** Continues a stalled turn without saving its recovery state. */
@@ -82,14 +77,12 @@ export interface ChatViewInteractions {
 
 /** Recovery banner state and actions for the active conversation. */
 export interface ChatRecoveryBannerState {
-  /** Recoverable turns returned by the server. */
-  turnRecoveries: TurnRecovery[];
-  /** Hides recovery banners after a user action. */
-  bannerDismissed: boolean;
-  /** Retries the selected recoverable thread executions. */
-  onRetry: (threadIds: string[]) => Promise<void>;
-  /** Dismisses every visible recovery banner. */
-  onDismiss: () => void;
+  /** Restart-scoped incident returned by the server, when visible. */
+  incident: RecoveryIncident | null;
+  /** Dismisses one incident for the browser app session. */
+  onDismiss: (incidentId: string) => void;
+  /** Retries each exact turn in the visible incident. */
+  onRetry: (executionIds: readonly string[]) => Promise<void>;
 }
 
 /** Props for the root chat visual surface. */
@@ -226,13 +219,10 @@ function ActiveThreadHeader({ state, editingThreadId, onEditingThreadIdChange, o
 
 /** Renders restart recovery and worktree warning banners. */
 function ActiveThreadBanners({ state, recovery }: { state: ChatViewState; recovery: ChatRecoveryBannerState }) {
-  const interruptedThreadIds = recovery.turnRecoveries.filter((recovery) => recovery.phase === "interrupted").map((recovery) => recovery.threadId);
-  const erroredThreadIds = recovery.turnRecoveries.filter((recovery) => recovery.phase === "errored").map((recovery) => recovery.threadId);
   const thread = state.activeThread!;
   return (
     <>
-      {interruptedThreadIds.length > 0 && !recovery.bannerDismissed && <div className="px-4 pt-2"><InterruptedSessionsBanner threadIds={interruptedThreadIds} onRetry={recovery.onRetry} onDismiss={recovery.onDismiss} /></div>}
-      {erroredThreadIds.length > 0 && !recovery.bannerDismissed && <div className="px-4 pt-2"><ErroredSessionsBanner threadIds={erroredThreadIds} onRetry={recovery.onRetry} onDismiss={recovery.onDismiss} /></div>}
+      {recovery.incident && <div className="px-4 pt-2"><InterruptedSessionsBanner incident={recovery.incident} onDismiss={() => recovery.onDismiss(recovery.incident!.id)} onRetry={recovery.onRetry} /></div>}
       {thread.clientWarnings?.length ? <div className="px-4 pt-2"><ThreadWarningBanner warnings={thread.clientWarnings} onDismiss={() => useWorkspaceStore.getState().dismissWarnings(thread.id)} /></div> : null}
     </>
   );
@@ -299,21 +289,17 @@ function ConversationStageContent({
 }
 
 /** Renders the conversation stage without taking over MessageList scrolling. */
-function ChatMessageStage({ state, interactions, onSubagentSelect, onOpenSubagents }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "onSubagentSelect" | "onOpenSubagents">) {
+function ChatMessageStage({ state, interactions, automaticSetup, onSubagentSelect, onOpenSubagents }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "onSubagentSelect" | "onOpenSubagents"> & { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
   const thread = state.activeThread!;
-  const automaticSetupTranscriptBlock = useMemo(() => (
-    thread.mode === "worktree" && thread.worktree_managed === true
-      ? <ProjectAutomaticSetupThreadBlock threadId={thread.id} workspaceId={thread.workspace_id} />
-      : undefined
-  ), [thread.id, thread.mode, thread.workspace_id, thread.worktree_managed]);
+  const automaticSetupTranscriptBlock = thread.mode === "worktree" && thread.worktree_managed === true
+    ? <ProjectAutomaticSetupCard snapshot={automaticSetup.snapshot} busy={automaticSetup.busy} error={automaticSetup.error} onContinue={automaticSetup.continueWithoutSetup} onRetry={automaticSetup.retrySetup} onApprove={automaticSetup.approveSetup} />
+    : undefined;
   const messageListProps = {
     onBranch: interactions.onBranch,
     onReply: interactions.onReply,
     onSelectedTextComment: interactions.onSelectedTextComment,
     onSubagentSelect,
     onOpenSubagents,
-    onContinue: interactions.onContinue,
-    onRetry: interactions.onRetry,
   };
   return (
     <div data-testid="chat-message-stage" className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>
@@ -323,12 +309,12 @@ function ChatMessageStage({ state, interactions, onSubagentSelect, onOpenSubagen
 }
 
 /** Renders the composer and plan question wizard for an active thread. */
-function ActiveThreadComposer({ state, interactions, pendingSelectedTextComment }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "pendingSelectedTextComment">) {
+function ActiveThreadComposer({ state, interactions, pendingSelectedTextComment, setupBlocked }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "pendingSelectedTextComment"> & { readonly setupBlocked: boolean }) {
   const thread = state.activeThread!;
   return (
     <div data-testid="chat-composer-stage" className="relative flex-shrink-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>
       <PlanQuestionWizard threadId={thread.id} />
-      <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} branchFromMessageId={state.branchFromMessageId} branchFromMessageContent={state.branchFromMessageContent} selectedTextComment={pendingSelectedTextComment ?? undefined} onSelectedTextCommentConsumed={interactions.onSelectedTextCommentConsumed} onBranchModeExit={interactions.onExitForkMode} />
+      <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} branchFromMessageId={state.branchFromMessageId} branchFromMessageContent={state.branchFromMessageContent} selectedTextComment={pendingSelectedTextComment ?? undefined} onSelectedTextCommentConsumed={interactions.onSelectedTextCommentConsumed} onBranchModeExit={interactions.onExitForkMode} setupBlocked={setupBlocked} />
     </div>
   );
 }
@@ -347,6 +333,10 @@ function ConversationTransitionState({ threadId, threadTitle }: { threadId: stri
 function ActiveThreadSurface(props: ChatViewSurfaceProps) {
   const { state, interactions, recovery, editingThreadId, onEditingThreadIdChange, pendingSelectedTextComment, onSubagentSelect, onOpenSubagents, dismissedError } = props;
   const thread = state.activeThread!;
+  const automaticSetup = useProjectAutomaticSetup(
+    thread.id,
+    thread.mode === "worktree" && thread.worktree_managed === true,
+  );
   const showConversationError = isConversationError(state.sessionError);
   const showConversationErrorBanner = showConversationError && (state.messageCount > 0 || state.isAgentRunning);
   const showCliError = isVisibleCliError(state.sessionError, dismissedError);
@@ -357,9 +347,9 @@ function ActiveThreadSurface(props: ChatViewSurfaceProps) {
       {showConversationErrorBanner ? <div className="mx-3 mb-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3"><p data-testid="conversation-error-banner" role="alert" className="text-sm text-destructive">Could not refresh conversation: {state.sessionError}</p></div> : null}
       <HandoffFallbackBanner threadId={thread.id} />
       <SavingDelayedDialog open={state.savingStatus?.mode === "saving-delayed"} onStopSafely={interactions.onStopSafely} onContinueWithoutSaving={interactions.onContinueWithoutSaving} />
-      <ChatMessageStage state={state} interactions={interactions} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} />
+      <ChatMessageStage state={state} interactions={interactions} automaticSetup={automaticSetup} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} />
       {showCliError && <CliErrorBanner error={state.sessionError!} onDismiss={interactions.onDismissCliError} onOpenSettings={interactions.onOpenSettings} />}
-      <ActiveThreadComposer state={state} interactions={interactions} pendingSelectedTextComment={pendingSelectedTextComment} />
+      <ActiveThreadComposer state={state} interactions={interactions} pendingSelectedTextComment={pendingSelectedTextComment} setupBlocked={automaticSetup.snapshot.gate === "blocked"} />
     </div>
   );
 }

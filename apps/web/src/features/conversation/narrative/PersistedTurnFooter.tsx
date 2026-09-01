@@ -75,10 +75,6 @@ export interface PersistedTurnFooterProps {
   messageId: string;
   /** Canonical summary used when this message has no legacy narrative cache. */
   summary?: TurnFooterSummary;
-  /** Prefills the existing composer with `Continue` for an interrupted turn. */
-  onContinue?: () => void | Promise<void>;
-  /** Calls the existing retry command with the summary's exact execution ID. */
-  onRetry?: (executionId: string) => void | Promise<void>;
 }
 
 /**
@@ -97,8 +93,6 @@ export function PersistedTurnFooter({
   threadId,
   messageId,
   summary,
-  onContinue,
-  onRetry,
 }: PersistedTurnFooterProps) {
   const records = useThreadRecord(threadId, (r) => r.narrativeByMessage[messageId]);
   const load = useThreadStore((s) => s.loadNarrativeForMessage);
@@ -126,9 +120,6 @@ export function PersistedTurnFooter({
       counts={resolvedSummary.counts}
       durationMs={resolvedSummary.durationMs}
       outcome={resolvedSummary.outcome}
-      outcomeExecutionId={resolvedSummary.outcomeExecutionId}
-      onContinue={onContinue}
-      onRetry={onRetry}
     />
   );
 }

@@ -15,6 +15,7 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "./state/workspaceStore";
+import { hasRecoveryEntry, useRecoveryIncidentStore } from "@/features/recovery/state/recoveryIncidentStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
@@ -88,6 +89,7 @@ import type { ChecksStatus } from "@mcode/contracts";
 import type { Workspace, Thread } from "@/transport/types";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
 import { getThreadStateMarker, ThreadStateMarker } from "@/components/sidebar/ThreadStateMarker";
+import { useProjectAutomaticSetup } from "@/features/projects/environment";
 import {
   DndContext,
   closestCenter,
@@ -1037,18 +1039,29 @@ const ThreadRow = memo(function ThreadRow({
 }: ThreadRowProps) {
   const isActive = useWorkspaceStore((s) => s.activeThreadId === thread.id);
   const isRunning = useThreadStore((s) => s.runningThreadIds.has(thread.id));
-  const isSetupRunning = useThreadStore((s) => {
-    const record = s.records.get(thread.id);
-    return s.runningThreadIds.has(thread.id)
-      && record?.runtimePhase === "running"
-      && record.turnExecutionId === null;
-  });
+  const automaticSetup = useProjectAutomaticSetup(
+    thread.id,
+    thread.mode === "worktree" && thread.worktree_managed === true,
+  );
+  const automaticSetupState = automaticSetup.snapshot.attempt?.state;
+  const isSetupRunning = automaticSetup.snapshot.gate === "blocked"
+    && (automaticSetupState === "queued" || automaticSetupState === "running");
+  const isSetupAwaitingResponse = automaticSetup.snapshot.gate === "blocked"
+    && (automaticSetupState === "failed" || automaticSetupState === "interrupted");
+  const isSetupAwaitingApproval = automaticSetup.snapshot.gate === "blocked"
+    && automaticSetupState === "awaiting-approval";
+  const isRecoveryInterrupted = useRecoveryIncidentStore((state) =>
+    hasRecoveryEntry(state, thread.workspace_id, thread.id),
+  );
   const presentation = createThreadRowPresentation(
     thread,
     checks,
     isRunning,
     isSetupRunning,
+    isSetupAwaitingResponse,
     hasPendingPermission,
+    isRecoveryInterrupted,
+    isSetupAwaitingApproval,
     worktreesLoadedFor,
     validWorktreePaths,
     availableProviders,
@@ -1135,7 +1148,10 @@ function createThreadRowPresentation(
   checks: ChecksStatus | undefined,
   isRunning: boolean,
   isSetupRunning: boolean,
+  isSetupAwaitingResponse: boolean,
   hasPendingPermission: boolean,
+  isRecoveryInterrupted: boolean,
+  isSetupAwaitingApproval: boolean,
   worktreesLoadedFor: string | null,
   validWorktreePaths: Set<string>,
   availableProviders: ThreadRowProps["availableProviders"],
@@ -1145,7 +1161,9 @@ function createThreadRowPresentation(
     checks,
     isRunning,
     isSetupRunning,
-    hasPendingPermission,
+    isSetupAwaitingResponse,
+    hasPendingPermission: hasPendingPermission || isSetupAwaitingApproval,
+    isRecoveryInterrupted,
   });
   const showPrCi = shouldShowThreadPrCi(thread, checks, marker);
   const isUserCompleted = thread.user_completed_at !== null;

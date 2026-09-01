@@ -479,6 +479,14 @@ provider or turn failure).
 > `Completed|Interrupted|Errored`, so it lacks the distinct `Cancelled`
 > outcome.
 
+### Recovery incident
+The exact set of active turns that one backend restart interrupted. The server
+creates the incident at startup and records each affected turn with that
+identity. It may include threads from every workspace, but excludes threads
+the user completed. The incident remains stable for that server run. A client
+may dismiss it for its current app session.
+_Avoid_: Interrupted-turn history, recovery error list
+
 ### Terminal proof
 Authoritative provider or system evidence that confirms one [[Turn outcome]].
 A final-looking assistant response is not terminal proof.

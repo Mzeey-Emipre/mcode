@@ -3,7 +3,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as NodeEvents from "node:events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
-import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
+import {
+  createAgentServiceForTest,
+  startAgentServiceIngressForTest,
+  wrapProviderEmitterForRuntimeEvents,
+} from "./agent-service-test-harness.js";
 import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
@@ -311,48 +315,6 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "errored");
   });
 
-  it("hides the failed attempt's transient error from the UI but keeps a fatal error visible", async () => {
-    const { service, sendTurn, providerEmitter } = buildService();
-    startAgentServiceIngressForTest(service, );
-
-    // Probe the suppression gate from inside the failing attempt — this is the
-    // window during which the provider emits its mid-attempt Error event.
-    let transientSuppressedDuringAttempt: boolean | undefined;
-    let fatalSuppressedDuringAttempt: boolean | undefined;
-    sendTurn
-      .mockImplementationOnce(() => {
-        transientSuppressedDuringAttempt = service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET");
-        fatalSuppressedDuringAttempt = service.shouldSuppressTransientTurnError(THREAD_ID, "permission denied");
-        return Promise.reject(new Error("read ECONNRESET"));
-      })
-      .mockResolvedValueOnce(undefined);
-
-    await service.sendMessage({
-      threadId: THREAD_ID,
-      content: "hello",
-      permissionMode: "default",
-      model: "claude-sonnet-4-6",
-      attachments: [],
-      provider: "claude",
-    });
-
-    // During the retried attempt: a transient error is swallowed, a fatal one is not.
-    expect(transientSuppressedDuringAttempt).toBe(true);
-    expect(fatalSuppressedDuringAttempt).toBe(false);
-    // Fire-and-forget providers keep the window armed until TurnComplete.
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(true);
-    providerEmitter.emit("event", {
-      type: "turnComplete",
-      threadId: THREAD_ID,
-      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
-      reason: "end_turn",
-      costUsd: null,
-      tokensIn: 0,
-      tokensOut: 0,
-    });
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
-  });
-
   it("terminalizes exhausted provider retries with the active turn identity", async () => {
     const { service, sendTurn, providerEmitter, threadRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
@@ -373,54 +335,9 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(terminalEvents).toHaveLength(2);
     expect(terminalEvents[0]?.turnExecutionId).toEqual(expect.any(String));
     expect(terminalEvents[1]?.turnExecutionId).toBe(terminalEvents[0]?.turnExecutionId);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
     expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "errored");
     expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "interrupted");
-  });
-
-  it("swallows the failed attempt's trailing Ended so the UI's running state survives the retry", async () => {
-    const { service, sendTurn, providerEmitter } = buildService();
-    startAgentServiceIngressForTest(service, );
-
-    // Model the await-full-turn provider flow: stream, hit a mid-attempt
-    // transient error (emitted through the provider), then reject so the loop
-    // retries. The trailing `Ended` from that failed attempt must be armed for
-    // suppression so it never tears down the spinner before the retry streams.
-    let endedSuppressedDuringAttempt: boolean | undefined;
-    sendTurn
-      .mockImplementationOnce((request: TurnRequest) => {
-        providerEmitter.emit("event", {
-          type: "error",
-          threadId: THREAD_ID,
-          turnExecutionId: request.turnExecutionId,
-          error: "read ECONNRESET",
-        });
-        endedSuppressedDuringAttempt = service.shouldSuppressTurnEnded(THREAD_ID);
-        return Promise.reject(new Error("read ECONNRESET"));
-      })
-      .mockResolvedValueOnce(undefined);
-
-    await service.sendMessage({
-      threadId: THREAD_ID,
-      content: "hello",
-      permissionMode: "default",
-      model: "claude-sonnet-4-6",
-      attachments: [],
-      provider: "claude",
-    });
-
-    // The trailing Ended was armed for suppression during the failed attempt...
-    expect(endedSuppressedDuringAttempt).toBe(true);
-    providerEmitter.emit("event", {
-      type: "turnComplete",
-      threadId: THREAD_ID,
-      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
-      reason: "end_turn",
-      costUsd: null,
-      tokensIn: 0,
-      tokensOut: 0,
-    });
-    expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
   });
 
   it("does not publish an interrupted status for suppressed retry teardown", async () => {
@@ -475,53 +392,6 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "interrupted");
   });
 
-  it("does not arm Ended suppression for a fatal error (the spinner tears down)", async () => {
-    const { service, sendTurn, providerEmitter } = buildService();
-    startAgentServiceIngressForTest(service, );
-
-    let endedSuppressedDuringAttempt: boolean | undefined;
-    sendTurn.mockImplementationOnce(() => {
-      providerEmitter.emit("event", {
-        type: "error",
-        threadId: THREAD_ID,
-        error: "permission denied",
-      });
-      endedSuppressedDuringAttempt = service.shouldSuppressTurnEnded(THREAD_ID);
-      return Promise.reject(new Error("permission denied"));
-    });
-
-    await service.sendMessage({
-      threadId: THREAD_ID,
-      content: "hello",
-      permissionMode: "default",
-      model: "claude-sonnet-4-6",
-      attachments: [],
-      provider: "claude",
-    });
-
-    // A fatal error is not part of a retry window, so its Ended must reach the UI.
-    expect(endedSuppressedDuringAttempt).toBe(false);
-    expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
-  });
-
-  it("disarms suppression before the final give-up so the error still reaches the UI", async () => {
-    const { service, sendTurn } = buildService();
-    startAgentServiceIngressForTest(service, );
-    sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
-
-    await service.sendMessage({
-      threadId: THREAD_ID,
-      content: "hello",
-      permissionMode: "default",
-      model: "claude-sonnet-4-6",
-      attachments: [],
-      provider: "claude",
-    });
-
-    // Give-up disarms the retry window so the terminal error is visible.
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
-  });
-
   it("leaves a full-looking response unresolved when the provider ends without terminal proof", async () => {
     const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
@@ -559,7 +429,7 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
     expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
     expect(messageRepo.createAssistantIdempotent).not.toHaveBeenCalled();
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
   });
 
   it("does not synthesize a terminal event after an explicit completion", async () => {
@@ -612,7 +482,7 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
     expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("fences child Ended events and clears the final-response marker for the next turn", async () => {
@@ -666,7 +536,7 @@ describe("AgentService transient-failure auto-retry", () => {
     // for each root execution; only the matching root Ended terminalizes.
     expect(events.filter((event) => event.type === "ended")).toHaveLength(3);
     await vi.waitFor(() => {
-      expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+      expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
     });
   });
 
@@ -696,7 +566,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
     expect(events.filter((event) => event.type === "error")).toHaveLength(1);
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
   });
 
   it("does not turn a stopped turn into a successful fallback", async () => {
@@ -712,7 +582,7 @@ describe("AgentService transient-failure auto-retry", () => {
       attachments: [],
       provider: "claude",
     });
-    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    const executionId = service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
     await service.stopSession(THREAD_ID);
 
     providerEmitter.emit("event", {
@@ -720,7 +590,7 @@ describe("AgentService transient-failure auto-retry", () => {
       threadId: THREAD_ID,
       turnExecutionId: executionId,
     });
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("cancelled");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("cancelled");
   });
 
   it("ignores stale Message events and interrupts only the matching execution", async () => {
@@ -738,7 +608,7 @@ describe("AgentService transient-failure auto-retry", () => {
       attachments: [],
       provider: "claude",
     });
-    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    const executionId = service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
     providerEmitter.emit("event", {
       type: "message",
       threadId: THREAD_ID,
@@ -747,7 +617,7 @@ describe("AgentService transient-failure auto-retry", () => {
       tokens: null,
     });
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
 
     providerEmitter.emit("event", {
       type: "message",
@@ -759,7 +629,7 @@ describe("AgentService transient-failure auto-retry", () => {
     await Promise.resolve();
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
     expect(messageRepo.createAssistantIdempotent).not.toHaveBeenCalled();
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
 
     providerEmitter.emit("event", {
       type: "ended",
@@ -775,7 +645,7 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
       expect.objectContaining({ content: "root" }),
     );
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("does not treat a post-turn goal receipt as a new completion", async () => {
@@ -793,7 +663,7 @@ describe("AgentService transient-failure auto-retry", () => {
       attachments: [],
       provider: "claude",
     });
-    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    const executionId = service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
     providerEmitter.emit("event", {
       type: "message",
       threadId: THREAD_ID,
@@ -812,7 +682,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
 
     providerEmitter.emit("event", {
       type: "ended",
@@ -827,7 +697,7 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
       expect.objectContaining({ content: "Goal achieved in 1s." }),
     );
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("leaves compaction-owned messages running until compaction finishes", async () => {
@@ -845,7 +715,7 @@ describe("AgentService transient-failure auto-retry", () => {
       attachments: [],
       provider: "claude",
     });
-    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    const executionId = service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
     providerEmitter.emit("event", {
       type: "compacting",
       threadId: THREAD_ID,
@@ -862,27 +732,25 @@ describe("AgentService transient-failure auto-retry", () => {
     await Promise.resolve();
 
     expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
     providerEmitter.emit("event", {
       type: "compacting",
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       active: false,
     });
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
   });
 
   it("swallows discardSession's trailing Ended when sendTurn rejects without emitting Error", async () => {
     const { service, sendTurn, discardSession, waitForSessionExit, providerEmitter } = buildService();
     startAgentServiceIngressForTest(service, );
 
-    let endedSuppressedWhenDiscardUnwinds: boolean | undefined;
     // Spawn-style failure: no provider Error, but discardSession unwinds a pooled
     // subprocess and emits Ended on the next tick while the retry catch runs.
     discardSession.mockImplementation(() => {
       queueMicrotask(() => {
-        endedSuppressedWhenDiscardUnwinds = service.shouldSuppressTurnEnded(THREAD_ID);
-        const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+        const executionId = service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
         if (!executionId) return;
         providerEmitter.emit("event", {
           type: "ended",
@@ -909,9 +777,8 @@ describe("AgentService transient-failure auto-retry", () => {
 
     expect(discardSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
     expect(waitForSessionExit).toHaveBeenCalledWith(`mcode-${THREAD_ID}`, 5000);
-    expect(endedSuppressedWhenDiscardUnwinds).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
-    expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
+    expect(sendTurn).toHaveBeenCalledTimes(2);
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
   });
 
   it("keeps a transient disconnect unfinished until a real terminal outcome", async () => {
@@ -939,7 +806,7 @@ describe("AgentService transient-failure auto-retry", () => {
       provider: "claude",
     });
 
-    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    const executionId = service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
     providerEmitter.emit("event", {
       type: "error",
       threadId: THREAD_ID,
@@ -953,7 +820,7 @@ describe("AgentService transient-failure auto-retry", () => {
     });
     await retryStarted;
 
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
 
     releaseRetry();
@@ -971,55 +838,7 @@ describe("AgentService transient-failure auto-retry", () => {
     await Promise.resolve();
 
     expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
-  });
-
-  it("does not suppress a bare Ended for a normal in-flight turn (no transient retry armed)", async () => {
-    const { service, sendTurn } = buildService();
-    startAgentServiceIngressForTest(service, );
-
-    sendTurn.mockResolvedValueOnce(undefined);
-
-    await service.sendMessage({
-      threadId: THREAD_ID,
-      content: "hello",
-      permissionMode: "default",
-      model: "claude-sonnet-4-6",
-      attachments: [],
-      provider: "claude",
-      contextWindow: "1m",
-    });
-
-    // A bare `Ended` with no in-flight transient retry means the stream
-    // genuinely ended; it must reach the cleanup path even though the
-    // fire-and-forget retry window is still armed. The superseded session's
-    // `Ended` during an internal recreation is suppressed at the provider
-    // layer, not here, so this gate stays narrow.
-    expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
-  });
-
-  it("disarms the retry window on a user stop so it can't re-dispatch or suppress later events", async () => {
-    const { service, sendTurn } = buildService();
-    startAgentServiceIngressForTest(service, );
-    sendTurn.mockResolvedValueOnce(undefined);
-
-    // Fire-and-forget send leaves the retry window armed until TurnComplete.
-    await service.sendMessage({
-      threadId: THREAD_ID,
-      content: "hello",
-      permissionMode: "default",
-      model: "claude-sonnet-4-6",
-      attachments: [],
-      provider: "claude",
-    });
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(true);
-
-    // A user stop ends the turn via finalize; it must tear down the armed
-    // window so a scheduled stream retry can't re-dispatch after the stop and
-    // the suppression flags don't outlive into the next turn.
-    await service.stopSession(THREAD_ID);
-
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("fences a delayed stream retry from stop and a replacement turn", async () => {
@@ -1144,14 +963,13 @@ describe("AgentService transient-failure auto-retry", () => {
       tokensOut: 0,
       turnExecutionId: (sendTurn.mock.calls[1][0] as TurnRequest).turnExecutionId,
     });
-    expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("swallows a failed attempt's TurnComplete during the retry window", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
     startAgentServiceIngressForTest(service, );
 
-    let turnCompleteSuppressedDuringAttempt: boolean | undefined;
     sendTurn
       .mockImplementationOnce((request: TurnRequest) => {
         providerEmitter.emit("event", {
@@ -1169,7 +987,6 @@ describe("AgentService transient-failure auto-retry", () => {
           tokensIn: 0,
           tokensOut: 0,
         });
-        turnCompleteSuppressedDuringAttempt = service.shouldSuppressTurnComplete(THREAD_ID);
         return Promise.reject(new Error("read ECONNRESET"));
       })
       .mockResolvedValueOnce(undefined);
@@ -1183,17 +1000,18 @@ describe("AgentService transient-failure auto-retry", () => {
       provider: "claude",
     });
 
-    expect(turnCompleteSuppressedDuringAttempt).toBe(true);
+    expect(sendTurn).toHaveBeenCalledTimes(2);
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
     providerEmitter.emit("event", {
       type: "turnComplete",
       threadId: THREAD_ID,
-      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      turnExecutionId: (sendTurn.mock.calls[1][0] as TurnRequest).turnExecutionId,
       reason: "end_turn",
       costUsd: null,
       tokensIn: 0,
       tokensOut: 0,
     });
-    expect(service.shouldSuppressTurnComplete(THREAD_ID)).toBe(false);
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("stops retrying at the attempt cap when a transient signature keeps failing", async () => {

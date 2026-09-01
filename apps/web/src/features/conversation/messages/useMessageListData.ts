@@ -102,7 +102,7 @@ export function useMessageListData(displayThreadId: string | undefined) {
   const legacyThoughtSegments = useThreadRecord(renderedThreadId, (record) => record.thoughtSegments);
   const canonicalAgentState = useThreadRecord(renderedThreadId, (record) => record.canonicalAgent.state);
   const canonicalProjection = useMemo(
-    () => displayThreadId && renderedThreadId
+    () => renderedThreadId
       ? projectCanonicalMessageList({
           threadId: renderedThreadId,
           state: canonicalAgentState,
@@ -113,7 +113,6 @@ export function useMessageListData(displayThreadId: string | undefined) {
       : undefined,
     [
       canonicalAgentState,
-      displayThreadId,
       legacyMessages,
       legacyThoughtSegments,
       legacyToolCalls,

@@ -16,6 +16,15 @@ export function formatDuration(totalSeconds: number): string {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
+/** Formats elapsed milliseconds with the turn footer's compact convention. */
+export function formatDurationMs(ms: number | null): string {
+  if (ms == null || ms < 0) return "—";
+  if (ms < 1000) return `${ms}ms`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
+  return formatDuration(Math.floor(totalSeconds));
+}
+
 /** Formats an ISO date string as a compact relative age. */
 export function relativeTime(dateStr: string): string {
   const now = Date.now();

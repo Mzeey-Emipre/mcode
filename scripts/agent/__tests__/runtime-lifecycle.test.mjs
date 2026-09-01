@@ -309,6 +309,31 @@ NodeTest.test("agentUp removes stale PID files before launching server and web p
   }
 });
 
+NodeTest.test("agentUp seeds the database after it stops the prior runtime", async () => {
+  const repo = makeRepo();
+  const events = [];
+  const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async () => { events.push("stopped"); },
+    seedDatabaseForStartup: ({ repoRoot }) => {
+      NodeAssertStrict.default.equal(repoRoot, repo);
+      events.push("seeded");
+    },
+    seedFixtureRepo: () => NodePath.join(repo, ".dev", "fixture-repo"),
+    computeAvailablePorts: async () => ({ serverPort: 41_229, webPort: 41_230 }),
+    getElectronBinary: () => {
+      NodeAssertStrict.default.deepEqual(events, ["stopped", "seeded"]);
+      return null;
+    },
+  });
+
+  try {
+    await NodeAssertStrict.default.rejects(() => agentUp(repo), /Electron binary not found/);
+  } finally {
+    restoreHooks();
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 NodeTest.test("agentUp prepares fresh runtime directories before recording child PIDs", async () => {
   const repo = makeRepo();
   const paths = getRuntimePaths(repo);

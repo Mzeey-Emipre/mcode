@@ -53,8 +53,8 @@ const {
 }));
 
 // Mock hooks before importing the component under test.
-vi.mock("../../navigation/usePreviewBridge", () => ({
-  usePreviewBridge: mockUsePreviewBridge,
+vi.mock("../../navigation/usePreviewSurfaceBridge", () => ({
+  usePreviewSurfaceBridge: mockUsePreviewBridge,
   formatNavError: (code: string) => code,
 }));
 
