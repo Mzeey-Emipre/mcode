@@ -66,7 +66,7 @@ describe("ProjectAutomaticSetupControl", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Environment setup failed" })).toBeVisible();
-    expect(screen.getByText("Choose how to continue this thread.")).toBeVisible();
+    expect(screen.queryByText("Choose how to continue this thread.")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Environment setup terminal")).toHaveTextContent("$ bun run setup");
     expect(screen.getByLabelText("Environment setup terminal")).toHaveTextContent("missing dependency");
     expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();

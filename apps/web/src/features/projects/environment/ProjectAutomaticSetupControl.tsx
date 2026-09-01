@@ -176,11 +176,9 @@ export function ProjectAutomaticSetupCard({
       : state === "running"
         ? "Setting up environment"
         : "Preparing environment";
-  const detail = failed
-    ? "Choose how to continue this thread."
-    : state === "running"
-      ? "Running setup before your first message."
-      : "Setup will run before your first message.";
+  const detail = state === "running"
+    ? "Running setup before your first message."
+    : "Setup will run before your first message.";
   const script = attempt?.snapshot?.script ?? "";
   const output = attempt?.output || (state === "running" ? "Waiting for setup output…" : "Waiting for setup to start…");
 
@@ -189,7 +187,7 @@ export function ProjectAutomaticSetupCard({
       <header className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-medium">{heading}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+          {!failed ? <p className="mt-1 text-xs text-muted-foreground">{detail}</p> : null}
         </div>
         {state === "running" ? (
           <span role="status" className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
