@@ -34,8 +34,18 @@ import { getSession, previewTabScopeKey, sessions } from "../../state/window-ses
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
+const SAFE_LOCAL_PAGE_URL = new URL(
+  "../../../../../../web/public/browser-automation-fixture.html",
+  import.meta.url,
+).href;
+
 function invoke<T>(channel: string, payload: Record<string, unknown>): Result<T> {
   return ipcHandlers[channel]!({ sender: window.webContents }, payload) as Result<T>;
+}
+
+async function invokeAsync<T>(channel: string, payload: Record<string, unknown>): Promise<Result<T>> {
+  const result = await ipcHandlers[channel]!({ sender: window.webContents }, payload);
+  return result as Result<T>;
 }
 
 beforeEach(() => {
@@ -66,7 +76,7 @@ describe("preview tab handlers", () => {
     expect(getSession(window as never).tabsByThread.has(previewTabScopeKey("workspace-B", "thread-A"))).toBe(true);
   });
 
-  it("opens, activates, and closes tabs while preserving one fallback tab", () => {
+  it("opens, activates, and closes tabs while preserving one fallback tab", async () => {
     const listed = invoke<{ activeTabId: string }>("preview:tabs.list", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
@@ -74,7 +84,7 @@ describe("preview tab handlers", () => {
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;
 
-    const opened = invoke<{ tabId: string }>("preview:tabs.open", {
+    const opened = await invokeAsync<{ tabId: string }>("preview:tabs.open", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
       initialAddress: "https://example.test/page",
@@ -105,7 +115,44 @@ describe("preview tab handlers", () => {
     expect(closedLast.ok && closedLast.data.activeTabId).toBeTruthy();
   });
 
-  it("persists renderer-observed tab chrome across activation snapshots", () => {
+  it("accepts a safe local file for the same navigation resolver as the address bar", async () => {
+    const opened = await invokeAsync<{ tabs: { tabs: Array<{ url: string | null }> } }>("preview:tabs.open", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+      initialAddress: SAFE_LOCAL_PAGE_URL,
+    });
+
+    expect(opened).toMatchObject({ ok: true });
+    if (!opened.ok) return;
+    expect(opened.data.tabs.tabs).toContainEqual(expect.objectContaining({ url: SAFE_LOCAL_PAGE_URL }));
+  });
+
+  it("persists a safe local file after the Browser surface reports its loaded URL", async () => {
+    const listed = invoke<{ activeTabId: string }>("preview:tabs.list", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+    });
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+
+    const updated = await invokeAsync<{ tabs: Array<{ id: string; url: string | null }> }>("preview:tabs.updateChrome", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+      tabId: listed.data.activeTabId,
+      title: "Local page",
+      url: SAFE_LOCAL_PAGE_URL,
+      faviconUrl: null,
+    });
+
+    expect(updated).toMatchObject({ ok: true });
+    if (!updated.ok) return;
+    expect(updated.data.tabs).toContainEqual(expect.objectContaining({
+      id: listed.data.activeTabId,
+      url: SAFE_LOCAL_PAGE_URL,
+    }));
+  });
+
+  it("persists renderer-observed tab chrome across activation snapshots", async () => {
     const first = invoke<{ activeTabId: string }>("preview:tabs.list", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
@@ -113,14 +160,14 @@ describe("preview tab handlers", () => {
     expect(first.ok).toBe(true);
     if (!first.ok) return;
 
-    const opened = invoke<{ tabId: string }>("preview:tabs.open", {
+    const opened = await invokeAsync<{ tabId: string }>("preview:tabs.open", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
     });
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
 
-    expect(invoke("preview:tabs.updateChrome", {
+    expect(await invokeAsync("preview:tabs.updateChrome", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
       tabId: opened.data.tabId,
@@ -142,7 +189,7 @@ describe("preview tab handlers", () => {
     }));
   });
 
-  it("clears explicit null chrome fields while preserving omitted fields", () => {
+  it("clears explicit null chrome fields while preserving omitted fields", async () => {
     const listed = invoke<{ activeTabId: string }>("preview:tabs.list", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
@@ -150,7 +197,7 @@ describe("preview tab handlers", () => {
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;
 
-    expect(invoke("preview:tabs.updateChrome", {
+    expect(await invokeAsync("preview:tabs.updateChrome", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
       tabId: listed.data.activeTabId,
@@ -159,7 +206,7 @@ describe("preview tab handlers", () => {
       faviconUrl: "https://example.test/favicon.ico",
     })).toMatchObject({ ok: true });
 
-    const updated = invoke<{ tabs: Array<Record<string, unknown>> }>("preview:tabs.updateChrome", {
+    const updated = await invokeAsync<{ tabs: Array<Record<string, unknown>> }>("preview:tabs.updateChrome", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
       tabId: listed.data.activeTabId,
@@ -173,7 +220,7 @@ describe("preview tab handlers", () => {
     }));
   });
 
-  it("rejects unsafe renderer-observed URLs and canonicalizes unloaded markers", () => {
+  it("rejects unsafe renderer-observed URLs and canonicalizes unloaded markers", async () => {
     const listed = invoke<{ activeTabId: string; tabs: Array<{ id: string; url: string | null }> }>(
       "preview:tabs.list",
       { workspaceId: "workspace-A", threadId: "thread-A" },
@@ -182,7 +229,7 @@ describe("preview tab handlers", () => {
     if (!listed.ok) return;
 
     for (const url of ["file:///sensitive.html", "data:text/html,unsafe"]) {
-      expect(invoke("preview:tabs.updateChrome", {
+      expect(await invokeAsync("preview:tabs.updateChrome", {
         workspaceId: "workspace-A",
         threadId: "thread-A",
         tabId: listed.data.activeTabId,
@@ -192,7 +239,7 @@ describe("preview tab handlers", () => {
       })).toEqual({ ok: false, error: "invalid-tab-chrome" });
     }
 
-    expect(invoke("preview:tabs.updateChrome", {
+    expect(await invokeAsync("preview:tabs.updateChrome", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
       tabId: listed.data.activeTabId,
@@ -221,7 +268,7 @@ describe("preview tab handlers", () => {
     expect(session.tabsByThread.has(previewTabScopeKey("workspace-B", "thread-A"))).toBe(true);
   });
 
-  it("rejects hostile senders and invalid identifiers or initial addresses", () => {
+  it("rejects hostile senders and invalid identifiers or initial addresses", async () => {
     expect(ipcHandlers["preview:tabs.list"]!({ sender: {} }, {
       workspaceId: "workspace-A",
       threadId: "thread-A",
@@ -230,17 +277,17 @@ describe("preview tab handlers", () => {
       ok: false,
       error: "invalid-workspace-id",
     });
-    expect(invoke("preview:tabs.open", {
+    expect(await invokeAsync("preview:tabs.open", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
       initialAddress: "https://user:password@example.test",
     })).toEqual({ ok: false, error: "invalid-initial-address" });
-    expect(invoke("preview:tabs.open", {
+    expect(await invokeAsync("preview:tabs.open", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
       initialAddress: "file:///sensitive.html",
     })).toEqual({ ok: false, error: "invalid-initial-address" });
-    expect(invoke("preview:tabs.updateChrome", {
+    expect(await invokeAsync("preview:tabs.updateChrome", {
       workspaceId: "workspace-A",
       threadId: "thread-A",
       tabId: "tab-A",
@@ -250,18 +297,18 @@ describe("preview tab handlers", () => {
     })).toEqual({ ok: false, error: "invalid-tab-chrome" });
   });
 
-  it("does not change workspace context when open or chrome validation fails", () => {
+  it("does not change workspace context when open or chrome validation fails", async () => {
     const session = getSession(window as never);
     session.workspaceId = "workspace-existing";
 
-    expect(invoke("preview:tabs.open", {
+    expect(await invokeAsync("preview:tabs.open", {
       workspaceId: "workspace-untrusted",
       threadId: "thread-A",
       initialAddress: "file:///sensitive.html",
     })).toEqual({ ok: false, error: "invalid-initial-address" });
     expect(session.workspaceId).toBe("workspace-existing");
 
-    expect(invoke("preview:tabs.updateChrome", {
+    expect(await invokeAsync("preview:tabs.updateChrome", {
       workspaceId: "workspace-untrusted",
       threadId: "thread-A",
       tabId: "tab-A",
