@@ -105,8 +105,10 @@ same worktree via the composer's "Existing worktree" mode. A thread can
 also run *without* a worktree, directly against the workspace's main
 checkout. See "Direct mode" below.
 
-Mcode removes a worktree in its sandbox when cleanup starts. It removes
-every thread linked to that worktree. Mcode keeps a checkout outside its
+Mcode removes a worktree in its sandbox when cleanup starts only if no active
+thread links to it. It then removes every linked thread that is not active.
+If an active thread links to the worktree, Mcode keeps both. It removes only the
+selected completed thread. Mcode keeps a checkout outside its
 sandbox or on the repository default branch, then removes only the selected
 thread data. When a user deletes a thread manually, they can choose whether
 to schedule worktree cleanup.

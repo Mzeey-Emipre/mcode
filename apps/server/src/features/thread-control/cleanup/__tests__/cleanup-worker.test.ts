@@ -93,29 +93,54 @@ describe("CleanupWorker sandbox worktrees", () => {
     );
   }
 
-  it("removes a dirty, committed sandbox worktree and every linked thread", async () => {
+  it("keeps a sandbox worktree and active handoff thread", async () => {
     const workspace = workspaces.create("Project", "/repo");
     const path = "C:\\Users\\user\\.mcode\\worktrees\\repo\\feature";
     addThread(workspace.id, "expired", path, "feature/dirty", new Date(0).toISOString());
-    addThread(workspace.id, "active-sibling", path, "feature/dirty", null);
+    addThread(workspace.id, "active-handoff", path, "feature/dirty", null);
+    database.prepare("UPDATE threads SET parent_thread_id = ? WHERE id = ?").run("expired", "active-handoff");
+    const now = new Date().toISOString();
+    const addCanonicalThread = database.prepare(
+      `INSERT INTO canonical_agent_threads (
+        id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
+        provider_id, provider_identities_json, activity_state, conversation_revision,
+        roster_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'claude', '[]', 'Idle', 0, 0, ?, ?)`,
+    );
+    addCanonicalThread.run("expired", workspace.id, null, "expired", null, now, now);
+    addCanonicalThread.run("active-handoff", workspace.id, "expired", "expired", "expired", now, now);
 
     await worker.poll();
 
     expect(threads.findById("expired")).toBeNull();
-    expect(threads.findById("active-sibling")).toBeNull();
+    expect(threads.findById("active-handoff")).toMatchObject({ parent_thread_id: null });
+    expect(
+      database.prepare(
+        "SELECT parent_thread_id, root_thread_id, owning_parent_thread_id FROM canonical_agent_threads WHERE id = ?",
+      ).get("active-handoff"),
+    ).toEqual({ parent_thread_id: null, root_thread_id: "active-handoff", owning_parent_thread_id: null });
     expect(threadDeletion.teardownThread).toHaveBeenCalledWith("expired");
-    expect(threadDeletion.teardownThread).toHaveBeenCalledWith("active-sibling");
-    expect(gitWorktrees.removeWorktree).toHaveBeenCalledWith(
-      "/repo",
-      "feature",
-      {
-        branchName: "feature/dirty",
-        deleteBranch: undefined,
-        forceDeleteBranch: true,
-        managedCanonicalOnly: true,
-        worktreePath: path,
-      },
-    );
+    expect(threadDeletion.teardownThread).toHaveBeenCalledTimes(1);
+    expect(gitWorktrees.removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("keeps a sandbox worktree when no thread still links to it", async () => {
+    const workspace = workspaces.create("Project", "/repo");
+    const path = "C:\\Users\\user\\.mcode\\worktrees\\repo\\stale";
+    addThread(workspace.id, "expired", path, "feature/stale", null);
+    threads.softDelete("expired");
+    cleanupJobs.insert({
+      thread_id: "expired",
+      workspace_path: "/repo",
+      worktree_path: path,
+      branch: "feature/stale",
+    });
+    database.prepare("UPDATE threads SET worktree_path = NULL WHERE id = ?").run("expired");
+
+    await worker.poll();
+
+    expect(threads.findById("expired")).toBeNull();
+    expect(gitWorktrees.removeWorktree).not.toHaveBeenCalled();
   });
 
   it("keeps a default-branch checkout and removes only the expired thread", async () => {

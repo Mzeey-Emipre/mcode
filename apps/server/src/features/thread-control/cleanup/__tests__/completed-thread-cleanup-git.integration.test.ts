@@ -228,7 +228,7 @@ describe("completed thread cleanup Git safety", () => {
     expect(NodeFS.existsSync(worktreePath)).toBe(false);
   }, 30_000);
 
-  it("removes every thread linked to the same sandbox worktree", async () => {
+  it("removes linked completed threads from the same sandbox worktree", async () => {
     const due = addCompletedThread({ title: "Due" });
     const remaining = addCompletedThread({
       title: "Remaining",

@@ -9,6 +9,7 @@ import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import { logger } from "@mcode/shared";
 import type { HostRuntime } from "@mcode/shared/node/host-runtime";
+import type { Thread } from "@mcode/contracts";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "./persistence/cleanup-job-repo.js";
 import type { CleanupJob } from "./persistence/cleanup-job-repo.js";
 import { ThreadRepo } from "../persistence/thread-repo.js";
@@ -289,7 +290,20 @@ export class CleanupWorker {
       return { removed: true, threadIds: [job.thread_id] };
     }
 
-    const threadIds = await this.findLinkedThreadIds(job.thread_id, worktreePath, decision.worktreePath);
+    const sourceThread = this.threadRepo.findById(job.thread_id);
+    if (!sourceThread) return { removed: true, threadIds: [] };
+
+    const linkedThreads = await this.findLinkedThreads(
+      sourceThread.workspace_id,
+      worktreePath,
+      decision.worktreePath,
+    );
+    if (linkedThreads.length === 0 || this.hasOtherActiveThread(linkedThreads, job.thread_id)) {
+      await this.teardownThreadRuntime(job.thread_id);
+      return { removed: true, threadIds: [job.thread_id] };
+    }
+
+    const threadIds = linkedThreads.map((thread) => thread.id);
     await Promise.all(threadIds.map((threadId) => this.teardownThreadRuntime(threadId)));
     if (!decision.worktreePath) return { removed: true, threadIds };
 
@@ -306,28 +320,33 @@ export class CleanupWorker {
     };
   }
 
-  private async findLinkedThreadIds(
-    threadId: string,
+  private async findLinkedThreads(
+    workspaceId: string,
     worktreePath: string,
     canonicalWorktreePath: string | null,
-  ): Promise<string[]> {
-    const thread = this.threadRepo.findById(threadId);
-    if (!thread) return [threadId];
-
-    const linked = this.threadRepo.findWorktreeThreadsByWorkspace(thread.workspace_id);
-    const ids = await Promise.all(linked.map(async (candidate) => {
+  ): Promise<Thread[]> {
+    const linked = this.threadRepo.findWorktreeThreadsByWorkspace(workspaceId);
+    const threads = await Promise.all(linked.map(async (candidate) => {
       if (!candidate.worktree_path) return null;
       if (!canonicalWorktreePath) {
         return this.cleanupPolicy.isSameSandboxPath(candidate.worktree_path, worktreePath)
-          ? candidate.id
+          ? candidate
           : null;
       }
       const candidatePath = await this.cleanupPolicy.resolveSandboxPath(candidate.worktree_path);
       return candidatePath && this.cleanupPolicy.isSameSandboxPath(candidatePath, canonicalWorktreePath)
-        ? candidate.id
+        ? candidate
         : null;
     }));
-    return [...new Set([threadId, ...ids.filter((id): id is string => id !== null)])];
+    return threads.filter((thread): thread is Thread => thread !== null);
+  }
+
+  private hasOtherActiveThread(threads: readonly Thread[], threadId: string): boolean {
+    return threads.some((thread) => (
+      thread.id !== threadId
+      && thread.deleted_at === null
+      && thread.user_completed_at === null
+    ));
   }
 
   private async completeThreads(job: CleanupJob, threadIds: readonly string[]): Promise<void> {
@@ -339,7 +358,7 @@ export class CleanupWorker {
     this.db.transaction(() => {
       for (const threadId of ids) {
         this.cleanupJobRepo.deleteByThreadId(threadId);
-        this.threadRepo.hardDelete(threadId);
+        this.threadRepo.hardDelete(threadId, { preserveActiveDescendants: true });
       }
       this.cleanupJobRepo.delete(job.id);
     })();

@@ -778,8 +778,9 @@ export class ThreadRepo {
   }
 
   /** Permanently remove a thread record from the database. */
-  hardDelete(id: string): boolean {
+  hardDelete(id: string, options: { preserveActiveDescendants?: boolean } = {}): boolean {
     return this.db.transaction(() => {
+      if (options.preserveActiveDescendants) this.detachActiveDescendants(id);
       this.db.exec(`
         DROP TABLE IF EXISTS canonical_thread_delete_queue;
         CREATE TEMP TABLE canonical_thread_delete_queue (
@@ -841,6 +842,43 @@ export class ThreadRepo {
       }
       return deletedRoot;
     })();
+  }
+
+  private detachActiveDescendants(rootThreadId: string): void {
+    const activeDescendants = this.db.prepare(
+      `WITH RECURSIVE descendants(id) AS (
+         SELECT id FROM threads WHERE parent_thread_id = ?
+         UNION
+         SELECT child.id
+         FROM threads AS child
+         JOIN descendants AS parent ON child.parent_thread_id = parent.id
+       ), active_descendants(id) AS (
+         SELECT thread.id
+         FROM threads AS thread
+         JOIN descendants ON descendants.id = thread.id
+         WHERE thread.deleted_at IS NULL
+           AND thread.user_completed_at IS NULL
+       )
+       SELECT active.id
+       FROM active_descendants AS active
+       JOIN threads AS thread ON thread.id = active.id
+       WHERE thread.parent_thread_id NOT IN (SELECT id FROM active_descendants)`,
+    ).all(rootThreadId) as Array<{ id: string }>;
+    if (activeDescendants.length === 0) return;
+
+    const ids = activeDescendants.map((thread) => thread.id);
+    const placeholders = ids.map(() => "?").join(", ");
+    const now = new Date().toISOString();
+    this.db.prepare(
+      `UPDATE threads
+       SET parent_thread_id = NULL, forked_from_message_id = NULL, updated_at = ?
+       WHERE id IN (${placeholders})`,
+    ).run(now, ...ids);
+    this.db.prepare(
+      `UPDATE canonical_agent_threads
+       SET parent_thread_id = NULL, root_thread_id = id, owning_parent_thread_id = NULL, updated_at = ?
+       WHERE id IN (${placeholders})`,
+    ).run(now, ...ids);
   }
 
   /** Update the provider associated with a thread. Returns true if a row was changed. */
