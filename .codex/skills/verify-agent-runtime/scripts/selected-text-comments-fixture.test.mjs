@@ -20,7 +20,7 @@ test("enforces the required Electron session lifecycle", () => {
   expect(() => assertElectronSessionState("cleanup", false)).not.toThrow();
 });
 
-test("accepts only the owned fixture state path and shape", () => {
+test("accepts only the fixture-owned state path and shape", () => {
   const root = "C:/repo";
   expect(() => assertOwnedStatePath(root, "C:/repo/.dev/verification/selected-text-comments-fixture.json")).not.toThrow();
   expect(() => assertOwnedStatePath(root, "C:/repo/.dev/verification/other.json")).toThrow();

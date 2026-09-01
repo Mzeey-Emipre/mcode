@@ -10,11 +10,11 @@ The first Electron launch initializes `.dev/electron-live-testing/runtime/db/app
 2. Run `bun .codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs`.
 3. Run `bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs`.
 4. Stop Electron.
-5. Run `bun .codex/skills/electorn-live-testing/scripts/selected-text-comments-fixture.mjs setup`.
+5. Run `bun .codex/skills/verify-agent-runtime/scripts/selected-text-comments-fixture.mjs setup`.
 6. Run `bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs`.
-7. Run `bun .codex/skills/electorn-live-testing/scripts/verify-selected-text-comments.mjs`.
+7. Run `bun .codex/skills/verify-agent-runtime/scripts/verify-selected-text-comments.mjs`.
 8. Stop Electron.
-9. Run `bun .codex/skills/electorn-live-testing/scripts/selected-text-comments-fixture.mjs cleanup`.
+9. Run `bun .codex/skills/verify-agent-runtime/scripts/selected-text-comments-fixture.mjs cleanup`.
 10. Run `bun run --shell system agent:down`.
 
 ## Observable action

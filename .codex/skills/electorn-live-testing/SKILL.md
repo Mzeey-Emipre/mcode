@@ -94,11 +94,11 @@ bun run --shell system agent:up
 bun .codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs
 bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs
 bun .codex/skills/electorn-live-testing/scripts/stop-electron.mjs
-bun .codex/skills/electorn-live-testing/scripts/selected-text-comments-fixture.mjs setup
+bun .codex/skills/verify-agent-runtime/scripts/selected-text-comments-fixture.mjs setup
 bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs
-bun .codex/skills/electorn-live-testing/scripts/verify-selected-text-comments.mjs
+bun .codex/skills/verify-agent-runtime/scripts/verify-selected-text-comments.mjs
 bun .codex/skills/electorn-live-testing/scripts/stop-electron.mjs
-bun .codex/skills/electorn-live-testing/scripts/selected-text-comments-fixture.mjs cleanup
+bun .codex/skills/verify-agent-runtime/scripts/selected-text-comments-fixture.mjs cleanup
 bun run --shell system agent:down
 ```
 

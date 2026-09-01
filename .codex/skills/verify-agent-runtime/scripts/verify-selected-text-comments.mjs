@@ -75,7 +75,7 @@ async function selectPhrase(content) {
 async function run() {
   const fixture = await readFixtureState();
   const playwright = await import(PLAYWRIGHT_PATH);
-  const helper = await import("./electron-session.mjs");
+  const helper = await import("../../electorn-live-testing/scripts/electron-session.mjs");
   session = await helper.connectElectronSession({ playwright, repoRoot: ROOT });
   page = session.page;
 
@@ -131,5 +131,8 @@ try {
   await NodeFSPromises.writeFile(RESULTS, JSON.stringify({ passed: false, assertions, error: String(error?.stack ?? error) }, null, 2));
   throw error;
 } finally {
-  if (session) await (await import("./electron-session.mjs")).disconnectElectronSession(session);
+  if (session) {
+    const helper = await import("../../electorn-live-testing/scripts/electron-session.mjs");
+    await helper.disconnectElectronSession(session);
+  }
 }
