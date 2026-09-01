@@ -99,6 +99,34 @@ function removeLegacyPreviewRenderingSetting(value: unknown): {
   return { changed: true, document };
 }
 
+function removeLegacyUnsafeWorktreePolicy(value: unknown): {
+  readonly changed: boolean;
+  readonly document: unknown;
+} {
+  if (!isRecord(value) || !isRecord(value.thread) || !isRecord(value.thread.completion)) {
+    return { changed: false, document: value };
+  }
+  if (!Object.prototype.hasOwnProperty.call(value.thread.completion, "unsafeWorktreePolicy")) {
+    return { changed: false, document: value };
+  }
+
+  const completion = { ...value.thread.completion };
+  delete completion.unsafeWorktreePolicy;
+  const thread = { ...value.thread };
+  if (Object.keys(completion).length === 0) {
+    delete thread.completion;
+  } else {
+    thread.completion = completion;
+  }
+  const document = { ...value };
+  if (Object.keys(thread).length === 0) {
+    delete document.thread;
+  } else {
+    document.thread = thread;
+  }
+  return { changed: true, document };
+}
+
 function getSettingsDefaults(): Settings {
   const defaults = getDefaultSettings();
   if (process.env.MCODE_AGENT_RUNTIME !== "1") {
@@ -303,8 +331,9 @@ export class SettingsService {
   }
 
   private readSettingsDocument(parsed: unknown): Settings | null {
-    const migration = removeLegacyPreviewRenderingSetting(parsed);
-    const terminalMigration = migrateTerminalSettingsDocument(migration.document);
+    const previewMigration = removeLegacyPreviewRenderingSetting(parsed);
+    const worktreeMigration = removeLegacyUnsafeWorktreePolicy(previewMigration.document);
+    const terminalMigration = migrateTerminalSettingsDocument(worktreeMigration.document);
     if (terminalMigration.status === "blocked") {
       this.blockTerminalMigration(terminalMigration.reason, terminalMigration.original);
       logger.warn("Settings file failed Terminal migration, returning temporary defaults", {
@@ -325,7 +354,11 @@ export class SettingsService {
     const migratedTerminalSettings = terminalMigration.status === "migrated";
     this.clearBlockedTerminalRecovery();
     this.terminalMigrationStatus = { status: terminalMigration.status };
-    this.persistSettingsMigration(result.data, migration.changed || migratedTerminalSettings, migratedTerminalSettings);
+    this.persistSettingsMigration(
+      result.data,
+      previewMigration.changed || worktreeMigration.changed || migratedTerminalSettings,
+      migratedTerminalSettings,
+    );
     return result.data;
   }
 

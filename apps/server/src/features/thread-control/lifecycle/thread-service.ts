@@ -4,13 +4,14 @@
  * Extracted from apps/desktop/src/main/app-state.ts.
  */
 
-import { injectable, inject } from "tsyringe";
+import { delay, injectable, inject } from "tsyringe";
 import { validateBranchName, logger } from "@mcode/shared";
 import type { Thread, RecentThread, ThreadMode, ContextWindowMode } from "@mcode/contracts";
 import { ThreadRepo } from "../persistence/thread-repo.js";
 import { ProjectWorktreeService } from "../../projects/index.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import { HandoffStorage } from "../../handoff/index.js";
+import { ThreadDeletionTeardownService } from "./thread-deletion-teardown-service.js";
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
@@ -20,6 +21,9 @@ export class ThreadService {
     @inject(ProjectWorktreeService) private readonly projectWorktreeService: ProjectWorktreeService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
+    // CI watcher registration follows ThreadService construction during bootstrap.
+    @inject(delay(() => ThreadDeletionTeardownService))
+    private readonly threadDeletionTeardownService: ThreadDeletionTeardownService,
   ) {}
 
   /**
@@ -93,29 +97,26 @@ export class ThreadService {
   }
 
   /**
-   * Soft-delete a thread and enqueue a background cleanup job when the thread
-   * has a worktree path. The cleanup job handles process termination,
-   * filesystem removal, and hard-deletion of the DB row asynchronously with
-   * exponential backoff retries. The job stores the thread's exact branch so
-   * explicit user cleanup deletes the worktree and its associated thread branch.
+   * Delete a thread. Eligible managed worktrees are queued for background cleanup;
+   * other threads are torn down and deleted immediately while active descendants
+   * remain available as detached threads.
    */
   async delete(threadId: string, cleanupWorktree: boolean): Promise<boolean> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread || thread.deleted_at !== null) return false;
 
-    if (cleanupWorktree && thread.worktree_path && thread.worktree_managed) {
+    if (cleanupWorktree && thread.worktree_path) {
       if (await this.projectWorktreeService.scheduleCleanup(threadId)) return true;
-    } else if (cleanupWorktree && thread.worktree_path) {
-      logger.info("Worktree cleanup skipped because the checkout is reused or unmanaged", {
+      logger.info("Worktree checkout kept because removal safety could not be proven", {
         threadId,
         worktreePath: thread.worktree_path,
-        managed: thread.worktree_managed,
       });
     }
 
+    await this.threadDeletionTeardownService.teardownThread(threadId);
     this.attachmentService.removeForThread(threadId);
     await this.handoffStorage.deleteThreadFiles(threadId);
-    return this.threadRepo.hardDelete(threadId);
+    return this.threadRepo.hardDelete(threadId, { preserveActiveDescendants: true });
   }
 
   /** Update a thread's display title. */

@@ -5,7 +5,7 @@ import { CleanupJobRepo } from "../../thread-control/cleanup/persistence/cleanup
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { GitWorktreeService } from "../git/git-worktree-service.js";
-import { WorktreeSafetyService } from "../git/worktree-safety-service.js";
+import { SandboxWorktreeCleanupPolicy } from "./sandbox-worktree-cleanup-policy.js";
 
 function managedWorktreeName(ref: string, threadId: string): string {
   return `${sanitizeBranchForFolder(ref).slice(0, 91)}-${threadId.slice(0, 8)}`;
@@ -19,7 +19,7 @@ export class ProjectWorktreeService {
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
     @inject(GitWorktreeService) private readonly gitWorktrees: GitWorktreeService,
-    @inject(WorktreeSafetyService) private readonly worktreeSafety: WorktreeSafetyService,
+    @inject(SandboxWorktreeCleanupPolicy) private readonly cleanupPolicy: SandboxWorktreeCleanupPolicy,
   ) {}
 
   /** Provision a worktree for a newly-created thread and persist its path. */
@@ -109,15 +109,15 @@ export class ProjectWorktreeService {
     return this.gitWorktrees.removeWorktree(workspace.path, name, { deleteBranch: false });
   }
 
-  /** Check ownership and enqueue cleanup for one managed worktree. */
+  /** Enqueue checkout cleanup when Mcode owns the sandbox worktree. */
   async scheduleCleanup(threadId: string): Promise<boolean> {
-    const thread = this.getManagedWorktreeCleanupCandidate(threadId);
+    const thread = this.getWorktreeCleanupCandidate(threadId);
     if (!thread) return false;
     const worktreePath = thread.worktree_path;
     if (!worktreePath) return false;
     const workspace = this.workspaceRepo.findById(thread.workspace_id);
     if (!workspace) {
-      logger.warn("Worktree cleanup skipped - workspace not found, directory will not be removed", {
+      logger.warn("Worktree cleanup skipped because the workspace no longer exists", {
         threadId,
         workspaceId: thread.workspace_id,
         worktreePath,
@@ -125,27 +125,28 @@ export class ProjectWorktreeService {
       return false;
     }
 
+    const firstDecision = await this.cleanupPolicy.decide({
+      workspacePath: workspace.path,
+      worktreePath,
+      branch: thread.branch,
+      checkoutState: thread.checkout_state,
+    });
+    if (firstDecision.action === "retain") return false;
+
     const current = this.getCurrentCleanupCandidate(threadId, worktreePath);
     if (!current || current.worktree_path !== worktreePath) return false;
-    const siblings = this.threadRepo.listActiveSiblingWorktreePaths(threadId);
-    const safety = await this.worktreeSafety.assessWorktreeRemovalSafety(
-      current.worktree_path,
-      siblings.paths,
-      siblings.truncated,
-    );
-    if (!safety.safe) {
-      logger.info("Worktree cleanup skipped because ownership is not exclusive", {
-        threadId,
-        worktreePath: current.worktree_path,
-        reason: safety.reason,
-      });
-      return false;
-    }
+    const currentDecision = await this.cleanupPolicy.decide({
+      workspacePath: workspace.path,
+      worktreePath: current.worktree_path,
+      branch: current.branch,
+      checkoutState: current.checkout_state,
+    });
+    if (currentDecision.action === "retain") return false;
     this.cleanupJobRepo.insert({
       thread_id: threadId,
       workspace_path: workspace.path,
       worktree_path: current.worktree_path,
-      branch: current.branch,
+      branch: currentDecision.branch,
     });
     logger.info("Worktree cleanup job enqueued", { threadId, worktreePath: current.worktree_path });
     return this.threadRepo.softDelete(threadId);
@@ -192,14 +193,14 @@ export class ProjectWorktreeService {
     throw new Error(`Failed to persist worktree path for thread ${thread.id}`);
   }
 
-  private getManagedWorktreeCleanupCandidate(threadId: string): Thread | null {
+  private getWorktreeCleanupCandidate(threadId: string): Thread | null {
     const thread = this.threadRepo.findById(threadId);
-    if (!thread || thread.deleted_at !== null || !thread.worktree_path || !thread.worktree_managed) return null;
+    if (!thread || thread.deleted_at !== null || !thread.worktree_path) return null;
     return thread;
   }
 
   private getCurrentCleanupCandidate(threadId: string, worktreePath: string): Thread | null {
-    const current = this.getManagedWorktreeCleanupCandidate(threadId);
+    const current = this.getWorktreeCleanupCandidate(threadId);
     return current?.worktree_path === worktreePath ? current : null;
   }
 }

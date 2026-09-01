@@ -1304,7 +1304,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       ciWatcherService: {
         teardownThread: vi.fn().mockResolvedValue(undefined),
       },
-      threadTeardownService: {
+      threadDeletionTeardownService: {
         teardownThread: vi
           .fn()
           .mockResolvedValueOnce(undefined)
@@ -1337,9 +1337,11 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     expect(deleteWorkspace).not.toHaveBeenCalled();
   });
 
-  it("unwatches thread worktrees after all workspace thread teardowns succeed", async () => {
+  it("lets each thread teardown unwatch its own worktree once", async () => {
     const unwatchThreadWorktree = vi.fn();
-    const teardownThread = vi.fn().mockResolvedValue(undefined);
+    const teardownThread = vi.fn(async (threadId: string) => {
+      unwatchThreadWorktree(threadId);
+    });
     const cancelSetupForWorkspace = vi.fn().mockResolvedValue(undefined);
     const projectActions = createProjectActionServiceMock();
     const deps = {
@@ -1355,7 +1357,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       ciWatcherService: {
         teardownThread: vi.fn().mockResolvedValue(undefined),
       },
-      threadTeardownService: {
+      threadDeletionTeardownService: {
         teardownThread,
       },
       gitWatcherService: {
@@ -1383,20 +1385,13 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     );
 
     expect(response.result).toBe(true);
-    expect(unwatchThreadWorktree).toHaveBeenCalledWith("thread-1");
-    expect(unwatchThreadWorktree).toHaveBeenCalledWith("thread-2");
-    expect(teardownThread.mock.invocationCallOrder[1]).toBeLessThan(
-      unwatchThreadWorktree.mock.invocationCallOrder[0],
-    );
+    expect(unwatchThreadWorktree).toHaveBeenCalledTimes(2);
+    expect(unwatchThreadWorktree).toHaveBeenNthCalledWith(1, "thread-1");
+    expect(unwatchThreadWorktree).toHaveBeenNthCalledWith(2, "thread-2");
     expect(cancelSetupForWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
       teardownThread.mock.invocationCallOrder[0],
     );
     expect(projectActions.beginWorkspaceTeardown).toHaveBeenCalledWith("ws-1");
-    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-1");
-    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-2");
-    expect(projectActions.stopForThread.mock.invocationCallOrder[0]).toBeLessThan(
-      teardownThread.mock.invocationCallOrder[0],
-    );
   });
 });
 
@@ -1446,61 +1441,27 @@ describe("routeMessage thread completion lifecycle", () => {
   });
 });
 
-describe("routeMessage thread.delete watcher teardown", () => {
+describe("routeMessage thread.delete teardown", () => {
   function createThreadDeleteDeps(options: {
-    teardown?: () => Promise<void>;
     deleteThread?: () => Promise<boolean>;
   } = {}) {
-    const unwatchThreadWorktree = vi.fn();
-    const teardownThread = vi
-      .fn()
-      .mockImplementation(options.teardown ?? (() => Promise.resolve()));
     const deleteThread = vi
       .fn()
       .mockImplementation(options.deleteThread ?? (() => Promise.resolve(true)));
-    const cancelSetupForThread = vi.fn().mockResolvedValue(undefined);
-    const projectActions = createProjectActionServiceMock();
     const deps = {
-      ciWatcherService: {
-        teardownThread: vi.fn().mockResolvedValue(undefined),
-      },
-      githubService: {
-        cancelForRepoPath: vi.fn().mockResolvedValue(undefined),
-      },
-      threadRepo: {
-        findById: vi.fn().mockReturnValue({
-          id: "thread-1",
-          worktree_path: "C:/repo-worktree",
-        }),
-      },
-      gitWatcherService: {
-        unwatchThreadWorktree,
-      },
-      threadTeardownService: {
-        teardownThread,
-      },
       threadService: {
         delete: deleteThread,
       },
-      workspaceEnvironmentService: {
-        cancelSetupForThread,
-        beginThreadDeletion: vi.fn(() => () => undefined),
-      },
-      projectActionService: projectActions.service,
     } as unknown as RouterDeps;
     return {
       deps,
-      unwatchThreadWorktree,
-      teardownThread,
       deleteThread,
-      cancelSetupForThread,
-      projectActions,
     };
   }
 
-  it("keeps the thread worktree watcher when thread teardown fails", async () => {
-    const { deps, unwatchThreadWorktree, deleteThread } = createThreadDeleteDeps({
-      teardown: () => Promise.reject(new Error("teardown failed")),
+  it("returns a lifecycle deletion failure", async () => {
+    const { deps, deleteThread } = createThreadDeleteDeps({
+      deleteThread: () => Promise.reject(new Error("teardown failed")),
     });
 
     const response = await routeMessage(
@@ -1513,12 +1474,11 @@ describe("routeMessage thread.delete watcher teardown", () => {
     );
 
     expect(response.error?.message).toContain("teardown failed");
-    expect(unwatchThreadWorktree).not.toHaveBeenCalled();
-    expect(deleteThread).not.toHaveBeenCalled();
+    expect(deleteThread).toHaveBeenCalledExactlyOnceWith("thread-1", true);
   });
 
-  it("keeps the thread worktree watcher when thread delete returns false", async () => {
-    const { deps, unwatchThreadWorktree } = createThreadDeleteDeps({
+  it("returns false when lifecycle deletion declines", async () => {
+    const { deps, deleteThread } = createThreadDeleteDeps({
       deleteThread: () => Promise.resolve(false),
     });
 
@@ -1532,18 +1492,11 @@ describe("routeMessage thread.delete watcher teardown", () => {
     );
 
     expect(response.result).toBe(false);
-    expect(unwatchThreadWorktree).not.toHaveBeenCalled();
+    expect(deleteThread).toHaveBeenCalledExactlyOnceWith("thread-1", true);
   });
 
-  it("unwatches the thread worktree after thread teardown and delete succeed", async () => {
-    const {
-      deps,
-      unwatchThreadWorktree,
-      teardownThread,
-      deleteThread,
-      cancelSetupForThread,
-      projectActions,
-    } = createThreadDeleteDeps();
+  it("delegates deletion once with the requested cleanup behavior", async () => {
+    const { deps, deleteThread } = createThreadDeleteDeps();
 
     const response = await routeMessage(
       JSON.stringify({
@@ -1555,70 +1508,11 @@ describe("routeMessage thread.delete watcher teardown", () => {
     );
 
     expect(response.result).toBe(true);
-    expect(unwatchThreadWorktree).toHaveBeenCalledWith("thread-1");
-    expect(teardownThread.mock.invocationCallOrder[0]).toBeLessThan(
-      unwatchThreadWorktree.mock.invocationCallOrder[0],
-    );
-    expect(deleteThread.mock.invocationCallOrder[0]).toBeLessThan(
-      unwatchThreadWorktree.mock.invocationCallOrder[0],
-    );
-    expect(cancelSetupForThread.mock.invocationCallOrder[0]).toBeLessThan(
-      teardownThread.mock.invocationCallOrder[0],
-    );
-    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-1");
-    expect(projectActions.stopForThread.mock.invocationCallOrder[0]).toBeLessThan(
-      teardownThread.mock.invocationCallOrder[0],
-    );
+    expect(deleteThread).toHaveBeenCalledExactlyOnceWith("thread-1", true);
   });
 });
 
 describe("routeMessage Setup deletion barriers", () => {
-  it("rejects Setup during a Thread deletion and releases the barrier after teardown fails", async () => {
-    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-setup-thread-delete-"));
-    const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
-    const environment = new WorkspaceEnvironmentService({
-      mcodeDir: root,
-      threads: { findById: (threadId) => threadId === thread.id ? thread : null },
-      platform: hostRuntime.platform,
-    });
-    const teardownEntered = deferred<void>();
-    const teardown = deferred<void>();
-    const projectActions = createProjectActionServiceMock();
-    const deps = {
-      ciWatcherService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
-      githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
-      threadRepo: { findById: vi.fn().mockReturnValue({ ...thread, worktree_path: null }) },
-      threadTeardownService: {
-        teardownThread: vi.fn(() => {
-          teardownEntered.resolve();
-          return teardown.promise;
-        }),
-      },
-      threadService: { delete: vi.fn().mockResolvedValue(true) },
-      workspaceEnvironmentService: environment,
-      projectActionService: projectActions.service,
-    } as unknown as RouterDeps;
-
-    try {
-      const deletion = routeMessage(JSON.stringify({
-        id: "thread-delete-barrier",
-        method: "thread.delete",
-        params: { threadId: thread.id, cleanupWorktree: false },
-      }), deps);
-      await teardownEntered.promise;
-
-      await expect(environment.startSetup({ threadId: thread.id })).rejects.toMatchObject({
-        code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
-      });
-
-      teardown.reject(new Error("teardown failed"));
-      await expect(deletion).resolves.toMatchObject({ error: { message: "teardown failed" } });
-      await expect(environment.startSetup({ threadId: thread.id })).resolves.toMatchObject({ status: "unavailable" });
-    } finally {
-      await NodeFSPromises.rm(root, { recursive: true, force: true });
-    }
-  });
-
   it("rejects Setup during a workspace deletion and falls back to not found after deletion", async () => {
     const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-setup-workspace-delete-"));
     const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
@@ -1635,7 +1529,7 @@ describe("routeMessage Setup deletion barriers", () => {
       threadRepo: { listAllByWorkspace: vi.fn().mockReturnValue([{ ...thread, worktree_path: null }]) },
       githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
       ciWatcherService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
-      threadTeardownService: {
+      threadDeletionTeardownService: {
         teardownThread: vi.fn(() => {
           teardownEntered.resolve();
           return teardown.promise;

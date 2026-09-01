@@ -48,6 +48,13 @@ export type { WorktreeDirectoryRemoverDependencies } from "./worktrees/worktree-
 
 /** Provisions and schedules cleanup for project worktrees. */
 export { ProjectWorktreeService } from "./worktrees/project-worktree-service.js";
+/** Decides whether Mcode removes a worktree checkout or keeps it. */
+export {
+  SandboxWorktreeCleanupPolicy,
+} from "./worktrees/sandbox-worktree-cleanup-policy.js";
+export type {
+  SandboxWorktreeCleanupDecision,
+} from "./worktrees/sandbox-worktree-cleanup-policy.js";
 
 /** Persists private workspace environment documents with revision checks. */
 export {

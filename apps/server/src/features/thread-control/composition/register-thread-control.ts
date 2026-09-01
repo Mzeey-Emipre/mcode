@@ -8,6 +8,7 @@ import {
   ThreadCompletionService,
   ThreadControlMutationReservationService,
   ThreadControlService,
+  ThreadDeletionTeardownService,
   ThreadTeardownService,
 } from "../index.js";
 import { ThreadControlApprovalRepo } from "../authority/persistence/thread-control-approval-repo.js";
@@ -58,6 +59,11 @@ export function registerThreadControlServices(container: DependencyContainer): v
   container.register(
     ThreadTeardownService,
     { useClass: ThreadTeardownService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ThreadDeletionTeardownService,
+    { useClass: ThreadDeletionTeardownService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

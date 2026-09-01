@@ -25,6 +25,14 @@ export interface NamedWorktreeRemovalSafety {
   reason: "clean" | "dirty" | "verification_failed";
 }
 
+/** Indicates that a worktree path does not canonically resolve within Mcode storage. */
+export class NonCanonicalManagedWorktreePathError extends Error {
+  constructor(worktreePath: string) {
+    super(`worktreePath is not a canonical managed worktree: ${worktreePath}`);
+    this.name = "NonCanonicalManagedWorktreePathError";
+  }
+}
+
 /** Verifies the safety conditions required before a worktree directory is removed. */
 @injectable()
 export class WorktreeSafetyService {
@@ -138,11 +146,23 @@ export class WorktreeSafetyService {
   async resolveManagedCanonicalWorktreePath(worktreePath: string): Promise<string> {
     const managedRoot = await NodeFSPromises.realpath(NodePath.resolve(getMcodeDir(), "worktrees"));
     const canonicalPath = await NodeFSPromises.realpath(worktreePath);
-    const rel = NodePath.relative(managedRoot, canonicalPath);
-    if (rel === "" || rel === ".." || rel.startsWith(`..${NodePath.sep}`) || NodePath.isAbsolute(rel)) {
-      throw new Error(`worktreePath is not a canonical managed worktree: ${worktreePath}`);
-    }
+    this.requireManagedDescendant(managedRoot, canonicalPath, worktreePath);
     return canonicalPath;
+  }
+
+  /** Resolve a managed worktree path, allowing only a missing leaf below canonical Mcode storage. */
+  async resolveManagedWorktreeRemovalPath(worktreePath: string): Promise<string> {
+    try {
+      return await this.resolveManagedCanonicalWorktreePath(worktreePath);
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+    }
+
+    const managedRoot = await NodeFSPromises.realpath(NodePath.resolve(getMcodeDir(), "worktrees"));
+    const requestedPath = NodePath.resolve(worktreePath);
+    const parent = await this.findExistingParent(requestedPath);
+    this.requireManagedDescendant(managedRoot, parent, worktreePath, true);
+    return requestedPath;
   }
 
   private async canonicalWorktreeIdentity(worktreePath: string): Promise<string | null> {
@@ -162,4 +182,39 @@ export class WorktreeSafetyService {
       return null;
     }
   }
+
+  private requireManagedDescendant(
+    managedRoot: string,
+    candidatePath: string,
+    requestedPath: string,
+    allowRoot = false,
+  ): void {
+    const relativePath = NodePath.relative(managedRoot, candidatePath);
+    if (
+      (!allowRoot && relativePath === "")
+      || relativePath === ".."
+      || relativePath.startsWith(`..${NodePath.sep}`)
+      || NodePath.isAbsolute(relativePath)
+    ) {
+      throw new NonCanonicalManagedWorktreePathError(requestedPath);
+    }
+  }
+
+  private async findExistingParent(worktreePath: string): Promise<string> {
+    let candidate = worktreePath;
+    while (true) {
+      try {
+        return await NodeFSPromises.realpath(candidate);
+      } catch (error) {
+        if (!isMissingPathError(error)) throw error;
+      }
+      const parent = NodePath.dirname(candidate);
+      if (parent === candidate) throw new NonCanonicalManagedWorktreePathError(worktreePath);
+      candidate = parent;
+    }
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }

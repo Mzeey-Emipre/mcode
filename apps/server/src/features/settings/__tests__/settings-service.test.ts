@@ -177,6 +177,20 @@ describe("SettingsService rendering-engine migration", () => {
     expect(persisted).not.toHaveProperty("preview.rendering");
   });
 
+  it("removes the retired unsafe-worktree policy from persisted settings", () => {
+    vi.mocked(NodeFS.readFileSync).mockReturnValue(JSON.stringify({
+      thread: { completion: { retentionDays: 7, unsafeWorktreePolicy: "delete" } },
+    }));
+
+    const settings = new SettingsService().get();
+
+    expect(settings.thread.completion).toEqual({ retentionDays: 7 });
+    const persisted = JSON.parse(
+      vi.mocked(NodeFS.writeFileSync).mock.calls[0]![1] as string,
+    ) as Record<string, unknown>;
+    expect(persisted).not.toHaveProperty("thread.completion.unsafeWorktreePolicy");
+  });
+
   it("does not persist a migration when the remaining settings fail validation", () => {
     vi.mocked(NodeFS.readFileSync).mockReturnValue(legacySettings("webview", {
       memorySaver: { maxWarm: 0 },

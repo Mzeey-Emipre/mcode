@@ -17,7 +17,6 @@ const MAX_REVIEW_COMPARISON_FILES = 10_000;
 @injectable()
 export class GitComparisonService {
   private readonly gitRepository: GitRepositoryService;
-  private readonly defaultBranchCache = new Map<string, string | null>();
   private readonly defaultComparisonRefCache = new Map<string, string | null>();
   private readonly originDefaultRefCache = new Map<string, string | null>();
 
@@ -447,44 +446,7 @@ export class GitComparisonService {
   }
 
   private async detectDefaultBranch(repoPath: string): Promise<string | null> {
-    const cached = this.defaultBranchCache.get(repoPath);
-    if (cached !== undefined) return cached;
-    const result = await this.resolveDefaultBranch(repoPath);
-    this.defaultBranchCache.set(repoPath, result);
-    return result;
-  }
-
-  private async resolveDefaultBranch(repoPath: string): Promise<string | null> {
-    try {
-      return (await this.gitExecutor.exec(
-        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        { timeout: 5_000 },
-      )).stdout.trim().replace(/^[^/]+\//, "");
-    } catch (error) {
-      logger.debug("[detectDefaultBranch] origin/HEAD not set, trying set-head", { repoPath, err: error });
-    }
-    try {
-      await this.gitExecutor.exec(["-C", repoPath, "remote", "set-head", "origin", "--auto"], { timeout: 1_500 });
-      return (await this.gitExecutor.exec(
-        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        { timeout: 5_000 },
-      )).stdout.trim().replace(/^[^/]+\//, "");
-    } catch (error) {
-      logger.debug("[detectDefaultBranch] set-head failed, falling back to HEAD", { repoPath, err: error });
-    }
-    for (const branchName of ["main", "master", "develop", "trunk"]) {
-      try {
-        await this.gitExecutor.exec(
-          ["-C", repoPath, "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`],
-          { timeout: 5_000 },
-        );
-        return branchName;
-      } catch {
-        continue;
-      }
-    }
-    logger.debug("[detectDefaultBranch] no default branch detected", { repoPath });
-    return null;
+    return this.gitRepository.getDefaultBranchAt(repoPath);
   }
 
   private requireWorkspace(workspaceId: string) {

@@ -82,6 +82,31 @@ describe("ThreadRepo active worktree ownership paths", () => {
   });
 });
 
+describe("ThreadRepo worktree path cleanup ownership", () => {
+  it("rejects worktree path changes after cleanup owns a thread", () => {
+    const db = openMemoryDatabase();
+    const workspace = new WorkspaceRepo(db).create("cleanup", "/tmp/cleanup", true);
+    const threadRepo = new ThreadRepo(db);
+    const deletedThread = threadRepo.create(workspace.id, "deleted", "worktree", "feature/deleted");
+    const runningThread = threadRepo.create(workspace.id, "running", "worktree", "feature/running");
+    const deletedPath = "/tmp/worktrees/deleted";
+    const runningPath = "/tmp/worktrees/running";
+
+    expect(threadRepo.updateWorktreePath(deletedThread.id, deletedPath)).toBe(true);
+    expect(threadRepo.updateWorktreePath(runningThread.id, runningPath)).toBe(true);
+    threadRepo.softDelete(deletedThread.id);
+    db.prepare("UPDATE threads SET cleanup_state = 'running' WHERE id = ?").run(runningThread.id);
+
+    expect(threadRepo.updateWorktreePath(deletedThread.id, "/tmp/worktrees/new-deleted")).toBe(false);
+    expect(threadRepo.clearWorktreePath(deletedThread.id)).toBe(false);
+    expect(threadRepo.updateWorktreePath(runningThread.id, "/tmp/worktrees/new-running")).toBe(false);
+    expect(threadRepo.clearWorktreePath(runningThread.id)).toBe(false);
+    expect(threadRepo.findById(deletedThread.id)?.worktree_path).toBe(deletedPath);
+    expect(threadRepo.findById(runningThread.id)?.worktree_path).toBe(runningPath);
+    db.close();
+  });
+});
+
 describe("ThreadRepo.updateCheckoutToNamedBranch", () => {
   let threadRepo: ThreadRepo;
   let workspaceId: string;

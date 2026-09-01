@@ -9,15 +9,15 @@ import { CleanupJobRepo } from "../../../thread-control/cleanup/persistence/clea
 import {
   RepositoryGitMutationLock,
   type GitWorktreeService,
-  type WorktreeSafetyService,
+  type SandboxWorktreeCleanupPolicy,
   WorkspaceService,
 } from "../../index.js";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import { CleanupWorker } from "../../../thread-control/cleanup/cleanup-worker.js";
 import { HandoffStorage } from "../../../handoff/index.js";
+import type { ThreadDeletionTeardownService } from "../../../thread-control/lifecycle/thread-deletion-teardown-service.js";
 import type { AgentService } from "../../../agents/index.js";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
-import type { TerminalBackend as TerminalService } from "../../../terminal/backends/terminal-backend.js";
 import { killDescendantsByName } from "../../../../runtime/process/containment/process-kill.js";
 import type { GitExecutor } from "../../git/execution/index.js";
 
@@ -39,22 +39,20 @@ function createCleanupGitWorktreeServiceMock(): GitWorktreeService {
   } as unknown as GitWorktreeService;
 }
 
-function createCleanupWorktreeSafetyServiceMock(): WorktreeSafetyService {
+function createSandboxWorktreeCleanupPolicyMock(): SandboxWorktreeCleanupPolicy {
   return {
-    assessWorktreeRemovalSafety: vi.fn(async (
-      worktreePath: string,
-      siblingPaths: readonly string[],
-      truncated: boolean,
-    ) => {
-      const normalize = (value: string) => value.replace(/\\/g, "/").toLowerCase();
-      if (truncated || siblingPaths.length > 512) {
-        return { safe: false, reason: "truncated" as const };
-      }
-      return siblingPaths.some((path) => normalize(path) === normalize(worktreePath))
-        ? { safe: false, reason: "shared" as const }
-        : { safe: true, reason: "exclusive" as const };
-    }),
-  } as unknown as WorktreeSafetyService;
+    decide: vi.fn(async ({ worktreePath }) => ({
+      action: "remove" as const,
+      worktreePath,
+      branch: null,
+    })),
+    resolveSandboxPath: vi.fn(async (path: string) => path),
+    isSameSandboxPath: vi.fn((left: string, right: string) => left === right),
+  } as unknown as SandboxWorktreeCleanupPolicy;
+}
+
+function createThreadDeletionTeardownServiceMock(): ThreadDeletionTeardownService {
+  return { teardownThread: vi.fn().mockResolvedValue(undefined) } as unknown as ThreadDeletionTeardownService;
 }
 
 describe("WorkspaceRepo - soft/hard delete", () => {
@@ -74,8 +72,8 @@ describe("WorkspaceRepo - soft/hard delete", () => {
     expect(result).toBe(true);
 
     // Direct DB check - row still exists but has deleted_at set
-    const row = db.prepare("SELECT deleted_at FROM workspaces WHERE id = ?").get(ws.id) as any;
-    expect(row.deleted_at).not.toBeNull();
+    const row = db.prepare("SELECT deleted_at FROM workspaces WHERE id = ?").get(ws.id) as { deleted_at: string | null } | undefined;
+    expect(row).toEqual({ deleted_at: expect.any(String) });
   });
 
   it("softDelete returns false for non-existent workspace", () => {
@@ -312,9 +310,8 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
     workspaceService.delete(ws.id);
 
     // Workspace row still exists (soft-deleted, waiting for cleanup)
-    const row = db.prepare("SELECT deleted_at FROM workspaces WHERE id = ?").get(ws.id) as any;
-    expect(row).toBeDefined();
-    expect(row.deleted_at).not.toBeNull();
+    const row = db.prepare("SELECT deleted_at FROM workspaces WHERE id = ?").get(ws.id) as { deleted_at: string | null } | undefined;
+    expect(row).toEqual({ deleted_at: expect.any(String) });
   });
 
   it("removes attachments for non-worktree threads before hard-deleting them", () => {
@@ -365,7 +362,6 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
   let mockClaudeProvider: ClaudeProvider;
-  let mockTerminalService: TerminalService;
   let mockGitWorktrees: GitWorktreeService;
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
@@ -384,10 +380,6 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
       waitForSessionExit: vi.fn().mockResolvedValue(undefined),
     } as unknown as ClaudeProvider;
 
-    mockTerminalService = {
-      killByThread: vi.fn(),
-    } as unknown as TerminalService;
-
     mockGitWorktrees = createCleanupGitWorktreeServiceMock();
 
     mockAttachmentService = {
@@ -403,17 +395,14 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
       cleanupJobRepo,
       threadRepo,
       mockClaudeProvider,
-      mockTerminalService,
       mockGitWorktrees,
-      createCleanupWorktreeSafetyServiceMock(),
+      createSandboxWorktreeCleanupPolicyMock(),
       new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       mockAttachmentService,
       mockHandoffStorage,
-      { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      createThreadDeletionTeardownServiceMock(),
       TEST_HOST_RUNTIME,
-      undefined,
-      undefined,
     );
   });
 
@@ -494,7 +483,6 @@ describe("CleanupWorker - startup reconciliation", () => {
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
   let mockClaudeProvider: ClaudeProvider;
-  let mockTerminalService: TerminalService;
   let mockGitWorktrees: GitWorktreeService;
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
@@ -512,10 +500,6 @@ describe("CleanupWorker - startup reconciliation", () => {
       waitForSessionExit: vi.fn().mockResolvedValue(undefined),
     } as unknown as ClaudeProvider;
 
-    mockTerminalService = {
-      killByThread: vi.fn(),
-    } as unknown as TerminalService;
-
     mockGitWorktrees = createCleanupGitWorktreeServiceMock();
 
     mockAttachmentService = {
@@ -531,17 +515,14 @@ describe("CleanupWorker - startup reconciliation", () => {
       cleanupJobRepo,
       threadRepo,
       mockClaudeProvider,
-      mockTerminalService,
       mockGitWorktrees,
-      createCleanupWorktreeSafetyServiceMock(),
+      createSandboxWorktreeCleanupPolicyMock(),
       new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       mockAttachmentService,
       mockHandoffStorage,
-      { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      createThreadDeletionTeardownServiceMock(),
       TEST_HOST_RUNTIME,
-      undefined,
-      undefined,
     );
   });
 
@@ -592,10 +573,10 @@ describe("CleanupWorker - shared branch protection", () => {
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
   let mockClaudeProvider: ClaudeProvider;
-  let mockTerminalService: TerminalService;
   let mockGitWorktrees: GitWorktreeService;
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
+  let mockCleanupPolicy: ReturnType<typeof createSandboxWorktreeCleanupPolicyMock>;
   let worker: CleanupWorker;
 
   beforeEach(() => {
@@ -608,17 +589,17 @@ describe("CleanupWorker - shared branch protection", () => {
     workspaceRepo = new WorkspaceRepo(db);
 
     mockClaudeProvider = { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider;
-    mockTerminalService = { killByThread: vi.fn() } as unknown as TerminalService;
     mockGitWorktrees = createCleanupGitWorktreeServiceMock();
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
+    mockCleanupPolicy = createSandboxWorktreeCleanupPolicyMock();
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, TEST_HOST_RUNTIME, undefined, undefined);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockGitWorktrees, mockCleanupPolicy, new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, createThreadDeletionTeardownServiceMock(), TEST_HOST_RUNTIME);
   });
 
   afterEach(() => { worker.dispose(); });
 
-  it("skips branch deletion if another active thread uses the same branch", async () => {
+  it("requests forced branch deletion even when another thread uses the branch", async () => {
     const ws = workspaceRepo.create("Test", "/tmp/ws");
     const t1 = threadRepo.create(ws.id, "T1", "worktree", "feat/shared");
     const t2 = threadRepo.create(ws.id, "T2", "worktree", "feat/shared");
@@ -632,13 +613,18 @@ describe("CleanupWorker - shared branch protection", () => {
       worktree_path: "/tmp/ws/.worktrees/t1",
       branch: "feat/shared",
     });
+    vi.mocked(mockCleanupPolicy.decide).mockResolvedValue({
+      action: "remove",
+      worktreePath: "/tmp/ws/.worktrees/t1",
+      branch: "feat/shared",
+    });
 
     await worker.processOneJob();
 
     expect(mockGitWorktrees.removeWorktree).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
-      expect.objectContaining({ deleteBranch: false }),
+      expect.objectContaining({ branchName: "feat/shared", forceDeleteBranch: true }),
     );
   });
 
@@ -654,13 +640,18 @@ describe("CleanupWorker - shared branch protection", () => {
       worktree_path: "/tmp/ws/.worktrees/t1",
       branch: "feat/solo",
     });
+    vi.mocked(mockCleanupPolicy.decide).mockResolvedValue({
+      action: "remove",
+      worktreePath: "/tmp/ws/.worktrees/t1",
+      branch: "feat/solo",
+    });
 
     await worker.processOneJob();
 
     expect(mockGitWorktrees.removeWorktree).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
-      expect.objectContaining({ branchName: "feat/solo" }),
+      expect.objectContaining({ branchName: "feat/solo", forceDeleteBranch: true }),
     );
   });
 });
@@ -795,18 +786,15 @@ describe("CleanupWorker - exhausted retries", () => {
       db,
       cleanupJobRepo,
       threadRepo,
-      { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as any,
-      { killByThread: vi.fn() } as any,
-      { removeWorktree: vi.fn().mockResolvedValue(true), isRegisteredWorktreePath: vi.fn().mockReturnValue(true) } as any,
-      createCleanupWorktreeSafetyServiceMock(),
+      { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider,
+      { removeWorktree: vi.fn().mockResolvedValue(true), isRegisteredWorktreePath: vi.fn().mockReturnValue(true) } as unknown as GitWorktreeService,
+      createSandboxWorktreeCleanupPolicyMock(),
       new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
-      { removeForThread: vi.fn() } as any,
-      { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as any,
-      { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      { removeForThread: vi.fn() } as unknown as AttachmentService,
+      { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
+      createThreadDeletionTeardownServiceMock(),
       TEST_HOST_RUNTIME,
-      undefined,
-      undefined,
     );
   });
 
@@ -842,7 +830,6 @@ describe("CleanupWorker - missing directory handling", () => {
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
   let mockClaudeProvider: ClaudeProvider;
-  let mockTerminalService: TerminalService;
   let mockGitWorktrees: GitWorktreeService;
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
@@ -858,12 +845,11 @@ describe("CleanupWorker - missing directory handling", () => {
     workspaceRepo = new WorkspaceRepo(db);
 
     mockClaudeProvider = { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider;
-    mockTerminalService = { killByThread: vi.fn() } as unknown as TerminalService;
     mockGitWorktrees = createCleanupGitWorktreeServiceMock();
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, TEST_HOST_RUNTIME, undefined, undefined);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockGitWorktrees, createSandboxWorktreeCleanupPolicyMock(), new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, createThreadDeletionTeardownServiceMock(), TEST_HOST_RUNTIME);
   });
 
   afterEach(() => { worker.dispose(); });
@@ -894,7 +880,7 @@ describe("CleanupWorker - missing directory handling", () => {
     expect(cleanupJobRepo.countByWorkspacePath("/tmp/ws")).toBe(0);
   });
 
-  it("treats non-existent workspace path gracefully (skip git commands)", async () => {
+  it("cleans a managed worktree when its workspace path is missing", async () => {
     const ws = workspaceRepo.create("Test", "/tmp/gone-ws");
     const t1 = threadRepo.create(ws.id, "WT", "worktree", "feat/x");
     db.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?")
@@ -915,8 +901,11 @@ describe("CleanupWorker - missing directory handling", () => {
     // Should complete without error, thread hard-deleted
     const thread = db.prepare("SELECT id FROM threads WHERE id = ?").get(t1.id);
     expect(thread).toBeUndefined();
-    // removeWorktree should NOT have been called (no filesystem to clean)
-    expect(mockGitWorktrees.removeWorktree).not.toHaveBeenCalled();
+    expect(mockGitWorktrees.removeWorktree).toHaveBeenCalledWith(
+      "/tmp/gone-ws",
+      "x",
+      expect.objectContaining({ worktreePath: "/tmp/gone-ws/.worktrees/x" }),
+    );
   });
 });
 
@@ -926,7 +915,6 @@ describe("CleanupWorker - idempotent retry", () => {
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
   let mockClaudeProvider: ClaudeProvider;
-  let mockTerminalService: TerminalService;
   let mockGitWorktrees: GitWorktreeService;
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
@@ -942,12 +930,11 @@ describe("CleanupWorker - idempotent retry", () => {
     workspaceRepo = new WorkspaceRepo(db);
 
     mockClaudeProvider = { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider;
-    mockTerminalService = { killByThread: vi.fn() } as unknown as TerminalService;
     mockGitWorktrees = createCleanupGitWorktreeServiceMock();
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitWorktrees, createCleanupWorktreeSafetyServiceMock(), new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, TEST_HOST_RUNTIME, undefined, undefined);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockGitWorktrees, createSandboxWorktreeCleanupPolicyMock(), new RepositoryGitMutationLock(TEST_HOST_RUNTIME), workspaceRepo, mockAttachmentService, mockHandoffStorage, createThreadDeletionTeardownServiceMock(), TEST_HOST_RUNTIME);
   });
 
   afterEach(() => { worker.dispose(); });

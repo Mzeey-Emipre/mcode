@@ -6,9 +6,7 @@ import { AgentPermissionService } from "../../agents/permissions/agent-permissio
 import { SettingsService } from "../../settings/settings-service.js";
 import { ThreadTeardownService } from "./thread-teardown-service.js";
 import { ThreadControlMutationReservationService } from "../authority/thread-control-mutation-reservation-service.js";
-import { CleanupJobRepo, CLEANUP_BATCH_LIMIT } from "../cleanup/persistence/cleanup-job-repo.js";
-import { logger } from "@mcode/shared";
-import type { UnsafeWorktreePolicy } from "@mcode/contracts";
+import { CleanupJobRepo } from "../cleanup/persistence/cleanup-job-repo.js";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const OVERDUE_SAFETY_MS = DAY_MS;
@@ -26,7 +24,6 @@ export class ThreadCompletionService {
   private readonly resourceOwners = new Map<string, (threadId: string) => Promise<ThreadResourceOwnerRelease>>();
   private deadlineChangesListener: ((threads: readonly Thread[]) => void) | null = null;
   private lastRetentionDays: CompletedThreadRetentionDays | undefined;
-  private lastUnsafeWorktreePolicy: UnsafeWorktreePolicy | undefined;
   private unsubscribeSettings: (() => void) | null = null;
   private retentionRecalculationGeneration = 0;
 
@@ -49,25 +46,17 @@ export class ThreadCompletionService {
     if (this.unsubscribeSettings) return;
     const initialSettings = this.settingsService.get();
     this.lastRetentionDays = this.retentionDays(initialSettings);
-    this.lastUnsafeWorktreePolicy = this.unsafeWorktreePolicy(initialSettings);
     this.unsubscribeSettings = this.settingsService.on("change", (settings) => {
       const nextRetentionDays = this.retentionDays(settings);
-      const nextUnsafeWorktreePolicy = this.unsafeWorktreePolicy(settings);
       const previousRetentionDays = this.lastRetentionDays;
-      const previousUnsafeWorktreePolicy = this.lastUnsafeWorktreePolicy;
-      if (previousRetentionDays === undefined || previousUnsafeWorktreePolicy === undefined) {
+      if (previousRetentionDays === undefined) {
         this.lastRetentionDays = nextRetentionDays;
-        this.lastUnsafeWorktreePolicy = nextUnsafeWorktreePolicy;
         return;
       }
       this.lastRetentionDays = nextRetentionDays;
-      this.lastUnsafeWorktreePolicy = nextUnsafeWorktreePolicy;
       if (previousRetentionDays !== nextRetentionDays) {
         const generation = ++this.retentionRecalculationGeneration;
         this.recalculateDeadlineBatch(previousRetentionDays, nextRetentionDays, null, generation);
-      }
-      if (previousUnsafeWorktreePolicy === "block" && nextUnsafeWorktreePolicy === "delete") {
-        this.requeueBlockedRetentionBatch();
       }
     });
   }
@@ -224,30 +213,6 @@ export class ThreadCompletionService {
 
   private retentionDays(settings: Settings): CompletedThreadRetentionDays {
     return settings.thread.completion.retentionDays;
-  }
-
-  private unsafeWorktreePolicy(settings: Settings): UnsafeWorktreePolicy {
-    return settings.thread.completion.unsafeWorktreePolicy === "delete" ? "delete" : "block";
-  }
-
-  /** Requeue blocked candidates one bounded page at a time after policy opt-in. */
-  private requeueBlockedRetentionBatch(): void {
-    try {
-      const batch = this.cleanupJobRepo.requeueBlockedRetentionBatch(CLEANUP_BATCH_LIMIT);
-      if (batch.threadIds.length > 0) {
-        const changed = batch.threadIds
-          .map((id) => this.threadRepo.findById(id))
-          .filter((thread): thread is Thread => thread !== null);
-        if (changed.length > 0) this.deadlineChangesListener?.(changed);
-      }
-      if (batch.hasMore) {
-        setTimeout(() => this.requeueBlockedRetentionBatch(), 0);
-      }
-    } catch (error) {
-      logger.warn("Failed to requeue blocked retention candidates", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 
   private recalculateDeadlineBatch(

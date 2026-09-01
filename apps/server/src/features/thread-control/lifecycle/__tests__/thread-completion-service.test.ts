@@ -543,44 +543,6 @@ describe("ThreadCompletionService", () => {
     expect(cleanupJobRepo.findByThreadId(threadId)).toBeNull();
   });
 
-  it("requeues every blocked candidate when policy changes from block to delete", () => {
-    db.prepare(
-      `UPDATE threads
-          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'blocked'
-        WHERE id = ?`,
-    ).run(now.toISOString(), now.toISOString(), threadId);
-    const second = threadRepo.create(
-      threadRepo.findById(threadId)!.workspace_id,
-      "Second blocked",
-      "direct",
-      "main",
-    );
-    db.prepare(
-      `UPDATE threads
-          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'blocked'
-        WHERE id = ?`,
-    ).run(now.toISOString(), now.toISOString(), second.id);
-    const changedIds: string[] = [];
-    service.onDeadlineChanges((threads) => changedIds.push(...threads.map((thread) => thread.id)));
-
-    settings = {
-      ...settings,
-      thread: {
-        completion: {
-          ...settings.thread.completion,
-          unsafeWorktreePolicy: "delete",
-        },
-      },
-    };
-    settingsListener?.(settings);
-
-    expect(threadRepo.findById(threadId)?.cleanup_state).toBe("queued");
-    expect(threadRepo.findById(second.id)?.cleanup_state).toBe("queued");
-    expect(cleanupJobRepo.findByThreadId(threadId)?.kind).toBe("retention");
-    expect(cleanupJobRepo.findByThreadId(second.id)?.kind).toBe("retention");
-    expect(changedIds).toEqual(expect.arrayContaining([threadId, second.id]));
-  });
-
   it("preserves conversation, attachments, and repository identity", async () => {
     const messageRepo = new MessageRepo(db);
     messageRepo.create(threadId, "user", "Keep this context", 1, [{

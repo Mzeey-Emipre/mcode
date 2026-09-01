@@ -13,6 +13,7 @@ describe("thread control feature boundary", () => {
       "ThreadCompletionService",
       "ThreadControlMutationReservationService",
       "ThreadControlService",
+      "ThreadDeletionTeardownService",
       "ThreadService",
       "ThreadTeardownService",
     ]);
