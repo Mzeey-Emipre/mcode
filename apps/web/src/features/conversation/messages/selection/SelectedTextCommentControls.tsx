@@ -24,7 +24,6 @@ export function SelectedTextCommentControls({
     x: number;
     y: number;
   } | null>(null);
-  const [selectedTextCopyAnnouncement, setSelectedTextCopyAnnouncement] = useState("");
   const [commentEditorSource, setCommentEditorSource] = useState<SelectedTextCommentSource | null>(null);
   const [commentNote, setCommentNote] = useState("");
 
@@ -41,17 +40,6 @@ export function SelectedTextCommentControls({
     document.addEventListener("mouseup", handleMouseUp);
     return () => document.removeEventListener("mouseup", handleMouseUp);
   }, []);
-
-  const handleCopySelectedText = useCallback(async () => {
-    const quote = selectedTextContextMenu?.source.quote;
-    if (!quote) return;
-    try {
-      await navigator.clipboard.writeText(quote);
-      setSelectedTextCopyAnnouncement("Selected text copied.");
-    } catch {
-      setSelectedTextCopyAnnouncement("Could not copy selected text.");
-    }
-  }, [selectedTextContextMenu]);
 
   const openSelectedTextCommentEditor = useCallback(() => {
     const source = selectedTextContextMenu?.source;
@@ -81,21 +69,16 @@ export function SelectedTextCommentControls({
 
   return (
     <>
-      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {selectedTextCopyAnnouncement}
-      </div>
       {selectedTextContextMenu && (
         <ContextMenu
           x={selectedTextContextMenu.x}
           y={selectedTextContextMenu.y}
-          items={[
-            { label: "Copy", onClick: () => { void handleCopySelectedText(); } },
-            { label: "Add comment", onClick: openSelectedTextCommentEditor },
-          ]}
+          items={[{ label: "Add comment", onClick: openSelectedTextCommentEditor }]}
           onClose={() => setSelectedTextContextMenu(null)}
         />
       )}
 
+      {/* This temporary first-slice editor preserves the composer workflow; #1556 will replace it with compact ComposerEditor behavior. */}
       <Popover
         open={commentEditorSource !== null}
         modal={false}

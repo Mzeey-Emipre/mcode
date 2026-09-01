@@ -86,3 +86,22 @@ bun .codex/skills/electorn-live-testing/scripts/stop-electron.mjs
 Then run `bun run --shell system agent:down` only when this workflow started the runtime. The stop helper verifies the recorded executable and dynamic CDP port before stopping the PID tree. If verification fails, inspect `.dev/electron-live-testing.json` and the live command before cleanup. Never kill Electron processes by name.
 
 Report desktop evidence separately from focused automated tests and `bun run verify`.
+
+Use this command order for selected-text comments:
+
+```powershell
+bun run --shell system agent:up
+bun .codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs
+bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs
+bun .codex/skills/electorn-live-testing/scripts/stop-electron.mjs
+bun .codex/skills/verify-agent-runtime/scripts/selected-text-comments-fixture.mjs setup
+bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs
+bun .codex/skills/verify-agent-runtime/scripts/verify-selected-text-comments.mjs
+bun .codex/skills/electorn-live-testing/scripts/stop-electron.mjs
+bun .codex/skills/verify-agent-runtime/scripts/selected-text-comments-fixture.mjs cleanup
+bun run --shell system agent:down
+```
+
+The first Electron launch initializes `.dev/electron-live-testing/runtime/db/app.sqlite`. Stop Electron before fixture setup. The second launch loads the fixture rows at server startup. The fixture never touches `.dev/db/app.sqlite` or deletes the built-in `.dev/fixture-repo` workspace.
+
+The verifier writes `.dev/verification/selected-text-comments.png` and `.json` evidence. Playwright proves that the app does not intercept `contextmenu`, but it cannot inspect the native OS menu.

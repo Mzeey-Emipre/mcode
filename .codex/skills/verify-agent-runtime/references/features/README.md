@@ -28,6 +28,7 @@ The harness uses a 15-second health limit from `scripts/dev-web.mjs` and one sha
 | A thread starts, runs, stops, clears active state, and retains a cancelled reconnect snapshot | [Thread lifecycle](thread-lifecycle.md) | `live --scenario stop` |
 | Provider events become durable assistant conversation data | [Provider events and durability](provider-events-and-durability.md) | `live --scenario completion` |
 | Thread deletion and provider-session cleanup retain runtime ownership | [Resource lifecycle](resource-lifecycle.md) | focused checks and controlled thread cleanup |
+| Selected assistant text exposes comment and native copy actions separately | [Selected text comments](selected-text-comments.md) | Electron live verification |
 
 ## Regression order
 

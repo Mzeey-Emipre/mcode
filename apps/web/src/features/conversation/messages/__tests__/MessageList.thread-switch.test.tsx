@@ -228,7 +228,7 @@ describe("MessageList thread switch", () => {
       content: "Select this phrase",
     }];
     const onSelectedTextComment = vi.fn();
-    const { getByRole, getByText } = render(
+    const { getByRole, getByText, queryByRole } = render(
       <MessageList onSelectedTextComment={onSelectedTextComment} />,
     );
     const content = getByText("Select this phrase");
@@ -246,12 +246,10 @@ describe("MessageList thread switch", () => {
     fireEvent.click(content, { button: 0, clientX: 24, clientY: 24 });
 
     expect(contextMenuSpy).not.toHaveBeenCalled();
-    const copy = getByRole("button", { name: "Copy" });
     const addComment = getByRole("button", { name: "Add comment" });
-    expect(copy.compareDocumentPosition(addComment) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
 
     fireEvent.click(addComment);
-    expect(() => getByRole("button", { name: "Copy" })).toThrow();
     expect(getByRole("dialog", { name: "Comment on selected text" })).toBeInTheDocument();
     fireEvent.change(getByRole("textbox", { name: "Comment note" }), {
       target: { value: "Explain this." },
@@ -295,7 +293,6 @@ describe("MessageList thread switch", () => {
 
     fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
 
-    expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
   });
 
@@ -318,7 +315,6 @@ describe("MessageList thread switch", () => {
 
     fireEvent.mouseUp(content, { button: 2, clientX: 24, clientY: 24 });
 
-    expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
   });
 
@@ -351,62 +347,6 @@ describe("MessageList thread switch", () => {
     });
   });
 
-  it("announces the exact successful selected-text copy result", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-    messagesValue = [{
-      id: "assistant-1",
-      sequence: 1,
-      thread_id: "thread-A",
-      role: "assistant",
-      content: "Select this phrase",
-    }];
-    const { getByRole, getByText } = render(<MessageList />);
-    const content = getByText("Select this phrase");
-    const range = document.createRange();
-    range.setStart(content.firstChild!, 0);
-    range.setEnd(content.firstChild!, 6);
-    const selection = document.getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
-    fireEvent.click(getByRole("button", { name: "Copy" }));
-
-    await vi.waitFor(() => {
-      expect(getByRole("status")).toHaveTextContent("Selected text copied.");
-    });
-    expect(writeText).toHaveBeenCalledWith("Select");
-  });
-
-  it("announces the exact failed selected-text copy result while retaining the fixed quote", async () => {
-    const writeText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-    messagesValue = [{
-      id: "assistant-1",
-      sequence: 1,
-      thread_id: "thread-A",
-      role: "assistant",
-      content: "Select this phrase",
-    }];
-    const { getByRole, getByText } = render(<MessageList />);
-    const content = getByText("Select this phrase");
-    const range = document.createRange();
-    range.setStart(content.firstChild!, 0);
-    range.setEnd(content.firstChild!, 6);
-    const selection = document.getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
-    fireEvent.click(getByRole("button", { name: "Copy" }));
-
-    await vi.waitFor(() => {
-      expect(getByRole("status")).toHaveTextContent("Could not copy selected text.");
-    });
-    expect(writeText).toHaveBeenCalledWith("Select");
-  });
-
   it("does not open the selected-text menu for cross-message or ineligible selections", () => {
     messagesValue = [
       {
@@ -436,7 +376,7 @@ describe("MessageList thread switch", () => {
     selection.addRange(crossMessageRange);
 
     fireEvent.mouseUp(first, { button: 0, clientX: 24, clientY: 24 });
-    expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
 
     const ineligibleRange = document.createRange();
     ineligibleRange.setStart(streaming.firstChild!, 0);
@@ -445,7 +385,7 @@ describe("MessageList thread switch", () => {
     selection.addRange(ineligibleRange);
 
     fireEvent.mouseUp(streaming, { button: 0, clientX: 24, clientY: 24 });
-    expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
   });
 
   it("shows file changes from only the displayed child thread", () => {

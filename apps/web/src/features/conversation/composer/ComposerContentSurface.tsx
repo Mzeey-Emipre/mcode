@@ -238,6 +238,7 @@ function ComposerReplySurface({
   );
 }
 
+// This temporary first-slice comment presentation preserves the composer contract; #1557 will replace it with aggregate cards.
 function ComposerSelectedTextComments({
   comments,
 }: {
