@@ -7,6 +7,14 @@ import { getTransport } from "@/transport";
 import { ProjectCommandApprovalDialog } from "./ProjectCommandApprovalDialog";
 
 type AutomaticSetupAction = "approve" | "continue" | "retry";
+type AutomaticSetupAttempt = NonNullable<WorkspaceEnvironmentAutomaticSetupSnapshot["attempt"]>;
+type AutomaticSetupAttemptState = AutomaticSetupAttempt["state"] | undefined;
+
+interface AutomaticSetupActionState {
+  readonly threadId: string;
+  readonly busy: AutomaticSetupAction | null;
+  readonly error: string | null;
+}
 
 const NO_AUTOMATIC_SETUP: WorkspaceEnvironmentAutomaticSetupSnapshot = {
   gate: "not-required",
@@ -43,8 +51,9 @@ export const useProjectAutomaticSetupStore = create<AutomaticSetupSnapshotState>
 export function useProjectAutomaticSetup(threadId: string, enabled = true) {
   const storedSnapshot = useProjectAutomaticSetupStore((state) => state.snapshotsByThread[threadId]);
   const snapshot = enabled ? storedSnapshot ?? NO_AUTOMATIC_SETUP : NO_AUTOMATIC_SETUP;
-  const [busy, setBusy] = useState<AutomaticSetupAction | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<AutomaticSetupActionState>({ threadId, busy: null, error: null });
+  const busy = actionState.threadId === threadId ? actionState.busy : null;
+  const error = actionState.threadId === threadId ? actionState.error : null;
   const request = useRef(0);
 
   const refresh = useCallback(async (): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot | null> => {
@@ -58,15 +67,13 @@ export function useProjectAutomaticSetup(threadId: string, enabled = true) {
       }
       return next;
     } catch {
-      if (request.current === current) setError("Could not refresh setup status");
+      if (request.current === current) setActionState({ threadId, busy: null, error: "Could not refresh setup status" });
       return null;
     }
   }, [threadId]);
 
   useEffect(() => {
     request.current += 1;
-    setBusy(null);
-    setError(null);
     if (enabled) void refresh();
   }, [enabled, refresh]);
 
@@ -83,14 +90,13 @@ export function useProjectAutomaticSetup(threadId: string, enabled = true) {
     failureMessage: string,
   ) => {
     if (busy) return;
-    setBusy(action);
-    setError(null);
+    setActionState({ threadId, busy: action, error: null });
     try {
       useProjectAutomaticSetupStore.getState().applySnapshot(threadId, await operation());
     } catch {
-      setError(failureMessage);
+      setActionState({ threadId, busy: null, error: failureMessage });
     } finally {
-      setBusy(null);
+      setActionState((current) => current.threadId === threadId ? { ...current, busy: null } : current);
     }
   }, [busy, threadId]);
 
@@ -133,6 +139,100 @@ export function useProjectAutomaticSetup(threadId: string, enabled = true) {
   };
 }
 
+function getAutomaticSetupPresentation(state: AutomaticSetupAttemptState) {
+  if (state === "failed") return { heading: "Environment setup failed", detail: null };
+  if (state === "interrupted") return { heading: "Environment setup stopped", detail: null };
+  if (state === "running") return { heading: "Setting up environment", detail: "Running setup before your first message." };
+  return { heading: "Preparing environment", detail: "Setup will run before your first message." };
+}
+
+function AutomaticSetupHeader({ state }: { readonly state: AutomaticSetupAttemptState }) {
+  const presentation = getAutomaticSetupPresentation(state);
+  return (
+    <header className="flex items-start justify-between gap-3">
+      <div>
+        <h2 className="text-sm font-medium">{presentation.heading}</h2>
+        {presentation.detail ? <p className="mt-1 text-xs text-muted-foreground">{presentation.detail}</p> : null}
+      </div>
+      {state === "running" ? (
+        <span role="status" className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Spinner size={13} aria-hidden />
+          Running
+        </span>
+      ) : null}
+    </header>
+  );
+}
+
+function AutomaticSetupOutput({ attempt }: { readonly attempt: AutomaticSetupAttempt | null }) {
+  const state = attempt?.state;
+  const script = attempt?.snapshot?.script ?? "";
+  const output = attempt?.output || (state === "running" ? "Waiting for setup output…" : "Waiting for setup to start…");
+  return (
+    <div aria-label="Environment setup terminal" className="mt-3 max-h-64 overflow-auto rounded-md border border-border/60 bg-background/60 p-3 font-mono text-xs leading-5">
+      {script ? <pre className="whitespace-pre-wrap break-words text-foreground">$ {script}</pre> : null}
+      <pre className="whitespace-pre-wrap break-words text-muted-foreground">{output}</pre>
+    </div>
+  );
+}
+
+function AutomaticSetupRecoveryActions({ busy, onContinue, onRetry }: {
+  readonly busy: AutomaticSetupAction | null;
+  readonly onContinue: () => Promise<void>;
+  readonly onRetry: () => Promise<void>;
+}) {
+  return (
+    <div className="mt-3 flex gap-2">
+      <Button type="button" size="sm" disabled={busy !== null} onClick={() => { void onRetry(); }}>
+        {busy === "retry" ? <Spinner size={13} aria-hidden /> : null}
+        Retry setup
+      </Button>
+      <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => { void onContinue(); }}>
+        {busy === "continue" ? <Spinner size={13} aria-hidden /> : null}
+        Continue without setup
+      </Button>
+    </div>
+  );
+}
+
+function AutomaticSetupApproval({ attempt, onApprove }: {
+  readonly attempt: AutomaticSetupAttempt;
+  readonly onApprove?: () => Promise<void>;
+}) {
+  return (
+    <ProjectCommandApprovalDialog
+      approval={attempt.snapshot?.approval ?? null}
+      script={attempt.snapshot?.script ?? null}
+      onApprove={async () => {
+        if (!onApprove) return false;
+        await onApprove();
+        return true;
+      }}
+      onCancel={() => undefined}
+    />
+  );
+}
+
+function AutomaticSetupAttemptCard({ attempt, busy, error, onContinue, onRetry }: {
+  readonly attempt: AutomaticSetupAttempt | null;
+  readonly busy: AutomaticSetupAction | null;
+  readonly error: string | null;
+  readonly onContinue: () => Promise<void>;
+  readonly onRetry: () => Promise<void>;
+}) {
+  const state = attempt?.state;
+  const failed = state === "failed" || state === "interrupted";
+  return (
+    <section aria-label="Environment setup" className="mb-4 border-y border-border/60 py-4">
+      <AutomaticSetupHeader state={state} />
+      <AutomaticSetupOutput attempt={attempt} />
+      {attempt?.outputTruncated ? <p className="mt-2 text-xs text-muted-foreground">Output was truncated.</p> : null}
+      {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
+      {failed ? <AutomaticSetupRecoveryActions busy={busy} onContinue={onContinue} onRetry={onRetry} /> : null}
+    </section>
+  );
+}
+
 /** Renders the current blocking Setup attempt and its recovery actions. */
 export function ProjectAutomaticSetupCard({
   snapshot,
@@ -153,67 +253,8 @@ export function ProjectAutomaticSetupCard({
 
   const attempt = snapshot.attempt;
   if (attempt?.state === "awaiting-approval") {
-    return (
-      <ProjectCommandApprovalDialog
-        approval={attempt.snapshot?.approval ?? null}
-        script={attempt.snapshot?.script ?? null}
-        onApprove={async () => {
-          if (!onApprove) return false;
-          await onApprove();
-          return true;
-        }}
-        onCancel={() => undefined}
-      />
-    );
+    return <AutomaticSetupApproval attempt={attempt} onApprove={onApprove} />;
   }
 
-  const state = attempt?.state;
-  const failed = state === "failed" || state === "interrupted";
-  const heading = state === "failed"
-    ? "Environment setup failed"
-    : state === "interrupted"
-      ? "Environment setup stopped"
-      : state === "running"
-        ? "Setting up environment"
-        : "Preparing environment";
-  const detail = state === "running"
-    ? "Running setup before your first message."
-    : "Setup will run before your first message.";
-  const script = attempt?.snapshot?.script ?? "";
-  const output = attempt?.output || (state === "running" ? "Waiting for setup output…" : "Waiting for setup to start…");
-
-  return (
-    <section aria-label="Environment setup" className="mb-4 border-y border-border/60 py-4">
-      <header className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-medium">{heading}</h2>
-          {!failed ? <p className="mt-1 text-xs text-muted-foreground">{detail}</p> : null}
-        </div>
-        {state === "running" ? (
-          <span role="status" className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <Spinner size={13} aria-hidden />
-            Running
-          </span>
-        ) : null}
-      </header>
-      <div aria-label="Environment setup terminal" className="mt-3 max-h-64 overflow-auto rounded-md border border-border/60 bg-background/60 p-3 font-mono text-xs leading-5">
-        {script ? <pre className="whitespace-pre-wrap break-words text-foreground">$ {script}</pre> : null}
-        <pre className="whitespace-pre-wrap break-words text-muted-foreground">{output}</pre>
-      </div>
-      {attempt?.outputTruncated ? <p className="mt-2 text-xs text-muted-foreground">Output was truncated.</p> : null}
-      {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
-      {failed ? (
-        <div className="mt-3 flex gap-2">
-          <Button type="button" size="sm" disabled={busy !== null} onClick={() => { void onRetry(); }}>
-            {busy === "retry" ? <Spinner size={13} aria-hidden /> : null}
-            Retry setup
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => { void onContinue(); }}>
-            {busy === "continue" ? <Spinner size={13} aria-hidden /> : null}
-            Continue without setup
-          </Button>
-        </div>
-      ) : null}
-    </section>
-  );
+  return <AutomaticSetupAttemptCard attempt={attempt} busy={busy} error={error} onContinue={onContinue} onRetry={onRetry} />;
 }

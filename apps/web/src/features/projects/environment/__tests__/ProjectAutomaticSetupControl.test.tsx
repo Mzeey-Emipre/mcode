@@ -112,6 +112,25 @@ describe("ProjectAutomaticSetupControl", () => {
     await waitFor(() => expect(screen.queryByLabelText("Environment setup")).not.toBeInTheDocument());
   });
 
+  it("does not show an action error from another thread", async () => {
+    const user = userEvent.setup();
+    transport.getAutomaticSetup.mockResolvedValue(failed);
+    transport.continueAutomaticSetup.mockRejectedValue(new Error("request failed"));
+
+    function Setup({ threadId }: { readonly threadId: string }) {
+      const automaticSetup = useProjectAutomaticSetup(threadId);
+      return <ProjectAutomaticSetupCard snapshot={automaticSetup.snapshot} busy={automaticSetup.busy} error={automaticSetup.error} onRetry={automaticSetup.retrySetup} onContinue={automaticSetup.continueWithoutSetup} />;
+    }
+
+    const { rerender } = render(<Setup threadId="thread-1" />);
+    await user.click(await screen.findByRole("button", { name: "Continue without setup" }));
+    await screen.findByRole("alert");
+
+    rerender(<Setup threadId="thread-2" />);
+    await screen.findByRole("heading", { name: "Environment setup failed" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("updates the project tree marker when the user continues without setup", async () => {
     const user = userEvent.setup();
     let resolveStaleRead: (snapshot: WorkspaceEnvironmentAutomaticSetupSnapshot) => void;
