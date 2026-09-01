@@ -1,15 +1,15 @@
 #!/usr/bin/env bun
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
+import * as NodeFSPromises from "node:fs/promises";
+import * as NodePath from "node:path";
 
-const ROOT = path.resolve(import.meta.dirname, "../../../../");
-const PLAYWRIGHT_PATH = path.join(ROOT, ".dev/playwright-scratch/node_modules/playwright/index.js");
-const FIXTURE_STATE = path.join(ROOT, ".dev/verification", "selected-text-comments-fixture.json");
+const ROOT = NodePath.resolve(import.meta.dirname, "../../../../");
+const PLAYWRIGHT_PATH = NodePath.join(ROOT, ".dev/playwright-scratch/node_modules/playwright/index.js");
+const FIXTURE_STATE = NodePath.join(ROOT, ".dev/verification", "selected-text-comments-fixture.json");
 const PHRASE = "verification phrase";
 const MESSAGE_TEXT = "Select this verification phrase";
-const EVIDENCE_DIR = path.join(ROOT, ".dev/verification");
-const SCREENSHOT = path.join(EVIDENCE_DIR, "selected-text-comments.png");
-const RESULTS = path.join(EVIDENCE_DIR, "selected-text-comments.json");
+const EVIDENCE_DIR = NodePath.join(ROOT, ".dev/verification");
+const SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments.png");
+const RESULTS = NodePath.join(EVIDENCE_DIR, "selected-text-comments.json");
 
 if (process.argv.includes("--help")) {
   console.log("Usage: bun verify-selected-text-comments.mjs");
@@ -21,20 +21,25 @@ let session;
 let page;
 let screenshotCaptured = false;
 
+function hasValidWorkspaceId(state) {
+  return typeof state.workspaceId === "string"
+    && state.workspaceId.length > 0
+    && /^[A-Za-z0-9_-]+$/.test(state.workspaceId);
+}
+
+function isFixtureState(state) {
+  return Boolean(state)
+    && typeof state === "object"
+    && !Array.isArray(state)
+    && Object.keys(state).sort().join(",") === "messageId,threadId,workspaceId"
+    && hasValidWorkspaceId(state)
+    && state.threadId === "mcode-verification-selected-text-thread"
+    && state.messageId === "mcode-verification-selected-text-message";
+}
+
 async function readFixtureState() {
-  const state = JSON.parse(await fs.readFile(FIXTURE_STATE, "utf8"));
-  if (
-    !state
-    || typeof state !== "object"
-    || Array.isArray(state)
-    || Object.keys(state).sort().join(",") !== "messageId,threadId,workspaceId"
-    || typeof state.workspaceId !== "string"
-    || state.workspaceId.length === 0
-    || !/^[A-Za-z0-9_-]+$/.test(state.workspaceId)
-    || typeof state.threadId !== "string"
-    || state.threadId !== "mcode-verification-selected-text-thread"
-    || state.messageId !== "mcode-verification-selected-text-message"
-  ) {
+  const state = JSON.parse(await NodeFSPromises.readFile(FIXTURE_STATE, "utf8"));
+  if (!isFixtureState(state)) {
     throw new Error("Selected text comments fixture state is invalid");
   }
   return state;
@@ -103,7 +108,7 @@ async function run() {
     return style.visibility !== "hidden" && style.display !== "none" && button.getBoundingClientRect().width > 0;
   }).length);
   mark("copy_button_absent", visibleCopyCount === 0, visibleCopyCount);
-  await fs.mkdir(EVIDENCE_DIR, { recursive: true });
+  await NodeFSPromises.mkdir(EVIDENCE_DIR, { recursive: true });
   await page.screenshot({ path: SCREENSHOT, fullPage: true });
   screenshotCaptured = true;
   const contextMenu = await content.evaluate((element) => {
@@ -115,15 +120,15 @@ async function run() {
   });
   mark("context_menu_not_prevented", contextMenu.prevented === false, contextMenu.prevented);
   mark("selection_preserved", contextMenu.selection === PHRASE, contextMenu.selection);
-  await fs.writeFile(RESULTS, JSON.stringify({ passed: true, assertions, contextMenu }, null, 2));
+  await NodeFSPromises.writeFile(RESULTS, JSON.stringify({ passed: true, assertions, contextMenu }, null, 2));
 }
 
 try {
   await run();
 } catch (error) {
-  await fs.mkdir(EVIDENCE_DIR, { recursive: true });
+  await NodeFSPromises.mkdir(EVIDENCE_DIR, { recursive: true });
   if (page && !screenshotCaptured) await page.screenshot({ path: SCREENSHOT, fullPage: true }).catch(() => {});
-  await fs.writeFile(RESULTS, JSON.stringify({ passed: false, assertions, error: String(error?.stack ?? error) }, null, 2));
+  await NodeFSPromises.writeFile(RESULTS, JSON.stringify({ passed: false, assertions, error: String(error?.stack ?? error) }, null, 2));
   throw error;
 } finally {
   if (session) await (await import("./electron-session.mjs")).disconnectElectronSession(session);

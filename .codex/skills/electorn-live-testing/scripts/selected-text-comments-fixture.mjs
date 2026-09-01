@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 import { Database } from "bun:sqlite";
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { probeCdpVersion } from "./start-electron.mjs";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../");
-const DATABASE_PATH = path.join(REPO_ROOT, ".dev", "electron-live-testing", "runtime", "db", "app.sqlite");
-const ELECTRON_SESSION_PATH = path.join(REPO_ROOT, ".dev", "electron-live-testing.json");
-const FIXTURE_WORKSPACE_PATH = path.join(REPO_ROOT, ".dev", "fixture-repo");
-const STATE_PATH = path.join(REPO_ROOT, ".dev", "verification", "selected-text-comments-fixture.json");
+const REPO_ROOT = NodePath.resolve(import.meta.dirname, "../../../../");
+const DATABASE_PATH = NodePath.join(REPO_ROOT, ".dev", "electron-live-testing", "runtime", "db", "app.sqlite");
+const ELECTRON_SESSION_PATH = NodePath.join(REPO_ROOT, ".dev", "electron-live-testing.json");
+const FIXTURE_WORKSPACE_PATH = NodePath.join(REPO_ROOT, ".dev", "fixture-repo");
+const STATE_PATH = NodePath.join(REPO_ROOT, ".dev", "verification", "selected-text-comments-fixture.json");
 const FIXTURE_THREAD_ID = "mcode-verification-selected-text-thread";
 const FIXTURE_MESSAGE_ID = "mcode-verification-selected-text-message";
 const FIXTURE_TITLE = "Selected text comments verification";
@@ -23,8 +23,15 @@ export function assertElectronSessionState(command, healthy) {
 
 /** Rejects a fixture state path outside this worktree's verification directory. */
 export function assertOwnedStatePath(root, statePath) {
-  const expected = path.join(path.resolve(root), ".dev", "verification", "selected-text-comments-fixture.json");
-  if (path.resolve(statePath) !== expected) throw new Error("Fixture state path is outside the worktree verification directory");
+  const expected = NodePath.join(NodePath.resolve(root), ".dev", "verification", "selected-text-comments-fixture.json");
+  if (NodePath.resolve(statePath) !== expected) throw new Error("Fixture state path is outside the worktree verification directory");
+}
+
+function isValidWorkspaceId(workspaceId) {
+  return typeof workspaceId === "string"
+    && workspaceId.length > 0
+    && workspaceId.length <= MAX_WORKSPACE_ID_LENGTH
+    && SAFE_IDENTIFIER.test(workspaceId);
 }
 
 /** Validates the persisted identifiers needed to remove one fixture thread. */
@@ -32,12 +39,7 @@ export function assertFixtureState(state) {
   if (!state || typeof state !== "object" || Array.isArray(state)) throw new Error("Fixture state must be an object");
   const keys = Object.keys(state).sort();
   if (keys.join(",") !== "messageId,threadId,workspaceId") throw new Error("Fixture state has an unexpected shape");
-  if (
-    typeof state.workspaceId !== "string"
-    || state.workspaceId.length === 0
-    || state.workspaceId.length > MAX_WORKSPACE_ID_LENGTH
-    || !SAFE_IDENTIFIER.test(state.workspaceId)
-  ) {
+  if (!isValidWorkspaceId(state.workspaceId)) {
     throw new Error("Fixture state workspace ID is invalid");
   }
   if (state.threadId !== FIXTURE_THREAD_ID) throw new Error("Fixture state thread ID is not owned by this fixture");
@@ -57,23 +59,27 @@ export function assertCleanupIdentity(state, thread, message) {
 }
 
 function normalizePath(value) {
-  const resolved = path.resolve(value);
+  const resolved = NodePath.resolve(value);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
+function isValidElectronSessionRecord(record) {
+  return Boolean(record)
+    && record.status === "running"
+    && Number.isSafeInteger(record.pid)
+    && record.pid > 0
+    && Number.isSafeInteger(record.debugPort)
+    && record.debugPort >= 1
+    && record.debugPort <= 65_535
+    && typeof record.repoRoot === "string"
+    && normalizePath(record.repoRoot) === normalizePath(REPO_ROOT);
+}
+
 function readElectronSession() {
-  const record = JSON.parse(fs.readFileSync(ELECTRON_SESSION_PATH, "utf8"));
+  const record = JSON.parse(NodeFS.readFileSync(ELECTRON_SESSION_PATH, "utf8"));
   const endpoint = parseLoopbackEndpoint(record?.endpoint);
   if (
-    !record
-    || record.status !== "running"
-    || !Number.isSafeInteger(record.pid)
-    || record.pid <= 0
-    || !Number.isSafeInteger(record.debugPort)
-    || record.debugPort < 1
-    || record.debugPort > 65_535
-    || typeof record.repoRoot !== "string"
-    || normalizePath(record.repoRoot) !== normalizePath(REPO_ROOT)
+    !isValidElectronSessionRecord(record)
     || !endpoint
     || Number(endpoint.port) !== record.debugPort
   ) {
@@ -82,30 +88,29 @@ function readElectronSession() {
   return record;
 }
 
+function isLoopbackEndpoint(endpoint) {
+  return endpoint.protocol === "http:"
+    && (endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]")
+    && !endpoint.username
+    && !endpoint.password
+    && endpoint.pathname === "/"
+    && !endpoint.search
+    && !endpoint.hash
+    && Boolean(endpoint.port);
+}
+
 function parseLoopbackEndpoint(value) {
   if (typeof value !== "string") return null;
   try {
     const endpoint = new URL(value);
-    if (
-      endpoint.protocol !== "http:"
-      || (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "[::1]")
-      || endpoint.username
-      || endpoint.password
-      || endpoint.pathname !== "/"
-      || endpoint.search
-      || endpoint.hash
-      || !endpoint.port
-    ) {
-      return null;
-    }
-    return endpoint;
+    return isLoopbackEndpoint(endpoint) ? endpoint : null;
   } catch {
     return null;
   }
 }
 
 async function isElectronSessionHealthy() {
-  if (!fs.existsSync(ELECTRON_SESSION_PATH)) return false;
+  if (!NodeFS.existsSync(ELECTRON_SESSION_PATH)) return false;
   const session = readElectronSession();
   return probeCdpVersion(session.endpoint);
 }
@@ -151,8 +156,8 @@ function insertFixtureRows(database, state) {
 }
 
 function writeFixtureState(state) {
-  fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
-  fs.writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  NodeFS.mkdirSync(NodePath.dirname(STATE_PATH), { recursive: true });
+  NodeFS.writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
 function deleteCreatedThread(database, state) {
@@ -175,9 +180,9 @@ function rollBackCreatedThread(database, state) {
 }
 
 async function setupFixture() {
-  if (fs.existsSync(STATE_PATH)) throw new Error("Fixture state already exists. Run cleanup before setup.");
+  if (NodeFS.existsSync(STATE_PATH)) throw new Error("Fixture state already exists. Run cleanup before setup.");
   assertElectronSessionState("setup", await isElectronSessionHealthy());
-  if (!fs.existsSync(DATABASE_PATH)) {
+  if (!NodeFS.existsSync(DATABASE_PATH)) {
     throw new Error("Electron's isolated database is missing. Start and stop Electron once to initialize it.");
   }
 
@@ -191,7 +196,7 @@ async function setupFixture() {
   } catch (error) {
     if (state) {
       rollBackCreatedThread(database, state);
-      fs.rmSync(STATE_PATH, { force: true });
+      NodeFS.rmSync(STATE_PATH, { force: true });
     }
     throw error;
   } finally {
@@ -200,7 +205,7 @@ async function setupFixture() {
 }
 
 function readFixtureState() {
-  return assertFixtureState(JSON.parse(fs.readFileSync(STATE_PATH, "utf8")));
+  return assertFixtureState(JSON.parse(NodeFS.readFileSync(STATE_PATH, "utf8")));
 }
 
 function removeFixtureRows(database, state) {
@@ -230,7 +235,7 @@ async function cleanupFixture() {
   } finally {
     database.close();
   }
-  fs.rmSync(STATE_PATH);
+  NodeFS.rmSync(STATE_PATH);
 }
 
 async function main() {
