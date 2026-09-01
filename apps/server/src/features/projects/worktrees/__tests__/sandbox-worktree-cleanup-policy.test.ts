@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import { GitRepositoryService } from "../../git/git-repository-service.js";
 import { WorktreeSafetyService } from "../../git/worktree-safety-service.js";
