@@ -1304,7 +1304,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       ciWatcherService: {
         teardownThread: vi.fn().mockResolvedValue(undefined),
       },
-      threadTeardownService: {
+      threadDeletionTeardownService: {
         teardownThread: vi
           .fn()
           .mockResolvedValueOnce(undefined)
@@ -1355,7 +1355,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       ciWatcherService: {
         teardownThread: vi.fn().mockResolvedValue(undefined),
       },
-      threadTeardownService: {
+      threadDeletionTeardownService: {
         teardownThread,
       },
       gitWatcherService: {
@@ -1476,7 +1476,7 @@ describe("routeMessage thread.delete watcher teardown", () => {
       gitWatcherService: {
         unwatchThreadWorktree,
       },
-      threadTeardownService: {
+      threadDeletionTeardownService: {
         teardownThread,
       },
       threadService: {
@@ -1588,7 +1588,7 @@ describe("routeMessage Setup deletion barriers", () => {
       ciWatcherService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
       githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
       threadRepo: { findById: vi.fn().mockReturnValue({ ...thread, worktree_path: null }) },
-      threadTeardownService: {
+      threadDeletionTeardownService: {
         teardownThread: vi.fn(() => {
           teardownEntered.resolve();
           return teardown.promise;
@@ -1635,7 +1635,7 @@ describe("routeMessage Setup deletion barriers", () => {
       threadRepo: { listAllByWorkspace: vi.fn().mockReturnValue([{ ...thread, worktree_path: null }]) },
       githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
       ciWatcherService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
-      threadTeardownService: {
+      threadDeletionTeardownService: {
         teardownThread: vi.fn(() => {
           teardownEntered.resolve();
           return teardown.promise;

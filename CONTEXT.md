@@ -105,9 +105,11 @@ same worktree via the composer's "Existing worktree" mode. A thread can
 also run *without* a worktree, directly against the workspace's main
 checkout. See "Direct mode" below.
 
-Worktrees are persistent and removed manually. When a user deletes a
-thread, an option to delete its worktree is offered alongside; the
-worktree can also be kept and reused for future threads.
+Mcode removes a worktree in its sandbox when cleanup starts. It removes
+every thread linked to that worktree. Mcode keeps a checkout outside its
+sandbox or on the repository default branch, then removes only the selected
+thread data. When a user deletes a thread manually, they can choose whether
+to schedule worktree cleanup.
 
 ### Branchless worktree
 A worktree that has no named branch yet. It starts from a selected base

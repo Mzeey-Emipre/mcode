@@ -8,7 +8,7 @@ import type { CiWatcherService } from "../../../pull-requests/status/ci-watcher.
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { ThreadCompletionService } from "../../../thread-control/lifecycle/thread-completion-service.js";
 import type { ThreadService } from "../../../thread-control/lifecycle/thread-service.js";
-import type { ThreadTeardownService } from "../../../thread-control/lifecycle/thread-teardown-service.js";
+import type { ThreadDeletionTeardownService } from "../../../thread-control/lifecycle/thread-deletion-teardown-service.js";
 import type { ProjectActionService } from "../../environment/project-action-service.js";
 import type { WorkspaceEnvironmentService } from "../../environment/workspace-environment-service.js";
 import type { GitWatcherService } from "../../git/git-watcher-service.js";
@@ -53,7 +53,7 @@ export interface WorkspaceThreadRouterDeps {
   threadService: Pick<ThreadService, "create" | "delete" | "findById" | "linkPr" | "list" | "listRecent" | "markViewed" | "search" | "updateSettings" | "updateTitle">;
   goalLifecycleService: Pick<GoalLifecycleService, "clear" | "get">;
   threadCompletionService: Pick<ThreadCompletionService, "cleanupBlockedCount" | "complete" | "reopen" | "retryCleanup">;
-  threadTeardownService: Pick<ThreadTeardownService, "teardownThread">;
+  threadDeletionTeardownService: Pick<ThreadDeletionTeardownService, "teardownThread">;
   threadRepo: Pick<ThreadRepo, "findById" | "listAllByWorkspace">;
   workspaceRepo: Pick<WorkspaceRepo, "findById" | "removeRecent" | "setPinned" | "touchLastOpened">;
   gitWatcherService: Pick<GitWatcherService, "retryWatch" | "unwatchThreadWorktree" | "unwatchWorkspace" | "watchThreadWorktree" | "watchWorkspace">;
@@ -252,33 +252,8 @@ async function deleteThread(
   deps: WorkspaceThreadRouterDeps,
   params: { threadId: string; cleanupWorktree: boolean },
 ): Promise<boolean> {
-  const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginThreadDeletion(params.threadId);
-  const releaseActionAdmission = await deps.projectActionService.beginThreadTeardown(params.threadId);
-  try {
-    await teardownThreadForDeletion(deps, params.threadId);
-    const deleted = await deps.threadService.delete(params.threadId, params.cleanupWorktree);
-    if (deleted) {
-      deps.gitWatcherService?.unwatchThreadWorktree?.(params.threadId);
-    }
-    return deleted;
-  } finally {
-    releaseActionAdmission();
-    releaseDeletionBarrier();
-  }
-}
-
-async function teardownThreadForDeletion(
-  deps: WorkspaceThreadRouterDeps,
-  threadId: string,
-): Promise<void> {
-  const thread = deps.threadRepo.findById(threadId);
-  await deps.workspaceEnvironmentService.cancelSetupForThread(threadId);
-  await deps.projectActionService.stopForThread(threadId);
-  if (thread?.worktree_path) {
-    await deps.githubService.cancelForRepoPath(thread.worktree_path);
-  }
-  await deps.ciWatcherService.teardownThread(threadId);
-  await deps.threadTeardownService.teardownThread(threadId);
+  await deps.threadDeletionTeardownService.teardownThread(params.threadId);
+  return await deps.threadService.delete(params.threadId, params.cleanupWorktree);
 }
 
 async function completeThread(
@@ -481,19 +456,9 @@ async function teardownWorkspaceThreads(
 
 async function teardownWorkspaceThread(
   deps: WorkspaceThreadRouterDeps,
-  thread: Pick<Thread, "id" | "worktree_path">,
+  thread: Pick<Thread, "id">,
 ): Promise<void> {
-  const releaseActionAdmission = await deps.projectActionService.beginThreadTeardown(thread.id);
-  try {
-    await deps.projectActionService.stopForThread(thread.id);
-    if (thread.worktree_path) {
-      await deps.githubService.cancelForRepoPath(thread.worktree_path);
-    }
-    await deps.ciWatcherService.teardownThread(thread.id);
-    await deps.threadTeardownService.teardownThread(thread.id);
-  } finally {
-    releaseActionAdmission();
-  }
+  await deps.threadDeletionTeardownService.teardownThread(thread.id);
 }
 
 function teardownFailureMessage(result: PromiseRejectedResult): string {

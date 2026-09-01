@@ -28,5 +28,8 @@ export {
 /** Tears down provider and terminal resources for a thread. */
 export { ThreadTeardownService } from "./lifecycle/thread-teardown-service.js";
 
+/** Stops all thread-owned work before thread data is deleted. */
+export { ThreadDeletionTeardownService } from "./lifecycle/thread-deletion-teardown-service.js";
+
 /** Owns durable thread completion and reopen transitions. */
 export { ThreadCompletionService } from "./lifecycle/thread-completion-service.js";

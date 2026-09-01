@@ -54,18 +54,15 @@ describe("thread.completion.retentionDays", () => {
   );
 });
 
-describe("thread.completion.unsafeWorktreePolicy", () => {
-  it("defaults to block and accepts partial updates", () => {
-    expect(getDefaultSettings().thread.completion.unsafeWorktreePolicy).toBe("block");
-    expect(PartialSettingsSchema().parse({
-      thread: { completion: { unsafeWorktreePolicy: "delete" } },
-    }).thread?.completion?.unsafeWorktreePolicy).toBe("delete");
-  });
+describe("thread.completion", () => {
+  it("does not expose the retired unsafe-worktree policy", () => {
+    const legacy = { thread: { completion: { unsafeWorktreePolicy: "delete" } } };
 
-  it.each(["allow", "always", 1, null, {}])("rejects invalid policy %j", (unsafeWorktreePolicy) => {
-    const input = { thread: { completion: { unsafeWorktreePolicy } } };
-    expect(SettingsSchema().safeParse(input).success).toBe(false);
-    expect(PartialSettingsSchema().safeParse(input).success).toBe(false);
+    expect(getDefaultSettings().thread.completion).not.toHaveProperty("unsafeWorktreePolicy");
+    expect(SettingsSchema().parse(legacy).thread.completion)
+      .not.toHaveProperty("unsafeWorktreePolicy");
+    expect(PartialSettingsSchema().parse(legacy).thread?.completion)
+      .not.toHaveProperty("unsafeWorktreePolicy");
   });
 });
 

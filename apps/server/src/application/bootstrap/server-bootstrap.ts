@@ -55,8 +55,8 @@ import {
   ExternalThreadControlPairingService,
   ThreadCompletionService,
   ThreadControlService,
+  ThreadDeletionTeardownService,
   ThreadService,
-  ThreadTeardownService,
 } from "../../features/thread-control";
 import {
   AgentPermissionService,
@@ -391,7 +391,7 @@ function warmCodexVersionGate(s = settingsService.get()): void {
 }
 
 const cleanupWorker = container.resolve(CleanupWorker);
-const threadTeardownService = container.resolve(ThreadTeardownService);
+const threadDeletionTeardownService = container.resolve(ThreadDeletionTeardownService);
 const threadCompletionService = container.resolve(ThreadCompletionService);
 const prDraftService = container.resolve(PrDraftService);
 const diffSummaryService = container.resolve(DiffSummaryService);
@@ -734,7 +734,7 @@ const { httpServer, wss } = createWsServer({
   recapService,
   handoffStorage,
   handoffCheckoutService,
-  threadTeardownService,
+  threadDeletionTeardownService,
   threadCompletionService,
   browserAutomationBroker,
   browserAutomationMcpHandler,

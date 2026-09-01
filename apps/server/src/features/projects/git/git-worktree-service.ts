@@ -25,6 +25,8 @@ export interface RemoveWorktreeOptions {
   worktreePath?: string;
   /** Require the supplied path to be a canonical descendant of managed storage. */
   managedCanonicalOnly?: boolean;
+  /** Force removal of an unmerged branch after its sandbox checkout is removed. */
+  forceDeleteBranch?: boolean;
 }
 
 const PARENT_RMDIR_MAX_RETRIES = 5;
@@ -40,6 +42,7 @@ type WorktreeCreationRequest = {
 
 type WorktreeRemovalRequest = {
   branch: string | null;
+  forceDeleteBranch: boolean;
   path: string;
 };
 
@@ -115,7 +118,7 @@ export class GitWorktreeService {
 
     await this.tryPruneWorktrees(repoPath);
     const parentsCleaned = await this.removeEmptyManagedParentDirs(request.path);
-    await this.tryDeleteWorktreeBranch(repoPath, request.branch);
+    await this.tryDeleteWorktreeBranch(repoPath, request.branch, request.forceDeleteBranch);
     return parentsCleaned;
   }
 
@@ -247,7 +250,7 @@ export class GitWorktreeService {
       : requestedPath;
     const branch = resolveWorktreeBranch(name, options);
     await this.assertRemovableWorktreePath(repoPath, path, managedCanonicalOnly);
-    return { branch, path };
+    return { branch, forceDeleteBranch: options.forceDeleteBranch === true, path };
   }
 
   private async tryGitWorktreeRemoval(repoPath: string, worktreePath: string): Promise<void> {
@@ -282,10 +285,17 @@ export class GitWorktreeService {
     }
   }
 
-  private async tryDeleteWorktreeBranch(repoPath: string, branch: string | null): Promise<void> {
+  private async tryDeleteWorktreeBranch(
+    repoPath: string,
+    branch: string | null,
+    forceDeleteBranch: boolean,
+  ): Promise<void> {
     if (!branch) return;
     try {
-      await this.gitExecutor.exec(["-C", repoPath, "branch", "-d", branch], { timeout: 10_000 });
+      await this.gitExecutor.exec(
+        ["-C", repoPath, "branch", forceDeleteBranch ? "-D" : "-d", branch],
+        { timeout: 10_000 },
+      );
     } catch (error) {
       logger.warn("Branch deletion failed (may not exist)", { branch, error: gitErrorMessage(error) });
     }

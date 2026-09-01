@@ -1,6 +1,6 @@
 import * as NodePath from "node:path";
 import { inject, injectable } from "tsyringe";
-import { validateBranchName } from "@mcode/shared";
+import { logger, validateBranchName } from "@mcode/shared";
 import type { GitBranch, GitRemoteUrl } from "@mcode/contracts";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import type { GitExecutor } from "./execution/index.js";
@@ -118,6 +118,8 @@ export function normalizeRemoteIdentity(
 /** Performs repository-level Git commands and remote identity normalization. */
 @injectable()
 export class GitRepositoryService {
+  private readonly defaultBranchCache = new Map<string, string | null>();
+
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
@@ -143,6 +145,15 @@ export class GitRepositoryService {
     } catch {
       return null;
     }
+  }
+
+  /** Get the repository's default branch, or null when Git cannot identify one. */
+  async getDefaultBranchAt(repoPath: string): Promise<string | null> {
+    const cached = this.defaultBranchCache.get(repoPath);
+    if (cached !== undefined) return cached;
+    const branch = await this.resolveDefaultBranch(repoPath);
+    this.defaultBranchCache.set(repoPath, branch);
+    return branch;
   }
 
   /** Checkout an existing branch in a workspace repository. */
@@ -280,6 +291,48 @@ export class GitRepositoryService {
       if (branch) branches.push(branch);
     }
     return branches.sort(compareBranches);
+  }
+
+  private async resolveDefaultBranch(repoPath: string): Promise<string | null> {
+    try {
+      return (await this.gitExecutor.exec(
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000 },
+      )).stdout.trim().replace(/^[^/]+\//, "");
+    } catch (error) {
+      logger.debug("[getDefaultBranchAt] origin/HEAD not set, trying set-head", {
+        repoPath,
+        err: error,
+      });
+    }
+    try {
+      await this.gitExecutor.exec(
+        ["-C", repoPath, "remote", "set-head", "origin", "--auto"],
+        { timeout: 1_500 },
+      );
+      return (await this.gitExecutor.exec(
+        ["-C", repoPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        { timeout: 5_000 },
+      )).stdout.trim().replace(/^[^/]+\//, "");
+    } catch (error) {
+      logger.debug("[getDefaultBranchAt] set-head failed, trying local defaults", {
+        repoPath,
+        err: error,
+      });
+    }
+    for (const branchName of ["main", "master", "develop", "trunk"]) {
+      try {
+        await this.gitExecutor.exec(
+          ["-C", repoPath, "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`],
+          { timeout: 5_000 },
+        );
+        return branchName;
+      } catch {
+        continue;
+      }
+    }
+    logger.debug("[getDefaultBranchAt] no default branch detected", { repoPath });
+    return null;
   }
 
   private requireWorkspace(workspaceId: string) {

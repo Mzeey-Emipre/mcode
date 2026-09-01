@@ -12,6 +12,7 @@ import { CleanupWorker } from "../cleanup-worker.js";
 import {
   GitRepositoryService,
   GitWorktreeService,
+  SandboxWorktreeCleanupPolicy,
   WorktreeSafetyService,
 } from "../../../projects/index.js";
 import { RepositoryGitMutationLock } from "../../../projects/git/repository-git-mutation-lock.js";
@@ -34,6 +35,7 @@ describe("completed thread cleanup Git safety", () => {
   let repositoryPath: string;
   let worktreePath: string;
   let gitWorktrees: GitWorktreeService;
+  let gitRepository: GitRepositoryService;
   let worktreeSafety: WorktreeSafetyService;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
@@ -61,7 +63,7 @@ describe("completed thread cleanup Git safety", () => {
     externalTargetPath = null;
     escapingLinkContainerPath = null;
     const executor = new RealGitExecutor();
-    const gitRepository = new GitRepositoryService(workspaceRepo, executor);
+    gitRepository = new GitRepositoryService(workspaceRepo, executor);
     gitWorktrees = new GitWorktreeService(workspaceRepo, executor, TEST_HOST_RUNTIME, undefined, undefined, gitRepository);
     worktreeSafety = new WorktreeSafetyService(executor, TEST_HOST_RUNTIME);
     worker = createWorker();
@@ -81,20 +83,14 @@ describe("completed thread cleanup Git safety", () => {
       cleanupJobRepo,
       threadRepo,
       { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider,
-      { killByThread: vi.fn().mockResolvedValue(undefined) } as unknown as TerminalBackend,
       gitWorktrees,
-      worktreeSafety,
+      new SandboxWorktreeCleanupPolicy(worktreeSafety, gitRepository, TEST_HOST_RUNTIME),
       new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
-      {
-        beginThreadDeletion: () => () => undefined,
-        cancelSetupForThread: vi.fn().mockResolvedValue(undefined),
-      } as unknown as WorkspaceEnvironmentService,
+      { teardownThread: vi.fn().mockResolvedValue(undefined) } as any,
       TEST_HOST_RUNTIME,
-      undefined,
-      undefined,
     );
   }
 
@@ -222,21 +218,17 @@ describe("completed thread cleanup Git safety", () => {
     expect(NodeFS.existsSync(worktreePath)).toBe(false);
   }, 30_000);
 
-  it("keeps a dirty managed worktree and blocks cleanup", async () => {
+  it("removes a dirty sandbox worktree", async () => {
     NodeFS.writeFileSync(NodePath.join(worktreePath, "tracked.txt"), "changed\n");
     const thread = addCompletedThread({ title: "Dirty" });
 
-    await expect(gitWorktrees.isRegisteredWorktreePath(repositoryPath, worktreePath)).resolves.toBe(true);
     await worker.poll();
 
-    expect(threadRepo.findById(thread.id)).toMatchObject({
-      cleanup_state: "blocked",
-      cleanup_reason: "The worktree has uncommitted changes.",
-    });
-    expect(NodeFS.existsSync(worktreePath)).toBe(true);
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(NodeFS.existsSync(worktreePath)).toBe(false);
   }, 30_000);
 
-  it("keeps a shared worktree while another linked thread remains", async () => {
+  it("removes every thread linked to the same sandbox worktree", async () => {
     const due = addCompletedThread({ title: "Due" });
     const remaining = addCompletedThread({
       title: "Remaining",
@@ -246,11 +238,11 @@ describe("completed thread cleanup Git safety", () => {
     await worker.poll();
 
     expect(threadRepo.findById(due.id)).toBeNull();
-    expect(threadRepo.findById(remaining.id)).not.toBeNull();
-    expect(NodeFS.existsSync(worktreePath)).toBe(true);
+    expect(threadRepo.findById(remaining.id)).toBeNull();
+    expect(NodeFS.existsSync(worktreePath)).toBe(false);
   }, 30_000);
 
-  it("removes named checkouts while preserving their exact branch", async () => {
+  it("removes a named sandbox checkout and its branch", async () => {
     NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "mcode/named", "main"]);
     const thread = addCompletedThread({
       title: "Named",
@@ -264,7 +256,7 @@ describe("completed thread cleanup Git safety", () => {
     expect(threadRepo.findById(thread.id)).toBeNull();
     expect(NodeFS.existsSync(worktreePath)).toBe(false);
     expect(NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "branch", "--list", "mcode/named"], { encoding: "utf8" }))
-      .toContain("mcode/named");
+      .not.toContain("mcode/named");
   }, 30_000);
 
   it("preserves a canonical link that resolves outside Mcode worktrees", async ({ skip }) => {
@@ -308,7 +300,7 @@ describe("completed thread cleanup Git safety", () => {
     expect(NodeFS.existsSync(externalTargetPath)).toBe(true);
   }, 30_000);
 
-  it("blocks branchless worktrees with unique commits", async () => {
+  it("removes a sandbox worktree with unique commits", async () => {
     NodeFS.writeFileSync(NodePath.join(worktreePath, "unique.txt"), "unique\n");
     NodeChildProcess.execFileSync("git", ["-C", worktreePath, "add", "unique.txt"]);
     NodeChildProcess.execFileSync("git", ["-C", worktreePath, "commit", "-m", "unique"]);
@@ -316,11 +308,8 @@ describe("completed thread cleanup Git safety", () => {
 
     await worker.poll();
 
-    expect(threadRepo.findById(thread.id)).toMatchObject({
-      cleanup_state: "blocked",
-      cleanup_reason: "The branchless worktree has commits that are not in its base branch.",
-    });
-    expect(NodeFS.existsSync(worktreePath)).toBe(true);
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(NodeFS.existsSync(worktreePath)).toBe(false);
   }, 30_000);
 
   it("deletes a thread when its registered worktree path is already missing", async () => {

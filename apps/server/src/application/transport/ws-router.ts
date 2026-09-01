@@ -85,8 +85,8 @@ import type {
   ExternalThreadControlPairingService,
   ThreadCompletionService,
   ThreadControlService,
+  ThreadDeletionTeardownService,
   ThreadService,
-  ThreadTeardownService,
 } from "../../features/thread-control/index.js";
 import {
   isThreadControlRpcMethod,
@@ -297,8 +297,8 @@ export interface RouterDeps {
   diffSummaryService: DiffSummaryService;
   /** Generates stateless AI-powered thread recaps from caller-supplied messages. */
   recapService: RecapService;
-  /** Tears down provider and terminal resources owned by a thread. */
-  threadTeardownService: ThreadTeardownService;
+  /** Stops all thread-owned work before persistent data is deleted. */
+  threadDeletionTeardownService: ThreadDeletionTeardownService;
   /** Owns explicit user completion and reopen transitions. */
   threadCompletionService: ThreadCompletionService;
   /** Serves provider-neutral pull request capabilities and inbox pages. */

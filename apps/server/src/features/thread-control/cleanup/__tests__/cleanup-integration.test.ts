@@ -15,16 +15,16 @@ import { CleanupWorker } from "../cleanup-worker.js";
 import { HandoffStorage } from "../../../handoff/index.js";
 import { ThreadService } from "../../index.js";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
-import type { TerminalBackend as TerminalService } from "../../../terminal/backends/terminal-backend.js";
 import type { GitExecutor } from "../../../projects/git/execution/index.js";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import {
   ProjectWorktreeService,
   RepositoryGitMutationLock,
   type GitWorktreeService,
-  type WorktreeSafetyService,
+  type SandboxWorktreeCleanupPolicy,
   WorkspaceService,
 } from "../../../projects/index.js";
+import type { ThreadDeletionTeardownService } from "../../lifecycle/thread-deletion-teardown-service.js";
 import type { AgentService } from "../../../agents/index.js";
 import { killDescendantsByName } from "../../../../runtime/process/containment/process-kill.js";
 import { getMcodeDir } from "@mcode/shared";
@@ -54,9 +54,9 @@ describe("Cleanup integration", () => {
   let threadService: ThreadService;
   let worker: CleanupWorker;
   let mockClaudeProvider: ClaudeProvider;
-  let mockTerminalService: TerminalService;
   let mockGitWorktrees: GitWorktreeService;
-  let mockWorktreeSafety: WorktreeSafetyService;
+  let mockThreadDeletion: ThreadDeletionTeardownService;
+  let mockCleanupPolicy: SandboxWorktreeCleanupPolicy;
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
   let mockAgentService: AgentService;
@@ -74,42 +74,34 @@ describe("Cleanup integration", () => {
       waitForSessionExit: vi.fn().mockResolvedValue(undefined),
     } as unknown as ClaudeProvider;
 
-    mockTerminalService = {
-      killByThread: vi.fn(),
-    } as unknown as TerminalService;
-
     mockGitWorktrees = {
       createWorktree: vi.fn().mockReturnValue({ path: NodePath.join(WT_BASE, "test-wt") }),
       removeWorktree: vi.fn().mockResolvedValue(true),
       isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
     } as unknown as GitWorktreeService;
 
-    mockWorktreeSafety = {
-      assessWorktreeRemovalSafety: vi.fn(async (
-        worktreePath: string,
-        siblingPaths: readonly string[],
-        truncated: boolean,
-      ) => {
-        const normalize = (value: string) => value.replace(/\\/g, "/").toLowerCase();
-        if (truncated || siblingPaths.length > 512) {
-          return { safe: false, reason: "truncated" as const };
-        }
-        return siblingPaths.some((path) => normalize(path) === normalize(worktreePath))
-          ? { safe: false, reason: "shared" as const }
-          : { safe: true, reason: "exclusive" as const };
-      }),
-    } as unknown as WorktreeSafetyService;
-
+    mockCleanupPolicy = {
+      decide: vi.fn(async ({ worktreePath }) => ({
+        action: "remove" as const,
+        worktreePath,
+        branch: "mcode/int-branch",
+      })),
+      resolveSandboxPath: vi.fn(async (path: string) => path),
+      isSameSandboxPath: vi.fn((left: string, right: string) => left === right),
+    } as unknown as SandboxWorktreeCleanupPolicy;
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = {
       deleteThreadFiles: vi.fn().mockResolvedValue(undefined),
     } as unknown as HandoffStorage;
+    mockThreadDeletion = {
+      teardownThread: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ThreadDeletionTeardownService;
     projectWorktreeService = new ProjectWorktreeService(
       threadRepo,
       workspaceRepo,
       cleanupJobRepo,
       mockGitWorktrees,
-      mockWorktreeSafety,
+      mockCleanupPolicy,
     );
     threadService = new ThreadService(
       threadRepo,
@@ -123,20 +115,14 @@ describe("Cleanup integration", () => {
       cleanupJobRepo,
       threadRepo,
       mockClaudeProvider,
-      mockTerminalService,
       mockGitWorktrees,
-      mockWorktreeSafety,
+      mockCleanupPolicy,
       new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
-      {
-        beginThreadDeletion: () => () => undefined,
-        cancelSetupForThread: vi.fn().mockResolvedValue(undefined),
-      } as unknown as WorkspaceEnvironmentService,
+      mockThreadDeletion,
       TEST_HOST_RUNTIME,
-      undefined,
-      undefined,
     );
 
     mockAgentService = { stopSession: vi.fn().mockResolvedValue(undefined) } as unknown as AgentService;
@@ -196,7 +182,7 @@ describe("Cleanup integration", () => {
       "mcode-thread-int-1",
       expect.any(Number),
     );
-    expect(mockTerminalService.killByThread).toHaveBeenCalledWith("thread-int-1");
+    expect(mockThreadDeletion.teardownThread).toHaveBeenCalledWith("thread-int-1");
     expect(mockGitWorktrees.removeWorktree).toHaveBeenCalledWith(
       expect.any(String),
       "feat-wt",

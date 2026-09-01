@@ -103,13 +103,11 @@ export class ThreadService {
     const thread = this.threadRepo.findById(threadId);
     if (!thread || thread.deleted_at !== null) return false;
 
-    if (cleanupWorktree && thread.worktree_path && thread.worktree_managed) {
+    if (cleanupWorktree && thread.worktree_path) {
       if (await this.projectWorktreeService.scheduleCleanup(threadId)) return true;
-    } else if (cleanupWorktree && thread.worktree_path) {
-      logger.info("Worktree cleanup skipped because the checkout is reused or unmanaged", {
+      logger.info("Worktree checkout kept because it is outside Mcode storage or on the default branch", {
         threadId,
         worktreePath: thread.worktree_path,
-        managed: thread.worktree_managed,
       });
     }
 
