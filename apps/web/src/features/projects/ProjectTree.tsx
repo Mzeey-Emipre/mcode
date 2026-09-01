@@ -15,7 +15,7 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "./state/workspaceStore";
-import { useRecoveryIncidentStore } from "@/features/recovery/state/recoveryIncidentStore";
+import { hasRecoveryEntry, useRecoveryIncidentStore } from "@/features/recovery/state/recoveryIncidentStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
@@ -1045,9 +1045,7 @@ const ThreadRow = memo(function ThreadRow({
       && record.turnExecutionId === null;
   });
   const isRecoveryInterrupted = useRecoveryIncidentStore((state) =>
-    state.incident?.entries.some((entry) =>
-      entry.workspaceId === thread.workspace_id && entry.threadId === thread.id,
-    ) ?? false,
+    hasRecoveryEntry(state, thread.workspace_id, thread.id),
   );
   const presentation = createThreadRowPresentation(
     thread,

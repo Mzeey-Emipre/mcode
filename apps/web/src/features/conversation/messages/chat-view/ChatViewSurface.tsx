@@ -81,6 +81,8 @@ export interface ChatRecoveryBannerState {
   incident: RecoveryIncident | null;
   /** Dismisses one incident for the browser app session. */
   onDismiss: (incidentId: string) => void;
+  /** Retries each exact turn in the visible incident. */
+  onRetry: (executionIds: readonly string[]) => Promise<void>;
 }
 
 /** Props for the root chat visual surface. */
@@ -220,7 +222,7 @@ function ActiveThreadBanners({ state, recovery }: { state: ChatViewState; recove
   const thread = state.activeThread!;
   return (
     <>
-      {recovery.incident && <div className="px-4 pt-2"><InterruptedSessionsBanner incident={recovery.incident} onDismiss={() => recovery.onDismiss(recovery.incident!.id)} /></div>}
+      {recovery.incident && <div className="px-4 pt-2"><InterruptedSessionsBanner incident={recovery.incident} onDismiss={() => recovery.onDismiss(recovery.incident!.id)} onRetry={recovery.onRetry} /></div>}
       {thread.clientWarnings?.length ? <div className="px-4 pt-2"><ThreadWarningBanner warnings={thread.clientWarnings} onDismiss={() => useWorkspaceStore.getState().dismissWarnings(thread.id)} /></div> : null}
     </>
   );

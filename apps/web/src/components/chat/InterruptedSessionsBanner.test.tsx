@@ -31,13 +31,19 @@ describe("InterruptedSessionsBanner", () => {
     ],
   };
 
-  it("lists every interrupted turn without recovery controls", () => {
-    render(<InterruptedSessionsBanner incident={incident} onDismiss={vi.fn()} />);
+  it("shows the exact turn count and retries every listed execution", async () => {
+    const user = userEvent.setup();
+    const retry = vi.fn().mockResolvedValue(undefined);
+    render(<InterruptedSessionsBanner incident={incident} onDismiss={vi.fn()} onRetry={retry} />);
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Turns were interrupted during a server restart.");
+    expect(screen.getByRole("alert")).toHaveTextContent("2 turns were interrupted during the last server restart.");
     expect(screen.getByTestId("recovery-incident-entry-00000000-0000-4000-8000-000000000002")).toHaveTextContent("Project A · Thread A · 4.2s");
     expect(screen.getByTestId("recovery-incident-entry-00000000-0000-4000-8000-000000000003")).toHaveTextContent("Project B · Thread B · 1m 5s");
-    expect(screen.queryByRole("button", { name: /continue|retry|resume/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry all" }));
+    expect(retry).toHaveBeenCalledWith([
+      "00000000-0000-4000-8000-000000000002",
+      "00000000-0000-4000-8000-000000000003",
+    ]);
   });
 
   it("calls onDismiss when X button is clicked", async () => {
@@ -47,6 +53,7 @@ describe("InterruptedSessionsBanner", () => {
       <InterruptedSessionsBanner
         incident={incident}
         onDismiss={mockDismiss}
+        onRetry={vi.fn().mockResolvedValue(undefined)}
       />,
     );
     await user.click(screen.getByRole("button", { name: /dismiss/i }));

@@ -46,6 +46,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const recoveryIncident = useVisibleRecoveryIncident();
   const setRecoveryIncident = useRecoveryIncidentStore((store) => store.setIncident);
   const dismissRecoveryIncident = useRecoveryIncidentStore((store) => store.dismissIncident);
+  const markRecoveryEntriesRetried = useRecoveryIncidentStore((store) => store.markEntriesRetried);
   const threadEpochRef = useRef({ epoch: 0, threadId: state.activeThreadId });
   if (threadEpochRef.current.threadId !== state.activeThreadId) {
     threadEpochRef.current = {
@@ -144,6 +145,18 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const handleContinueWithoutSaving = useCallback(async () => {
     if (state.savingStatus?.mode === "saving-delayed") await getTransport().continueWithoutSaving(state.savingStatus.executionId);
   }, [state.savingStatus]);
+  const retryRecoveryEntries = useCallback(async (executionIds: readonly string[]) => {
+    const retried: string[] = [];
+    for (const executionId of executionIds) {
+      try {
+        await getTransport().retryTurn(executionId);
+        retried.push(executionId);
+      } catch (error) {
+        console.error("Failed to retry interrupted turn", executionId, error);
+      }
+    }
+    if (retried.length > 0) markRecoveryEntriesRetried(retried);
+  }, [markRecoveryEntriesRetried]);
   const handleDismissCliError = useCallback(() => {
     setDismissedErrorState({ error: state.sessionError, threadEpoch });
   }, [state.sessionError, threadEpoch]);
@@ -185,6 +198,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const recovery: ChatRecoveryBannerState = {
     incident: recoveryIncident,
     onDismiss: dismissRecoveryIncident,
+    onRetry: retryRecoveryEntries,
   };
 
   // No `key` here: a remount would discard the virtualizer state owned by MessageList.

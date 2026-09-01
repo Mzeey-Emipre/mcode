@@ -1131,7 +1131,11 @@ describe("ProjectTree action-required indicator", () => {
     threadStoreOverrides.permissionsByThread = undefined;
     threadStoreOverrides.runningThreadIds = undefined;
     threadStoreOverrides.runtimeByThread = undefined;
-    useRecoveryIncidentStore.setState({ incident: null, dismissedIncidentIds: new Set<string>() });
+    useRecoveryIncidentStore.setState({
+      incident: null,
+      dismissedIncidentIds: new Set<string>(),
+      retriedExecutionIds: new Set<string>(),
+    });
     currentThread = makeThread({ id: "thread-pending", status: "active" });
     currentChecks = {};
     installWorkspaceMock();
@@ -1345,6 +1349,14 @@ describe("ProjectTree action-required indicator", () => {
     });
 
     expect(screen.getByLabelText("Interrupted")).toBeVisible();
+
+    act(() => {
+      useRecoveryIncidentStore.getState().markEntriesRetried([
+        "00000000-0000-4000-8000-000000000104",
+      ]);
+    });
+
+    expect(screen.queryByLabelText("Interrupted")).toBeNull();
   });
 
   it("keeps update time out of the thread row and shows it in hover details", async () => {
