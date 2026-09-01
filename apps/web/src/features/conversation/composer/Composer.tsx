@@ -193,6 +193,8 @@ interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;
   workspaceId?: string;
+  /** Locks normal input while automatic Setup holds the first Turn. */
+  setupBlocked?: boolean;
   /** When set, the composer is in fork mode; submit creates a forked thread instead of sending. */
   branchFromMessageId?: string;
   /** Preview content of the message being forked from, shown as a quote. */
@@ -220,6 +222,7 @@ export function Composer({
   threadId,
   isNewThread,
   workspaceId,
+  setupBlocked = false,
   branchFromMessageId,
   branchFromMessageContent,
   onBranchModeExit,
@@ -611,6 +614,7 @@ export function Composer({
             taskBubbleTasks,
             fileEffectSummary,
             isAgentRunning,
+            setupBlocked,
             provider,
             planPending,
             queuedSend: Boolean(queuedSend),

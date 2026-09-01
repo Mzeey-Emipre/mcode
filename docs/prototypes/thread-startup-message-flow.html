@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Thread setup order prototype</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --page: #121416;
+        --sidebar: #17191c;
+        --surface: #1c1f23;
+        --raised: #23272c;
+        --line: #363b42;
+        --ink: #f0f2f4;
+        --muted: #a6adb5;
+        --quiet: #737b85;
+        --amber: #efb54d;
+        --amber-ink: #17120a;
+        --red: #f0958b;
+        --green: #8fc7a7;
+        --blue: #9ab8e7;
+        --focus: #8fb4ef;
+        --tree-active-line: #4a4433;
+        --tree-active-surface: #282519;
+        --terminal-line: #42474e;
+        --terminal-surface: #111315;
+        --terminal-head-line: #30353a;
+        --terminal-head-surface: #191c20;
+        --terminal-ink: #d2d8de;
+        --terminal-command: #f2ce83;
+        --terminal-muted: #8e98a3;
+        --prototype-surface: #101214;
+        --prototype-line: #565d66;
+        --radius-control: 7px;
+        --radius-row: 8px;
+        --radius-surface: 10px;
+        --radius-pill: 999px;
+        --text-small: 12px;
+        --text-row: 13px;
+        --text-heading: 15px;
+        --text-prototype: 11px;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        min-width: 960px;
+        min-height: 100vh;
+        margin: 0;
+        background: var(--page);
+        color: var(--ink);
+      }
+
+      button, textarea { font: inherit; }
+
+      button {
+        min-height: 32px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-control);
+        padding: 6px 10px;
+        background: var(--raised);
+        color: var(--ink);
+        cursor: pointer;
+      }
+
+      button:hover { border-color: var(--muted); }
+      button:disabled { cursor: not-allowed; opacity: .5; }
+
+      button:focus-visible, textarea:focus-visible {
+        outline: 3px solid var(--focus);
+        outline-offset: 2px;
+      }
+
+      .prototype-label {
+        padding: 7px 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--prototype-surface);
+        color: var(--muted);
+        font-size: var(--text-small);
+      }
+
+      .prototype-label strong { color: var(--ink); }
+
+      .app-shell {
+        display: grid;
+        grid-template-columns: 282px minmax(0, 1fr);
+        min-height: calc(100vh - 34px);
+      }
+
+      .project-tree {
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: var(--sidebar);
+      }
+
+      .tree-header {
+        display: flex;
+        justify-content: space-between;
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: var(--text-row);
+      }
+
+      .tree-project {
+        padding: 18px 14px 11px;
+        color: var(--ink);
+        font-size: var(--text-row);
+        font-weight: 650;
+      }
+
+      .tree-row {
+        margin: 0 6px;
+        border: 1px solid transparent;
+        border-radius: var(--radius-row);
+        padding: 11px 14px;
+      }
+
+      .tree-row.active { border-color: var(--tree-active-line); background: var(--tree-active-surface); }
+
+      .tree-title { display: flex; gap: 8px; align-items: center; font-size: var(--text-row); }
+      .provider { color: var(--blue); font-weight: 700; }
+      .worktree { color: var(--muted); }
+
+      .tree-state {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: 7px;
+        color: var(--amber);
+        font-size: var(--text-small);
+      }
+
+      .state-dot {
+        width: 8px;
+        height: 8px;
+        border: 2px solid var(--amber);
+        border-radius: 50%;
+      }
+
+      .state-dot.running {
+        border-color: var(--blue);
+        border-top-color: transparent;
+        animation: spin 850ms linear infinite;
+      }
+
+      .state-dot.agent { border: 0; background: var(--green); }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      .tree-note {
+        margin: 12px;
+        padding: 11px 0 0;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: var(--text-small);
+        line-height: 1.45;
+      }
+
+      .conversation { min-width: 0; }
+
+      .conversation-header {
+        display: flex;
+        min-height: 54px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .thread-heading { font-weight: 650; }
+      .thread-meta { margin-top: 3px; color: var(--muted); font-size: var(--text-small); }
+
+      .timeline {
+        width: min(820px, 100%);
+        margin: 0 auto;
+        padding: 32px 0 126px;
+      }
+
+      .timeline-item { margin-bottom: 24px; }
+      .item-label { margin-bottom: 7px; color: var(--quiet); font-size: var(--text-small); }
+
+      .message {
+        width: fit-content;
+        max-width: 80%;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-surface);
+        padding: 11px 13px;
+        background: var(--raised);
+        line-height: 1.45;
+      }
+
+      .message-meta { margin-top: 7px; color: var(--amber); font-size: var(--text-small); }
+
+      .setup-entry {
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        padding: 17px 0;
+      }
+
+      .setup-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+      .setup-heading h2 { margin: 0; font-size: var(--text-heading); }
+      .setup-outcome { color: var(--red); font-size: var(--text-small); font-weight: 650; }
+      .setup-copy { margin: 8px 0 0; color: var(--muted); font-size: var(--text-row); line-height: 1.5; }
+
+      .pty {
+        overflow: hidden;
+        margin-top: 16px;
+        border: 1px solid var(--terminal-line);
+        border-radius: var(--radius-row);
+        background: var(--terminal-surface);
+      }
+
+      .pty-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 11px;
+        border-bottom: 1px solid var(--terminal-head-line);
+        background: var(--terminal-head-surface);
+        color: var(--muted);
+        font-size: var(--text-small);
+      }
+
+      .pty-head strong { color: var(--ink); font-weight: 600; }
+
+      .terminal-output {
+        min-height: 214px;
+        margin: 0;
+        padding: 14px;
+        color: var(--terminal-ink);
+        font: var(--text-small)/1.58 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+        white-space: pre-wrap;
+      }
+
+      .terminal-command { color: var(--terminal-command); }
+      .terminal-muted { color: var(--terminal-muted); }
+
+      .output-disclosure { margin-top: 14px; }
+      .output-disclosure summary { cursor: pointer; color: var(--muted); font-size: var(--text-small); }
+      .output-disclosure .pty { margin-top: 10px; }
+
+      .action-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+      .primary { border-color: var(--amber); background: var(--amber); color: var(--amber-ink); font-weight: 700; }
+      .quiet-button { background: transparent; color: var(--muted); }
+
+      .agent-event {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 0;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: var(--text-row);
+      }
+
+      .agent-event strong { color: var(--ink); }
+
+      .composer-wrap {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 282px;
+        border-top: 1px solid var(--line);
+        padding: 13px clamp(24px, 5vw, 72px);
+        background: var(--surface);
+      }
+
+      .composer {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        width: min(820px, 100%);
+        margin: 0 auto;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-surface);
+        background: var(--raised);
+      }
+
+      .composer textarea {
+        min-height: 40px;
+        resize: none;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--ink);
+      }
+
+      .composer textarea:disabled { color: var(--muted); }
+      .composer-help { grid-column: 1 / -1; color: var(--amber); font-size: var(--text-small); }
+
+      .prototype-state {
+        position: fixed;
+        right: 18px;
+        bottom: 88px;
+        border: 1px solid var(--prototype-line);
+        border-radius: var(--radius-row);
+        padding: 9px 11px;
+        background: var(--prototype-surface);
+        color: var(--muted);
+        font: var(--text-prototype)/1.6 "JetBrains Mono", Consolas, monospace;
+      }
+
+      .prototype-state strong { color: var(--ink); }
+      .prototype-state .value { color: var(--amber); }
+      .prototype-state button { min-height: 26px; margin-top: 6px; padding: 3px 7px; font-size: var(--text-prototype); }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation-duration: 0ms !important; transition-duration: 0ms !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- PROTOTYPE: Selected inline timeline. A failed Setup stays visible. A resolved Setup clears. Awaiting response is a derived tree marker, not a Thread status. This file uses in-memory state only. -->
+    <div class="prototype-label"><strong>PROTOTYPE</strong> | A failed Setup stays visible. A resolved Setup clears.</div>
+    <main id="app"></main>
+
+    <script>
+      const state = { setup: "failed", gate: "blocked", firstTurn: "held", composer: "locked" };
+      const app = document.querySelector("#app");
+
+      function setupState() {
+        // Existing Automatic Setup data drives this tree marker. It is not a Thread status.
+        if (state.setup === "running") return { tree: "Setup running", dot: "running" };
+        if (state.setup === "passed" || state.setup === "skipped") return { tree: "Agent running", dot: "agent" };
+        return { tree: "Awaiting response", dot: "" };
+      }
+
+      function pty(lines) {
+        return `
+          <section class="pty" aria-label="Environment setup PTY">
+            <div class="pty-head"><span><strong>Setup terminal</strong> | PTY</span><span>shell: zsh</span></div>
+            <pre class="terminal-output">${lines}</pre>
+          </section>`;
+      }
+
+      function failedOutput() {
+        return '<span class="terminal-muted">/worktrees/feature/setup-recovery</span>\n<span class="terminal-command">$ bun run setup</span>\n<span class="terminal-muted">[setup] Installing workspace dependencies</span>\nerror: package install returned exit code 1';
+      }
+
+      function runningOutput() {
+        return '<span class="terminal-muted">/worktrees/feature/setup-recovery</span>\n<span class="terminal-command">$ bun run setup</span>\n<span class="terminal-muted">[setup] Retrying workspace dependencies</span>\n<span class="terminal-muted">[setup] Resolving package graph</span>\n<span class="terminal-muted">[setup] Running project bootstrap</span>';
+      }
+
+      function setupEntry() {
+        if (state.setup === "running") return `
+          <section class="timeline-item setup-entry" aria-live="polite">
+            <div class="setup-heading"><h2>Setting up environment</h2><span class="setup-outcome">Running</span></div>
+            <p class="setup-copy">Running setup before your first message.</p>
+            ${pty(runningOutput())}
+          </section>`;
+
+        if (state.setup === "passed" || state.setup === "skipped") return "";
+
+        return `
+          <section class="timeline-item setup-entry" aria-live="polite">
+            <div class="setup-heading"><h2>Environment setup failed</h2></div>
+            <p class="setup-copy">Choose how to continue this thread.</p>
+            <details class="output-disclosure"><summary>Show terminal output</summary>${pty(failedOutput())}</details>
+            <div class="action-row">
+              <button class="primary" type="button" data-action="retry">Retry setup</button>
+              <button type="button" data-action="continue">Continue without setup</button>
+            </div>
+          </section>`;
+      }
+
+      function firstTurn() {
+        const held = state.firstTurn === "held";
+        return `
+          <article class="timeline-item">
+            <div class="item-label">You | first turn</div>
+            <div class="message">Build the diagnostics page and explain the setup failure.</div>
+            ${held ? '<div class="message-meta">Held until Setup ends</div>' : ""}
+          </article>`;
+      }
+
+      function agentEvent() {
+        if (state.setup !== "passed" && state.setup !== "skipped") return "";
+        return '<section class="timeline-item agent-event" aria-live="polite"><span class="state-dot running"></span><span><strong>Codex</strong> is working on the first turn.</span></section>';
+      }
+
+      function composer() {
+        const enabled = state.composer === "ready";
+        const placeholder = enabled ? "Send a follow-up message" : "Resolve Setup before you send another message";
+        const help = enabled ? "The first turn started. New messages follow normal thread rules." : "The composer stays locked. Mcode does not add more queued turns.";
+        return `
+          <section class="composer" aria-label="Thread composer">
+            <textarea ${enabled ? "" : "disabled"} placeholder="${placeholder}" aria-label="${placeholder}"></textarea>
+            <button ${enabled ? "" : "disabled"} type="button">Send</button>
+            <span class="composer-help">${help}</span>
+          </section>`;
+      }
+
+      function projectTree() {
+        const status = setupState();
+        return `
+          <aside class="project-tree" aria-label="Projects">
+            <div class="tree-header"><span>Projects</span><span>New</span></div>
+            <div class="tree-project">mcode</div>
+            <div class="tree-row active" aria-current="page">
+              <div class="tree-title"><span class="provider">C</span><span>Setup recovery</span><span class="worktree">worktree</span></div>
+              <div class="tree-state"><span class="state-dot ${status.dot}"></span><span>${status.tree}</span></div>
+            </div>
+            <p class="tree-note">The tree carries the attention state. The thread header stays quiet.</p>
+          </aside>`;
+      }
+
+      function prototypeState() {
+        return `
+          <aside class="prototype-state" aria-live="polite">
+            <strong>Prototype state</strong><br />
+            setup: <span class="value">${state.setup}</span><br />
+            first turn: <span class="value">${state.firstTurn}</span><br />
+            composer: <span class="value">${state.composer}</span><br />
+            <button type="button" data-action="reset">Reset failed state</button>
+          </aside>`;
+      }
+
+      function render() {
+        app.innerHTML = `
+          <div class="app-shell">
+            ${projectTree()}
+            <section class="conversation">
+              <header class="conversation-header"><div><div class="thread-heading">Setup recovery</div><div class="thread-meta">New worktree | Codex | feature/setup-recovery</div></div></header>
+              <main class="timeline">${setupEntry()}${firstTurn()}${agentEvent()}</main>
+            </section>
+          </div>
+          <footer class="composer-wrap">${composer()}</footer>
+          ${prototypeState()}`;
+      }
+
+      function update(next) {
+        state.setup = next;
+        if (next === "failed" || next === "running") Object.assign(state, { gate: "blocked", firstTurn: "held", composer: "locked" });
+        if (next === "passed" || next === "skipped") Object.assign(state, { gate: "released", firstTurn: "sent", composer: "ready" });
+        render();
+      }
+
+      document.addEventListener("click", (event) => {
+        const action = event.target.closest("button")?.dataset.action;
+        if (action === "retry") {
+          update("running");
+          window.setTimeout(() => update("passed"), 1_500);
+        }
+        if (action === "continue") update("skipped");
+        if (action === "reset") update("failed");
+      });
+
+      render();
+    </script>
+  </body>
+</html>

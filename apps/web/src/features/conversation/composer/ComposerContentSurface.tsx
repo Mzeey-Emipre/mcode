@@ -53,6 +53,7 @@ interface ComposerContentSurfaceProps {
     readonly taskBubbleTasks: readonly ComponentProps<typeof TaskBubble>["tasks"][number][];
     readonly fileEffectSummary: ComponentProps<typeof TaskBubble>["fileEffects"];
     readonly isAgentRunning: boolean;
+    readonly setupBlocked: boolean;
     readonly provider?: string;
     readonly planPending: boolean;
     readonly queuedSend: boolean;
@@ -329,6 +330,7 @@ function ComposerQueueEditNotice({
 }
 
 function getEditorPlaceholder(model: ComposerContentSurfaceProps["model"]) {
+  if (model.setupBlocked) return "Resolve Automatic Setup before sending a follow-up";
   if (model.isStaleWorktree) return "Worktree directory no longer exists. This thread is read-only.";
   if (model.planPending) return "Answer the planning questions above";
   if (model.goalPending) return "Describe the goal...";
@@ -343,7 +345,7 @@ function ComposerEditorSurface({
   model,
   actions,
 }: Pick<ComposerContentSurfaceProps, "model" | "actions">) {
-  const disabled = model.planPending || model.isStaleWorktree || Boolean(model.providerReason);
+  const disabled = model.setupBlocked || model.planPending || model.isStaleWorktree || Boolean(model.providerReason);
 
   return (
     <div className="relative" ref={model.editorContainerRef} onPaste={actions.onPaste}>
@@ -522,6 +524,7 @@ function isComposerSendButtonDisabled({
   isThreadScaffold,
   isAgentRunning,
   hasContent,
+  setupBlocked,
 }: {
   readonly needsWorkspace: boolean;
   readonly providerReason: ComposerContentSurfaceProps["model"]["providerReason"];
@@ -530,8 +533,9 @@ function isComposerSendButtonDisabled({
   readonly isThreadScaffold: boolean;
   readonly isAgentRunning: boolean;
   readonly hasContent: boolean;
+  readonly setupBlocked: boolean;
 }) {
-  return needsWorkspace || Boolean(providerReason) || isStaleWorktree || planPending
+  return setupBlocked || needsWorkspace || Boolean(providerReason) || isStaleWorktree || planPending
     || isThreadScaffold || (!isAgentRunning && !hasContent);
 }
 
@@ -597,7 +601,7 @@ function ComposerControlBar({
   model,
   actions,
 }: Pick<ComposerContentSurfaceProps, "model" | "actions">) {
-  const disabled = model.planPending || model.isStaleWorktree || Boolean(model.providerReason);
+  const disabled = model.setupBlocked || model.planPending || model.isStaleWorktree || Boolean(model.providerReason);
 
   return (
     <div className="flex items-center gap-x-1.5 sm:gap-x-2.5 border-t border-border/20 px-3 py-1.5">
@@ -605,6 +609,7 @@ function ComposerControlBar({
         ref={model.attachmentInputRef}
         type="file"
         multiple
+        disabled={disabled}
         className="hidden"
         accept={model.attachmentInputAccept}
         data-testid="composer-attachment-input"
