@@ -699,12 +699,10 @@ describe("TurnRecoveryService", () => {
 
     expect(sink.listInterruptedCheckpoints()).toEqual([]);
     expect(sink.loadCheckpoint(EXECUTION_ID)?.phase).toBe("retried");
-    expect(service.currentRecoveryIncident()).toMatchObject({
-      entries: [{ executionId: EXECUTION_ID }],
-    });
+    expect(service.currentRecoveryIncident()).toBeNull();
   });
 
-  it("offers Retry for a known terminal provider failure", async () => {
+  it("rejects a provider failure outside the current restart incident", async () => {
     sink.finishParentTurn({
       threadId: THREAD_ID,
       turnId: TURN_ID,
@@ -726,10 +724,7 @@ describe("TurnRecoveryService", () => {
       narrativeStore,
     );
     const dispatch = vi.fn(async () => undefined);
-    await service.retry(EXECUTION_ID, dispatch);
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
-      retryOfExecutionId: EXECUTION_ID,
-      forceFreshSession: true,
-    }));
+    await expect(service.retry(EXECUTION_ID, dispatch)).rejects.toThrow();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

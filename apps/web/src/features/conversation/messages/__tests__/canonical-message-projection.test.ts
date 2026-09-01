@@ -161,7 +161,7 @@ describe("projectCanonicalMessageList", () => {
     expect(projection?.turnSummariesByMessageId).toEqual({
       "child-answer": {
         counts: { steps: 0, thoughts: 1, subagents: 0 },
-        durationMs: 0,
+        durationMs: 5_000,
       },
     });
   });
@@ -286,11 +286,11 @@ describe("projectCanonicalMessageList", () => {
     expect(projection?.turnSummariesByMessageId).toEqual({
       "child-answer-1": {
         counts: { steps: 1, thoughts: 0, subagents: 0 },
-        durationMs: 2_000,
+        durationMs: 5_000,
       },
       "child-answer-2": {
         counts: { steps: 1, thoughts: 0, subagents: 0 },
-        durationMs: 2_000,
+        durationMs: 5_000,
       },
     });
   });

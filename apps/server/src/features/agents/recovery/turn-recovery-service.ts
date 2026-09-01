@@ -142,7 +142,7 @@ export class TurnRecoveryService {
     return staged;
   }
 
-  /** Read the immutable incident created by this server startup. */
+  /** Read unresolved entries from the incident created by this server startup. */
   currentRecoveryIncident(): RecoveryIncident | null {
     return this.currentIncident;
   }
@@ -160,8 +160,11 @@ export class TurnRecoveryService {
     executionId: string,
     dispatch: (command: SendMessageCommand) => Promise<void>,
   ): Promise<void> {
+    if (!this.currentIncident?.entries.some((entry) => entry.executionId === executionId)) {
+      throw new Error(`Recovery incident entry not found: ${executionId}`);
+    }
     const checkpoint = this.canonicalSink.loadCheckpoint(executionId);
-    if (!checkpoint || !["interrupted", "errored"].includes(checkpoint.phase)) {
+    if (!checkpoint || checkpoint.phase !== "interrupted") {
       throw new Error(`Recoverable execution not found: ${executionId}`);
     }
     const message = this.canonicalSink.loadUserMessage(checkpoint.turnId);
@@ -172,6 +175,13 @@ export class TurnRecoveryService {
     }
     const attachments = this.attachmentService.prepareRetryAttachments(thread.id, message.attachments ?? []);
     await dispatch(this.retryCommand(thread, message, attachments, executionId));
+    this.consumeRecoveryIncidentEntry(executionId);
+  }
+
+  private consumeRecoveryIncidentEntry(executionId: string): void {
+    if (!this.currentIncident) return;
+    const entries = this.currentIncident.entries.filter((entry) => entry.executionId !== executionId);
+    this.currentIncident = entries.length > 0 ? { ...this.currentIncident, entries } : null;
   }
 
   private retryCommand(

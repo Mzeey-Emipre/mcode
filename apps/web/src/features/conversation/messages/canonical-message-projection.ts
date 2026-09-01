@@ -140,14 +140,15 @@ function datedItemValues(items: readonly AgentItem[], field: "createdAt" | "upda
 }
 
 function canonicalTurnDuration(turn: AgentTurn, activityItems: readonly AgentItem[]): number | null {
+  const turnStartedAt = timestamp(turn.startedAt ?? turn.createdAt);
+  const turnEndedAt = timestamp(turn.endedAt ?? turn.updatedAt);
+  if (turnStartedAt !== undefined && turnEndedAt !== undefined) {
+    return Math.max(0, turnEndedAt - turnStartedAt);
+  }
   const starts = datedItemValues(activityItems, "createdAt");
   const ends = datedItemValues(activityItems, "updatedAt");
   if (starts.length > 0 && ends.length > 0) return Math.max(0, Math.max(...ends) - Math.min(...starts));
-  const turnStartedAt = timestamp(turn.startedAt ?? turn.createdAt);
-  const turnEndedAt = timestamp(turn.endedAt ?? turn.updatedAt);
-  return turnStartedAt !== undefined && turnEndedAt !== undefined
-    ? Math.max(0, turnEndedAt - turnStartedAt)
-    : null;
+  return null;
 }
 
 function latestAssistantMessage(items: readonly AgentItem[]): Message | undefined {

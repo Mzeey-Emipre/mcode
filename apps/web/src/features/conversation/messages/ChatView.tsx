@@ -44,7 +44,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   });
   const [dismissedErrorState, setDismissedErrorState] = useState<DismissedSessionError | null>(null);
   const recoveryIncident = useVisibleRecoveryIncident();
-  const setRecoveryIncident = useRecoveryIncidentStore((store) => store.setIncident);
   const dismissRecoveryIncident = useRecoveryIncidentStore((store) => store.dismissIncident);
   const markRecoveryEntriesRetried = useRecoveryIncidentStore((store) => store.markEntriesRetried);
   const threadEpochRef = useRef({ epoch: 0, threadId: state.activeThreadId });
@@ -71,19 +70,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     setPendingPrefill,
     updateThreadTitle,
   } = state;
-
-  useEffect(() => {
-    if (state.connectionStatus !== "connected") return;
-    let cancelled = false;
-    void getTransport().getRecoveryIncident().then((incident) => {
-      if (!cancelled) setRecoveryIncident(incident);
-    }).catch((error: unknown) => {
-      console.error("Failed to load recovery incident", error);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [setRecoveryIncident, state.connectionStatus]);
 
   const previousConnectionStatusRef = useRef(state.connectionStatus);
   useEffect(() => {

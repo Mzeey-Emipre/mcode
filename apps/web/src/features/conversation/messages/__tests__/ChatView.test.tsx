@@ -410,22 +410,18 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       65_000,
     );
     const user = userEvent.setup();
-    chatViewTransportMock.getRecoveryIncident.mockResolvedValue(incidentA);
+    useRecoveryIncidentStore.getState().setIncident(incidentA);
 
     const first = render(<ChatView />);
     expect(await screen.findByTestId("recovery-incident-banner")).toHaveTextContent("Project A · Thread A · 4.2s");
-    expect(screen.getByRole("button", { name: "Retry all" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByTestId("recovery-incident-banner")).toBeNull();
     first.unmount();
 
-    const second = render(<ChatView />);
-    await waitFor(() => expect(chatViewTransportMock.getRecoveryIncident).toHaveBeenCalledTimes(2));
-    expect(screen.queryByTestId("recovery-incident-banner")).toBeNull();
-    second.unmount();
-
-    chatViewTransportMock.getRecoveryIncident.mockResolvedValue(incidentB);
     render(<ChatView />);
+    expect(screen.queryByTestId("recovery-incident-banner")).toBeNull();
+
+    act(() => useRecoveryIncidentStore.getState().setIncident(incidentB));
     expect(await screen.findByTestId("recovery-incident-banner")).toHaveTextContent("Project B · Thread B · 1m 5s");
   });
 
@@ -438,7 +434,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       4_200,
     );
     const user = userEvent.setup();
-    chatViewTransportMock.getRecoveryIncident.mockResolvedValue(incident);
+    useRecoveryIncidentStore.getState().setIncident(incident);
 
     render(<ChatView />);
     await user.click(await screen.findByRole("button", { name: "Retry all" }));
@@ -467,7 +463,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     const incident = { ...failed, entries: [failed.entries[0]!, completed.entries[0]!] };
     const user = userEvent.setup();
     const logError = vi.spyOn(console, "error").mockImplementation(() => {});
-    chatViewTransportMock.getRecoveryIncident.mockResolvedValue(incident);
+    useRecoveryIncidentStore.getState().setIncident(incident);
     chatViewTransportMock.retryTurn.mockImplementation(async (executionId) => {
       if (executionId === failed.entries[0]!.executionId) throw new Error("retry failed");
     });
