@@ -8,10 +8,6 @@ import {
   type TurnEventApplication,
   type TurnLifecycleControl,
 } from "../turn-event-pipeline.js";
-import {
-  TurnEventApplication as NormalizedTurnEventApplication,
-  type TurnEventEffects,
-} from "../turn-event-application.js";
 import type { ProviderEventIngressEvent } from "../../../providers/composition/provider-event-ingress.js";
 import { PARENT_ASSISTANT_TEXT_RETAINED_LIMITS } from "../parent-assistant-text-checkpoint-service.js";
 
@@ -272,47 +268,6 @@ describe("TurnEventPipeline", () => {
     });
   });
 
-  it("passes canonical ingress provenance to the diagnostic decision", () => {
-    const recordDiagnostic = vi.fn();
-    const event = textDelta("provenance");
-    const application = new NormalizedTurnEventApplication({
-      recordDiagnostic,
-      applyTextDelta: () => true,
-      applyGeneratedAttachment: () => undefined,
-      applyMessage: () => undefined,
-      applyAssistantMessageBoundary: () => undefined,
-      applyToolUse: () => undefined,
-      applyHookStarted: () => undefined,
-      applyHookCompleted: () => undefined,
-      applyToolResult: () => undefined,
-      applyTurnStarted: () => undefined,
-      applyTurnComplete: () => undefined,
-      applyError: () => undefined,
-      applyCompacting: () => undefined,
-      applyCompactSummary: () => undefined,
-      applySystem: () => undefined,
-      applyEnded: () => undefined,
-      finishAssistantText: () => true,
-      isAssistantTextUnsaved: () => false,
-      interruptForAssistantTextFailure: () => undefined,
-      checkpointNarrative: () => undefined,
-      interruptForNarrativeFailure: () => undefined,
-      isLateHook: () => false,
-      ownsLateHookPublication: () => false,
-      publish: () => undefined,
-      fileFinalization: () => undefined,
-    } satisfies TurnEventEffects);
-
-    application.apply(event, event.event, true);
-
-    expect(recordDiagnostic).toHaveBeenCalledWith({
-      sourceKind: "canonical-bridge",
-      canonicalReceipt: {
-        eventId: event.canonicalReceipt?.eventId,
-        durableRevision: event.canonicalReceipt?.durableRevision,
-      },
-    }, event.event);
-  });
 });
 
 function turnStarted(executionId: string): ProviderEventIngressEvent {

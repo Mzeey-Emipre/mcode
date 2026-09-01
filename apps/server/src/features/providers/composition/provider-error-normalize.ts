@@ -43,27 +43,21 @@ function cliNotFoundMessage(providerId: string): string {
   }
 }
 
-/**
- * Applies provider-specific substitutions for repetitive failure patterns.
- *
- * @param providerId - Thread provider id (`claude`, `cursor`, etc.).
- * @param message - Raw error string from a provider or subprocess.
- */
-export function normalizeAgentProviderError(providerId: string, message: string): string {
+/** Apply provider-specific substitutions at the provider event boundary. */
+export function normalizeProviderError(providerId: string, message: string): string {
   if (
-    providerId === "cursor" &&
-    !message.startsWith("Cursor's servers are rate-limiting") &&
-    CURSOR_RATE_LIMIT_RE.test(message)
+    providerId === "cursor"
+    && !message.startsWith("Cursor's servers are rate-limiting")
+    && CURSOR_RATE_LIMIT_RE.test(message)
   ) {
     return cursorRateLimitMessage(message);
   }
 
-  const cursorPreambleAlready =
-    message.startsWith("The Cursor CLI reported an upstream error");
+  const cursorPreambleAlready = message.startsWith("The Cursor CLI reported an upstream error");
   if (
-    providerId === "cursor" &&
-    !cursorPreambleAlready &&
-    /\binternal\s+server\s+error\b|\b(?:http\s*)?502\b|\b(?:http\s*)?503\b|status\s*code\s*:\s*5\d\d/i.test(
+    providerId === "cursor"
+    && !cursorPreambleAlready
+    && /\binternal\s+server\s+error\b|\b(?:http\s*)?502\b|\b(?:http\s*)?503\b|status\s*code\s*:\s*5\d\d/i.test(
       message,
     )
   ) {

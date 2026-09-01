@@ -11,7 +11,12 @@ import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import { AgentEventPublicationRegistry } from "../agent-event-publication-registry.js";
-import { createAgentServiceForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
+import {
+  createAgentServiceForTest,
+  goalLifecycleForAgentServiceTest,
+  startProviderTurnForTest,
+  wrapProviderEmitterForRuntimeEvents,
+} from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { GoalLifecycleService } from "../../goals/goal-lifecycle-service.js";
@@ -29,11 +34,6 @@ import * as NodeEvents from "node:events";
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 import { broadcast } from "../../../../application/transport/push.js";
 
-type GoalTestTurnRuntime = {
-  start: (threadId: string) => { turnExecutionId: string };
-  snapshot: (threadId: string) => { turnExecutionId: string | null; phase: string } | undefined;
-};
-
 function needsTurnExecutionId(event: unknown): event is Record<string, unknown> & { threadId: string } {
   return Boolean(
     event
@@ -41,16 +41,6 @@ function needsTurnExecutionId(event: unknown): event is Record<string, unknown> 
     && isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
     && !(event as { turnExecutionId?: string }).turnExecutionId,
   );
-}
-
-function runtimeForGoalEvent(
-  runtime: GoalTestTurnRuntime,
-  event: Record<string, unknown> & { threadId: string },
-) {
-  const current = runtime.snapshot(event.threadId);
-  const active = current?.phase === "running" || current?.phase === "finalizing";
-  const startsTurn = event.type === AgentEventType.TurnStarted || event.type === AgentEventType.Message;
-  return !current || (startsTurn && !active) ? runtime.start(event.threadId) : current;
 }
 
 /**
@@ -208,12 +198,20 @@ function buildService(db: Database.Database) {
   // Provider adapters always stamp turn-scoped events with the active execution
   // identity. Keep direct event fixtures on that same boundary, including the
   // post-turn receipt and auto-resume cases covered below.
-  const turnRuntime = (svc as unknown as { turnRuntime: GoalTestTurnRuntime }).turnRuntime;
   const emit = providerStub.emit.bind(providerStub);
   providerStub.emit = ((eventName: string, event?: unknown, ...args: unknown[]) => {
     if (eventName === "event" && needsTurnExecutionId(event)) {
-      const runtime = runtimeForGoalEvent(turnRuntime, event);
-      event = { ...(event as Record<string, unknown>), turnExecutionId: runtime?.turnExecutionId };
+      const source = event as Record<string, unknown> & { threadId: string };
+      const current = svc.runtimeAccess().runtimeSnapshots()
+        .find((snapshot) => snapshot.threadId === source.threadId);
+      const active = current?.phase === "running" || current?.phase === "finalizing";
+      const startsTurn = source.type === AgentEventType.TurnStarted || source.type === AgentEventType.Message;
+      if (!current || (startsTurn && !active)) {
+        const turnExecutionId = startProviderTurnForTest(svc, source.threadId);
+        event = { ...source, turnExecutionId };
+      } else {
+        event = { ...source, turnExecutionId: current.turnExecutionId };
+      }
     }
     return emit(eventName, event, ...args);
   }) as typeof providerStub.emit;
@@ -675,10 +673,7 @@ describe("AgentService.sendMessage — /goal command", () => {
       provider: "claude",
     })).rejects.toThrow("already has an active agent session");
 
-    const goalEffects = svc as unknown as {
-      goalEffectsForTest: GoalLifecycleService;
-    };
-    expect(goalEffects.goalEffectsForTest.pendingCommandEffectCount()).toBe(0);
+    expect(goalLifecycleForAgentServiceTest(svc).pendingCommandEffectCount()).toBe(0);
     expect(providerStub.setGoal).not.toHaveBeenCalled();
     expect(providerStub.clearGoal).not.toHaveBeenCalled();
     expect(providerStub.sendTurn).not.toHaveBeenCalled();

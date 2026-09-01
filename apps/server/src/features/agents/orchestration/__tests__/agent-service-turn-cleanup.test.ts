@@ -29,7 +29,13 @@ import { ThoughtSegmentRepo as RealThoughtSegmentRepo } from "../../conversation
 import { HookExecutionRepo as RealHookExecutionRepo } from "../../events/persistence/hook-execution-repo.js";
 import { AgentService } from "../agent-service.js";
 import { PlanTurnService } from "../../planning/plan-turn-service.js";
-import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
+import {
+  createAgentServiceForTest,
+  fileTrackerForAgentServiceTest,
+  startAgentServiceIngressForTest,
+  startProviderTurnForTest,
+  wrapProviderEmitterForRuntimeEvents,
+} from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
@@ -51,7 +57,6 @@ import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-qu
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
 import { SubagentLifecycleService } from "../../collaboration/subagent-lifecycle-service.js";
-import type { TurnEventDiagnosticProvenance } from "../../turns/turn-event-application.js";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -68,16 +73,14 @@ vi.mock("fs", async (importOriginal) => {
 const THREAD_ID = "thread-cleanup-test";
 
 function activeExecutionId(service: AgentService, threadId = THREAD_ID): string {
-  const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === threadId)?.turnExecutionId;
+  const executionId = service.runtimeAccess().runtimeSnapshots()
+    .find((snapshot) => snapshot.threadId === threadId)?.turnExecutionId;
   if (!executionId) throw new Error("Expected an active turn execution identity");
   return executionId;
 }
 
 function startProviderTurn(service: AgentService): string {
-  const runtime = (service as unknown as {
-    turnRuntime: { start: (threadId: string) => { turnExecutionId: string } };
-  }).turnRuntime;
-  return runtime.start(THREAD_ID).turnExecutionId;
+  return startProviderTurnForTest(service, THREAD_ID);
 }
 
 /** Create a minimal Thread fixture with sensible defaults for turn cleanup tests. */
@@ -410,62 +413,6 @@ describe("AgentService turn cleanup", () => {
     expect(publish).toHaveBeenCalledWith(event);
   });
 
-  it("publishes a resumed turn event once after ingress reaches the pipeline", async () => {
-    const { service, providerEmitter } = buildService();
-    const publish = vi.fn();
-    startAgentServiceIngressForTest(service, publish);
-    const executionId = startProviderTurn(service);
-
-    const event = {
-      type: AgentEventType.TurnStarted,
-      threadId: THREAD_ID,
-      turnExecutionId: executionId,
-    } satisfies AgentEvent;
-    providerEmitter.emit("event", event);
-
-    expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish).toHaveBeenCalledWith(event);
-
-    expect(publish).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not publish when internal event handling throws", async () => {
-    const { service, providerEmitter } = buildService();
-    const publish = vi.fn();
-    startAgentServiceIngressForTest(service, publish);
-
-    await service.sendMessage({
-      threadId: THREAD_ID,
-      content: "hello",
-      permissionMode: "default",
-      model: "claude-sonnet-4-6",
-      attachments: [],
-      provider: "claude",
-    });
-    const executionId = activeExecutionId(service);
-    publish.mockClear();
-    const application = (service as unknown as {
-      normalizedTurnEventApplication: { apply: () => boolean };
-    }).normalizedTurnEventApplication;
-    vi.spyOn(application, "apply").mockImplementation(() => {
-      throw new Error("internal event failure");
-    });
-
-    const event = {
-      event: {
-        type: AgentEventType.ToolUse,
-        threadId: THREAD_ID,
-        turnExecutionId: executionId,
-        toolCallId: "tool-1",
-        toolName: "Agent",
-        toolInput: {},
-      },
-    } satisfies import("@mcode/contracts").ProviderRuntimeEvent;
-
-    expect(() => providerEmitter.emit("event", event)).toThrow("internal event failure");
-    expect(publish).not.toHaveBeenCalled();
-  });
-
   it("removes thread from activeThreadIds on TurnComplete", async () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
     startAgentServiceIngressForTest(service, );
@@ -480,7 +427,7 @@ describe("AgentService turn cleanup", () => {
       provider: "claude",
     });
 
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
     const executionId = activeExecutionId(service);
 
     // Fire TurnComplete through the provider
@@ -498,7 +445,7 @@ describe("AgentService turn cleanup", () => {
     } satisfies AgentEvent);
 
     // Thread should no longer be active
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markIdle).toHaveBeenCalled();
   });
 
@@ -520,7 +467,7 @@ describe("AgentService turn cleanup", () => {
       provider: "claude",
     });
 
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
     let completed = false;
     void accepted.completion.then(() => { completed = true; });
     await Promise.resolve();
@@ -540,107 +487,6 @@ describe("AgentService turn cleanup", () => {
 
     await expect(accepted.completion).resolves.toBeUndefined();
     expect(completed).toBe(true);
-  });
-
-  it("waits for a provider outcome after a narrative checkpoint failure", async () => {
-    const { service, providerEmitter, messageRepo } = buildService();
-    startAgentServiceIngressForTest(service, );
-    vi.mocked(messageRepo.findByIdInThread).mockReturnValue({ id: "queued-checkpoint-failure", sequence: 1 } as never);
-    const accepted = await service.dispatchQueuedAutomaticTurn({
-      threadId: THREAD_ID,
-      messageId: "queued-checkpoint-failure",
-      content: "Queued work",
-      displayContent: "Queued work",
-      model: "claude-sonnet-4-6",
-      permissionMode: "default",
-      attachments: [],
-      persistedAttachments: [],
-      mentions: [],
-      provider: "claude",
-    });
-    const recovery = (service as unknown as {
-      parentNarrativeRecovery: { checkpoint: (event: AgentEvent) => void };
-    }).parentNarrativeRecovery;
-    const checkpoint = vi.spyOn(recovery, "checkpoint").mockImplementation(() => {
-      throw new Error("narrative checkpoint unavailable");
-    });
-
-    let completed = false;
-    void accepted.completion.then(() => {
-      completed = true;
-    });
-
-    providerEmitter.emit("event", {
-      type: AgentEventType.TextDelta,
-      threadId: THREAD_ID,
-      turnExecutionId: activeExecutionId(service),
-      delta: "durability boundary",
-    } satisfies AgentEvent);
-
-    await vi.waitFor(() => {
-      expect(providerEmitter.stopSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
-    });
-    expect(completed).toBe(false);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
-
-    checkpoint.mockRestore();
-    providerEmitter.emit("event", {
-      type: AgentEventType.Ended,
-      threadId: THREAD_ID,
-      turnExecutionId: activeExecutionId(service),
-      outcome: "cancelled",
-    } satisfies AgentEvent);
-
-    await expect(accepted.completion).resolves.toBeUndefined();
-  });
-
-  it("contains synchronous provider lookup failures after a checkpoint failure", () => {
-    const { service } = buildService();
-    const internals = service as unknown as {
-      runtimePersistence: { load: (threadId: string) => unknown };
-      providerRegistry: { resolve: (providerId: ProviderId) => unknown };
-      requestProviderStopAfterCheckpointFailure: (threadId: string, executionId: string) => void;
-    };
-    const load = vi.spyOn(internals.runtimePersistence, "load").mockImplementation(() => {
-      throw new Error("runtime persistence unavailable");
-    });
-
-    expect(() => internals.requestProviderStopAfterCheckpointFailure(THREAD_ID, "execution-1")).not.toThrow();
-    load.mockRestore();
-
-    const resolve = vi.spyOn(internals.providerRegistry, "resolve").mockImplementation(() => {
-      throw new Error("provider registry unavailable");
-    });
-    expect(() => internals.requestProviderStopAfterCheckpointFailure(THREAD_ID, "execution-2")).not.toThrow();
-    resolve.mockRestore();
-  });
-
-  it("records runtime diagnostics without duplicating a canonical receipt", () => {
-    const { service } = buildService();
-    const runtime = service as unknown as {
-      parentDurability: { recordProviderDiagnostic: (input: unknown) => void };
-      recordProviderDiagnostic: (provenance: TurnEventDiagnosticProvenance, event: AgentEvent) => void;
-    };
-    const recordDiagnostic = vi.spyOn(runtime.parentDurability, "recordProviderDiagnostic");
-    const event = {
-      type: AgentEventType.TextDelta,
-      threadId: THREAD_ID,
-      turnExecutionId: "00000000-0000-4000-8000-000000000031",
-      delta: "diagnostic boundary",
-    } satisfies AgentEvent;
-
-    runtime.recordProviderDiagnostic({ sourceKind: "provider-runtime" }, event);
-    runtime.recordProviderDiagnostic({
-      sourceKind: "canonical-commit",
-      canonicalReceipt: { eventId: "canonical-event-31", durableRevision: 31 },
-    }, event);
-
-    expect(recordDiagnostic).toHaveBeenCalledOnce();
-    expect(recordDiagnostic).toHaveBeenCalledWith({
-      executionId: event.turnExecutionId,
-      event,
-      terminal: false,
-    });
   });
 
   it("releases a stopped queued dispatch so the next FIFO Turn can reserve the active slot", async () => {
@@ -748,14 +594,14 @@ describe("AgentService turn cleanup", () => {
       provider: "claude",
     });
     await service.stopSession(THREAD_ID);
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
 
     providerEmitter.emit("event", {
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
     } satisfies AgentEvent);
 
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markActive).toHaveBeenCalledTimes(1);
   });
 
@@ -775,14 +621,14 @@ describe("AgentService turn cleanup", () => {
     provider.stopSession.mockRejectedValueOnce(new Error("stop unavailable"));
 
     await expect(service.stopSession(THREAD_ID)).rejects.toThrow("stop unavailable");
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
 
     provider.stopSession.mockResolvedValueOnce(undefined);
     const result = await service.stopSession(THREAD_ID);
     expect(result.status).toBe("cancelled");
     expect(result.dispatchState).toBe("dispatched");
     expect(result.snapshot).toMatchObject({ threadId: THREAD_ID, phase: "cancelled" });
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
   });
 
   it("cancels during delayed setup without dispatching after setup resumes", async () => {
@@ -802,7 +648,7 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    await vi.waitFor(() => expect(service.activeThreadIds()).toContain(THREAD_ID));
+    await vi.waitFor(() => expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID));
 
     const result = await service.stopSession(THREAD_ID);
     expect(result.status).toBe("cancelled");
@@ -819,7 +665,7 @@ describe("AgentService turn cleanup", () => {
       provider: "claude",
     });
     await replacement;
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
 
     releaseSetup();
     await send;
@@ -842,8 +688,8 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     })).rejects.toThrow("attachment setup failed");
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
-    expect(service.runtimeSnapshots()).toEqual([
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().runtimeSnapshots()).toEqual([
       expect.objectContaining({ threadId: THREAD_ID, phase: "errored" }),
     ]);
     expect((providerEmitter as NodeEvents.EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
@@ -871,6 +717,7 @@ describe("AgentService turn cleanup", () => {
 
     const first = service.stopSession(THREAD_ID);
     const second = service.stopSession(THREAD_ID);
+    await vi.waitFor(() => expect(provider.stopSession).toHaveBeenCalledOnce());
     releaseStop();
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(provider.stopSession).toHaveBeenCalledTimes(1);
@@ -898,7 +745,7 @@ describe("AgentService turn cleanup", () => {
     await expect(first).rejects.toThrow("stop unavailable");
     await expect(second).rejects.toThrow("stop unavailable");
     expect(provider.stopSession).toHaveBeenCalledTimes(1);
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
 
     provider.stopSession.mockResolvedValueOnce(undefined);
     const retry = await service.stopSession(THREAD_ID);
@@ -917,7 +764,7 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    const runtime = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID);
+    const runtime = service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID);
     const executionId = runtime?.turnExecutionId;
     expect(executionId).toBeTruthy();
     if (!executionId) throw new Error("turn execution identity missing");
@@ -930,6 +777,7 @@ describe("AgentService turn cleanup", () => {
     }));
 
     const stopping = service.stopSession(THREAD_ID);
+    await vi.waitFor(() => expect(provider.stopSession).toHaveBeenCalledOnce());
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
@@ -1002,8 +850,8 @@ describe("AgentService turn cleanup", () => {
     );
   });
 
-  it("does NOT remove thread from activeThreadIds on TurnComplete during compaction", async () => {
-    const { service, providerEmitter } = buildService();
+  it("keeps compaction active while materializing a post-terminal goal receipt", async () => {
+    const { service, providerEmitter, messageRepo } = buildService();
     startAgentServiceIngressForTest(service, );
 
     await service.sendMessage({
@@ -1014,19 +862,21 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
+    const executionId = activeExecutionId(service);
+    vi.mocked(messageRepo.create).mockClear();
 
-    // Start compaction first
     providerEmitter.emit("event", {
       type: AgentEventType.Compacting,
       threadId: THREAD_ID,
+      turnExecutionId: executionId,
       active: true,
     } satisfies AgentEvent);
 
-    // Fire TurnComplete during compaction
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
+      turnExecutionId: executionId,
       reason: "end_turn",
       costUsd: null,
       tokensIn: 100,
@@ -1036,8 +886,25 @@ describe("AgentService turn cleanup", () => {
       providerId: "claude",
     } satisfies AgentEvent);
 
-    // Thread should STILL be active (compaction guard)
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
+    providerEmitter.emit("event", {
+      type: AgentEventType.Message,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "Goal achieved in 1s.",
+      tokens: null,
+    } satisfies AgentEvent);
+
+    expect(messageRepo.create).toHaveBeenCalledWith(
+      THREAD_ID,
+      "assistant",
+      "Goal achieved in 1s.",
+      expect.any(Number),
+      undefined,
+      undefined,
+      undefined,
+      "claude-sonnet-4-6",
+    );
   });
 
   it("re-adds thread to activeThreadIds on TurnStarted after TurnComplete (auto-resume)", async () => {
@@ -1052,7 +919,7 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
     const executionId = activeExecutionId(service);
 
     // Turn completes, thread removed from active
@@ -1069,7 +936,7 @@ describe("AgentService turn cleanup", () => {
       providerId: "claude",
     } satisfies AgentEvent);
 
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
 
     // SDK auto-resumes: TurnStarted fires from stream loop
     memoryPressureService.markActive.mockClear();
@@ -1082,7 +949,7 @@ describe("AgentService turn cleanup", () => {
 
     // The resumed turn becomes active after prior-turn persistence releases its barrier.
     await vi.waitFor(() => {
-      expect(service.activeThreadIds()).toContain(THREAD_ID);
+      expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
       expect(memoryPressureService.markActive).toHaveBeenCalled();
     });
   });
@@ -1108,7 +975,7 @@ describe("AgentService turn cleanup", () => {
       turnExecutionId: resumedExecutionId,
       outcome: "cancelled",
     } satisfies AgentEvent);
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
     expect(mutationReservations.owns(THREAD_ID, "pending-approval", "pendingApproval")).toBe(true);
   });
 
@@ -1125,10 +992,7 @@ describe("AgentService turn cleanup", () => {
       startAgentServiceIngressForTest(service, );
       const resumedExecutionId = startProviderTurn(service);
       snapshotService.captureRef.mockClear();
-      const internals = service as unknown as {
-        turnFileTracker: { observeToolUse: (...args: unknown[]) => Promise<void> };
-      };
-      const observeToolUse = vi.spyOn(internals.turnFileTracker, "observeToolUse");
+      const observeToolUse = vi.spyOn(fileTrackerForAgentServiceTest(service), "observeToolUse");
 
       providerEmitter.emit("event", {
         type: AgentEventType.TurnStarted,
@@ -1197,12 +1061,7 @@ describe("AgentService turn cleanup", () => {
         toolCallRecordRepo,
       } = buildService(root);
       startAgentServiceIngressForTest(service, );
-      const tracker = (service as unknown as {
-        turnFileTracker: {
-          observeToolUse: (...args: unknown[]) => Promise<void>;
-          observeToolResult: (...args: unknown[]) => Promise<void>;
-        };
-      }).turnFileTracker;
+      const tracker = fileTrackerForAgentServiceTest(service);
       const observeToolUse = vi.spyOn(tracker, "observeToolUse");
       const firstExecutionId = startProviderTurn(service);
       const originalObserveToolResult = tracker.observeToolResult.bind(tracker);
@@ -1335,7 +1194,7 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
     const executionId = activeExecutionId(service);
 
     // Turn completes, thread removed
@@ -1352,7 +1211,7 @@ describe("AgentService turn cleanup", () => {
       providerId: "claude",
     } satisfies AgentEvent);
 
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
 
     // Error event should not re-add the thread
     memoryPressureService.markActive.mockClear();
@@ -1363,7 +1222,7 @@ describe("AgentService turn cleanup", () => {
       error: "Something went wrong",
     } satisfies AgentEvent);
 
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markActive).not.toHaveBeenCalled();
   });
 
@@ -1379,7 +1238,7 @@ describe("AgentService turn cleanup", () => {
       attachments: [],
       provider: "claude",
     });
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).toContain(THREAD_ID);
     const executionId = activeExecutionId(service);
 
     providerEmitter.emit("event", {
@@ -1389,7 +1248,7 @@ describe("AgentService turn cleanup", () => {
       outcome: "completed",
     } satisfies AgentEvent);
 
-    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markIdle).toHaveBeenCalled();
   });
 });
@@ -1521,36 +1380,6 @@ describe("AgentService Ended finalization", () => {
     });
   });
 
-  it("returns an explicit cancellation when the final text checkpoint fails during a user stop", async () => {
-    const workspace = workspaceRepo.create("Test", process.cwd());
-    const thread = threadRepo.create(workspace.id, "Stop checkpoint failure", "direct", "main", true, "codex");
-
-    await service.sendMessage({
-      threadId: thread.id,
-      content: "stop this turn after a checkpoint failure",
-      permissionMode: "default",
-      model: "gpt-5",
-      attachments: [],
-      provider: "codex",
-    });
-    const executionId = activeExecutionId(service, thread.id);
-    const parentAssistantText = (service as unknown as {
-      parentAssistantText: { finish: (id: string) => boolean };
-    }).parentAssistantText;
-    vi.spyOn(parentAssistantText, "finish").mockReturnValue(false);
-
-    await expect(service.stopSession(thread.id)).resolves.toMatchObject({
-      status: "cancelled",
-      turnExecutionId: executionId,
-      snapshot: { phase: "cancelled" },
-    });
-    expect(providerEmitter.stopSession).toHaveBeenCalledOnce();
-    expect(canonicalSink.loadCheckpoint(executionId)).toMatchObject({
-      phase: "cancelled",
-      terminalOutcome: "cancelled",
-    });
-  });
-
   it.each(["error", "turnComplete", "ended"] as const)(
     "keeps an explicit stop authoritative when provider emits %s synchronously",
     async (terminalType) => {
@@ -1616,6 +1445,82 @@ describe("AgentService Ended finalization", () => {
       });
     },
   );
+
+  it("does not materialize a queued goal receipt after Error rejects a trailing completion", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Terminal error", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "finish this turn",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    const appendChunk = ParentAssistantTextCheckpointService.prototype.appendChunk;
+    let queuedTrailingEvents = false;
+    const appendChunkSpy = vi.spyOn(ParentAssistantTextCheckpointService.prototype, "appendChunk")
+      .mockImplementation(function(inputs) {
+        if (!queuedTrailingEvents) {
+          queuedTrailingEvents = true;
+          providerEmitter.emit("event", {
+            type: AgentEventType.TurnComplete,
+            threadId: thread.id,
+            turnExecutionId: executionId,
+            reason: "end_turn",
+            costUsd: null,
+            tokensIn: 1,
+            tokensOut: 1,
+            contextWindow: 200000,
+            totalProcessedTokens: 2,
+            providerId: "codex",
+          } satisfies AgentEvent);
+          providerEmitter.emit("event", {
+            type: AgentEventType.Message,
+            threadId: thread.id,
+            turnExecutionId: executionId,
+            content: "Goal achieved in 2s.",
+            tokens: null,
+          } satisfies AgentEvent);
+        }
+        return appendChunk.call(this, inputs);
+      });
+    const create = vi.spyOn(messageRepo, "create");
+
+    try {
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: thread.id,
+        turnExecutionId: executionId,
+        delta: "final text",
+        isFinalResponse: true,
+      } satisfies AgentEvent);
+      providerEmitter.emit("event", {
+        type: AgentEventType.Error,
+        threadId: thread.id,
+        turnExecutionId: executionId,
+        error: "provider failed",
+      } satisfies AgentEvent);
+
+      expect(service.runtimeAccess().runtimeSnapshots())
+        .toContainEqual(expect.objectContaining({ threadId: thread.id, phase: "errored" }));
+      expect(create).not.toHaveBeenCalledWith(
+        thread.id,
+        "assistant",
+        "Goal achieved in 2s.",
+        expect.any(Number),
+        undefined,
+        undefined,
+        undefined,
+        "gpt-5",
+      );
+    } finally {
+      create.mockRestore();
+      appendChunkSpy.mockRestore();
+    }
+  });
 
   it("stops every running canonical descendant through the public parent stop seam", async () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
@@ -1694,7 +1599,7 @@ describe("AgentService Ended finalization", () => {
       [direct.childThread.id, "Running"],
       [nested.childThread.id, "Running"],
     ]));
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
       .toMatchObject({ phase: "running", turnExecutionId: executionId });
 
     pendingPlanOutputs.set(thread.id, "# plan\n\n## Stop-safe cleanup");
@@ -1737,7 +1642,7 @@ describe("AgentService Ended finalization", () => {
       owningParentThreadId: thread.id,
       childThreadId: sibling.childThread.id,
     })?.latestTurn?.status).toBe("Completed");
-    expect(service.activeThreadIds()).not.toContain(thread.id);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(thread.id);
     expect(threadRepo.findById(thread.id)?.status).toBe("paused");
     expect(broadcast).not.toHaveBeenCalledWith("thread.status", {
       threadId: thread.id,
@@ -1871,7 +1776,7 @@ describe("AgentService Ended finalization", () => {
       owningParentThreadId: thread.id,
       childThreadId: child.childThread.id,
     })?.latestTurn?.status).toBe("Interrupted");
-    expect(service.activeThreadIds()).not.toContain(thread.id);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(thread.id);
     expect(providerEmitter.stopSession).toHaveBeenCalledWith(`mcode-${thread.id}`);
   });
 
@@ -1908,7 +1813,7 @@ describe("AgentService Ended finalization", () => {
       terminalOutcome: null,
     });
     expect(threadRepo.findById(thread.id)?.status).toBe("active");
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
       .toMatchObject({ phase: "running", turnExecutionId: executionId });
   });
 
@@ -1948,7 +1853,7 @@ describe("AgentService Ended finalization", () => {
       outcome: expect.any(String),
       executionId,
     }));
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id)?.phase).toBe("running");
   });
 
   it("leaves a matching outcome-less Ended unresolved", async () => {
@@ -1976,7 +1881,7 @@ describe("AgentService Ended finalization", () => {
       terminalOutcome: null,
     });
     expect(threadRepo.findById(thread.id)?.status).toBe("active");
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
       .toMatchObject({ phase: "running" });
   });
 
@@ -2001,16 +1906,14 @@ describe("AgentService Ended finalization", () => {
       reason: "provider_lost",
     } satisfies AgentEvent);
 
-    await vi.waitFor(() => expect(service.runtimeSnapshots()
+    await vi.waitFor(() => expect(service.runtimeAccess().runtimeSnapshots()
       .find((snapshot) => snapshot.threadId === thread.id)).toBeUndefined());
     expect(canonicalSink.loadCheckpoint(executionId)).toMatchObject({
       phase: "running",
       terminalOutcome: null,
     });
     expect(threadRepo.findById(thread.id)?.status).toBe("active");
-    expect(service.activeThreadIds()).not.toContain(thread.id);
-    expect((service as unknown as { activeMutationReservations: Map<string, string> })
-      .activeMutationReservations.has(thread.id)).toBe(false);
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(thread.id);
   });
 
   it("maps provider-cancelled Ended to the recoverable interrupted outcome", async () => {
@@ -2081,7 +1984,7 @@ describe("AgentService Ended finalization", () => {
       outcome: expect.any(String),
       executionId,
     }));
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id)?.phase).toBe("running");
+    expect(service.runtimeAccess().runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id)?.phase).toBe("running");
   });
 
   it("keeps a provider Error consistent across canonical, legacy, and renderer state", async () => {

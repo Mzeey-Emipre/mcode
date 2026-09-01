@@ -5,7 +5,6 @@ import type { NarrativeStore } from "../conversation/narrative/narrative-store.j
 import { publishParentProviderEvent } from "../events/provider-event-publication.js";
 import { publishAgentPermissionEvents } from "../permissions/permission-publication.js";
 import { sanitizePublicToolInput } from "../tools/input/public-tool-input.js";
-import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 
 /** The runtime read surface needed to prepare renderer-facing provider events. */
 export interface AgentEventPublicationRuntime {
@@ -63,7 +62,7 @@ export class AgentEventPublicationService {
   private enrich(event: AgentEvent): AgentEvent {
     const withFileEffect = this.enrichTurnStart(event);
     const withParent = this.enrichToolParent(withFileEffect);
-    return this.enrichError(withParent);
+    return withParent;
   }
 
   private enrichTurnStart(event: AgentEvent): AgentEvent {
@@ -76,12 +75,6 @@ export class AgentEventPublicationService {
     if (event.type !== AgentEventType.ToolUse || event.toolName === "Agent" || event.parentToolCallId) return event;
     const parentToolCallId = this.dependencies.narrative.getCurrentParentToolCallId(event.threadId);
     return parentToolCallId ? { ...event, parentToolCallId } : event;
-  }
-
-  private enrichError(event: AgentEvent): AgentEvent {
-    if (event.type !== AgentEventType.Error) return event;
-    const provider = this.dependencies.threads.findById(event.threadId)?.provider || "claude";
-    return { ...event, error: normalizeAgentProviderError(provider, event.error ?? "") };
   }
 
   private sanitize(event: AgentEvent): AgentEvent {

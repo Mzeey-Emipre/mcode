@@ -16,9 +16,13 @@ import type {
 } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import {
+  continueAgentTurnWithoutSavingForTest,
   createAgentServiceForTest,
+  finalizerForAgentServiceTest,
+  messageRepoForAgentServiceTest,
   runtimeProviderEvent,
   startAgentServiceIngressForTest,
+  startProviderTurnForTest,
   streamAgentReliabilityTextForTest,
 } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
@@ -51,11 +55,6 @@ import type { TaskRepo } from "../persistence/task-repo.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
-
-type NarrativeTestTurnRuntime = {
-  start: (threadId: string) => { turnExecutionId: string };
-  snapshot: (threadId: string) => { turnExecutionId: string | null; phase: string } | undefined;
-};
 
 function normalizedNarrativeProviderEvent(event: Record<string, unknown>): Record<string, unknown> {
   return event.type === AgentEventType.TurnComplete
@@ -92,6 +91,13 @@ vi.mock("fs", async (importOriginal) => {
 
 const THREAD_ID = "t-narr";
 const MSG_ID = "msg-narr";
+
+function narrativeExecutionId(service: AgentService): string {
+  const executionId = service.runtimeAccess().runtimeSnapshots()
+    .find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+  if (!executionId) throw new Error("Expected a narrative test execution identity");
+  return executionId;
+}
 
 function codexRuntimeEvent(
   event: AgentEvent,
@@ -140,6 +146,7 @@ interface Built {
   providerEmitter: NodeEvents.EventEmitter;
   canonicalSink: CanonicalAgentEventSink;
   db: Database.Database;
+  messageRepo: MessageRepo;
   thoughtBulk: ReturnType<typeof vi.fn>;
   hookBulk: ReturnType<typeof vi.fn>;
   toolBulk: ReturnType<typeof vi.fn>;
@@ -153,6 +160,7 @@ interface Built {
 function build(options: {
   db?: Database.Database;
   canonicalSink?: CanonicalAgentEventSink;
+  messageRepo?: MessageRepo;
   parentAssistantTextCheckpoints?: ParentAssistantTextCheckpointService;
   onProviderEvent?: (event: AgentEvent) => void;
 } = {}): Built {
@@ -177,7 +185,7 @@ function build(options: {
     findById: vi.fn(() => ({ id: "ws-1", path: "/workspace" })),
   } as unknown as WorkspaceRepo;
   let latestSequence = 2;
-  const messageRepo = {
+  const fixtureMessageRepo = {
     listByThread: vi.fn(() => ({ messages: [{ id: MSG_ID, role: "assistant", sequence: 2 }] })),
     getLatestSequenceIncludingInternal: vi.fn(() => latestSequence),
     create: vi.fn((_threadId: string, _role: string, _content: string, sequence: number) => {
@@ -188,6 +196,7 @@ function build(options: {
     listByThreadUpToSequence: vi.fn(() => []),
     setAssistantOutcome: vi.fn(),
   } as unknown as MessageRepo;
+  const messageRepo = options.messageRepo ?? fixtureMessageRepo;
   const gitService = {
     resolveWorkingDir: vi.fn(() => "/workspace"),
     listWorktrees: vi.fn(() => []),
@@ -312,15 +321,13 @@ function build(options: {
   // Provider adapters always stamp turn-scoped events with the active execution
   // identity. Keep this fixture aligned with that production boundary while
   // leaving each test focused on the narrative payload it emits.
-  const turnRuntime = (service as unknown as { turnRuntime: NarrativeTestTurnRuntime }).turnRuntime;
-  turnRuntime.start(THREAD_ID);
+  const turnExecutionId = startProviderTurnForTest(service, THREAD_ID);
   const emit = providerEmitter.emit.bind(providerEmitter);
   providerEmitter.emit = ((eventName: string, event?: unknown, ...args: unknown[]) => {
     if (eventName === "event" && event && typeof event === "object") {
       event = normalizedNarrativeProviderEvent(event as Record<string, unknown>);
       if (needsNarrativeTurnExecutionId(event)) {
-        const runtime = turnRuntime.snapshot(THREAD_ID);
-        event = { ...(event as Record<string, unknown>), turnExecutionId: runtime?.turnExecutionId };
+        event = { ...(event as Record<string, unknown>), turnExecutionId };
       }
     }
     return emit(
@@ -339,6 +346,7 @@ function build(options: {
     providerEmitter,
     canonicalSink,
     db,
+    messageRepo,
     thoughtBulk,
     hookBulk,
     toolBulk,
@@ -371,9 +379,7 @@ describe("AgentService narrative persistence", () => {
       canonicalSink,
       onProviderEvent: (event) => published.push(event),
     });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     canonicalSink.startParentTurn({
       thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -442,9 +448,7 @@ describe("AgentService narrative persistence", () => {
       canonicalSink,
       onProviderEvent: (event) => published.push(event),
     });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     canonicalSink.startParentTurn({
       thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -512,9 +516,7 @@ describe("AgentService narrative persistence", () => {
         canonicalSink,
         onProviderEvent: (event) => published.push(event),
       });
-      const executionId = (service as unknown as {
-        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const executionId = narrativeExecutionId(service);
       const messages = new SqliteMessageRepo(db);
       canonicalSink.startParentTurn({
         thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -582,9 +584,7 @@ describe("AgentService narrative persistence", () => {
         canonicalSink,
         onProviderEvent: (event) => published.push(event),
       });
-      const executionId = (service as unknown as {
-        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const executionId = narrativeExecutionId(service);
       const messages = new SqliteMessageRepo(db);
       canonicalSink.startParentTurn({
         thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -641,9 +641,7 @@ describe("AgentService narrative persistence", () => {
     vi.useFakeTimers();
     try {
       const { providerEmitter, service } = build({ db, canonicalSink, onProviderEvent: vi.fn() });
-      const executionId = (service as unknown as {
-        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const executionId = narrativeExecutionId(service);
       const messages = new SqliteMessageRepo(db);
       canonicalSink.startParentTurn({
         thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -674,7 +672,7 @@ describe("AgentService narrative persistence", () => {
 
       expect((providerEmitter as unknown as { stopSession: ReturnType<typeof vi.fn> }).stopSession)
         .not.toHaveBeenCalled();
-      expect(service.runtimeSnapshots()).not.toContainEqual(expect.objectContaining({
+      expect(service.runtimeAccess().runtimeSnapshots()).not.toContainEqual(expect.objectContaining({
         threadId: THREAD_ID,
         turnExecutionId: executionId,
         phase: "interrupted",
@@ -711,9 +709,7 @@ describe("AgentService narrative persistence", () => {
     vi.useFakeTimers();
     try {
       const { providerEmitter, service } = build({ db, canonicalSink, onProviderEvent: vi.fn() });
-      const executionId = (service as unknown as {
-        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const executionId = narrativeExecutionId(service);
       const messages = new SqliteMessageRepo(db);
       canonicalSink.startParentTurn({
         thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -741,7 +737,7 @@ describe("AgentService narrative persistence", () => {
 
       expect((providerEmitter as unknown as { stopSession: ReturnType<typeof vi.fn> }).stopSession)
         .toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
-      expect(service.runtimeSnapshots()).toContainEqual(expect.objectContaining({
+      expect(service.runtimeAccess().runtimeSnapshots()).toContainEqual(expect.objectContaining({
         threadId: THREAD_ID,
         turnExecutionId: executionId,
         phase: "running",
@@ -795,9 +791,7 @@ describe("AgentService narrative persistence", () => {
         parentAssistantTextCheckpoints: journalService,
         onProviderEvent: (event) => published.push(event),
       });
-      const executionId = (service as unknown as {
-        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const executionId = narrativeExecutionId(service);
       const messages = new SqliteMessageRepo(db);
       canonicalSink.startParentTurn({
         thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -864,9 +858,7 @@ describe("AgentService narrative persistence", () => {
         canonicalSink,
         onProviderEvent: (event) => published.push(event),
       });
-      const executionId = (service as unknown as {
-        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const executionId = narrativeExecutionId(service);
       const messages = new SqliteMessageRepo(db);
       canonicalSink.startParentTurn({
         thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -892,7 +884,7 @@ describe("AgentService narrative persistence", () => {
 
       expect(published).toEqual([]);
 
-      service.continueWithoutSaving(executionId);
+      continueAgentTurnWithoutSavingForTest(service, executionId);
       await Promise.resolve();
 
       expect(published.map((event) => event.type)).toEqual([
@@ -928,9 +920,7 @@ describe("AgentService narrative persistence", () => {
       canonicalSink,
       onProviderEvent: (event) => published.push(event),
     });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     canonicalSink.startParentTurn({
       thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -1006,9 +996,7 @@ describe("AgentService narrative persistence", () => {
         observed.push({ type: event.type, persisted: row?.payload_json });
       },
     });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     canonicalSink.startParentTurn({
       thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -1051,12 +1039,13 @@ describe("AgentService narrative persistence", () => {
     ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
     const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
     const published: AgentEvent[] = [];
+    const messageRepo = new SqliteMessageRepo(db);
     const { service } = build({
       db,
       canonicalSink,
+      messageRepo,
       onProviderEvent: (event) => published.push(event),
     });
-    (service as unknown as { messageRepo: MessageRepo }).messageRepo = new SqliteMessageRepo(db);
 
     try {
       const stream = streamAgentReliabilityTextForTest(service, THREAD_ID);
@@ -1517,12 +1506,7 @@ describe("AgentService narrative persistence", () => {
         }
       },
     });
-    const finalizer = (service as unknown as {
-      turnFinalizer: {
-        finalize: (...args: unknown[]) => Promise<void>;
-        getLastPersistedMessageId: (threadId: string) => string | undefined;
-      };
-    }).turnFinalizer;
+    const finalizer = finalizerForAgentServiceTest(service);
     let completeFinalization!: () => void;
     vi.spyOn(finalizer, "finalize").mockReturnValue(new Promise<void>((resolve) => {
       completeFinalization = resolve;
@@ -1603,9 +1587,7 @@ describe("AgentService narrative persistence", () => {
       canonicalSink,
       onProviderEvent: (event) => published.push(event),
     });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     canonicalSink.startParentTurn({
       thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
@@ -1615,9 +1597,7 @@ describe("AgentService narrative persistence", () => {
       providerIdentities: [],
       projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
     });
-    const finalizer = (service as unknown as {
-      turnFinalizer: { finalize: (...args: unknown[]) => Promise<void> };
-    }).turnFinalizer;
+    const finalizer = finalizerForAgentServiceTest(service);
     vi.spyOn(finalizer, "finalize").mockRejectedValue(new Error("forced terminal failure"));
 
     providerEmitter.emit("event", {
@@ -1671,9 +1651,7 @@ describe("AgentService narrative persistence", () => {
     const published: AgentEvent[] = [];
     vi.mocked(broadcast).mockReset();
     const { service, providerEmitter } = build({ onProviderEvent: (event) => published.push(event) });
-    const finalizer = (service as unknown as {
-      turnFinalizer: { finalize: (...args: unknown[]) => Promise<void> };
-    }).turnFinalizer;
+    const finalizer = finalizerForAgentServiceTest(service);
     let completeFinalization!: () => void;
     vi.spyOn(finalizer, "finalize").mockReturnValue(new Promise<void>((resolve) => {
       completeFinalization = resolve;
@@ -1770,7 +1748,7 @@ describe("AgentService narrative persistence", () => {
       attachments: null,
       is_internal: false,
     };
-    (service as unknown as { messageRepo: MessageRepo }).messageRepo.listByThread = vi.fn(() => ({
+    messageRepoForAgentServiceTest(service).listByThread = vi.fn(() => ({
       messages: [mockMsg],
       hasMore: false,
     }));
@@ -1852,8 +1830,7 @@ describe("AgentService narrative persistence", () => {
       attachments: null,
       is_internal: false,
     };
-    const messageRepo = (service as unknown as { messageRepo: MessageRepo }).messageRepo as
-      & MessageRepo
+    const messageRepo = messageRepoForAgentServiceTest(service) as MessageRepo
       & { createAssistantIdempotent: ReturnType<typeof vi.fn> };
     messageRepo.listByThread = vi.fn(() => ({ messages: [userMsg], hasMore: false }));
     messageRepo.createAssistantIdempotent = vi.fn(() => assistantMsg);
@@ -1936,9 +1913,7 @@ describe("AgentService narrative persistence", () => {
     const published = vi.fn();
     const canonicalSink = new CanonicalAgentEventSink(db, published);
     const { providerEmitter, service, narrativeStore } = build({ db, canonicalSink });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     const userMessage = messages.create(THREAD_ID, "user", "delegate", 1);
     canonicalSink.startParentTurn({
@@ -2099,9 +2074,7 @@ describe("AgentService narrative persistence", () => {
     ).run(THREAD_ID, "ws-nested", "Parent", "main", "codex", now, now);
     const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
     const { providerEmitter, service } = build({ db, canonicalSink });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     const userMessage = messages.create(THREAD_ID, "user", "delegate", 1);
     canonicalSink.startParentTurn({
@@ -2360,9 +2333,7 @@ describe("AgentService narrative persistence", () => {
     ).run(THREAD_ID, "ws-failure", "Parent", "main", "codex", now, now);
     const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
     const { providerEmitter, service } = build({ db, canonicalSink });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     const userMessage = messages.create(THREAD_ID, "user", "delegate", 1);
     canonicalSink.startParentTurn({
@@ -2442,9 +2413,7 @@ describe("AgentService narrative persistence", () => {
     ).run(THREAD_ID, "ws-action", "Parent", "main", "codex", now, now);
     const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
     const { providerEmitter, service } = build({ db, canonicalSink });
-    const executionId = (service as unknown as {
-      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
-    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const executionId = narrativeExecutionId(service);
     const messages = new SqliteMessageRepo(db);
     const userMessage = messages.create(THREAD_ID, "user", "delegate", 1);
     canonicalSink.startParentTurn({
@@ -2702,8 +2671,8 @@ describe("AgentService narrative persistence", () => {
   it("withholds terminal provider publication when final durability fails", async () => {
     const published: AgentEvent[] = [];
     const { service, providerEmitter } = build({ onProviderEvent: (event) => published.push(event) });
-    (service as unknown as { turnFinalizer: { finalize: () => Promise<void> } }).turnFinalizer.finalize =
-      vi.fn(() => Promise.reject(new Error("terminal write failed")));
+    vi.spyOn(finalizerForAgentServiceTest(service), "finalize")
+      .mockRejectedValue(new Error("terminal write failed"));
 
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,

@@ -70,6 +70,12 @@ import { TurnConversationProjectionService } from "../turns/turn-conversation-pr
 import { PostTerminalHookCompletionEffect } from "../turns/post-terminal-hook-completion-effect.js";
 import { ThreadCreationCoordinator } from "../turns/thread-creation-coordinator.js";
 import { ProviderSessionCursorPersistence } from "../turns/provider-session-cursor-persistence.js";
+import { ProviderTurnEventApplication } from "../turns/provider-turn-event-application.js";
+import {
+  TURN_RUNTIME_EVENT_CONTROL,
+  type TurnRuntimeEventControl,
+} from "../orchestration/turn-runtime-event-control.js";
+import { TurnRuntimeController } from "../orchestration/turn-runtime-controller.js";
 
 /** Register agent orchestration, event, recovery, and planning services. */
 export function registerAgentServices(container: DependencyContainer): void {
@@ -220,6 +226,19 @@ export function registerAgentServices(container: DependencyContainer): void {
       () => c.resolve(PlanTurnService),
     )),
   });
+  container.register<TurnRuntimeEventControl>(TURN_RUNTIME_EVENT_CONTROL, {
+    useFactory: (c) => c.resolve(TurnRuntimeController),
+  });
+  container.register(
+    ProviderTurnEventApplication,
+    { useClass: ProviderTurnEventApplication },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    TurnRuntimeController,
+    { useClass: TurnRuntimeController },
+    { lifecycle: Lifecycle.Singleton },
+  );
   container.register(
     AgentService,
     { useClass: AgentService },
