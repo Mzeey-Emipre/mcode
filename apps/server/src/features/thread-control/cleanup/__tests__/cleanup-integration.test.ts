@@ -37,12 +37,6 @@ vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Stub filesystem checks for synthetic test paths.
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, existsSync: vi.fn().mockReturnValue(true) };
-});
-
 const WT_BASE = NodePath.join(getMcodeDir(), "worktrees", "integration-test");
 
 describe("Cleanup integration", () => {

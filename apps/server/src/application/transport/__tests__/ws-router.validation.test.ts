@@ -1446,12 +1446,11 @@ describe("routeMessage thread completion lifecycle", () => {
   });
 });
 
-describe("routeMessage thread.delete watcher teardown", () => {
+describe("routeMessage thread.delete teardown", () => {
   function createThreadDeleteDeps(options: {
     teardown?: () => Promise<void>;
     deleteThread?: () => Promise<boolean>;
   } = {}) {
-    const unwatchThreadWorktree = vi.fn();
     const teardownThread = vi
       .fn()
       .mockImplementation(options.teardown ?? (() => Promise.resolve()));
@@ -1459,9 +1458,6 @@ describe("routeMessage thread.delete watcher teardown", () => {
       .fn()
       .mockImplementation(options.deleteThread ?? (() => Promise.resolve(true)));
     const deps = {
-      gitWatcherService: {
-        unwatchThreadWorktree,
-      },
       threadDeletionTeardownService: {
         teardownThread,
       },
@@ -1471,14 +1467,13 @@ describe("routeMessage thread.delete watcher teardown", () => {
     } as unknown as RouterDeps;
     return {
       deps,
-      unwatchThreadWorktree,
       teardownThread,
       deleteThread,
     };
   }
 
-  it("keeps the thread worktree watcher when thread teardown fails", async () => {
-    const { deps, unwatchThreadWorktree, deleteThread } = createThreadDeleteDeps({
+  it("does not delete the thread when teardown fails", async () => {
+    const { deps, deleteThread } = createThreadDeleteDeps({
       teardown: () => Promise.reject(new Error("teardown failed")),
     });
 
@@ -1492,12 +1487,11 @@ describe("routeMessage thread.delete watcher teardown", () => {
     );
 
     expect(response.error?.message).toContain("teardown failed");
-    expect(unwatchThreadWorktree).not.toHaveBeenCalled();
     expect(deleteThread).not.toHaveBeenCalled();
   });
 
-  it("keeps the thread worktree watcher when thread delete returns false", async () => {
-    const { deps, unwatchThreadWorktree } = createThreadDeleteDeps({
+  it("returns false when deletion declines after teardown", async () => {
+    const { deps, teardownThread } = createThreadDeleteDeps({
       deleteThread: () => Promise.resolve(false),
     });
 
@@ -1511,13 +1505,12 @@ describe("routeMessage thread.delete watcher teardown", () => {
     );
 
     expect(response.result).toBe(false);
-    expect(unwatchThreadWorktree).not.toHaveBeenCalled();
+    expect(teardownThread).toHaveBeenCalledWith("thread-1");
   });
 
-  it("unwatches the thread worktree after thread teardown and delete succeed", async () => {
+  it("deletes only after thread teardown succeeds", async () => {
     const {
       deps,
-      unwatchThreadWorktree,
       teardownThread,
       deleteThread,
     } = createThreadDeleteDeps();
@@ -1532,12 +1525,8 @@ describe("routeMessage thread.delete watcher teardown", () => {
     );
 
     expect(response.result).toBe(true);
-    expect(unwatchThreadWorktree).toHaveBeenCalledWith("thread-1");
     expect(teardownThread.mock.invocationCallOrder[0]).toBeLessThan(
-      unwatchThreadWorktree.mock.invocationCallOrder[0],
-    );
-    expect(deleteThread.mock.invocationCallOrder[0]).toBeLessThan(
-      unwatchThreadWorktree.mock.invocationCallOrder[0],
+      deleteThread.mock.invocationCallOrder[0],
     );
   });
 });

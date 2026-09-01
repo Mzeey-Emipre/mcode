@@ -18,11 +18,10 @@ import {
 import { RepositoryGitMutationLock } from "../../../projects/git/repository-git-mutation-lock.js";
 import { RealGitExecutor } from "../../../projects/git/execution/real-git-executor.js";
 import { getMcodeDir } from "@mcode/shared";
+import { hostRuntime } from "@mcode/shared/node/host-runtime";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { HandoffStorage } from "../../../handoff/index.js";
-
-const TEST_HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
@@ -30,6 +29,7 @@ vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
 
 describe("completed thread cleanup Git safety", () => {
   let database: Database.Database;
+  let testRootPath: string;
   let repositoryPath: string;
   let worktreePath: string;
   let gitWorktrees: GitWorktreeService;
@@ -45,8 +45,10 @@ describe("completed thread cleanup Git safety", () => {
   beforeEach(() => {
     const worktreesPath = NodePath.join(getMcodeDir(), "worktrees");
     NodeFS.mkdirSync(worktreesPath, { recursive: true });
-    repositoryPath = NodeFS.mkdtempSync(NodePath.join(worktreesPath, "mcode-completed-cleanup-"));
-    worktreePath = NodePath.join(repositoryPath, "worktree");
+    testRootPath = NodeFS.mkdtempSync(NodePath.join(worktreesPath, "mcode-completed-cleanup-"));
+    repositoryPath = NodePath.join(testRootPath, "repository");
+    worktreePath = NodePath.join(testRootPath, "worktree");
+    NodeFS.mkdirSync(repositoryPath);
     NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "init", "-b", "main"]);
     NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "config", "user.email", "test@mcode.test"]);
     NodeChildProcess.execFileSync("git", ["-C", repositoryPath, "config", "user.name", "Mcode Test"]);
@@ -62,15 +64,15 @@ describe("completed thread cleanup Git safety", () => {
     escapingLinkContainerPath = null;
     const executor = new RealGitExecutor();
     gitRepository = new GitRepositoryService(workspaceRepo, executor);
-    gitWorktrees = new GitWorktreeService(workspaceRepo, executor, TEST_HOST_RUNTIME, undefined, undefined, gitRepository);
-    worktreeSafety = new WorktreeSafetyService(executor, TEST_HOST_RUNTIME);
+    gitWorktrees = new GitWorktreeService(workspaceRepo, executor, hostRuntime, undefined, undefined, gitRepository);
+    worktreeSafety = new WorktreeSafetyService(executor, hostRuntime);
     worker = createWorker();
   }, 30_000);
 
   afterEach(() => {
     worker.dispose();
     database.close();
-    NodeFS.rmSync(repositoryPath, { recursive: true, force: true });
+    NodeFS.rmSync(testRootPath, { recursive: true, force: true });
     if (escapingLinkContainerPath) NodeFS.rmSync(escapingLinkContainerPath, { recursive: true, force: true });
     if (externalTargetPath) NodeFS.rmSync(externalTargetPath, { recursive: true, force: true });
   }, 30_000);
@@ -82,13 +84,13 @@ describe("completed thread cleanup Git safety", () => {
       threadRepo,
       { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider,
       gitWorktrees,
-      new SandboxWorktreeCleanupPolicy(worktreeSafety, gitRepository, TEST_HOST_RUNTIME),
-      new RepositoryGitMutationLock(TEST_HOST_RUNTIME),
+      new SandboxWorktreeCleanupPolicy(worktreeSafety, gitRepository, hostRuntime),
+      new RepositoryGitMutationLock(hostRuntime),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
       { teardownThread: vi.fn().mockResolvedValue(undefined) } as any,
-      TEST_HOST_RUNTIME,
+      hostRuntime,
     );
   }
 

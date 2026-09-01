@@ -28,6 +28,7 @@ describe("projects feature boundary", () => {
       "PullRequestReviewGitError",
       "PullRequestReviewGitService",
       "RepositoryGitMutationLock",
+      "SandboxWorktreeCleanupPolicy",
       "WorkspaceEnricher",
       "WorkspaceEnvironmentService",
       "WorkspaceEnvironmentServiceError",

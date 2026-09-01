@@ -43,7 +43,7 @@ function workspaceDeps(): RouterDeps {
       forceDelete: vi.fn().mockReturnValue(true),
     },
     workspaceEnvironmentService: {
-      beginWorkspaceDeletion: vi.fn(idempotentNoopRelease),
+      beginWorkspaceDeletion: vi.fn(() => () => undefined),
       cancelSetupForWorkspace: vi.fn().mockResolvedValue(undefined),
       clearApprovals: vi.fn(),
     },

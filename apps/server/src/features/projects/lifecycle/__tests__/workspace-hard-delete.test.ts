@@ -880,7 +880,7 @@ describe("CleanupWorker - missing directory handling", () => {
     expect(cleanupJobRepo.countByWorkspacePath("/tmp/ws")).toBe(0);
   });
 
-  it("treats non-existent workspace path gracefully (skip git commands)", async () => {
+  it("cleans a managed worktree when its workspace path is missing", async () => {
     const ws = workspaceRepo.create("Test", "/tmp/gone-ws");
     const t1 = threadRepo.create(ws.id, "WT", "worktree", "feat/x");
     db.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?")
@@ -901,8 +901,11 @@ describe("CleanupWorker - missing directory handling", () => {
     // Should complete without error, thread hard-deleted
     const thread = db.prepare("SELECT id FROM threads WHERE id = ?").get(t1.id);
     expect(thread).toBeUndefined();
-    // removeWorktree should NOT have been called (no filesystem to clean)
-    expect(mockGitWorktrees.removeWorktree).not.toHaveBeenCalled();
+    expect(mockGitWorktrees.removeWorktree).toHaveBeenCalledWith(
+      "/tmp/gone-ws",
+      "x",
+      expect.objectContaining({ worktreePath: "/tmp/gone-ws/.worktrees/x" }),
+    );
   });
 });
 
