@@ -20,6 +20,15 @@ Use `runtime live --scenario completion --confirm-provider-call` for server and 
 
 Use `runtime live --scenario stop --confirm-provider-call` for the public server proof. The harness requests retained event replay after it creates the thread.
 
+## Managed-worktree Setup readiness
+
+1. Create a New-worktree first turn through the public agent API.
+2. Wait for Git to finish the checkout before the thread is returned.
+3. Keep the first turn queued while automatic Setup reads every tracked fixture file and writes its proof marker.
+4. Remove the generated thread, worktree, workspace, and fixture repository.
+
+Use `runtime worktree-setup --confirm-cleanup` for the public server proof. The Setup command remains running after the marker, so the queued turn cannot call a provider.
+
 ## Completed managed-worktree thread
 
 1. Open an idle managed-worktree thread in Electron.

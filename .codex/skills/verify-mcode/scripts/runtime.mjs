@@ -19,6 +19,20 @@ const POLL_INTERVAL_MS = 250;
 const FRESHNESS_TOLERANCE_MS = 2_000;
 const MAX_ERROR_CHARS = 640;
 const EVIDENCE_DIRECTORY = NodePath.join(".dev", "verification", "agent-runtime");
+const WORKTREE_SETUP_ACTIVE_RUN_FILE = "worktree-setup-active-run.json";
+const WORKTREE_SETUP_MARKER = ".mcode-worktree-setup-proof";
+const WORKTREE_SETUP_SOURCE_FILES = Object.freeze({
+  "checkout-root.txt": "root checkout complete\n",
+  "fixtures/nested/checkout-nested.txt": "nested checkout complete\n",
+  "fixtures/nested/deep/checkout-deep.txt": "deep checkout complete\n",
+});
+const WORKTREE_SETUP_SCRIPT_FILE = "verify-checkout.mjs";
+const WORKTREE_SETUP_MANIFEST_FILE = "checkout-manifest.json";
+const WORKTREE_SETUP_TRACKED_FILES = Object.freeze([
+  ...Object.keys(WORKTREE_SETUP_SOURCE_FILES),
+  WORKTREE_SETUP_MANIFEST_FILE,
+  WORKTREE_SETUP_SCRIPT_FILE,
+].sort());
 const RUNTIME_SOURCE_DIRECTORIES = [
   ["apps", "server", "src"],
   ["packages", "contracts", "src"],
@@ -48,6 +62,7 @@ const FOCUSED_TEST_FILES = [
   "src/features/agents/turns/__tests__/turn-finalizer.test.ts",
   "src/features/agents/turns/__tests__/turn-runtime.test.ts",
   "src/features/providers/composition/__tests__/provider-event-ingress.test.ts",
+  "src/features/projects/git/__tests__/git-service-push.test.ts",
 ];
 const FIXED_PROMPTS = {
   completion: "Reply with exactly: Agent runtime verification complete. Do not edit files or invoke tools.",
@@ -68,6 +83,10 @@ Commands:
       Read active runtime and workspace summaries through the authenticated WebSocket RPC API.
   live --provider <codex|claude|cursor> --model <id> --scenario <completion|stop> --confirm-provider-call [--keep-thread]
       Make one confirmed provider call in the registered current-worktree workspace. Does not start a runtime.
+  worktree-setup --confirm-cleanup
+      Create an owned Git project, hold its automatic Setup gate open after it verifies every tracked fixture file, then remove the project, workspace, thread, and worktree. Does not make a provider call.
+  worktree-setup-cleanup --confirm-cleanup
+      Remove a retained worktree-setup run after an interrupted proof.
   diagnostics
       Summarize harness receipt metadata without emitting raw contents.
   cleanup
@@ -100,11 +119,13 @@ function parseArguments(argv) {
   if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) return { help: true };
   const [command, ...rest] = argv;
   validateCommand(command);
-  return command === "live" ? parseLiveArguments(rest) : parseOptionlessCommand(command, rest);
+  if (command === "live") return parseLiveArguments(rest);
+  if (["worktree-setup", "worktree-setup-cleanup"].includes(command)) return parseCleanupConfirmedCommand(command, rest);
+  return parseOptionlessCommand(command, rest);
 }
 
 function validateCommand(command) {
-  if (["health", "check", "inspect", "live", "diagnostics", "cleanup"].includes(command)) return;
+  if (["health", "check", "inspect", "live", "worktree-setup", "worktree-setup-cleanup", "diagnostics", "cleanup"].includes(command)) return;
   throw cliError(`Unknown command "${String(command)}"`);
 }
 
@@ -120,6 +141,11 @@ function parseLiveArguments(rest) {
   const scenario = options.get("--scenario");
   validateLiveOptions(options, provider, model, scenario);
   return { command: "live", provider, model, scenario, keepThread: options.has("--keep-thread") };
+}
+
+function parseCleanupConfirmedCommand(command, rest) {
+  if (rest.length === 1 && rest[0] === "--confirm-cleanup") return { command };
+  throw cliError(`${command} requires --confirm-cleanup`);
 }
 
 function readLiveOptions(rest) {
@@ -163,6 +189,8 @@ async function execute(parsed, repoRoot) {
     if (parsed.command === "check") return await check(repoRoot);
     if (parsed.command === "inspect") return success(await inspect(repoRoot));
     if (parsed.command === "live") return await live(repoRoot, parsed);
+    if (parsed.command === "worktree-setup") return await worktreeSetup(repoRoot);
+    if (parsed.command === "worktree-setup-cleanup") return success(await worktreeSetupCleanup(repoRoot));
     if (parsed.command === "diagnostics") return success(diagnostics(repoRoot));
     return success(cleanup(repoRoot));
   } catch (error) {
@@ -397,6 +425,540 @@ async function live(repoRoot, options) {
     await disposeLiveRun(run, options.keepThread);
   }
   return writeLiveArtifacts(repoRoot, artifacts, run.report);
+}
+
+async function worktreeSetup(repoRoot) {
+  const run = createWorktreeSetupRun(repoRoot);
+  const report = createWorktreeSetupReport();
+  const deadline = Date.now() + LIVE_TIMEOUT_MS;
+  let socket = null;
+  try {
+    await health(repoRoot);
+    socket = await openSocket(repoRoot, readRuntime(repoRoot));
+    await createWorktreeSetupFixture(run.record);
+    const workspace = await createWorktreeSetupWorkspace(socket, run.evidenceDirectory, run.record, deadline);
+    await saveWorktreeSetupConfiguration(socket, workspace.id, deadline);
+    const thread = await createWorktreeSetupThread(socket, workspace.id, deadline);
+    recordWorktreeSetupThread(run.evidenceDirectory, run.record, thread);
+    report.checkout = await proveWorktreeSetup(socket, run.record, deadline);
+  } catch (error) {
+    report.failure = safeError(error);
+  } finally {
+    try {
+      report.cleanup = await cleanupWorktreeSetupRun(socket, run.evidenceDirectory, run.record, Date.now() + LIVE_TIMEOUT_MS);
+    } catch (error) {
+      report.cleanup.failure = safeError(error);
+    }
+    await socket?.close();
+  }
+  return writeWorktreeSetupReceipt(repoRoot, run.receiptPath, report);
+}
+
+function createWorktreeSetupReport() {
+  return {
+    command: "worktree-setup",
+    checkout: null,
+    cleanup: {
+      attempted: false,
+      threadDeleted: null,
+      worktreeRemoved: null,
+      workspaceDeleted: null,
+      sourceRepositoryRemoved: false,
+      failure: null,
+    },
+    failure: null,
+  };
+}
+
+function createWorktreeSetupRun(repoRoot) {
+  const evidenceDirectory = ensureEvidenceDirectory(repoRoot);
+  if (readWorktreeSetupActiveRun(evidenceDirectory)) {
+    throw actionable("A previous worktree Setup proof still owns generated state", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime worktree-setup-cleanup --confirm-cleanup, then retry.");
+  }
+  const id = `${fileStamp()}-${NodeCrypto.randomUUID()}`;
+  const runsDirectory = NodePath.join(evidenceDirectory, "runs");
+  NodeFS.mkdirSync(runsDirectory, { recursive: true });
+  assertDirectoryIsNotLinked(runsDirectory, "worktree Setup runs directory");
+  const runDirectory = NodePath.join(runsDirectory, id);
+  NodeFS.mkdirSync(runDirectory);
+  const record = {
+    id,
+    runDirectory,
+    sourceRepositoryPath: NodePath.join(runDirectory, "source"),
+    workspaceId: null,
+    threadId: null,
+    worktreePath: null,
+  };
+  writeWorktreeSetupActiveRun(evidenceDirectory, record);
+  return {
+    evidenceDirectory,
+    record,
+    receiptPath: NodePath.join(evidenceDirectory, `${fileStamp()}-worktree-setup-receipt.json`),
+  };
+}
+
+async function createWorktreeSetupFixture(record) {
+  const sourceRepositoryPath = record.sourceRepositoryPath;
+  NodeFS.mkdirSync(sourceRepositoryPath);
+  await runFixtureGit(sourceRepositoryPath, ["init", "--quiet", "--initial-branch=main"]);
+  const hooksDirectory = NodePath.join(sourceRepositoryPath, ".git", "verify-mcode-hooks");
+  NodeFS.mkdirSync(hooksDirectory);
+  await runFixtureGit(sourceRepositoryPath, ["config", "user.email", "verify-mcode@example.invalid"]);
+  await runFixtureGit(sourceRepositoryPath, ["config", "user.name", "Mcode verifier"]);
+  await runFixtureGit(sourceRepositoryPath, ["config", "commit.gpgsign", "false"]);
+  await runFixtureGit(sourceRepositoryPath, ["config", "core.autocrlf", "false"]);
+  await runFixtureGit(sourceRepositoryPath, ["config", "core.hooksPath", hooksDirectory]);
+  for (const [relativePath, contents] of Object.entries(WORKTREE_SETUP_SOURCE_FILES)) {
+    const path = NodePath.join(sourceRepositoryPath, relativePath);
+    NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+    NodeFS.writeFileSync(path, contents, { encoding: "utf8", flag: "wx" });
+  }
+  NodeFS.writeFileSync(
+    NodePath.join(sourceRepositoryPath, WORKTREE_SETUP_MANIFEST_FILE),
+    `${JSON.stringify(WORKTREE_SETUP_TRACKED_FILES)}\n`,
+    { encoding: "utf8", flag: "wx" },
+  );
+  NodeFS.writeFileSync(
+    NodePath.join(sourceRepositoryPath, WORKTREE_SETUP_SCRIPT_FILE),
+    worktreeSetupFixtureScript(),
+    { encoding: "utf8", flag: "wx" },
+  );
+  await runFixtureGit(sourceRepositoryPath, ["add", "."]);
+  await runFixtureGit(sourceRepositoryPath, ["commit", "--quiet", "-m", "verification fixture"]);
+}
+
+async function runFixtureGit(cwd, args) {
+  const child = Bun.spawn({
+    cmd: ["git", ...args],
+    cwd,
+    env: { ...childCommandEnvironment(), GIT_TERMINAL_PROMPT: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  if (exitCode === 0) return stdout;
+  throw actionable(`Fixture Git ${args[0]} failed: ${firstFailure(stdout, stderr)}`, "Check the local Git installation, then retry worktree Setup verification.");
+}
+
+async function createWorktreeSetupWorkspace(socket, evidenceDirectory, record, deadline) {
+  const workspace = await socket.rpc("workspace.create", {
+    name: `Verify worktree Setup ${record.id.slice(-8)}`,
+    path: record.sourceRepositoryPath,
+  }, deadline);
+  if (!isOwnedWorktreeSetupWorkspace(workspace, record)) {
+    throw actionable("workspace.create did not return the owned fixture workspace", "Run worktree-setup-cleanup with --confirm-cleanup, inspect runtime diagnostics, then retry.");
+  }
+  record.workspaceId = workspace.id;
+  writeWorktreeSetupActiveRun(evidenceDirectory, record);
+  return workspace;
+}
+
+async function saveWorktreeSetupConfiguration(socket, workspaceId, deadline) {
+  const saved = await socket.rpc("workspace.environment.save", {
+    workspaceId,
+    sourceRevision: null,
+    document: {
+      version: "0.0.1",
+      setup: { default: `bun ${WORKTREE_SETUP_SCRIPT_FILE}` },
+      actions: [],
+    },
+  }, deadline);
+  if (saved?.status === "present" && saved?.document?.setup?.default === `bun ${WORKTREE_SETUP_SCRIPT_FILE}`) return;
+  throw actionable("workspace.environment.save did not retain the automatic Setup script", "Run worktree-setup-cleanup with --confirm-cleanup, then retry.");
+}
+
+function worktreeSetupFixtureScript() {
+  const expectedContents = JSON.stringify(WORKTREE_SETUP_SOURCE_FILES);
+  return [
+    'import * as fs from "node:fs";',
+    'import * as child from "node:child_process";',
+    `const expectedContents = ${expectedContents};`,
+    `const expectedFiles = JSON.parse(fs.readFileSync("${WORKTREE_SETUP_MANIFEST_FILE}", "utf8"));`,
+    'const trackedFiles = child.execFileSync("git", ["ls-files"], { encoding: "utf8" }).trim().split(/\\r?\\n/).filter(Boolean).sort();',
+    'if (JSON.stringify(trackedFiles) !== JSON.stringify(expectedFiles)) throw new Error("checkout fixture is incomplete");',
+    'for (const path of expectedFiles) if (!fs.existsSync(path)) throw new Error("checkout fixture is incomplete");',
+    'for (const [path, contents] of Object.entries(expectedContents)) if (fs.readFileSync(path, "utf8") !== contents) throw new Error("checkout fixture is incomplete");',
+    `fs.writeFileSync("${WORKTREE_SETUP_MARKER}", "ready\\n");`,
+    'await new Promise(() => {});',
+    '',
+  ].join("\n");
+}
+
+async function createWorktreeSetupThread(socket, workspaceId, deadline) {
+  const thread = await socket.rpc("agent.createAndSend", {
+    workspaceId,
+    content: "Verify automatic Setup checkout readiness.",
+    model: "claude-sonnet-4-6",
+    provider: "claude",
+    permissionMode: "full",
+    mode: "worktree",
+    branch: "main",
+  }, deadline);
+  if (
+    typeof thread?.id !== "string" ||
+    typeof thread?.worktree_path !== "string" ||
+    thread.mode !== "worktree" ||
+    thread.worktree_managed !== true ||
+    thread.runtimeSnapshot?.phase !== "idle"
+  ) {
+    throw actionable("agent.createAndSend did not retain a queued managed worktree turn", "Run worktree-setup-cleanup with --confirm-cleanup, inspect runtime diagnostics, then retry.");
+  }
+  return thread;
+}
+
+function recordWorktreeSetupThread(evidenceDirectory, record, thread) {
+  record.threadId = thread.id;
+  record.worktreePath = thread.worktree_path;
+  writeWorktreeSetupActiveRun(evidenceDirectory, record);
+}
+
+async function proveWorktreeSetup(socket, record, deadline) {
+  const automatic = await waitForRunningAutomaticSetup(socket, record.threadId, deadline);
+  if (!isRunningWorktreeSetup(automatic, record.worktreePath) || !hasQueuedFirstTurn(automatic)) {
+    throw actionable("Automatic Setup did not remain active with its first Turn queued", "Run worktree-setup-cleanup with --confirm-cleanup, inspect runtime diagnostics, then retry.");
+  }
+  const markerWritten = await waitFor(() => hasCompleteWorktreeCheckout(record.worktreePath), deadline);
+  if (!markerWritten) {
+    throw actionable("Automatic Setup did not write its checkout proof marker before the live deadline", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect automatic Setup execution.");
+  }
+  assertCompleteWorktreeCheckout(record.worktreePath);
+  const settledAutomatic = await socket.rpc("workspace.environment.automaticSetup.get", { threadId: record.threadId }, deadline);
+  if (!isRunningWorktreeSetup(settledAutomatic, record.worktreePath) || !hasQueuedFirstTurn(settledAutomatic)) {
+    throw actionable("Automatic Setup released its first Turn before cleanup", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect automatic Setup execution.");
+  }
+  const running = await socket.rpc("agent.listRunning", {}, deadline);
+  if (!hasNoRuntimeForThread(running, record.threadId)) {
+    throw actionable("The queued first Turn reached an agent runtime", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect automatic Setup execution.");
+  }
+  return {
+    automaticSetupState: settledAutomatic.attempt.state,
+    checkoutPathMatchesWorktree: true,
+    trackedFixtureFiles: WORKTREE_SETUP_TRACKED_FILES.length,
+    proofMarker: true,
+    firstTurnQueued: true,
+  };
+}
+
+function isRunningWorktreeSetup(automatic, worktreePath) {
+  if (automatic?.gate !== "blocked") return false;
+  if (automatic.attempt?.state !== "running") return false;
+  return pathsMatch(automatic.attempt.snapshot?.checkoutPath, worktreePath);
+}
+
+function hasQueuedFirstTurn(automatic) {
+  if (!Array.isArray(automatic?.queuedTurns)) return false;
+  if (automatic.queuedTurns.length !== 1) return false;
+  return automatic.queuedTurns[0]?.state === "queued";
+}
+
+function hasNoRuntimeForThread(running, threadId) {
+  return Array.isArray(running) && !running.some((snapshot) => snapshot?.threadId === threadId);
+}
+
+async function waitForRunningAutomaticSetup(socket, threadId, deadline) {
+  while (Date.now() < deadline) {
+    const automatic = await socket.rpc("workspace.environment.automaticSetup.get", { threadId }, deadline);
+    if (automatic?.attempt?.state === "running") return automatic;
+    if (["awaiting-approval", "failed", "interrupted"].includes(automatic?.attempt?.state)) {
+      throw actionable(`Automatic Setup reached ${automatic.attempt.state}`, "Run worktree-setup-cleanup with --confirm-cleanup, inspect runtime diagnostics, then retry.");
+    }
+    await delayUntil(deadline);
+  }
+  throw actionable("Automatic Setup did not begin before the 120-second live deadline", "Run worktree-setup-cleanup with --confirm-cleanup, inspect runtime diagnostics, then retry.");
+}
+
+function assertCompleteWorktreeCheckout(worktreePath) {
+  if (hasCompleteWorktreeCheckout(worktreePath)) return;
+  throw actionable("Automatic Setup ran before the fixture checkout was complete", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect the worktree creation flow.");
+}
+
+function hasCompleteWorktreeCheckout(worktreePath) {
+  for (const relativePath of WORKTREE_SETUP_TRACKED_FILES) {
+    if (!NodeFS.existsSync(NodePath.join(worktreePath, relativePath))) return false;
+  }
+  for (const [relativePath, expected] of Object.entries(WORKTREE_SETUP_SOURCE_FILES)) {
+    const path = NodePath.join(worktreePath, relativePath);
+    if (!NodeFS.existsSync(path) || NodeFS.readFileSync(path, "utf8") !== expected) return false;
+  }
+  const marker = NodePath.join(worktreePath, WORKTREE_SETUP_MARKER);
+  return NodeFS.existsSync(marker) && NodeFS.readFileSync(marker, "utf8") === "ready\n";
+}
+
+async function cleanupWorktreeSetupRun(socket, evidenceDirectory, record, deadline) {
+  const cleanup = {
+    attempted: true,
+    threadDeleted: null,
+    worktreeRemoved: null,
+    workspaceDeleted: null,
+    sourceRepositoryRemoved: false,
+    failure: null,
+  };
+  if (socket) await removeWorktreeSetupRuntimeResources(socket, evidenceDirectory, record, cleanup, deadline);
+  if (!socket && record.workspaceId) {
+    throw actionable("The runtime connection ended before generated state could be removed", "Run worktree-setup-cleanup with --confirm-cleanup after the runtime is healthy.");
+  }
+  await removeOwnedFixtureWorktrees(evidenceDirectory, record, cleanup);
+  await removeOwnedWorktreeSetupRunDirectory(evidenceDirectory, record, deadline);
+  removeWorktreeSetupActiveRun(evidenceDirectory);
+  cleanup.sourceRepositoryRemoved = true;
+  return cleanup;
+}
+
+async function removeWorktreeSetupRuntimeResources(socket, evidenceDirectory, record, cleanup, deadline) {
+  const workspace = await findOwnedWorktreeSetupWorkspace(socket, record, deadline);
+  if (!workspace) return;
+  record.workspaceId = workspace.id;
+  writeWorktreeSetupActiveRun(evidenceDirectory, record);
+  await removeOwnedWorktreeSetupThreads(socket, workspace.id, cleanup, deadline);
+  const workspaceDeleted = await socket.rpc("workspace.forceDelete", { id: workspace.id }, deadline);
+  if (workspaceDeleted !== true) throw actionable("workspace.forceDelete did not confirm removal of the generated workspace", "Run worktree-setup-cleanup with --confirm-cleanup after the runtime is healthy.");
+  cleanup.workspaceDeleted = true;
+}
+
+async function findOwnedWorktreeSetupWorkspace(socket, record, deadline) {
+  const workspaces = await socket.rpc("workspace.list", {}, deadline);
+  if (!Array.isArray(workspaces)) throw actionable("workspace.list returned an unexpected value during cleanup", "Run worktree-setup-cleanup with --confirm-cleanup after the runtime is healthy.");
+  const owned = workspaces.filter((workspace) => isOwnedWorktreeSetupWorkspace(workspace, record));
+  if (owned.length === 0) return null;
+  if (owned.length === 1) return owned[0];
+  throw actionable("The retained worktree Setup run matches multiple workspaces", "Inspect the verifier evidence before cleanup. Do not delete a workspace by guesswork.");
+}
+
+async function removeOwnedWorktreeSetupThreads(socket, workspaceId, cleanup, deadline) {
+  const threads = await socket.rpc("thread.list", { workspaceId }, deadline);
+  if (!Array.isArray(threads) || threads.some((thread) => typeof thread?.id !== "string")) {
+    throw actionable("thread.list returned an unexpected value during cleanup", "Run worktree-setup-cleanup with --confirm-cleanup after the runtime is healthy.");
+  }
+  for (const thread of threads) {
+    const deleted = await socket.rpc("thread.delete", { threadId: thread.id, cleanupWorktree: true }, deadline);
+    if (deleted !== true) throw actionable("thread.delete did not confirm removal of a generated thread", "Run worktree-setup-cleanup with --confirm-cleanup after the runtime is healthy.");
+  }
+  const removed = await waitForAsync(async () => {
+    const remaining = await socket.rpc("thread.list", { workspaceId }, deadline);
+    return Array.isArray(remaining) && remaining.length === 0;
+  }, deadline);
+  if (!removed) throw actionable("Generated thread cleanup did not finish before the live deadline", "Run worktree-setup-cleanup with --confirm-cleanup after the runtime is healthy.");
+  cleanup.threadDeleted = true;
+}
+
+function isOwnedWorktreeSetupWorkspace(workspace, record) {
+  return typeof workspace?.id === "string"
+    && workspace.id.length > 0
+    && typeof workspace.path === "string"
+    && pathsMatch(workspace.path, record.sourceRepositoryPath);
+}
+
+async function removeOwnedFixtureWorktrees(evidenceDirectory, record, cleanup) {
+  if (!NodeFS.existsSync(NodePath.join(record.sourceRepositoryPath, ".git"))) return;
+  const listed = await runFixtureGit(record.sourceRepositoryPath, ["worktree", "list", "--porcelain"]);
+  const worktrees = fixtureWorktreePaths(listed).filter((path) => !pathsMatch(path, record.sourceRepositoryPath));
+  for (const worktreePath of worktrees) {
+    assertOwnedFixtureWorktreePath(evidenceDirectory, worktreePath);
+    await runFixtureGit(record.sourceRepositoryPath, ["worktree", "remove", "--force", worktreePath]);
+  }
+  const remaining = fixtureWorktreePaths(await runFixtureGit(record.sourceRepositoryPath, ["worktree", "list", "--porcelain"]));
+  if (remaining.some((path) => !pathsMatch(path, record.sourceRepositoryPath))) {
+    throw actionable("A generated fixture worktree remains after cleanup", "Run worktree-setup-cleanup with --confirm-cleanup after the runtime is idle.");
+  }
+  cleanup.worktreeRemoved = true;
+}
+
+function fixtureWorktreePaths(output) {
+  return output.split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length));
+}
+
+function assertOwnedFixtureWorktreePath(evidenceDirectory, worktreePath) {
+  const devDirectory = NodePath.resolve(evidenceDirectory, "..", "..");
+  if (NodePath.isAbsolute(worktreePath) && isPathInside(NodePath.resolve(worktreePath), devDirectory)) return;
+  throw actionable("The owned fixture repository references a worktree outside .dev", "Inspect the verifier evidence before cleanup.");
+}
+
+async function worktreeSetupCleanup(repoRoot) {
+  const evidenceDirectory = ensureEvidenceDirectory(repoRoot);
+  const record = readWorktreeSetupActiveRun(evidenceDirectory);
+  if (!record) return { command: "worktree-setup-cleanup", activeRunRemoved: false };
+  await health(repoRoot);
+  const socket = await openSocket(repoRoot, readRuntime(repoRoot));
+  try {
+    const cleanup = await cleanupWorktreeSetupRun(socket, evidenceDirectory, record, Date.now() + LIVE_TIMEOUT_MS);
+    return { command: "worktree-setup-cleanup", activeRunRemoved: true, cleanup };
+  } finally {
+    await socket.close();
+  }
+}
+
+function writeWorktreeSetupReceipt(repoRoot, receiptPath, report) {
+  const receipt = {
+    ok: report.failure === null && report.cleanup.failure === null,
+    command: report.command,
+    checkout: report.checkout,
+    cleanup: report.cleanup,
+    failure: report.failure,
+  };
+  NodeFS.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  return {
+    exitCode: receipt.ok ? 0 : 1,
+    output: { ...receipt, receiptPath: relativeTo(repoRoot, receiptPath) },
+  };
+}
+
+function writeWorktreeSetupActiveRun(evidenceDirectory, record) {
+  assertWorktreeSetupRunRecord(evidenceDirectory, record);
+  const path = worktreeSetupActiveRunPath(evidenceDirectory);
+  assertWorktreeSetupActiveRunFile(path);
+  const temporaryPath = `${path}.${process.pid}.${NodeCrypto.randomUUID()}.tmp`;
+  try {
+    NodeFS.writeFileSync(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    assertWorktreeSetupActiveRunFile(path);
+    NodeFS.renameSync(temporaryPath, path);
+  } finally {
+    NodeFS.rmSync(temporaryPath, { force: true });
+  }
+}
+
+function readWorktreeSetupActiveRun(evidenceDirectory) {
+  const path = worktreeSetupActiveRunPath(evidenceDirectory);
+  if (!assertWorktreeSetupActiveRunFile(path)) return null;
+  let record;
+  try {
+    record = JSON.parse(NodeFS.readFileSync(path, "utf8"));
+  } catch {
+    throw actionable("The retained worktree Setup run record is not valid JSON", "Inspect the verifier evidence before cleanup.");
+  }
+  return assertWorktreeSetupRunRecord(evidenceDirectory, record);
+}
+
+function removeWorktreeSetupActiveRun(evidenceDirectory) {
+  const path = worktreeSetupActiveRunPath(evidenceDirectory);
+  if (!assertWorktreeSetupActiveRunFile(path)) return;
+  NodeFS.rmSync(path);
+}
+
+function worktreeSetupActiveRunPath(evidenceDirectory) {
+  return NodePath.join(evidenceDirectory, WORKTREE_SETUP_ACTIVE_RUN_FILE);
+}
+
+function assertWorktreeSetupActiveRunFile(path) {
+  let status;
+  try {
+    status = NodeFS.lstatSync(path);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+  if (status.isSymbolicLink() || !status.isFile()) {
+    throw actionable("The retained worktree Setup run record is not a regular file", "Inspect the verifier evidence before cleanup.");
+  }
+  return true;
+}
+
+function assertWorktreeSetupRunRecord(evidenceDirectory, record) {
+  assertWorktreeSetupRunShape(record);
+  assertWorktreeSetupRunIdentity(record);
+  assertWorktreeSetupRunThread(record);
+  assertWorktreeSetupRunDirectory(evidenceDirectory, record);
+  return record;
+}
+
+function assertWorktreeSetupRunShape(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw actionable("The retained worktree Setup run record must be an object", "Inspect the verifier evidence before cleanup.");
+  }
+  const keys = ["id", "runDirectory", "sourceRepositoryPath", "threadId", "workspaceId", "worktreePath"];
+  if (Object.keys(record).sort().join(",") !== keys.sort().join(",")) {
+    throw actionable("The retained worktree Setup run record has an unexpected shape", "Inspect the verifier evidence before cleanup.");
+  }
+}
+
+function assertWorktreeSetupRunIdentity(record) {
+  if (!isWorktreeSetupRunId(record.id) || !isAbsolutePath(record.runDirectory) || !isAbsolutePath(record.sourceRepositoryPath)) {
+    throw actionable("The retained worktree Setup run record has invalid paths or identity", "Inspect the verifier evidence before cleanup.");
+  }
+  if (!isOptionalWorktreeSetupId(record.workspaceId) || !isOptionalWorktreeSetupId(record.threadId)) {
+    throw actionable("The retained worktree Setup run record has invalid workspace or thread identity", "Inspect the verifier evidence before cleanup.");
+  }
+}
+
+function assertWorktreeSetupRunThread(record) {
+  if (!isOptionalAbsolutePath(record.worktreePath)) {
+    throw actionable("The retained worktree Setup run record has an invalid worktree identity", "Inspect the verifier evidence before cleanup.");
+  }
+  if (record.threadId === null && record.worktreePath !== null) {
+    throw actionable("The retained worktree Setup run record has an invalid worktree identity", "Inspect the verifier evidence before cleanup.");
+  }
+  if (record.threadId !== null && record.worktreePath === null) {
+    throw actionable("The retained worktree Setup run record has an invalid worktree identity", "Inspect the verifier evidence before cleanup.");
+  }
+  if (record.workspaceId !== null) return;
+  if (record.threadId === null) return;
+  throw actionable("The retained worktree Setup run record has a thread without its workspace", "Inspect the verifier evidence before cleanup.");
+}
+
+function assertWorktreeSetupRunDirectory(evidenceDirectory, record) {
+  const runsDirectory = NodePath.resolve(evidenceDirectory, "runs");
+  const expectedRunDirectory = NodePath.resolve(runsDirectory, record.id);
+  const expectedSourcePath = NodePath.resolve(expectedRunDirectory, "source");
+  if (!pathsMatch(record.runDirectory, expectedRunDirectory)) {
+    throw actionable("The retained worktree Setup run record points outside its owned fixture directory", "Inspect the verifier evidence before cleanup.");
+  }
+  if (!pathsMatch(record.sourceRepositoryPath, expectedSourcePath)) {
+    throw actionable("The retained worktree Setup run record points outside its owned fixture directory", "Inspect the verifier evidence before cleanup.");
+  }
+}
+
+function isWorktreeSetupRunId(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9-]{36}$/i.test(value);
+}
+
+function isOptionalWorktreeSetupId(value) {
+  return value === null || (typeof value === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(value));
+}
+
+function isOptionalAbsolutePath(value) {
+  return value === null || isAbsolutePath(value);
+}
+
+function isAbsolutePath(value) {
+  return typeof value === "string" && NodePath.isAbsolute(value);
+}
+
+function assertDirectoryIsNotLinked(path, label) {
+  const status = NodeFS.lstatSync(path);
+  if (status.isSymbolicLink() || !status.isDirectory()) {
+    throw actionable(`The ${label} is not a real directory`, "Replace it with a directory inside .dev, then retry.");
+  }
+}
+
+async function removeOwnedWorktreeSetupRunDirectory(evidenceDirectory, record, deadline) {
+  assertWorktreeSetupRunRecord(evidenceDirectory, record);
+  const runsDirectory = NodePath.join(evidenceDirectory, "runs");
+  assertDirectoryIsNotLinked(runsDirectory, "worktree Setup runs directory");
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      if (NodeFS.existsSync(record.runDirectory)) {
+        assertDirectoryIsNotLinked(record.runDirectory, "worktree Setup run directory");
+        NodeFS.rmSync(record.runDirectory, { recursive: true, force: true });
+      }
+      if (NodeFS.readdirSync(runsDirectory).length === 0) NodeFS.rmdirSync(runsDirectory);
+      return;
+    } catch (error) {
+      if (!isRetryableRunRemovalError(error)) throw error;
+      lastError = error;
+      await delayUntil(deadline);
+    }
+  }
+  throw lastError ?? actionable("The generated worktree Setup run directory could not be removed", "Run worktree-setup-cleanup with --confirm-cleanup after the runtime is idle.");
+}
+
+function isRetryableRunRemovalError(error) {
+  return error && typeof error === "object" && "code" in error && ["EBUSY", "ENOTEMPTY", "EPERM"].includes(error.code);
 }
 
 function createLiveArtifacts(repoRoot, options) {
@@ -740,7 +1302,7 @@ function cleanup(repoRoot) {
 function isHarnessEvidenceFile(name) {
   const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/;
   if (!timestamp.test(name)) return false;
-  return /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:completion|stop)-(?:receipt\.json|timeline\.html)|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:focused-agent-runtime|verify-changed|lint-fast)\.log)$/.test(name);
+  return /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:completion|stop)-(?:receipt\.json|timeline\.html)|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-worktree-setup-receipt\.json|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:focused-agent-runtime|verify-changed|lint-fast)\.log)$/.test(name);
 }
 
 function ensureEvidenceDirectory(repoRoot) {
