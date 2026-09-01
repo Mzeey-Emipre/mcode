@@ -202,9 +202,10 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       (runtimeEvent) => runtimeEvent.event.type === AgentEventType.TurnStarted,
     ).length;
     expect(turnStartedCount, "turnStarted must be emitted exactly once").toBe(1);
-    expect(svc.getCurrentFileEffectTurnId(thread.id)).toMatch(/^\d+$/);
-
-    expect(svc.activeThreadIds()).toContain(thread.id);
+    expect(svc.runtimeAccess().runtimeSnapshots()).toContainEqual(expect.objectContaining({
+      threadId: thread.id,
+      phase: "running",
+    }));
 
     // Provider.sendTurn must have been invoked. Confirms the emit happened
     // during sendTurn flow, not via some other path.
@@ -221,11 +222,6 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     startAgentServiceIngressForTest(svc, );
     const workspace = workspaceRepo.create("test-ws", process.cwd());
     const thread = threadRepo.create(workspace.id, "Cursor Thread", "direct", "main", true, "cursor");
-    const serviceInternals = svc as unknown as {
-      terminalFinalizedThreads: Set<string>;
-    };
-    serviceInternals.terminalFinalizedThreads.add(thread.id);
-
     void svc.sendMessage({
       threadId: thread.id,
       content: "hello",
@@ -234,8 +230,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(serviceInternals.terminalFinalizedThreads.has(thread.id)).toBe(false);
-    expect(svc.activeThreadIds()).toContain(thread.id);
+    expect(svc.runtimeAccess().activeThreadIds()).toContain(thread.id);
     expect(providerStub.sendTurn).toHaveBeenCalledWith(expect.objectContaining({
       turnId: "canonical-cursor-turn",
     }));

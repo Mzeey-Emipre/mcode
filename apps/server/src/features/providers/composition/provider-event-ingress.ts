@@ -16,6 +16,7 @@ import {
   CODEX_PROVIDER_EVENT_ADAPTER,
   type ProviderEventAdapter,
 } from "./provider-event-adapter.js";
+import { normalizeProviderError } from "./provider-error-normalize.js";
 
 const MAX_PENDING_PROVIDER_EVENTS = 1_024;
 const MAX_CANONICAL_EVENT_IDENTITIES = 16_384;
@@ -255,7 +256,10 @@ export class ProviderEventIngress {
       });
       return true;
     }
-    return this.enqueue({ ...event, event: projection.event });
+    const normalized = projection.event.type === "error"
+      ? { ...projection.event, error: normalizeProviderError(event.providerId, projection.event.error ?? "") }
+      : projection.event;
+    return this.enqueue({ ...event, event: normalized });
   }
 
   private adapterFor(providerId: ProviderId): ProviderEventAdapter | undefined {
