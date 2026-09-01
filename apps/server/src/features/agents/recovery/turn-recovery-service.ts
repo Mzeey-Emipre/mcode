@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import { CanonicalAgentBoundary } from "../canonical/canonical-agent-boundary.js";
 import { MessageRepo } from "../conversation/persistence/message-repo.js";
@@ -7,7 +8,7 @@ import { deriveTurnAssistantMessageId } from "../turns/turn-assistant-message-id
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import type { SendMessageCommand } from "../orchestration/agent-service.js";
-import type { TurnRecovery } from "@mcode/contracts";
+import type { RecoveryIncident } from "@mcode/contracts";
 
 const UNPROVED_EXECUTION_REASON =
   "The provider could not prove that this execution was still active after restart.";
@@ -15,6 +16,8 @@ const UNPROVED_EXECUTION_REASON =
 /** Reconciles durable turn checkpoints after a server process restart. */
 @injectable()
 export class TurnRecoveryService {
+  private currentIncident: RecoveryIncident | null = null;
+
   constructor(
     @inject(CanonicalAgentBoundary) private readonly canonicalSink: CanonicalAgentBoundary,
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -30,9 +33,19 @@ export class TurnRecoveryService {
     this.parentAssistantTextCheckpoints.importRecoveryJournals();
     this.reopenMaterializableTerminalCheckpoints();
     this.parentAssistantTextCheckpoints.retireTerminalCheckpoints();
-    return { interrupted: this.canonicalSink.listUnfinishedCheckpoints().map(
-      (checkpoint) => this.interruptUnfinishedCheckpoint(checkpoint),
-    ) };
+    const checkpoints = this.canonicalSink.listUnfinishedCheckpoints();
+    if (checkpoints.length === 0) {
+      this.currentIncident = null;
+      return { interrupted: [] };
+    }
+    const incident = { id: NodeCrypto.randomUUID(), createdAt: new Date().toISOString() };
+    const interrupted = checkpoints.map((checkpoint) => this.interruptUnfinishedCheckpoint(checkpoint, incident.id));
+    const entries = this.canonicalSink.listRecoveryIncidentEntries(incident.id).map((entry) => ({
+      ...entry,
+      durationMs: this.durationMs(entry.startedAt, entry.interruptedAt),
+    }));
+    this.currentIncident = entries.length > 0 ? { ...incident, entries } : null;
+    return { interrupted };
   }
 
   private reopenMaterializableTerminalCheckpoints(): void {
@@ -51,6 +64,7 @@ export class TurnRecoveryService {
 
   private interruptUnfinishedCheckpoint(
     checkpoint: ReturnType<CanonicalAgentBoundary["listUnfinishedCheckpoints"]>[number],
+    recoveryIncidentId: string,
   ): string {
     const checkpointChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId);
     const canonicalAssistant = this.canonicalSink.loadTerminalProjection(checkpoint.turnId).message;
@@ -70,6 +84,7 @@ export class TurnRecoveryService {
       stagedAssistant,
       this.persistInterruptedNarrative(recoveredNarrative.length),
       recoveredNarrative,
+      recoveryIncidentId,
     );
     this.retireRecoveredChunks(checkpoint.executionId, checkpointChunks.length);
     this.threadRepo.updateStatus(checkpoint.threadId, "interrupted");
@@ -127,17 +142,17 @@ export class TurnRecoveryService {
     return staged;
   }
 
-  /** List explicit actions for interrupted and errored executions. */
-  listRecoveries(): TurnRecovery[] {
-    return this.canonicalSink.listInterruptedCheckpoints().map((checkpoint) => ({
-      threadId: checkpoint.threadId,
-      executionId: checkpoint.executionId,
-      acceptedThrough: checkpoint.lastAcceptedSequence,
-      durableThrough: checkpoint.lastDurableSequence,
-      phase: checkpoint.phase,
-      error: checkpoint.error,
-      actions: ["retry" as const],
-    }));
+  /** Read the immutable incident created by this server startup. */
+  currentRecoveryIncident(): RecoveryIncident | null {
+    return this.currentIncident;
+  }
+
+  private durationMs(startedAt: string, interruptedAt: string): number {
+    const durationMs = Date.parse(interruptedAt) - Date.parse(startedAt);
+    if (!Number.isFinite(durationMs)) {
+      throw new Error(`Recovery incident has invalid turn timestamps: ${startedAt}, ${interruptedAt}`);
+    }
+    return Math.max(0, durationMs);
   }
 
   /** Dispatch an interrupted turn's accepted user input as a new provider execution. */
@@ -145,10 +160,10 @@ export class TurnRecoveryService {
     executionId: string,
     dispatch: (command: SendMessageCommand) => Promise<void>,
   ): Promise<void> {
-    const checkpoint = this.canonicalSink
-      .listInterruptedCheckpoints()
-      .find((candidate) => candidate.executionId === executionId);
-    if (!checkpoint) throw new Error(`Recoverable execution not found: ${executionId}`);
+    const checkpoint = this.canonicalSink.loadCheckpoint(executionId);
+    if (!checkpoint || !["interrupted", "errored"].includes(checkpoint.phase)) {
+      throw new Error(`Recoverable execution not found: ${executionId}`);
+    }
     const message = this.canonicalSink.loadUserMessage(checkpoint.turnId);
     if (!message) throw new Error(`Accepted user input not found: ${executionId}`);
     const thread = this.threadRepo.findById(checkpoint.threadId);

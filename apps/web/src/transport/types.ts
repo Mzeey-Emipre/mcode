@@ -90,7 +90,7 @@ import type {
   SendMessageInput,
   CreateAndSendInput,
   AgentStopResult,
-  TurnRecovery,
+  RecoveryIncident,
   TerminalBackendCapabilities,
   TerminalCustomProfile,
   TerminalPreferencesUpdate,
@@ -403,8 +403,8 @@ export interface McodeTransport {
 
   // Agent commands
   sendMessage(input: SendMessageInput): Promise<void>;
-  /** List interrupted executions and their capability-safe recovery actions. */
-  listTurnRecoveries(): Promise<TurnRecovery[]>;
+  /** Read the current restart-scoped recovery incident. */
+  getRecoveryIncident(): Promise<RecoveryIncident | null>;
   /** Retry one interrupted turn as a fresh provider execution. */
   retryTurn(executionId: string): Promise<void>;
   createAndSendMessage(input: CreateAndSendInput): Promise<CreateAndSendResult>;

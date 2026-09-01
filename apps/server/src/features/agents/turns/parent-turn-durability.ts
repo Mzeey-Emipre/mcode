@@ -71,6 +71,7 @@ export interface ParentNarrativeRecoveryCommit {
 export interface ParentTurnInterruptionInput {
   executionId: string;
   reason: string;
+  recoveryIncidentId?: string;
   stagedAssistant?: Message;
   finalizeCompatibility?: (
     assistant: Message,
@@ -92,6 +93,7 @@ export interface ParentTurnDurability {
       narrative: readonly ParentNarrativeRecoveryItem[],
     ) => void,
     recoveredNarrative?: readonly ParentNarrativeRecoveryItem[],
+    recoveryIncidentId?: string,
   ): ParentTurnCommitResult;
   loadTurnByExecution(executionId: string): AgentTurn | null;
   loadThread(threadId: string): AgentThread | null;

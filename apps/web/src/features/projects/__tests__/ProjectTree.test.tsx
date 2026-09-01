@@ -193,6 +193,7 @@ afterEach(() => {
 // Import after mocks are registered.
 import { useWorkspaceStore } from "../state/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useRecoveryIncidentStore } from "@/features/recovery/state/recoveryIncidentStore";
 import { prefetchOnPointerDown } from "@/features/conversation";
 import { ProjectTree } from "../ProjectTree";
 
@@ -1130,6 +1131,7 @@ describe("ProjectTree action-required indicator", () => {
     threadStoreOverrides.permissionsByThread = undefined;
     threadStoreOverrides.runningThreadIds = undefined;
     threadStoreOverrides.runtimeByThread = undefined;
+    useRecoveryIncidentStore.setState({ incident: null, dismissedIncidentIds: new Set<string>() });
     currentThread = makeThread({ id: "thread-pending", status: "active" });
     currentChecks = {};
     installWorkspaceMock();
@@ -1260,7 +1262,6 @@ describe("ProjectTree action-required indicator", () => {
 
   it.each([
     ["completed", "Completed", "--diff-add-strong"],
-    ["interrupted", "Interrupted", "bg-amber-500"],
     ["errored", "Errored", "--diff-remove-strong"],
   ] as const)(
     "shows the %s turn notification blob when a PR has checks",
@@ -1294,6 +1295,57 @@ describe("ProjectTree action-required indicator", () => {
       expect(blob.parentElement).toHaveClass("inline-flex");
     },
   );
+
+  it("shows interruption only for the exact recovery incident entry", () => {
+    currentThread = makeThread({
+      id: "thread-pending",
+      status: "interrupted",
+      mode: "worktree",
+      pr_number: 42,
+      pr_status: "open",
+    });
+    installWorkspaceMock();
+    useRecoveryIncidentStore.setState({
+      incident: {
+        id: "00000000-0000-4000-8000-000000000101",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        entries: [{
+          workspaceId: "ws-2",
+          workspaceName: "Other Project",
+          threadId: "other-thread",
+          threadTitle: "Other Thread",
+          executionId: "00000000-0000-4000-8000-000000000102",
+          startedAt: "2026-09-01T11:59:55.000Z",
+          interruptedAt: "2026-09-01T12:00:00.000Z",
+          durationMs: 5_000,
+        }],
+      },
+    });
+
+    render(<ProjectTree />);
+    expect(screen.queryByLabelText("Interrupted")).toBeNull();
+
+    act(() => {
+      useRecoveryIncidentStore.setState({
+        incident: {
+          id: "00000000-0000-4000-8000-000000000103",
+          createdAt: "2026-09-01T12:00:00.000Z",
+          entries: [{
+            workspaceId: "ws-1",
+            workspaceName: "Test Project",
+            threadId: "thread-pending",
+            threadTitle: "My Thread",
+            executionId: "00000000-0000-4000-8000-000000000104",
+            startedAt: "2026-09-01T11:59:55.000Z",
+            interruptedAt: "2026-09-01T12:00:00.000Z",
+            durationMs: 5_000,
+          }],
+        },
+      });
+    });
+
+    expect(screen.getByLabelText("Interrupted")).toBeVisible();
+  });
 
   it("keeps update time out of the thread row and shows it in hover details", async () => {
     const updatedAt = "2026-08-12T07:15:00.000Z";

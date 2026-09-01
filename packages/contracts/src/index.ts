@@ -288,10 +288,10 @@ export type { Thread, RecentThread, ThreadCheckoutState } from "./models/thread.
 
 export {
   MAX_TURN_RECOVERIES,
-  TurnRecoveryActionSchema,
-  TurnRecoverySchema,
+  RecoveryIncidentEntrySchema,
+  RecoveryIncidentSchema,
 } from "./models/turn-recovery.js";
-export type { TurnRecoveryAction, TurnRecovery } from "./models/turn-recovery.js";
+export type { RecoveryIncidentEntry, RecoveryIncident } from "./models/turn-recovery.js";
 
 export {
   MessageSchema,

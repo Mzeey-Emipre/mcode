@@ -15,6 +15,7 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "./state/workspaceStore";
+import { useRecoveryIncidentStore } from "@/features/recovery/state/recoveryIncidentStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
@@ -1043,12 +1044,18 @@ const ThreadRow = memo(function ThreadRow({
       && record?.runtimePhase === "running"
       && record.turnExecutionId === null;
   });
+  const isRecoveryInterrupted = useRecoveryIncidentStore((state) =>
+    state.incident?.entries.some((entry) =>
+      entry.workspaceId === thread.workspace_id && entry.threadId === thread.id,
+    ) ?? false,
+  );
   const presentation = createThreadRowPresentation(
     thread,
     checks,
     isRunning,
     isSetupRunning,
     hasPendingPermission,
+    isRecoveryInterrupted,
     worktreesLoadedFor,
     validWorktreePaths,
     availableProviders,
@@ -1136,6 +1143,7 @@ function createThreadRowPresentation(
   isRunning: boolean,
   isSetupRunning: boolean,
   hasPendingPermission: boolean,
+  isRecoveryInterrupted: boolean,
   worktreesLoadedFor: string | null,
   validWorktreePaths: Set<string>,
   availableProviders: ThreadRowProps["availableProviders"],
@@ -1146,6 +1154,7 @@ function createThreadRowPresentation(
     isRunning,
     isSetupRunning,
     hasPendingPermission,
+    isRecoveryInterrupted,
   });
   const showPrCi = shouldShowThreadPrCi(thread, checks, marker);
   const isUserCompleted = thread.user_completed_at !== null;

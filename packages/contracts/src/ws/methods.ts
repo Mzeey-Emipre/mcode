@@ -89,7 +89,7 @@ import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, Chec
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { AgentStopResultSchema, TurnRuntimeSnapshotSchema } from "../models/turn-runtime.js";
 import { CanonicalSubagentStopRequestSchema, CanonicalSubagentStopResultSchema } from "../models/canonical-subagent-roster.js";
-import { MAX_TURN_RECOVERIES, TurnRecoverySchema } from "../models/turn-recovery.js";
+import { RecoveryIncidentSchema } from "../models/turn-recovery.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
 import { PlanStatusSchema, PlanRecordSchema, PlanActionSchema } from "../models/plan-output.js";
 import { DiffStatsSchema } from "../models/diff-stats.js";
@@ -1004,10 +1004,10 @@ export const WS_METHODS = lazySchema(() => ({
     params: SendMessageSchema() as z.ZodType<SendMessageInput>,
     result: z.void(),
   },
-  /** List interrupted executions and their capability-safe user actions. */
-  "agent.recoveries": {
+  /** Read the current restart-scoped recovery incident, if one exists. */
+  "agent.recoveryIncident": {
     params: z.object({}).strict(),
-    result: z.array(TurnRecoverySchema()).max(MAX_TURN_RECOVERIES),
+    result: RecoveryIncidentSchema().nullable(),
   },
   /** Retry one interrupted execution as a new execution. */
   "agent.retry": {

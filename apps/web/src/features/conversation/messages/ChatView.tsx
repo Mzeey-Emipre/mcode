@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { SelectedTextComment, TurnRecovery } from "@mcode/contracts";
+import type { SelectedTextComment } from "@mcode/contracts";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { useRecoveryIncidentStore, useVisibleRecoveryIncident } from "@/features/recovery/state/recoveryIncidentStore";
 import { useReplyStore } from "@/stores/replyStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { getTransport } from "@/transport";
@@ -42,8 +43,9 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     value: null,
   });
   const [dismissedErrorState, setDismissedErrorState] = useState<DismissedSessionError | null>(null);
-  const [turnRecoveries, setTurnRecoveries] = useState<TurnRecovery[]>([]);
-  const [dismissedBannerEpoch, setDismissedBannerEpoch] = useState<number | null>(null);
+  const recoveryIncident = useVisibleRecoveryIncident();
+  const setRecoveryIncident = useRecoveryIncidentStore((store) => store.setIncident);
+  const dismissRecoveryIncident = useRecoveryIncidentStore((store) => store.dismissIncident);
   const threadEpochRef = useRef({ epoch: 0, threadId: state.activeThreadId });
   if (threadEpochRef.current.threadId !== state.activeThreadId) {
     threadEpochRef.current = {
@@ -52,15 +54,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     };
   }
   const threadEpoch = threadEpochRef.current.epoch;
-  const connectionEpochRef = useRef({ epoch: 0, status: state.connectionStatus });
-  if (connectionEpochRef.current.status !== state.connectionStatus) {
-    connectionEpochRef.current = {
-      epoch: connectionEpochRef.current.epoch + 1,
-      status: state.connectionStatus,
-    };
-  }
-  const connectionEpoch = connectionEpochRef.current.epoch;
-  const bannerDismissed = dismissedBannerEpoch === connectionEpoch;
   const visibleEditingThreadId = editingThreadState.threadEpoch === threadEpoch
     ? editingThreadState.value
     : null;
@@ -79,17 +72,17 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   } = state;
 
   useEffect(() => {
-    if (state.connectionStatus !== "connected" || bannerDismissed) return;
+    if (state.connectionStatus !== "connected") return;
     let cancelled = false;
-    void getTransport().listTurnRecoveries().then((recoveries) => {
-      if (!cancelled) setTurnRecoveries(recoveries);
+    void getTransport().getRecoveryIncident().then((incident) => {
+      if (!cancelled) setRecoveryIncident(incident);
     }).catch((error: unknown) => {
-      console.error("Failed to load turn recoveries", error);
+      console.error("Failed to load recovery incident", error);
     });
     return () => {
       cancelled = true;
     };
-  }, [state.connectionStatus, bannerDismissed]);
+  }, [setRecoveryIncident, state.connectionStatus]);
 
   const previousConnectionStatusRef = useRef(state.connectionStatus);
   useEffect(() => {
@@ -120,25 +113,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     previousThreadIdRef.current = state.activeThreadId;
   }, [state.activeThreadId]);
 
-  const handleRetryRecoveries = useCallback(async (threadIds: string[]) => {
-    setDismissedBannerEpoch(connectionEpoch);
-    const failedIds: string[] = [];
-    for (const threadId of threadIds) {
-      try {
-        const recovery = turnRecoveries.find((candidate) => candidate.threadId === threadId);
-        if (!recovery || !recovery.actions.includes("retry")) throw new Error("Retry is unavailable");
-        await getTransport().retryTurn(recovery.executionId);
-      } catch (error) {
-        console.error("Failed to retry recoverable thread", threadId, error);
-        failedIds.push(threadId);
-      }
-    }
-    const remainingRecoveries = turnRecoveries.filter((recovery) =>
-      !threadIds.includes(recovery.threadId) || failedIds.includes(recovery.threadId));
-    setTurnRecoveries(remainingRecoveries);
-    setDismissedBannerEpoch(remainingRecoveries.length === 0 ? connectionEpoch : null);
-  }, [connectionEpoch, turnRecoveries]);
-
   const handleBranch = useCallback((messageId: string) => {
     const activeThreadId = useWorkspaceStore.getState().activeThreadId;
     const message = activeThreadId
@@ -164,12 +138,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const consumeSelectedTextComment = useCallback(() => {
     setPendingSelectedTextCommentState({ threadEpoch, value: null });
   }, [threadEpoch]);
-  const handleContinue = useCallback(() => {
-    setPendingPrefill("Continue");
-  }, [setPendingPrefill]);
-  const handleRetry = useCallback((executionId: string) => {
-    void getTransport().retryTurn(executionId);
-  }, []);
   const handleStopSafely = useCallback(async () => {
     if (state.activeThreadId) await useThreadStore.getState().stopAgent(state.activeThreadId);
   }, [state.activeThreadId]);
@@ -195,8 +163,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     onSelectedTextComment: handleSelectedTextComment,
     onSelectedTextCommentConsumed: consumeSelectedTextComment,
     onPromptSelect: setPendingPrefill,
-    onContinue: handleContinue,
-    onRetry: handleRetry,
     onStopSafely: handleStopSafely,
     onContinueWithoutSaving: handleContinueWithoutSaving,
     onDismissCliError: handleDismissCliError,
@@ -206,26 +172,19 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   }), [
     consumeSelectedTextComment,
     handleBranch,
-    handleContinue,
     handleContinueWithoutSaving,
     handleDismissCliError,
     handleExitForkMode,
     handleOpenSettings,
     handleReply,
-    handleRetry,
     handleSaveTitle,
     handleSelectedTextComment,
     handleStopSafely,
     setPendingPrefill,
   ]);
   const recovery: ChatRecoveryBannerState = {
-    turnRecoveries,
-    bannerDismissed,
-    onRetry: handleRetryRecoveries,
-    onDismiss: () => {
-      setDismissedBannerEpoch(connectionEpoch);
-      setTurnRecoveries([]);
-    },
+    incident: recoveryIncident,
+    onDismiss: dismissRecoveryIncident,
   };
 
   // No `key` here: a remount would discard the virtualizer state owned by MessageList.

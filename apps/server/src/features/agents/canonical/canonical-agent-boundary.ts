@@ -145,6 +145,17 @@ export interface CanonicalAgentCommitInput {
   persistCheckpoint?: boolean;
 }
 
+/** One visible entry in a restart-scoped recovery incident. */
+export interface CanonicalRecoveryIncidentEntry {
+  workspaceId: string;
+  workspaceName: string;
+  threadId: string;
+  threadTitle: string;
+  executionId: string;
+  startedAt: string;
+  interruptedAt: string;
+}
+
 /** Observable result after one canonical batch commits. */
 export interface CanonicalAgentCommitResult extends ParentTurnCommitResult {
   outcome: "committed" | "duplicate" | "conflict" | "terminal-outcome-confirmed" | "ingest-overflow";
@@ -451,6 +462,8 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       loadThread: (threadId) => this.loadThread(threadId),
       loadTerminalProjection: (turnId) => this.loadTerminalProjection(turnId),
       interruptedNarrativeEvents: (input) => this.interruptedNarrativeProjectionEvents(input),
+      stampRecoveryIncident: (executionId, recoveryIncidentId) =>
+        this.stampRecoveryIncident(executionId, recoveryIncidentId),
     });
     this.reads = new CanonicalAgentReadRepository(db, {
       loadState: (threadId) => this.loadState(threadId),
@@ -799,6 +812,53 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       }
       return true;
     })();
+  }
+
+  /** Load the visible entries for one restart-scoped recovery incident. */
+  listRecoveryIncidentEntries(recoveryIncidentId: string): CanonicalRecoveryIncidentEntry[] {
+    const rows = this.db.prepare(`
+      SELECT
+        workspace.id AS workspace_id,
+        workspace.name AS workspace_name,
+        thread.id AS thread_id,
+        thread.title AS thread_title,
+        checkpoint.execution_id,
+        turn.started_at,
+        turn.ended_at
+      FROM canonical_agent_ingest_checkpoints checkpoint
+      JOIN canonical_agent_turns turn ON turn.id = checkpoint.turn_id
+      JOIN threads thread ON thread.id = checkpoint.thread_id
+      JOIN workspaces workspace ON workspace.id = thread.workspace_id
+      WHERE checkpoint.recovery_incident_id = ?
+        AND checkpoint.terminal_outcome = 'interrupted'
+        AND checkpoint.phase = 'interrupted'
+        AND turn.status = 'Interrupted'
+        AND thread.user_completed_at IS NULL
+        AND turn.started_at IS NOT NULL
+        AND turn.ended_at IS NOT NULL
+      ORDER BY turn.ended_at ASC, checkpoint.execution_id ASC
+      LIMIT ?
+    `).all(recoveryIncidentId, MAX_TURN_RECOVERIES + 1) as Array<{
+      workspace_id: string;
+      workspace_name: string;
+      thread_id: string;
+      thread_title: string;
+      execution_id: string;
+      started_at: string;
+      ended_at: string;
+    }>;
+    if (rows.length > MAX_TURN_RECOVERIES) {
+      throw new Error(`Recovery incident exceeds ${MAX_TURN_RECOVERIES} entries`);
+    }
+    return rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      workspaceName: row.workspace_name,
+      threadId: row.thread_id,
+      threadTitle: row.thread_title,
+      executionId: row.execution_id,
+      startedAt: row.started_at,
+      interruptedAt: row.ended_at,
+    }));
   }
 
   /** Load interrupted checkpoints that permit an explicit recovery action. */
@@ -1887,6 +1947,7 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       narrative: readonly ParentNarrativeRecoveryItem[],
     ) => void,
     recoveredNarrative: readonly ParentNarrativeRecoveryItem[] = [],
+    recoveryIncidentId?: string,
   ): CanonicalAgentCommitResult {
     return this.parentLifecycle.interrupt({
       executionId,
@@ -1894,6 +1955,7 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       stagedAssistant,
       finalizeCompatibility,
       recoveredNarrative,
+      recoveryIncidentId,
     } satisfies ParentTurnInterruptionInput);
   }
 
@@ -3111,6 +3173,18 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       checkpoint.error,
       checkpoint.updatedAt,
     );
+  }
+
+  private stampRecoveryIncident(executionId: string, recoveryIncidentId: string): void {
+    const stamped = this.db.prepare(`
+      UPDATE canonical_agent_ingest_checkpoints
+      SET recovery_incident_id = ?
+      WHERE execution_id = ?
+        AND recovery_incident_id IS NULL
+    `).run(recoveryIncidentId, executionId);
+    if (stamped.changes !== 1) {
+      throw new Error(`Recovery incident checkpoint was not stamped: ${executionId}`);
+    }
   }
 
   private threadFromRow(row: Record<string, unknown>): AgentThread {

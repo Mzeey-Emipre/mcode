@@ -1,6 +1,6 @@
 import { useMemo, type ComponentProps, type ReactNode } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
-import type { SelectedTextComment, TurnRecovery } from "@mcode/contracts";
+import type { RecoveryIncident, SelectedTextComment } from "@mcode/contracts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -8,7 +8,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CliErrorBanner, isCliError } from "@/components/chat/CliErrorBanner";
 import { CollapsibleError } from "@/components/chat/CollapsibleError";
 import { ConversationHoldOverlay } from "@/components/chat/ConversationHoldOverlay";
-import { ErroredSessionsBanner } from "@/components/chat/ErroredSessionsBanner";
 import { HandoffFallbackBanner } from "@/components/chat/HandoffFallbackBanner";
 import { HeaderActions } from "@/components/chat/HeaderActions";
 import { InterruptedSessionsBanner } from "@/components/chat/InterruptedSessionsBanner";
@@ -62,10 +61,6 @@ export interface ChatViewInteractions {
   onSelectedTextCommentConsumed: () => void;
   /** Prefills the new-thread composer with a starter prompt. */
   onPromptSelect: (text: string) => void;
-  /** Prefills the composer for a persisted interrupted turn. */
-  onContinue: () => void;
-  /** Retries a persisted turn by execution identity. */
-  onRetry: (executionId: string) => void;
   /** Stops the active agent after saving has stalled. */
   onStopSafely: () => Promise<void>;
   /** Continues a stalled turn without saving its recovery state. */
@@ -82,14 +77,10 @@ export interface ChatViewInteractions {
 
 /** Recovery banner state and actions for the active conversation. */
 export interface ChatRecoveryBannerState {
-  /** Recoverable turns returned by the server. */
-  turnRecoveries: TurnRecovery[];
-  /** Hides recovery banners after a user action. */
-  bannerDismissed: boolean;
-  /** Retries the selected recoverable thread executions. */
-  onRetry: (threadIds: string[]) => Promise<void>;
-  /** Dismisses every visible recovery banner. */
-  onDismiss: () => void;
+  /** Restart-scoped incident returned by the server, when visible. */
+  incident: RecoveryIncident | null;
+  /** Dismisses one incident for the browser app session. */
+  onDismiss: (incidentId: string) => void;
 }
 
 /** Props for the root chat visual surface. */
@@ -226,13 +217,10 @@ function ActiveThreadHeader({ state, editingThreadId, onEditingThreadIdChange, o
 
 /** Renders restart recovery and worktree warning banners. */
 function ActiveThreadBanners({ state, recovery }: { state: ChatViewState; recovery: ChatRecoveryBannerState }) {
-  const interruptedThreadIds = recovery.turnRecoveries.filter((recovery) => recovery.phase === "interrupted").map((recovery) => recovery.threadId);
-  const erroredThreadIds = recovery.turnRecoveries.filter((recovery) => recovery.phase === "errored").map((recovery) => recovery.threadId);
   const thread = state.activeThread!;
   return (
     <>
-      {interruptedThreadIds.length > 0 && !recovery.bannerDismissed && <div className="px-4 pt-2"><InterruptedSessionsBanner threadIds={interruptedThreadIds} onRetry={recovery.onRetry} onDismiss={recovery.onDismiss} /></div>}
-      {erroredThreadIds.length > 0 && !recovery.bannerDismissed && <div className="px-4 pt-2"><ErroredSessionsBanner threadIds={erroredThreadIds} onRetry={recovery.onRetry} onDismiss={recovery.onDismiss} /></div>}
+      {recovery.incident && <div className="px-4 pt-2"><InterruptedSessionsBanner incident={recovery.incident} onDismiss={() => recovery.onDismiss(recovery.incident!.id)} /></div>}
       {thread.clientWarnings?.length ? <div className="px-4 pt-2"><ThreadWarningBanner warnings={thread.clientWarnings} onDismiss={() => useWorkspaceStore.getState().dismissWarnings(thread.id)} /></div> : null}
     </>
   );
@@ -312,8 +300,6 @@ function ChatMessageStage({ state, interactions, onSubagentSelect, onOpenSubagen
     onSelectedTextComment: interactions.onSelectedTextComment,
     onSubagentSelect,
     onOpenSubagents,
-    onContinue: interactions.onContinue,
-    onRetry: interactions.onRetry,
   };
   return (
     <div data-testid="chat-message-stage" className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>

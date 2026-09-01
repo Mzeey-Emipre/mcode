@@ -16,14 +16,19 @@ export type ThreadStateMarkerModel =
   | { kind: "interrupted"; label: "Interrupted" }
   | { kind: "time"; label: string };
 
-function getThreadStatusMarker(thread: Pick<Thread, "status" | "updated_at">): ThreadStateMarkerModel {
+function getThreadStatusMarker(
+  thread: Pick<Thread, "status" | "updated_at">,
+  isRecoveryInterrupted: boolean | undefined,
+): ThreadStateMarkerModel {
+  if (isRecoveryInterrupted) return { kind: "interrupted", label: "Interrupted" };
+  if (thread.status === "interrupted" && isRecoveryInterrupted === undefined) {
+    return { kind: "interrupted", label: "Interrupted" };
+  }
   switch (thread.status) {
     case "completed":
       return { kind: "completed", label: "Completed" };
     case "errored":
       return { kind: "errored", label: "Errored" };
-    case "interrupted":
-      return { kind: "interrupted", label: "Interrupted" };
     default:
       return { kind: "time", label: relativeTime(thread.updated_at) };
   }
@@ -43,17 +48,19 @@ export function getThreadStateMarker({
   isRunning,
   isSetupRunning = false,
   hasPendingPermission,
+  isRecoveryInterrupted,
 }: {
   thread: Pick<Thread, "status" | "updated_at">;
   checks: ChecksStatus | undefined;
   isRunning: boolean;
   isSetupRunning?: boolean;
   hasPendingPermission: boolean;
+  isRecoveryInterrupted?: boolean;
 }): ThreadStateMarkerModel {
   if (hasPendingPermission) return { kind: "action", label: "Action required" };
   if (isSetupRunning) return { kind: "setup", label: "Setup running" };
   if (isRunning) return { kind: "running", label: "Running" };
-  return getCiMarker(checks) ?? getThreadStatusMarker(thread);
+  return getCiMarker(checks) ?? getThreadStatusMarker(thread, isRecoveryInterrupted);
 }
 
 function ThreadStateSpinner({ marker, dim }: { marker: Extract<ThreadStateMarkerModel, { kind: "setup" | "running" }>; dim: boolean }) {

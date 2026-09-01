@@ -106,10 +106,6 @@ export interface MessageListProps {
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
   onOpenSubagents?: (target: SubagentRosterTarget) => void;
-  /** Prefills the composer with `Continue` for an interrupted turn. */
-  onContinue?: () => void | Promise<void>;
-  /** Retries one turn with its exact persisted execution identity. */
-  onRetry?: (executionId: string) => void | Promise<void>;
   /** Whether child prompts display their parent-agent provenance label. */
   showParentAgentProvenance?: boolean;
 }
@@ -123,8 +119,6 @@ export function MessageList({
   onSelectedTextComment,
   onSubagentSelect,
   onOpenSubagents,
-  onContinue,
-  onRetry,
   showParentAgentProvenance = true,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1161,7 +1155,7 @@ export function MessageList({
                   {item.type === "leading-content" ? (
                     <div data-testid="message-list-leading-content">{item.content}</div>
                   ) : (
-                    <TranscriptItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onContinue={onContinue} onRetry={onRetry} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
+                    <TranscriptItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
                   )}
                 </div>
               </div>
