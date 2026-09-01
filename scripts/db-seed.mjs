@@ -4,6 +4,7 @@
  * Uses SQLite VACUUM INTO for online, corruption-safe single-file replication.
  */
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -53,9 +54,6 @@ export function resolveTargetDbPath(preferredTarget, repoRoot = resolveRepoRoot(
  * @param {string} targetPath
  */
 function cleanTargetFiles(targetPath) {
-  const targetDir = NodePath.dirname(targetPath);
-  NodeFS.mkdirSync(targetDir, { recursive: true });
-
   try {
     NodeFS.rmSync(targetPath, { force: true });
     NodeFS.rmSync(`${targetPath}-wal`, { force: true });
@@ -132,11 +130,46 @@ export function seedDatabase(options = {}) {
     throw new Error(`Source database not found at: ${sourcePath}`);
   }
 
-  cleanTargetFiles(targetPath);
-  executeVacuumInto(sourcePath, targetPath);
+  NodeFS.mkdirSync(NodePath.dirname(targetPath), { recursive: true });
+  const temporaryTargetPath = NodePath.join(
+    NodePath.dirname(targetPath),
+    `.${NodePath.basename(targetPath)}.seed-${NodeCrypto.randomUUID()}`,
+  );
+  try {
+    executeVacuumInto(sourcePath, temporaryTargetPath);
+    cleanTargetFiles(targetPath);
+    NodeFS.renameSync(temporaryTargetPath, targetPath);
+  } finally {
+    NodeFS.rmSync(temporaryTargetPath, { force: true });
+  }
   const stats = collectTableStats(targetPath);
 
   return { sourcePath, targetPath, stats };
+}
+
+/**
+ * Seeds a development database without interrupting startup when the snapshot is unavailable.
+ *
+ * @param {{ source?: string, target?: string, repoRoot?: string, preserveExistingTarget?: boolean }} [options]
+ */
+export function seedDatabaseForStartup(options = {}) {
+  const targetPath = resolveTargetDbPath(options.target, options.repoRoot);
+
+  if (options.preserveExistingTarget && targetDatabaseExists(targetPath)) {
+    console.warn("[database] Seed skipped: the development database already exists.");
+    return;
+  }
+
+  try {
+    seedDatabase(options);
+  } catch (error) {
+    console.warn(`[database] Seed skipped: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function targetDatabaseExists(targetPath) {
+  return [targetPath, `${targetPath}-wal`, `${targetPath}-shm`]
+    .some((path) => NodeFS.existsSync(path));
 }
 
 /**
