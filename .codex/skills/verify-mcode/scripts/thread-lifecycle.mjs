@@ -14,8 +14,19 @@ import {
 
 const HEALTH_TIMEOUT_MS = 15_000;
 const WORKFLOW_TIMEOUT_MS = 45_000;
+const FRESHNESS_TOLERANCE_MS = 2_000;
 const ELECTRON_SESSION_FILE = "electron-thread-lifecycle.json";
 const EVIDENCE_DIRECTORY = ".dev/verification/thread-lifecycle";
+const DESKTOP_BUILD_COMMAND = "bun run --cwd apps/desktop build";
+const DESKTOP_WORKFLOW_SOURCE_DIRECTORIES = [
+  ["apps", "desktop", "src"],
+  ["apps", "web", "src"],
+];
+const RUN_ID_TEXT = "\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const RUN_ID_PATTERN = new RegExp(`^${RUN_ID_TEXT}$`, "i");
+const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
+const OWNED_RECEIPT_PATTERN = new RegExp(`^${RUN_ID_TEXT}-(?:receipt|failure)\\.json$|^${RUN_ID_TEXT}-(?:completed|failure)\\.png$`, "i");
+const OWNED_LOG_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:thread-lifecycle-server|thread-lifecycle-web|verify-changed|lint-fast)\.log$/;
 const FOCUSED_SERVER_TESTS = [
   "src/features/projects/worktrees/__tests__/sandbox-worktree-cleanup-policy.test.ts",
   "src/features/thread-control/cleanup/__tests__/cleanup-integration.test.ts",
@@ -30,10 +41,10 @@ const FOCUSED_WEB_TESTS = [
   "src/features/projects/state/__tests__/workspaceStore.completion.test.ts",
 ];
 
-const HELP = `Verify Thread Lifecycle
+const HELP = `Verify Mcode thread lifecycle
 
 Usage:
-  bun .codex/skills/verify-thread-lifecycle/scripts/verify-thread-lifecycle.mjs <command> [options]
+  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle <command> [options]
 
 Commands:
   health
@@ -50,22 +61,23 @@ Commands:
 The live proof confirms completion and its scheduled deletion. Retention expiry has a one-day minimum, so focused integration tests prove the later cleanup-worker removal.`;
 
 async function main() {
-  const parsed = parseArguments(process.argv.slice(2));
-  if (parsed.help) {
-    process.stdout.write(`${HELP}\n`);
-    return;
-  }
-
-  const repoRoot = resolveRepoRoot();
+  const command = safeText(process.argv[2] ?? "help");
   try {
+    const parsed = parseArguments(process.argv.slice(2));
+    if (parsed.help) {
+      process.stdout.write(`${HELP}\n`);
+      return;
+    }
+
+    const repoRoot = resolveRepoRoot();
     const output = await execute(parsed, repoRoot);
     process.stdout.write(`${JSON.stringify({ ok: true, command: parsed.command, ...output }, null, 2)}\n`);
   } catch (error) {
     process.exitCode = 1;
     process.stdout.write(`${JSON.stringify({
       ok: false,
-      command: parsed.command,
-      failure: error instanceof Error ? error.message : String(error),
+      command,
+      failure: safeError(error),
     }, null, 2)}\n`);
   }
 }
@@ -81,7 +93,7 @@ function parseArguments(argv) {
 
 function validateCommand(command) {
   if (["health", "check", "proof", "inspect", "cleanup"].includes(command)) return;
-  throw new Error(`Unknown command: ${String(command)}`);
+  throw cliError(`Unknown command: ${safeText(command)}`);
 }
 
 function requiresCleanupConfirmation(command) {
@@ -92,12 +104,12 @@ function parseConfirmedCommand(command, options) {
   if (options.length === 1 && options[0] === "--confirm-cleanup") {
     return { command, confirmCleanup: true };
   }
-  throw new Error(`${command} requires --confirm-cleanup`);
+  throw cliError(`${command} requires --confirm-cleanup`);
 }
 
 function parseOptionlessCommand(command, options) {
   if (options.length === 0) return { command };
-  throw new Error(`${command} does not accept options`);
+  throw cliError(`${command} does not accept options`);
 }
 
 async function execute(parsed, repoRoot) {
@@ -163,11 +175,15 @@ async function prove(repoRoot) {
   try {
     await prepareProof(proof);
     const receipt = await captureCompletionProof(proof);
-    await cleanupRun(proof.socket, proof.record);
+    await validateActiveRunOwnership(proof.socket, proof.repoRoot, proof.evidenceDirectory, proof.record);
+    await cleanupRun(proof.socket, proof.evidenceDirectory, proof.record);
     removeActiveRun(proof.evidenceDirectory);
     writeJson(proof.receiptPath, { ...receipt, cleanup: "removed generated project, thread, and worktree" });
     return { receiptPath: relativePath(repoRoot, proof.receiptPath), ...receipt };
   } catch (error) {
+    if (!NodeFS.existsSync(NodePath.join(proof.evidenceDirectory, "active-run.json"))) {
+      removeOwnedRunDirectory(proof.evidenceDirectory, proof.record.runDirectory, proof.record.id);
+    }
     const desktopDiagnostic = await captureDesktopDiagnostic(proof);
     writeJson(proof.failureReceiptPath, {
       ...proof.record,
@@ -198,19 +214,12 @@ function createProofContext(repoRoot) {
 
 async function prepareProof(proof) {
   await health(proof.repoRoot);
-  writeActiveRun(proof.evidenceDirectory, proof.record);
   proof.desktop = await openDesktop(proof.repoRoot);
   proof.record.desktopRuntimeDirectory = proof.desktop.runtimeDirectory;
-  writeActiveRun(proof.evidenceDirectory, proof.record);
   proof.socket = await openDesktopSocket(proof.repoRoot, proof.desktop.runtimeDirectory);
-  const prepared = await createProofThread(
-    proof.socket,
-    proof.record,
-    proof.evidenceDirectory,
-    proof.record.id,
-    proof.repoRoot,
-  );
+  const prepared = await createProofThread(proof.socket, proof.record, proof.evidenceDirectory, proof.record.id, proof.repoRoot);
   Object.assign(proof, prepared);
+  writeActiveRun(proof.evidenceDirectory, proof.record);
 }
 
 function createProofRecord(run) {
@@ -227,8 +236,7 @@ function createProofRecord(run) {
 async function createProofThread(socket, record, evidenceDirectory, runId, repoRoot) {
   const workspace = await findFixtureWorkspace(socket, getRuntimePaths(repoRoot).fixtureRepoDir);
   record.workspaceId = workspace.id;
-  writeActiveRun(evidenceDirectory, record);
-  const title = `Complete worktree ${runId.slice(-8)}`;
+  const title = expectedThreadTitle(runId);
   const thread = await socket.rpc("thread.create", {
     workspaceId: workspace.id,
     title,
@@ -240,7 +248,6 @@ async function createProofThread(socket, record, evidenceDirectory, runId, repoR
   }
   record.threadId = thread.id;
   record.worktreePath = thread.worktree_path;
-  writeActiveRun(evidenceDirectory, record);
   return {
     screenshotPath: NodePath.join(evidenceDirectory, "receipts", `${runId}-completed.png`),
     thread,
@@ -249,11 +256,13 @@ async function createProofThread(socket, record, evidenceDirectory, runId, repoR
   };
 }
 
-async function findFixtureWorkspace(socket, fixtureRepoPath) {
+/** Finds the fixture workspace registered for this worktree. */
+export async function findFixtureWorkspace(socket, fixtureRepoPath) {
   const workspaces = await socket.rpc("workspace.list", {});
-  const fixturePath = NodePath.resolve(fixtureRepoPath).toLowerCase();
   const workspace = Array.isArray(workspaces)
-    ? workspaces.find((candidate) => NodePath.resolve(candidate.path).toLowerCase() === fixturePath)
+    ? workspaces.find((candidate) => typeof candidate?.id === "string"
+      && typeof candidate.path === "string"
+      && pathsMatch(candidate.path, fixtureRepoPath))
     : null;
   if (!workspace) throw new Error("The fixture repository is not registered as a project. Restart agent:up, then retry.");
   return workspace;
@@ -316,20 +325,22 @@ async function inspectActiveThread(repoRoot, activeRun) {
 async function cleanup(repoRoot) {
   const evidenceDirectory = ensureEvidenceDirectory(repoRoot);
   const activeRun = readActiveRun(evidenceDirectory);
+  let activeRunRemoved = false;
   if (activeRun) {
     await health(repoRoot);
     const desktop = await openDesktop(repoRoot);
     const socket = await openDesktopSocket(repoRoot, desktop.runtimeDirectory);
     try {
-      await cleanupRun(socket, activeRun);
+      await validateActiveRunOwnership(socket, repoRoot, evidenceDirectory, activeRun);
+      await cleanupRun(socket, evidenceDirectory, activeRun);
       removeActiveRun(evidenceDirectory);
+      activeRunRemoved = true;
     } finally {
       await socket.close();
       await closeDesktop(desktop, repoRoot);
     }
   }
-  removeOwnedDirectory(evidenceDirectory, getRuntimePaths(repoRoot).devDir);
-  return { activeRunRemoved: activeRun !== null, evidenceRemoved: true };
+  return { activeRunRemoved, ...cleanupKnownEvidence(evidenceDirectory) };
 }
 
 function requireRuntimePorts(repoRoot) {
@@ -342,10 +353,39 @@ function requireRuntimePorts(repoRoot) {
 }
 
 function requireDesktopBundle(repoRoot) {
-  const desktopBundle = NodePath.join(repoRoot, "apps", "desktop", "dist", "main", "main.cjs");
-  if (!NodeFS.existsSync(desktopBundle)) {
-    throw new Error("The Electron main bundle is missing. Run bun run --cwd apps/desktop build, then retry.");
+  const artifacts = [
+    requiredDesktopArtifact(repoRoot, ["apps", "desktop", "dist", "main", "main.cjs"], "Electron main bundle"),
+    requiredDesktopArtifact(repoRoot, ["apps", "desktop", "dist", "renderer", "index.html"], "Electron renderer output"),
+  ];
+  const staleSources = desktopWorkflowSourceFiles(repoRoot).filter((source) => artifacts.some((artifact) => source.modifiedMs > artifact.modifiedMs + FRESHNESS_TOLERANCE_MS));
+  if (staleSources.length === 0) return;
+  const paths = staleSources.slice(0, 3).map((source) => relativePath(repoRoot, source.path)).join(", ");
+  throw actionable(`${staleSources.length} desktop workflow source file(s) are newer than the Electron build artifacts: ${paths}`, `Run ${DESKTOP_BUILD_COMMAND}, then retry.`);
+}
+
+function requiredDesktopArtifact(repoRoot, parts, label) {
+  const path = NodePath.join(repoRoot, ...parts);
+  if (!NodeFS.existsSync(path) || !NodeFS.statSync(path).isFile()) {
+    throw actionable(`The ${label} is missing: ${relativePath(repoRoot, path)}`, `Run ${DESKTOP_BUILD_COMMAND}, then retry.`);
   }
+  return { path, modifiedMs: NodeFS.statSync(path).mtimeMs };
+}
+
+function desktopWorkflowSourceFiles(repoRoot) {
+  return DESKTOP_WORKFLOW_SOURCE_DIRECTORIES.flatMap((parts) => sourceFilesUnder(NodePath.join(repoRoot, ...parts)));
+}
+
+function sourceFilesUnder(directory) {
+  if (!NodeFS.existsSync(directory)) return [];
+  const files = [];
+  for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
+    const path = NodePath.join(directory, entry.name);
+    if (entry.isDirectory() && entry.name !== "__tests__") files.push(...sourceFilesUnder(path));
+    if (entry.isFile() && !/\.(?:test|spec)\.[^.]+$/i.test(entry.name)) {
+      files.push({ path, modifiedMs: NodeFS.statSync(path).mtimeMs });
+    }
+  }
+  return files;
 }
 
 function requirePlaywright(repoRoot) {
@@ -374,7 +414,12 @@ function ensureEvidenceDirectory(repoRoot) {
 
 function createRun(evidenceDirectory) {
   const id = `${fileStamp()}-${NodeCrypto.randomUUID()}`;
-  const directory = NodePath.join(evidenceDirectory, "runs", id);
+  const runsDirectory = NodePath.join(evidenceDirectory, "runs");
+  NodeFS.mkdirSync(runsDirectory, { recursive: true });
+  if (NodeFS.lstatSync(runsDirectory).isSymbolicLink()) {
+    throw new Error("The thread-lifecycle runs directory is linked");
+  }
+  const directory = NodePath.join(runsDirectory, id);
   NodeFS.mkdirSync(directory, { recursive: true });
   return { id, directory };
 }
@@ -588,18 +633,36 @@ async function findThread(socket, workspaceId, threadId) {
   return Array.isArray(threads) ? threads.find((thread) => thread.id === threadId) ?? null : null;
 }
 
-async function cleanupRun(socket, record) {
-  if (record.threadId && record.workspaceId) {
-    const thread = await findThread(socket, record.workspaceId, record.threadId);
-    if (thread) {
-      await socket.rpc("thread.delete", { threadId: record.threadId, cleanupWorktree: true });
-      await waitFor(async () => {
-        const current = await findThread(socket, record.workspaceId, record.threadId);
-        return current === null && (!record.worktreePath || !NodeFS.existsSync(record.worktreePath));
-      }, "The generated worktree cleanup did not finish");
-    }
+async function validateActiveRunOwnership(socket, repoRoot, evidenceDirectory, record) {
+  assertActiveRunRecord(evidenceDirectory, record);
+  const fixtureRepoPath = getRuntimePaths(repoRoot).fixtureRepoDir;
+  const workspace = await findFixtureWorkspace(socket, fixtureRepoPath);
+  if (workspace.id !== record.workspaceId) {
+    throw activeRunError("does not belong to this worktree's fixture workspace");
   }
-  if (record.runDirectory) removeOwnedDirectory(record.runDirectory, NodePath.join(record.runDirectory, ".."));
+  const thread = await findThread(socket, record.workspaceId, record.threadId);
+  assertOwnedActiveRun(evidenceDirectory, fixtureRepoPath, record, workspace, thread);
+}
+
+/** Validates a persisted run before the verifier deletes a thread or evidence. */
+export function assertOwnedActiveRun(evidenceDirectory, fixtureRepoPath, record, workspace, thread) {
+  assertActiveRunRecord(evidenceDirectory, record);
+  if (!isFixtureWorkspace(workspace, fixtureRepoPath, record.workspaceId)) {
+    throw activeRunError("does not identify the fixture workspace for this repository");
+  }
+  if (!isExpectedThread(record, thread)) {
+    throw activeRunError("does not identify the generated managed-worktree thread");
+  }
+  return record;
+}
+
+async function cleanupRun(socket, evidenceDirectory, record) {
+  await socket.rpc("thread.delete", { threadId: record.threadId, cleanupWorktree: true });
+  await waitFor(async () => {
+    const current = await findThread(socket, record.workspaceId, record.threadId);
+    return current === null && !NodeFS.existsSync(record.worktreePath);
+  }, "The generated worktree cleanup did not finish");
+  removeOwnedRunDirectory(evidenceDirectory, record.runDirectory, record.id);
 }
 
 async function waitFor(condition, message) {
@@ -611,18 +674,53 @@ async function waitFor(condition, message) {
   throw new Error(message);
 }
 
-function writeActiveRun(evidenceDirectory, record) {
-  writeJson(NodePath.join(evidenceDirectory, "active-run.json"), record);
+/** Writes a verified run record without following an active-run symlink. */
+export function writeActiveRun(evidenceDirectory, record) {
+  const path = activeRunPath(evidenceDirectory);
+  assertActiveRunFile(path);
+  assertActiveRunRecord(evidenceDirectory, record);
+  const temporaryPath = `${path}.${process.pid}.${NodeCrypto.randomUUID()}.tmp`;
+  try {
+    writeJson(temporaryPath, record);
+    assertActiveRunFile(path);
+    NodeFS.renameSync(temporaryPath, path);
+  } finally {
+    NodeFS.rmSync(temporaryPath, { force: true });
+  }
 }
 
-function readActiveRun(evidenceDirectory) {
-  const path = NodePath.join(evidenceDirectory, "active-run.json");
-  if (!NodeFS.existsSync(path)) return null;
-  return JSON.parse(NodeFS.readFileSync(path, "utf8"));
+/** Reads a verified run record without following an active-run symlink. */
+export function readActiveRun(evidenceDirectory) {
+  const path = activeRunPath(evidenceDirectory);
+  if (!assertActiveRunFile(path)) return null;
+  let record;
+  try {
+    record = JSON.parse(NodeFS.readFileSync(path, "utf8"));
+  } catch {
+    throw activeRunError("is not valid JSON");
+  }
+  return assertActiveRunRecord(evidenceDirectory, record);
 }
 
 function removeActiveRun(evidenceDirectory) {
-  NodeFS.rmSync(NodePath.join(evidenceDirectory, "active-run.json"), { force: true });
+  NodeFS.rmSync(activeRunPath(evidenceDirectory), { force: true });
+}
+
+function activeRunPath(evidenceDirectory) {
+  return NodePath.join(evidenceDirectory, "active-run.json");
+}
+
+function assertActiveRunFile(path) {
+  let status;
+  try {
+    status = NodeFS.lstatSync(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+  if (status.isSymbolicLink()) throw activeRunError("is a symbolic link");
+  if (!status.isFile()) throw activeRunError("is not a regular file");
+  return true;
 }
 
 function writeJson(path, value) {
@@ -630,14 +728,168 @@ function writeJson(path, value) {
   NodeFS.writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
-function removeOwnedDirectory(directory, parent) {
-  const resolvedDirectory = NodePath.resolve(directory);
-  const resolvedParent = NodePath.resolve(parent);
-  const relative = NodePath.relative(resolvedParent, resolvedDirectory);
-  if (relative === "" || relative.startsWith("..") || NodePath.isAbsolute(relative)) {
-    throw new Error(`Refusing to remove verification path outside its owner: ${directory}`);
+function assertActiveRunRecord(evidenceDirectory, record) {
+  assertActiveRunObject(record);
+  assertActiveRunIdentifiers(record);
+  assertActiveRunPaths(record);
+  assertActiveRunDirectory(evidenceDirectory, record);
+  return record;
+}
+
+function assertActiveRunObject(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw activeRunError("must be an object");
   }
-  NodeFS.rmSync(resolvedDirectory, { recursive: true, force: true });
+  const expectedKeys = ["desktopRuntimeDirectory", "id", "runDirectory", "threadId", "workspaceId", "worktreePath"];
+  if (Object.keys(record).sort().join(",") !== expectedKeys.join(",")) {
+    throw activeRunError("has an unexpected shape");
+  }
+}
+
+function assertActiveRunIdentifiers(record) {
+  if (!RUN_ID_PATTERN.test(record.id)) throw activeRunError("has an invalid run ID");
+  if (!isSafeId(record.workspaceId) || !isSafeId(record.threadId)) {
+    throw activeRunError("has an invalid workspace or thread ID");
+  }
+}
+
+function assertActiveRunPaths(record) {
+  if (!isAbsolutePath(record.desktopRuntimeDirectory) || !isAbsolutePath(record.worktreePath)) {
+    throw activeRunError("has an invalid desktop runtime or worktree path");
+  }
+}
+
+function assertActiveRunDirectory(evidenceDirectory, record) {
+  const runsDirectory = NodePath.resolve(evidenceDirectory, "runs");
+  const expectedRunDirectory = NodePath.resolve(runsDirectory, record.id);
+  if (!isAbsolutePath(record.runDirectory) || !pathsMatch(record.runDirectory, expectedRunDirectory)) {
+    throw activeRunError("runDirectory is not the expected direct child of evidenceDirectory/runs");
+  }
+}
+
+function isFixtureWorkspace(workspace, fixtureRepoPath, workspaceId) {
+  return Boolean(workspace)
+    && workspace.id === workspaceId
+    && typeof workspace.path === "string"
+    && pathsMatch(workspace.path, fixtureRepoPath);
+}
+
+function isExpectedThread(record, thread) {
+  return Boolean(thread)
+    && thread.id === record.threadId
+    && thread.workspace_id === record.workspaceId
+    && thread.mode === "worktree"
+    && thread.worktree_managed === true
+    && thread.title === expectedThreadTitle(record.id)
+    && typeof thread.worktree_path === "string"
+    && pathsMatch(thread.worktree_path, record.worktreePath);
+}
+
+function expectedThreadTitle(runId) {
+  return `Complete worktree ${runId.slice(-8)}`;
+}
+
+function isSafeId(value) {
+  return typeof value === "string" && SAFE_ID_PATTERN.test(value);
+}
+
+function isAbsolutePath(value) {
+  return typeof value === "string" && NodePath.isAbsolute(value);
+}
+
+function pathsMatch(left, right) {
+  const normalizedLeft = NodePath.resolve(left).replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedRight = NodePath.resolve(right).replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function removeOwnedRunDirectory(evidenceDirectory, runDirectory, runId) {
+  const runsDirectory = NodePath.resolve(evidenceDirectory, "runs");
+  const expectedDirectory = NodePath.resolve(runsDirectory, runId);
+  if (!pathsMatch(runDirectory, expectedDirectory)) {
+    throw activeRunError("runDirectory changed before cleanup");
+  }
+  if (NodeFS.existsSync(runsDirectory) && NodeFS.lstatSync(runsDirectory).isSymbolicLink()) {
+    throw activeRunError("runs directory is a symbolic link");
+  }
+  if (!NodeFS.existsSync(runDirectory)) return;
+  if (NodeFS.lstatSync(runDirectory).isSymbolicLink()) {
+    throw activeRunError("runDirectory is a symbolic link");
+  }
+  NodeFS.rmSync(runDirectory, { recursive: true, force: true });
+}
+
+/** Removes only evidence file names that this verifier creates. */
+export function cleanupKnownEvidence(evidenceDirectory) {
+  const removed = [
+    ...removeKnownFiles(evidenceDirectory, OWNED_LOG_PATTERN),
+    ...removeKnownFiles(NodePath.join(evidenceDirectory, "receipts"), OWNED_RECEIPT_PATTERN),
+    ...removeEmptyOwnedRunDirectories(NodePath.join(evidenceDirectory, "runs")),
+  ];
+  removeEmptyDirectory(NodePath.join(evidenceDirectory, "receipts"));
+  removeEmptyDirectory(NodePath.join(evidenceDirectory, "runs"));
+  const evidenceDirectoryRemoved = removeEmptyDirectory(evidenceDirectory);
+  return { evidenceDirectoryRemoved, removed };
+}
+
+function removeEmptyOwnedRunDirectories(runsDirectory) {
+  if (!NodeFS.existsSync(runsDirectory)) return [];
+  const status = NodeFS.lstatSync(runsDirectory);
+  if (!status.isDirectory() || status.isSymbolicLink()) return [];
+  const removed = [];
+  for (const entry of NodeFS.readdirSync(runsDirectory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !RUN_ID_PATTERN.test(entry.name)) continue;
+    const directory = NodePath.join(runsDirectory, entry.name);
+    if (NodeFS.lstatSync(directory).isSymbolicLink() || NodeFS.readdirSync(directory).length > 0) continue;
+    NodeFS.rmdirSync(directory);
+    removed.push(directory);
+  }
+  return removed;
+}
+
+function removeKnownFiles(directory, pattern) {
+  if (!NodeFS.existsSync(directory)) return [];
+  const status = NodeFS.lstatSync(directory);
+  if (!status.isDirectory() || status.isSymbolicLink()) return [];
+  const removed = [];
+  for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isFile() || !pattern.test(entry.name)) continue;
+    const path = NodePath.join(directory, entry.name);
+    NodeFS.unlinkSync(path);
+    removed.push(path);
+  }
+  return removed;
+}
+
+function removeEmptyDirectory(directory) {
+  if (!NodeFS.existsSync(directory)) return false;
+  const status = NodeFS.lstatSync(directory);
+  if (!status.isDirectory() || status.isSymbolicLink() || NodeFS.readdirSync(directory).length > 0) return false;
+  NodeFS.rmdirSync(directory);
+  return true;
+}
+
+function activeRunError(condition) {
+  return actionable(`active-run.json ${condition}`, "Inspect the thread-lifecycle evidence and correct the record before cleanup.");
+}
+
+function cliError(condition) {
+  return actionable(condition, "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle --help.");
+}
+
+function actionable(condition, nextAction) {
+  return new Error(`Condition: ${condition}. Next action: ${nextAction}`);
+}
+
+function safeError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return safeText(message);
+}
+
+function safeText(value) {
+  return String(value).replace(/[\r\n\t]+/g, " ").slice(0, 640);
 }
 
 async function runPhase(repoRoot, args, logPath) {

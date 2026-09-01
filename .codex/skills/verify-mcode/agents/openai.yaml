@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Mcode"
+  short_description: "Prove runtime, desktop, and worktree workflows"
+  default_prompt: "Use $verify-mcode to test the changed Mcode behavior before merge."

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Verify Agent Runtime"
-  short_description: "Prove AgentService thread runtime behavior"
-  default_prompt: "Use $verify-agent-runtime to test the changed AgentService and thread-runtime behavior before merge."

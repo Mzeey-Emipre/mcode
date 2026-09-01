@@ -14,12 +14,12 @@
 3. Stop the running thread from the chat controls.
 4. Confirm that the running indicator clears.
 
-## Driving it with verify-agent-runtime
+## Driving it with verify-mcode
 
-Run `health`, then run:
+Run `runtime health`, then run:
 
 ```sh
-bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs live --provider codex --model <id> --scenario stop --confirm-provider-call
+bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime live --provider codex --model <id> --scenario stop --confirm-provider-call
 ```
 
 The harness waits for `turnStarted`. It sends two `agent.stop` RPCs together. It requires matching cancelled results with one turn execution and dispatch state. It then checks a stopped event. It requires `agent.activeCount` to reach zero. It requires `agent.listRunning` to retain the matching cancelled snapshot for reconnect hydration.

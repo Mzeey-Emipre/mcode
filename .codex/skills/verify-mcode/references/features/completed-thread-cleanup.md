@@ -15,9 +15,9 @@
 3. Open the completed thread view.
 4. Confirm that the thread remains visible as completed.
 
-## Driving it with verify-thread-lifecycle
+## Driving it with verify-mcode
 
-Run `proof --confirm-cleanup`. The harness creates a disposable worktree thread in Electron's fixture project. It uses Electron to select the same completion control that a user selects. The receipt records the completed timestamp and deletion schedule. `check` runs the cleanup-worker integration tests that prove later deletion.
+Run `thread-lifecycle proof --confirm-cleanup`. The harness creates a disposable worktree thread in Electron's fixture project. It uses Electron to select the same completion control that a user selects. The receipt records the completed timestamp and deletion schedule. `thread-lifecycle check` runs the cleanup-worker integration tests that prove later deletion.
 
 ## Gotchas
 

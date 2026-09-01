@@ -15,12 +15,12 @@
 3. Wait for the final reply.
 4. Reload or reopen the conversation and confirm that the reply remains.
 
-## Driving it with verify-agent-runtime
+## Driving it with verify-mcode
 
-Run `health`, then run:
+Run `runtime health`, then run:
 
 ```sh
-bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs live --provider codex --model <id> --scenario completion --confirm-provider-call
+bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime live --provider codex --model <id> --scenario completion --confirm-provider-call
 ```
 
 The harness requires `turnComplete` or `ended`. It fails immediately when the target thread emits `error`, `errored`, `cancelled`, `interrupted`, or `paused` first. It then reads `conversation.page` and `message.list` until both return a durable assistant message. The receipt omits assistant text and provider-private payloads.
