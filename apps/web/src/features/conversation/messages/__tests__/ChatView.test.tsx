@@ -133,7 +133,7 @@ vi.mock("@/features/conversation/residency/conversation-residency", () => ({
 
 // Composer and MessageList have deep dependencies; stub them out.
 vi.mock("../../composer/Composer", () => ({
-  Composer: () => <div data-testid="composer" />,
+  Composer: ({ setupBlocked = false }: { readonly setupBlocked?: boolean }) => <button data-testid="composer" disabled={setupBlocked}>Send</button>,
 }));
 
 vi.mock("../MessageList", () => ({
@@ -556,9 +556,11 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
 
     render(<ChatView />);
 
-    const setupBlock = await screen.findByRole("button", { name: /Automatic Setup. Setup failed/i });
+    const setupBlock = await screen.findByLabelText("Environment setup");
     const queuedMessage = screen.getByTestId("queued-first-user-message");
     expect(setupBlock.compareDocumentPosition(queuedMessage) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(screen.getByLabelText("Environment setup terminal")).toHaveTextContent("di");
+    expect(screen.getByTestId("composer")).toBeDisabled();
     expect(chatViewTransportMock.getAutomaticSetup).toHaveBeenCalledWith(thread.id);
   });
 

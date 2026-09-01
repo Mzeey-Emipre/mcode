@@ -281,6 +281,27 @@ describe("MarkdownContent workspace preview navigation", () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
+  it("routes absolute Windows file links through the Preview resolver", async () => {
+    const filePath = "C:/workspace/hello-world.html";
+    const resolvedUrl = "file:///C:/workspace/hello-world.html";
+    mockResolveNavigation.mockResolvedValue({ ok: true, url: resolvedUrl });
+    const { container } = render(<MarkdownContent content={`[Preview hello-world.html](${filePath})`} />);
+    const link = container.querySelector("a");
+
+    expect(link).toHaveAttribute("href", filePath);
+    await act(async () => {
+      fireEvent.click(link!, { ctrlKey: true });
+      await vi.runAllTimersAsync();
+    });
+
+    expect(mockResolveNavigation).toHaveBeenCalledWith(filePath, "/tmp/ws-preview-test");
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
+      activate: true,
+      initialAddress: resolvedUrl,
+    });
+    expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-prev", resolvedUrl);
+  });
+
   it("opens mcode-workspace in the default browser on plain click", async () => {
     const mockOpenExternal = vi.fn();
     const ws = createMockWorkspace({ id: "ws-plain", path: "/proj/plain" });

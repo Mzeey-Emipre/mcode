@@ -23,8 +23,16 @@ paths, writes `.dev/ports.json`, and prints that JSON as the final line after
 ports. On Windows, plain `bun run agent:up` still starts the runtime, but Bun
 Shell can drop the final stdout line.
 
+Before `agent:up` starts the runtime, it snapshots the production database
+into `.dev/db/app.sqlite`. It first checks `~/.mcode/mcode.db`. It then checks
+`~/.mcode-dev/mcode.db`. If the source database is unavailable or the snapshot
+fails, the command prints a warning and starts with the local database.
+
 Use `bun run dev:web` only when the task needs the live web runtime. It builds
 the server bundle and runs it with Electron's Node.js. It also starts Vite.
+When `bun run dev` or `bun run dev:web` starts without `.dev/db/app.sqlite`, it
+creates the same snapshot. It keeps an existing local database. Run `bun run
+db:seed` after you stop the runtime to replace it.
 
 Use `bun run dev:desktop` only when testing Electron-specific behavior (native IPC,
 tray, window management).

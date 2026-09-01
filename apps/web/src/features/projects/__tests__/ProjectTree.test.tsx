@@ -1,6 +1,7 @@
 import { render, screen, act, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useLayoutEffect, useState } from "react";
+import type { WorkspaceEnvironmentAutomaticSetupSnapshot } from "@mcode/contracts";
 import type { Thread } from "@/transport/types";
 
 const sortableMockState = vi.hoisted(() => ({
@@ -111,6 +112,12 @@ vi.mock("@/stores/threadStore", () => ({
   useThreadStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector(buildMockThreadStoreState()),
   ),
+}));
+
+const automaticSetupTransport = vi.hoisted(() => ({ getAutomaticSetup: vi.fn() }));
+
+vi.mock("@/transport", () => ({
+  getTransport: () => automaticSetupTransport,
 }));
 
 vi.mock("@/stores/sidebarSearchStore", () => ({
@@ -1136,6 +1143,12 @@ describe("ProjectTree action-required indicator", () => {
       dismissedIncidentIds: new Set<string>(),
       retriedExecutionIds: new Set<string>(),
     });
+    automaticSetupTransport.getAutomaticSetup.mockReset();
+    automaticSetupTransport.getAutomaticSetup.mockResolvedValue({
+      gate: "not-required",
+      attempt: null,
+      queuedTurns: [],
+    } satisfies WorkspaceEnvironmentAutomaticSetupSnapshot);
     currentThread = makeThread({ id: "thread-pending", status: "active" });
     currentChecks = {};
     installWorkspaceMock();
@@ -1242,25 +1255,33 @@ describe("ProjectTree action-required indicator", () => {
     ).toBeTruthy();
   });
 
-  it("changes the white Setup spinner to the primary running spinner after the provider Turn starts", () => {
-    threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
-    threadStoreOverrides.runtimeByThread = {
-      "thread-pending": { runtimePhase: "running", turnExecutionId: null },
-    };
-    const { rerender } = render(<ProjectTree />);
+  it("shows Setup running from the automatic Setup snapshot", async () => {
+    currentThread = makeThread({ id: "thread-pending", mode: "worktree", worktree_managed: true });
+    automaticSetupTransport.getAutomaticSetup.mockResolvedValue({
+      gate: "blocked",
+      attempt: { id: "attempt-1", state: "running", reason: null, snapshot: null, outcome: null, createdAt: "", startedAt: "", finishedAt: null, exitCode: null, output: "installing", outputTruncated: false },
+      queuedTurns: [],
+    } satisfies WorkspaceEnvironmentAutomaticSetupSnapshot);
+    installWorkspaceMock();
 
-    const setupSpinner = screen.getByLabelText("Setup running");
-    expect(setupSpinner).toHaveClass("text-white");
-    expect(setupSpinner).not.toHaveClass("text-primary");
+    render(<ProjectTree />);
 
-    threadStoreOverrides.runtimeByThread = {
-      "thread-pending": { runtimePhase: "running", turnExecutionId: "turn-1" },
-    };
-    rerender(<ProjectTree />);
+    expect(await screen.findByLabelText("Setup running")).toHaveClass("text-white");
+  });
 
-    const runningSpinner = screen.getByLabelText("Running");
-    expect(runningSpinner).toHaveClass("text-primary");
-    expect(runningSpinner).not.toHaveClass("text-white");
+  it("shows Awaiting response for a failed blocking setup", async () => {
+    currentThread = makeThread({ id: "thread-pending", mode: "worktree", worktree_managed: true });
+    automaticSetupTransport.getAutomaticSetup.mockResolvedValue({
+      gate: "blocked",
+      attempt: { id: "attempt-1", state: "failed", reason: "setup_failed", snapshot: null, outcome: "command_failure", createdAt: "", startedAt: "", finishedAt: "", exitCode: 1, output: "failed", outputTruncated: false },
+      queuedTurns: [],
+    } satisfies WorkspaceEnvironmentAutomaticSetupSnapshot);
+    installWorkspaceMock();
+
+    render(<ProjectTree />);
+
+    const indicator = await screen.findByLabelText("Awaiting response");
+    expect(indicator).toHaveClass("ring-amber-500", "status-pulse");
     expect(screen.queryByLabelText("Setup running")).not.toBeInTheDocument();
   });
 

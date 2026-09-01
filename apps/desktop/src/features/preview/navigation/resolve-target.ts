@@ -9,12 +9,38 @@ import {
   resolveLocalFileUrl,
   resolveMcodeWorkspacePreviewUrl,
 } from "./local-file.js";
-import { isAllowedPreviewUrl } from "./policy.js";
 
 /** Result returned after normalizing and validating an omnibox target. */
 export type PreviewResolveNavigationResult =
   | { ok: true; url: string }
   | { ok: false; error: string };
+
+/**
+ * Validates a complete Preview address before it is stored on a tab or loaded
+ * into a Browser surface.
+ */
+export async function validatePreviewNavigationUrl(
+  url: string,
+): Promise<PreviewResolveNavigationResult> {
+  const trimmed = url.trim();
+  if (!trimmed) return { ok: false, error: "empty-url" };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { ok: false, error: "invalid-url" };
+  }
+
+  if (parsed.protocol === "file:") return resolveLocalFileUrl(trimmed, null);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { ok: false, error: "invalid-url" };
+  }
+  if (parsed.username.length > 0 || parsed.password.length > 0) {
+    return { ok: false, error: "invalid-url" };
+  }
+  return { ok: true, url: trimmed };
+}
 
 /**
  * Returns true when `input` looks like a bare host rather than a free-form search query.
@@ -38,10 +64,7 @@ export async function resolvePreviewNavigationTarget(
 ): Promise<PreviewResolveNavigationResult> {
   const trimmed = url.trim();
   if (!trimmed) return { ok: false, error: "empty-url" };
-  const target = await resolvePreviewTarget(trimmed, workspacePath?.trim() ?? null);
-  if (!target.ok) return target;
-  if (!isAllowedPreviewUrl(target.url)) return { ok: false, error: "invalid-url" };
-  return target;
+  return resolvePreviewTarget(trimmed, workspacePath?.trim() ?? null);
 }
 
 async function resolvePreviewTarget(
@@ -51,10 +74,10 @@ async function resolvePreviewTarget(
   if (isMcodeWorkspacePreviewUrl(trimmed)) {
     return resolveMcodeWorkspacePreviewUrl(trimmed, workspacePath);
   }
-  if (/^https?:\/\//i.test(trimmed)) return { ok: true, url: trimmed };
+  if (/^https?:\/\//i.test(trimmed)) return validatePreviewNavigationUrl(trimmed);
   if (/^file:\/\//i.test(trimmed) || looksLikeFilePath(trimmed)) {
     return resolveLocalFileUrl(trimmed, workspacePath);
   }
-  if (looksLikeBareDomain(trimmed)) return { ok: true, url: `https://${trimmed}` };
-  return { ok: true, url: `https://www.google.com/search?q=${encodeURIComponent(trimmed)}` };
+  if (looksLikeBareDomain(trimmed)) return validatePreviewNavigationUrl(`https://${trimmed}`);
+  return validatePreviewNavigationUrl(`https://www.google.com/search?q=${encodeURIComponent(trimmed)}`);
 }

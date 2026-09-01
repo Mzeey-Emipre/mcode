@@ -13,6 +13,7 @@ import {
   type TabState,
 } from "../state/window-session.js";
 import { bumpPerf } from "../observability/perf-counters.js";
+import { validatePreviewNavigationUrl } from "../navigation/resolve-target.js";
 
 type TabIpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -62,28 +63,22 @@ function normaliseChromeField(value: unknown, maxLength: number): string | null 
   return value;
 }
 
-function normaliseInitialAddress(value: unknown): string | null | undefined {
+async function normaliseInitialAddress(value: unknown): Promise<string | null | undefined> {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || value.length === 0 || value.length > BROWSER_TAB_INFO_STRING_MAX.url) {
     return null;
   }
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    if (parsed.username.length > 0 || parsed.password.length > 0) return null;
-    return value;
-  } catch {
-    return null;
-  }
+  const result = await validatePreviewNavigationUrl(value);
+  return result.ok ? result.url : null;
 }
 
-function normaliseChromeUrl(value: unknown): string | null | undefined {
+async function normaliseChromeUrl(value: unknown): Promise<string | null | undefined> {
   if (value === null) return null;
   if (typeof value !== "string" || value.length > BROWSER_TAB_INFO_STRING_MAX.url) return undefined;
   const trimmed = value.trim();
   const lower = trimmed.toLowerCase();
   if (trimmed.length === 0 || lower.startsWith("about:") || lower.startsWith("chrome-error:")) return null;
-  return normaliseInitialAddress(trimmed) ?? undefined;
+  return (await normaliseInitialAddress(trimmed)) ?? undefined;
 }
 
 function hasOwnField(value: unknown, field: string): boolean {
@@ -139,16 +134,16 @@ function parseRequestedTabId(value: unknown, supplied: boolean): string | null |
   return tabId ?? error("invalid-tab-id");
 }
 
-function parseInitialAddress(value: unknown, supplied: boolean): string | null | undefined | TabIpcResult<never> {
-  const address = normaliseInitialAddress(value);
+async function parseInitialAddress(value: unknown, supplied: boolean): Promise<string | null | undefined | TabIpcResult<never>> {
+  const address = await normaliseInitialAddress(value);
   if (supplied && address === null) return error("invalid-initial-address");
   return address;
 }
 
-function parseOpenTabInput(payload: { activate?: unknown; tabId?: unknown; initialAddress?: unknown }): OpenTabInput | TabIpcResult<never> {
+async function parseOpenTabInput(payload: { activate?: unknown; tabId?: unknown; initialAddress?: unknown }): Promise<OpenTabInput | TabIpcResult<never>> {
   const requestedTabId = parseRequestedTabId(payload?.tabId, payload?.tabId !== undefined);
   if (isTabError(requestedTabId)) return requestedTabId;
-  const initialAddress = parseInitialAddress(payload?.initialAddress, payload?.initialAddress !== undefined);
+  const initialAddress = await parseInitialAddress(payload?.initialAddress, payload?.initialAddress !== undefined);
   if (isTabError(initialAddress)) return initialAddress;
   return { requestedTabId, initialAddress, activate: payload?.activate !== false };
 }
@@ -200,17 +195,17 @@ function parseChromeField(value: unknown, supplied: boolean, maxLength: number):
   return normalised === undefined ? error("invalid-tab-chrome") : normalised;
 }
 
-function parseChromeUrl(value: unknown, supplied: boolean): string | null | undefined | TabIpcResult<never> {
+async function parseChromeUrl(value: unknown, supplied: boolean): Promise<string | null | undefined | TabIpcResult<never>> {
   if (!supplied) return undefined;
-  const normalised = normaliseChromeUrl(value);
+  const normalised = await normaliseChromeUrl(value);
   return normalised === undefined ? error("invalid-tab-chrome") : normalised;
 }
 
-function parseChromeUpdate(payload: { title?: unknown; url?: unknown; faviconUrl?: unknown }): ChromeUpdateInput | TabIpcResult<never> {
+async function parseChromeUpdate(payload: { title?: unknown; url?: unknown; faviconUrl?: unknown }): Promise<ChromeUpdateInput | TabIpcResult<never>> {
   const updates = { title: hasOwnField(payload, "title"), url: hasOwnField(payload, "url"), faviconUrl: hasOwnField(payload, "faviconUrl") };
   const title = parseChromeField(payload?.title, updates.title, BROWSER_TAB_INFO_STRING_MAX.title);
   if (isTabError(title)) return title;
-  const url = parseChromeUrl(payload?.url, updates.url);
+  const url = await parseChromeUrl(payload?.url, updates.url);
   if (isTabError(url)) return url;
   const faviconUrl = parseChromeField(payload?.faviconUrl, updates.faviconUrl, BROWSER_TAB_INFO_STRING_MAX.faviconUrl);
   if (isTabError(faviconUrl)) return faviconUrl;
@@ -230,10 +225,10 @@ function handleList(event: IpcMainInvokeEvent, payload: { threadId?: unknown; wo
   return { ok: true, data: buildTabSet(context.session, context.threadId) };
 }
 
-function handleOpen(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; activate?: unknown; tabId?: unknown; initialAddress?: unknown }): TabIpcResult<{ tabId: string; tabs: BrowserTabSet }> {
+async function handleOpen(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; activate?: unknown; tabId?: unknown; initialAddress?: unknown }): Promise<TabIpcResult<{ tabId: string; tabs: BrowserTabSet }>> {
   const context = resolveTabContext(event, payload);
   if ("ok" in context) return context;
-  const input = parseOpenTabInput(payload);
+  const input = await parseOpenTabInput(payload);
   if ("ok" in input) return input;
   updateWorkspaceContext(context);
   return openTab(context, input);
@@ -256,10 +251,10 @@ function handleActivate(event: IpcMainInvokeEvent, payload: { threadId?: unknown
   return { ok: true, data: tabs };
 }
 
-function handleChromeUpdate(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown; title?: unknown; url?: unknown; faviconUrl?: unknown }): TabIpcResult<BrowserTabSet> {
+async function handleChromeUpdate(event: IpcMainInvokeEvent, payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown; title?: unknown; url?: unknown; faviconUrl?: unknown }): Promise<TabIpcResult<BrowserTabSet>> {
   const context = resolveTabIdContext(event, payload);
   if ("ok" in context) return context;
-  const input = parseChromeUpdate(payload);
+  const input = await parseChromeUpdate(payload);
   if ("ok" in input) return input;
   updateWorkspaceContext(context);
   const tab = ensureThreadTabSet(context.session, context.threadId).tabs.find((candidate) => candidate.id === context.tabId);
