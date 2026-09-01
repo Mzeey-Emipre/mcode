@@ -75,6 +75,7 @@ describe("SandboxWorktreeCleanupPolicy", () => {
     await expect(policy.decide({
       workspacePath,
       worktreePath: sandboxPath,
+      checkoutState: "branchless",
     })).resolves.toEqual({
       action: "remove",
       worktreePath: sandboxPath,
@@ -138,6 +139,20 @@ describe("SandboxWorktreeCleanupPolicy", () => {
     })).resolves.toEqual({
       action: "retain",
       reason: "default-branch-unknown",
+    });
+  });
+
+  it("retains a named checkout when its current branch cannot be read", async () => {
+    const policy = createPolicy({ defaultBranch: "main", currentBranch: null });
+
+    await expect(policy.decide({
+      workspacePath,
+      worktreePath: sandboxPath,
+      branch: "feature/unreadable",
+      checkoutState: "named",
+    })).resolves.toEqual({
+      action: "retain",
+      reason: "current-branch-unknown",
     });
   });
 });

@@ -31,12 +31,13 @@ function workspaceDeps() {
   const deleteWorkspace = vi.fn().mockReturnValue(true);
   const forceDeleteWorkspace = vi.fn().mockReturnValue(true);
   const beginWorkspaceTeardown = vi.fn().mockResolvedValue(() => undefined);
+  const unwatchThreadWorktree = vi.fn();
   const listAllByWorkspace = vi.fn().mockReturnValue([
     { id: "t-1", worktree_path: "C:/repo-worktree-1" },
     { id: "t-2", worktree_path: "C:/repo-worktree-2" },
   ]);
   const deps = {
-    gitWatcherService: { unwatchWorkspace: vi.fn() },
+    gitWatcherService: { unwatchThreadWorktree, unwatchWorkspace: vi.fn() },
     threadRepo: {
       listAllByWorkspace,
     },
@@ -61,6 +62,7 @@ function workspaceDeps() {
     forceDeleteWorkspace,
     beginWorkspaceTeardown,
     listAllByWorkspace,
+    unwatchThreadWorktree,
   };
 }
 
@@ -144,5 +146,16 @@ describe("workspace delete teardown", () => {
     expect(response).toEqual({ id: "workspace-delete-1", result: true });
     expect(teardownThread).toHaveBeenCalledTimes(2);
     expect(forceDeleteWorkspace).toHaveBeenCalledWith("workspace-1");
+  });
+
+  it("leaves each thread watcher to its deletion teardown", async () => {
+    const { deps, teardownThread, unwatchThreadWorktree } = workspaceDeps();
+    teardownThread.mockImplementation(async () => {
+      unwatchThreadWorktree();
+    });
+
+    await routeMessage(workspaceRequest("workspace.delete"), deps);
+
+    expect(unwatchThreadWorktree).toHaveBeenCalledTimes(2);
   });
 });

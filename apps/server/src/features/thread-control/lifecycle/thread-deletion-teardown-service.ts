@@ -24,8 +24,9 @@ export class ThreadDeletionTeardownService {
   /** Stop thread work and detach its file watcher before persistent data is removed. */
   async teardownThread(threadId: string): Promise<void> {
     const releaseDeletionBarrier = this.workspaceEnvironmentService.beginThreadDeletion(threadId);
-    const releaseActionAdmission = await this.projectActionService.beginThreadTeardown(threadId);
+    let releaseActionAdmission: (() => void) | undefined;
     try {
+      releaseActionAdmission = await this.projectActionService.beginThreadTeardown(threadId);
       const thread = this.threadRepo.findById(threadId);
       await this.workspaceEnvironmentService.cancelSetupForThread(threadId);
       await this.projectActionService.stopForThread(threadId);
@@ -36,7 +37,7 @@ export class ThreadDeletionTeardownService {
       await this.threadTeardownService.teardownThread(threadId);
       this.gitWatcherService.unwatchThreadWorktree(threadId);
     } finally {
-      releaseActionAdmission();
+      releaseActionAdmission?.();
       releaseDeletionBarrier();
     }
   }

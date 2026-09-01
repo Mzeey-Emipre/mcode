@@ -442,12 +442,7 @@ async function teardownWorkspaceThreads(
     threads.map((thread) => teardownWorkspaceThread(deps, thread)),
   );
   const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-  if (failures.length === 0) {
-    for (const thread of threads) {
-      deps.gitWatcherService?.unwatchThreadWorktree?.(thread.id);
-    }
-    return;
-  }
+  if (failures.length === 0) return;
   throw new Error(
     `Workspace teardown failed for ${workspaceId}: ${failures.map(teardownFailureMessage).join("; ")}`,
   );

@@ -26,7 +26,7 @@ thread shares it. A missing managed checkout is pruned from Git and its saved
 named branch is removed. An external, unmanaged, shared, or non-descendant
 worktree keeps its filesystem and Git state; only the thread's database row and
 generated artifacts expire. Cleanup also keeps a named checkout when the
-repository default branch cannot be identified.
+repository default branch or its current branch cannot be identified.
 
 ## Repository mapping
 

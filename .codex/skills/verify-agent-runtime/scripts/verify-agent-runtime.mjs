@@ -69,7 +69,7 @@ Commands:
   health
       Validate this worktree's .dev/ports.json and GET /health. Does not start a runtime.
   check
-      Run focused AgentService/event tests, bun run verify:changed, and bun run lint:fast.
+      Run focused AgentService, resource-cleanup, and event tests, bun run verify:changed, and bun run lint:fast.
   inspect
       Read active runtime and workspace summaries through the authenticated WebSocket RPC API.
   live --provider <codex|claude|cursor> --model <id> --scenario <completion|stop> --confirm-provider-call [--keep-thread]

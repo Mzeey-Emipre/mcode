@@ -13,7 +13,14 @@ import {
 /** The permitted cleanup action for one thread checkout. */
 export type SandboxWorktreeCleanupDecision =
   | { action: "remove"; worktreePath: string | null; branch: string | null }
-  | { action: "retain"; reason: "outside-sandbox" | "primary-branch" | "default-branch-unknown" };
+  | {
+    action: "retain";
+    reason:
+      | "outside-sandbox"
+      | "primary-branch"
+      | "default-branch-unknown"
+      | "current-branch-unknown";
+  };
 
 /** Decides whether Mcode may remove a checkout during thread cleanup. */
 @injectable()
@@ -50,11 +57,44 @@ export class SandboxWorktreeCleanupPolicy {
 
     const [defaultBranch, currentBranch] = await Promise.all([
       this.gitRepository.getDefaultBranchAt(input.workspacePath),
-      sandboxPath ? this.gitRepository.getCurrentBranchAt(sandboxPath) : Promise.resolve(null),
+      this.currentBranchAt(sandboxPath),
     ]);
-    const branch = input.checkoutState === "branchless"
+    if (this.namedCheckoutBranchIsUnknown(input.checkoutState, sandboxPath, currentBranch)) {
+      return { action: "retain", reason: "current-branch-unknown" };
+    }
+    const branch = this.branchForRemoval(input.checkoutState, currentBranch, input.branch);
+    return this.decideRemoval(defaultBranch, branch, sandboxPath);
+  }
+
+  private currentBranchAt(sandboxPath: string | null): Promise<string | null> {
+    return sandboxPath
+      ? this.gitRepository.getCurrentBranchAt(sandboxPath)
+      : Promise.resolve(null);
+  }
+
+  private namedCheckoutBranchIsUnknown(
+    checkoutState: "named" | "branchless" | undefined,
+    sandboxPath: string | null,
+    currentBranch: string | null,
+  ): boolean {
+    return sandboxPath !== null && checkoutState !== "branchless" && namedBranch(currentBranch) === null;
+  }
+
+  private branchForRemoval(
+    checkoutState: "named" | "branchless" | undefined,
+    currentBranch: string | null,
+    savedBranch: string | null | undefined,
+  ): string | null {
+    return checkoutState === "branchless"
       ? null
-      : namedBranch(currentBranch) ?? namedBranch(input.branch);
+      : namedBranch(currentBranch) ?? namedBranch(savedBranch);
+  }
+
+  private decideRemoval(
+    defaultBranch: string | null,
+    branch: string | null,
+    sandboxPath: string | null,
+  ): SandboxWorktreeCleanupDecision {
     if (defaultBranch === null && branch !== null) {
       return { action: "retain", reason: "default-branch-unknown" };
     }

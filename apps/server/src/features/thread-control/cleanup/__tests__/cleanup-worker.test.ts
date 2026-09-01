@@ -95,6 +95,14 @@ describe("CleanupWorker sandbox worktrees", () => {
     );
   }
 
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((nextResolve) => {
+      resolve = nextResolve;
+    });
+    return { promise, resolve };
+  }
+
   it("keeps a sandbox worktree and active handoff thread", async () => {
     const workspace = workspaces.create("Project", "/repo");
     const path = "C:\\Users\\user\\.mcode\\worktrees\\repo\\feature";
@@ -205,5 +213,106 @@ describe("CleanupWorker sandbox worktrees", () => {
     expect(threads.findById("expired")).toBeNull();
     expect(threads.findById("active-sibling")).not.toBeNull();
     expect(gitWorktrees.removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("retries failed worktree removal without deleting the thread", async () => {
+    const workspace = workspaces.create("Project", "/repo");
+    addThread(
+      workspace.id,
+      "failed-removal",
+      "C:\\Users\\user\\.mcode\\worktrees\\repo\\failed",
+      "feature/failed",
+      new Date(0).toISOString(),
+    );
+    vi.mocked(gitWorktrees.removeWorktree).mockResolvedValue(false);
+
+    await worker.poll();
+
+    expect(cleanupJobs.findByThreadId("failed-removal")).toMatchObject({
+      attempts: 1,
+      last_error: expect.stringContaining("still exists"),
+    });
+    expect(threads.findById("failed-removal")).not.toBeNull();
+  });
+
+  it("does not overlap cleanup polls while a worktree removal is running", async () => {
+    const workspace = workspaces.create("Project", "/repo");
+    const removal = deferred<boolean>();
+    const removalStarted = deferred<void>();
+    addThread(
+      workspace.id,
+      "concurrent-removal",
+      "C:\\Users\\user\\.mcode\\worktrees\\repo\\concurrent",
+      "feature/concurrent",
+      new Date(0).toISOString(),
+    );
+    vi.mocked(gitWorktrees.removeWorktree).mockImplementation(async () => {
+      removalStarted.resolve();
+      return await removal.promise;
+    });
+
+    const firstPoll = worker.poll();
+    await removalStarted.promise;
+    await worker.poll();
+
+    expect(gitWorktrees.removeWorktree).toHaveBeenCalledExactlyOnceWith(
+      "/repo",
+      "concurrent",
+      expect.objectContaining({ branchName: "feature/dirty" }),
+    );
+
+    removal.resolve(true);
+    await firstPoll;
+  });
+
+  it("does not admit cleanup after disposal", async () => {
+    const workspace = workspaces.create("Project", "/repo");
+    addThread(
+      workspace.id,
+      "disposed-removal",
+      "C:\\Users\\user\\.mcode\\worktrees\\repo\\disposed",
+      "feature/disposed",
+      new Date(0).toISOString(),
+    );
+
+    worker.dispose();
+    await worker.poll();
+
+    expect(threads.findById("disposed-removal")).not.toBeNull();
+    expect(gitWorktrees.removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("waits for an active cleanup before shutdown completes", async () => {
+    const workspace = workspaces.create("Project", "/repo");
+    const removal = deferred<boolean>();
+    const removalStarted = deferred<void>();
+    addThread(
+      workspace.id,
+      "shutdown-removal",
+      "C:\\Users\\user\\.mcode\\worktrees\\repo\\shutdown",
+      "feature/shutdown",
+      new Date(0).toISOString(),
+    );
+    vi.mocked(gitWorktrees.removeWorktree).mockImplementation(async () => {
+      removalStarted.resolve();
+      return await removal.promise;
+    });
+
+    const poll = worker.poll();
+    await removalStarted.promise;
+    let shutdownComplete = false;
+    const shutdown = worker.shutdown().then(() => {
+      shutdownComplete = true;
+    });
+    await Promise.resolve();
+
+    expect(shutdownComplete).toBe(false);
+    await worker.poll();
+    expect(gitWorktrees.removeWorktree).toHaveBeenCalledOnce();
+
+    removal.resolve(true);
+    await poll;
+    await shutdown;
+    expect(shutdownComplete).toBe(true);
   });
 });

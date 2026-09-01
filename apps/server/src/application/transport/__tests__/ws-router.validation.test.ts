@@ -1337,9 +1337,11 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     expect(deleteWorkspace).not.toHaveBeenCalled();
   });
 
-  it("unwatches thread worktrees after all workspace thread teardowns succeed", async () => {
+  it("lets each thread teardown unwatch its own worktree once", async () => {
     const unwatchThreadWorktree = vi.fn();
-    const teardownThread = vi.fn().mockResolvedValue(undefined);
+    const teardownThread = vi.fn(async (threadId: string) => {
+      unwatchThreadWorktree(threadId);
+    });
     const cancelSetupForWorkspace = vi.fn().mockResolvedValue(undefined);
     const projectActions = createProjectActionServiceMock();
     const deps = {
@@ -1383,11 +1385,9 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     );
 
     expect(response.result).toBe(true);
-    expect(unwatchThreadWorktree).toHaveBeenCalledWith("thread-1");
-    expect(unwatchThreadWorktree).toHaveBeenCalledWith("thread-2");
-    expect(teardownThread.mock.invocationCallOrder[1]).toBeLessThan(
-      unwatchThreadWorktree.mock.invocationCallOrder[0],
-    );
+    expect(unwatchThreadWorktree).toHaveBeenCalledTimes(2);
+    expect(unwatchThreadWorktree).toHaveBeenNthCalledWith(1, "thread-1");
+    expect(unwatchThreadWorktree).toHaveBeenNthCalledWith(2, "thread-2");
     expect(cancelSetupForWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
       teardownThread.mock.invocationCallOrder[0],
     );

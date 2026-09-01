@@ -45,9 +45,25 @@ describe("ThreadDeletionTeardownService", () => {
       "release-deletion",
     ]);
   });
+
+  it("releases the deletion barrier when action admission fails", async () => {
+    const calls: string[] = [];
+    const service = createService(calls, { admissionFails: true });
+
+    await expect(service.teardownThread("thread-1")).rejects.toThrow("admission failed");
+
+    expect(calls).toEqual([
+      "begin-deletion",
+      "begin-action",
+      "release-deletion",
+    ]);
+  });
 });
 
-function createService(calls: string[], options: { stopFails?: boolean } = {}): ThreadDeletionTeardownService {
+function createService(
+  calls: string[],
+  options: { stopFails?: boolean; admissionFails?: boolean } = {},
+): ThreadDeletionTeardownService {
   const workspaceEnvironment = {
     beginThreadDeletion: vi.fn(() => {
       calls.push("begin-deletion");
@@ -58,6 +74,7 @@ function createService(calls: string[], options: { stopFails?: boolean } = {}): 
   const projectActions = {
     beginThreadTeardown: vi.fn(async () => {
       calls.push("begin-action");
+      if (options.admissionFails) throw new Error("admission failed");
       return () => calls.push("release-action");
     }),
     stopForThread: vi.fn(async () => {
