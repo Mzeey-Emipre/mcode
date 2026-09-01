@@ -124,23 +124,49 @@ describe("CleanupWorker sandbox worktrees", () => {
     expect(gitWorktrees.removeWorktree).not.toHaveBeenCalled();
   });
 
-  it("keeps a sandbox worktree when no thread still links to it", async () => {
+  it("does not remove a new worktree path from a stale cleanup job", async () => {
     const workspace = workspaces.create("Project", "/repo");
-    const path = "C:\\Users\\user\\.mcode\\worktrees\\repo\\stale";
-    addThread(workspace.id, "expired", path, "feature/stale", null);
+    const stalePath = "C:\\Users\\user\\.mcode\\worktrees\\repo\\stale";
+    const currentPath = "C:\\Users\\user\\.mcode\\worktrees\\repo\\current";
+    addThread(workspace.id, "expired", stalePath, "feature/stale", null);
     threads.softDelete("expired");
     cleanupJobs.insert({
       thread_id: "expired",
       workspace_path: "/repo",
-      worktree_path: path,
+      worktree_path: stalePath,
       branch: "feature/stale",
     });
-    database.prepare("UPDATE threads SET worktree_path = NULL WHERE id = ?").run("expired");
+    database.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?").run(currentPath, "expired");
 
     await worker.poll();
 
     expect(threads.findById("expired")).toBeNull();
     expect(gitWorktrees.removeWorktree).not.toHaveBeenCalled();
+    expect(cleanupPolicy.decide).not.toHaveBeenCalled();
+  });
+
+  it("does not remove a path changed after cleanup validates the job", async () => {
+    const workspace = workspaces.create("Project", "/repo");
+    const stalePath = "C:\\Users\\user\\.mcode\\worktrees\\repo\\stale";
+    const currentPath = "C:\\Users\\user\\.mcode\\worktrees\\repo\\current";
+    addThread(workspace.id, "expired", stalePath, "feature/stale", null);
+    threads.softDelete("expired");
+    cleanupJobs.insert({
+      thread_id: "expired",
+      workspace_path: "/repo",
+      worktree_path: stalePath,
+      branch: "feature/stale",
+    });
+    vi.mocked(cleanupPolicy.decide).mockImplementationOnce(async ({ worktreePath }) => {
+      database.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?").run(currentPath, "expired");
+      return { action: "remove", worktreePath, branch: "feature/stale" };
+    });
+
+    await worker.poll();
+
+    expect(threads.findById("expired")).toBeNull();
+    expect(gitWorktrees.removeWorktree).not.toHaveBeenCalled();
+    expect(cleanupPolicy.decide).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a default-branch checkout and removes only the expired thread", async () => {

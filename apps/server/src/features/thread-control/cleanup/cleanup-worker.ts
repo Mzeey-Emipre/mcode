@@ -224,7 +224,23 @@ export class CleanupWorker {
       this.cleanupJobRepo.delete(job.id);
       return;
     }
-    await this.cleanupWorktree(job, thread?.worktree_path ?? job.worktree_path);
+    if (!await this.matchesJobWorktree(thread, job)) {
+      await this.completeThreadOnly(job);
+      return;
+    }
+    await this.cleanupWorktree(job, job.worktree_path);
+  }
+
+  private async matchesJobWorktree(thread: Thread | null, job: CleanupJob): Promise<boolean> {
+    if (job.worktree_path === null) return thread?.worktree_path === null;
+    if (!thread?.worktree_path) return false;
+
+    const [jobPath, currentPath] = await Promise.all([
+      this.cleanupPolicy.resolveSandboxPath(job.worktree_path),
+      this.cleanupPolicy.resolveSandboxPath(thread.worktree_path),
+    ]);
+    if (jobPath && currentPath) return this.cleanupPolicy.isSameSandboxPath(jobPath, currentPath);
+    return this.cleanupPolicy.isSameSandboxPath(job.worktree_path, thread.worktree_path);
   }
 
   private claimRetentionCleanup(job: CleanupJob): ReturnType<ThreadRepo["claimRetentionCleanup"]> | undefined {
@@ -249,9 +265,7 @@ export class CleanupWorker {
     worktreePath: string | null,
   ): Promise<void> {
     if (!worktreePath) {
-      await this.teardownThreadRuntime(job.thread_id);
-      await this.completeThreads(job, [job.thread_id]);
-      await this.finalizeWorkspaceIfDone(job.workspace_path);
+      await this.completeThreadOnly(job);
       return;
     }
 
@@ -260,9 +274,7 @@ export class CleanupWorker {
       worktreePath,
     });
     if (decision.action === "retain") {
-      await this.teardownThreadRuntime(job.thread_id);
-      await this.completeThreads(job, [job.thread_id]);
-      await this.finalizeWorkspaceIfDone(job.workspace_path);
+      await this.completeThreadOnly(job);
       return;
     }
 
@@ -277,10 +289,22 @@ export class CleanupWorker {
     await this.finalizeWorkspaceIfDone(job.workspace_path);
   }
 
+  private async completeThreadOnly(job: CleanupJob): Promise<void> {
+    await this.teardownThreadRuntime(job.thread_id);
+    await this.completeThreads(job, [job.thread_id]);
+    await this.finalizeWorkspaceIfDone(job.workspace_path);
+  }
+
   private async removeLockedWorktree(
     job: CleanupJob,
     worktreePath: string,
   ): Promise<LockedRemovalResult> {
+    const sourceThread = this.threadRepo.findById(job.thread_id);
+    if (!sourceThread || !await this.matchesJobWorktree(sourceThread, job)) {
+      await this.teardownThreadRuntime(job.thread_id);
+      return { removed: true, threadIds: sourceThread ? [job.thread_id] : [] };
+    }
+
     const decision = await this.cleanupPolicy.decide({
       workspacePath: job.workspace_path,
       worktreePath,
@@ -289,9 +313,6 @@ export class CleanupWorker {
       await this.teardownThreadRuntime(job.thread_id);
       return { removed: true, threadIds: [job.thread_id] };
     }
-
-    const sourceThread = this.threadRepo.findById(job.thread_id);
-    if (!sourceThread) return { removed: true, threadIds: [] };
 
     const linkedThreads = await this.findLinkedThreads(
       sourceThread.workspace_id,

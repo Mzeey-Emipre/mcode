@@ -681,23 +681,25 @@ export class ThreadRepo {
     return row?.found === 1;
   }
 
-  /** Set the worktree filesystem path for a thread. Returns true if a row was changed. */
+  /** Set the worktree filesystem path for a thread unless cleanup owns the thread. */
   updateWorktreePath(id: string, worktreePath: string): boolean {
     const now = new Date().toISOString();
     const result = this.db
       .prepare(
-        "UPDATE threads SET worktree_path = ?, updated_at = ? WHERE id = ?",
+        "UPDATE threads SET worktree_path = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND cleanup_state IS NOT 'running'",
       )
       .run(worktreePath, now, id);
 
     return result.changes > 0;
   }
 
-  /** Clear a thread's persisted worktree path after its managed checkout is removed. */
+  /** Clear a thread's worktree filesystem path unless cleanup owns the thread. */
   clearWorktreePath(id: string): boolean {
     const now = new Date().toISOString();
     const result = this.db
-      .prepare("UPDATE threads SET worktree_path = NULL, updated_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE threads SET worktree_path = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND cleanup_state IS NOT 'running'",
+      )
       .run(now, id);
 
     return result.changes > 0;
