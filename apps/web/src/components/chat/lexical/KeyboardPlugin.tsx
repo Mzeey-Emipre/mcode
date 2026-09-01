@@ -23,8 +23,10 @@ import { $isSlashCommandNode } from "./SlashCommandNode";
 interface KeyboardPluginProps {
   /** Callback to submit the current message. */
   readonly onSubmit: () => void;
-  /** When true, Enter-to-submit is suppressed. */
+  /** When true, no submit shortcut is active. */
   readonly disabled?: boolean;
+  /** When false, Ctrl/Cmd+Enter submits and Enter inserts a line break. */
+  readonly submitOnEnter?: boolean;
   /** When true, intercept navigation keys for popup handling. */
   readonly isPopupOpen?: boolean;
   /** Called when a navigation key is pressed while popup is open. Returns true if handled. */
@@ -36,6 +38,7 @@ interface KeyboardRefs {
   onPopupKeyDown: MutableRefObject<((key: string) => boolean) | undefined>;
   onSubmit: MutableRefObject<() => void>;
   disabled: MutableRefObject<boolean | undefined>;
+  submitOnEnter: MutableRefObject<boolean | undefined>;
 }
 
 /** Handles a popup navigation key when a Composer popup has claimed it. */
@@ -49,13 +52,18 @@ function handlePopupKey(event: KeyboardEvent | null, key: string, refs: Keyboard
 
 /** Handles Enter for an open Composer popup. */
 function handlePopupEnter(event: KeyboardEvent | null, refs: KeyboardRefs): boolean {
-  if (!event || event.shiftKey) return false;
+  if (!event || event.shiftKey || event.ctrlKey || event.metaKey) return false;
   return handlePopupKey(event, "Enter", refs);
 }
 
 /** Submits the Composer for an unhandled Enter key. */
 function handleSubmitEnter(event: KeyboardEvent | null, refs: KeyboardRefs): boolean {
-  if (!event || event.shiftKey) return false;
+  if (!event) return false;
+  const submitOnEnter = refs.submitOnEnter.current ?? true;
+  const shouldSubmit = submitOnEnter
+    ? !event.shiftKey
+    : !event.shiftKey && (event.ctrlKey || event.metaKey);
+  if (!shouldSubmit) return false;
   event.preventDefault();
   if (!refs.disabled.current) refs.onSubmit.current();
   return true;
@@ -129,8 +137,8 @@ function handleShortcutDelete(event: KeyboardEvent, isBackward: boolean): boolea
 
 /**
  * Lexical plugin for keyboard shortcuts.
- * - Enter (without Shift): submit message (or select popup item)
- * - Shift+Enter: insert newline (default Lexical behavior)
+ * - Enter submits by default, or Ctrl/Cmd+Enter submits when requested
+ * - An unhandled Enter inserts a newline in compact editors
  * - Arrow keys, Tab, Escape: delegated to popup handler when open
  *
  * Uses refs for popup callbacks to avoid constant re-registration of
@@ -140,6 +148,7 @@ function handleShortcutDelete(event: KeyboardEvent, isBackward: boolean): boolea
 export function KeyboardPlugin({
   onSubmit,
   disabled,
+  submitOnEnter,
   isPopupOpen,
   onPopupKeyDown,
 }: KeyboardPluginProps): null {
@@ -158,11 +167,15 @@ export function KeyboardPlugin({
   const disabledRef = useRef(disabled);
   disabledRef.current = disabled;
 
+  const submitOnEnterRef = useRef(submitOnEnter);
+  submitOnEnterRef.current = submitOnEnter;
+
   const refs = useMemo<KeyboardRefs>(() => ({
     isPopupOpen: isPopupOpenRef,
     onPopupKeyDown: onPopupKeyDownRef,
     onSubmit: onSubmitRef,
     disabled: disabledRef,
+    submitOnEnter: submitOnEnterRef,
   }), []);
 
   // Register all keyboard handlers once, using refs for latest values

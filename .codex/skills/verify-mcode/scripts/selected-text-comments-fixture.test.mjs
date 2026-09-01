@@ -4,6 +4,8 @@ import {
   assertCleanupIdentity,
   assertElectronSessionState,
   assertFixtureState,
+  assertOwnedSkillContent,
+  assertOwnedSkillPath,
   assertOwnedStatePath,
 } from "./selected-text-comments-fixture.mjs";
 
@@ -24,10 +26,16 @@ test("accepts only the fixture-owned state path and shape", () => {
   const root = "C:/repo";
   expect(() => assertOwnedStatePath(root, "C:/repo/.dev/verification/selected-text-comments-fixture.json")).not.toThrow();
   expect(() => assertOwnedStatePath(root, "C:/repo/.dev/verification/other.json")).toThrow();
+  expect(() => assertOwnedSkillPath(root, "C:/repo/.dev/fixture-repo/.claude/skills/verification-comment/SKILL.md")).not.toThrow();
+  expect(() => assertOwnedSkillPath(root, "C:/repo/.claude/skills/verification-comment/SKILL.md")).toThrow();
   expect(assertFixtureState(state)).toEqual(state);
   expect(() => assertFixtureState({ ...state, extra: "value" })).toThrow();
   expect(() => assertFixtureState({ ...state, threadId: "other-thread" })).toThrow();
   expect(() => assertFixtureState({ ...state, messageId: "other-message" })).toThrow();
+});
+
+test("rejects cleanup when the fixture skill was replaced", () => {
+  expect(() => assertOwnedSkillContent("fixture skill")).toThrow();
 });
 
 test("rejects cleanup rows that do not belong to the recorded fixture", () => {

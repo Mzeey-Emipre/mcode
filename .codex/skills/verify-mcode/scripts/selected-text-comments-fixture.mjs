@@ -13,6 +13,17 @@ const FIXTURE_THREAD_ID = "mcode-verification-selected-text-thread";
 const FIXTURE_MESSAGE_ID = "mcode-verification-selected-text-message";
 const FIXTURE_TITLE = "Selected text comments verification";
 const FIXTURE_MESSAGE_CONTENT = "Select this verification phrase";
+const FIXTURE_SKILL_DIRECTORY = NodePath.join(FIXTURE_WORKSPACE_PATH, ".claude", "skills", "verification-comment");
+const FIXTURE_SKILL_PATH = NodePath.join(FIXTURE_SKILL_DIRECTORY, "SKILL.md");
+const FIXTURE_SKILL_CONTENT = `---
+name: verification-comment
+description: Add a deterministic selected-text verification comment.
+---
+
+# Verification comment
+
+Use this fixture skill only to verify selected-text comment slash insertion.
+`;
 const MAX_WORKSPACE_ID_LENGTH = 200;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9_-]+$/;
 
@@ -25,6 +36,17 @@ export function assertElectronSessionState(command, healthy) {
 export function assertOwnedStatePath(root, statePath) {
   const expected = NodePath.join(NodePath.resolve(root), ".dev", "verification", "selected-text-comments-fixture.json");
   if (NodePath.resolve(statePath) !== expected) throw new Error("Fixture state path is outside the worktree verification directory");
+}
+
+/** Rejects fixture skill paths outside the owned disposable workspace. */
+export function assertOwnedSkillPath(root, skillPath) {
+  const expected = NodePath.join(NodePath.resolve(root), ".dev", "fixture-repo", ".claude", "skills", "verification-comment", "SKILL.md");
+  if (NodePath.resolve(skillPath) !== expected) throw new Error("Fixture skill path is outside the disposable workspace");
+}
+
+/** Rejects cleanup when the fixture skill was replaced with other content. */
+export function assertOwnedSkillContent(content) {
+  if (content !== FIXTURE_SKILL_CONTENT) throw new Error("Fixture skill content is not owned by this verifier");
 }
 
 function isValidWorkspaceId(workspaceId) {
@@ -160,6 +182,26 @@ function writeFixtureState(state) {
   NodeFS.writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
+function writeFixtureSkill() {
+  assertOwnedSkillPath(REPO_ROOT, FIXTURE_SKILL_PATH);
+  if (NodeFS.existsSync(FIXTURE_SKILL_PATH)) {
+    assertOwnedSkillContent(NodeFS.readFileSync(FIXTURE_SKILL_PATH, "utf8"));
+    return;
+  }
+  NodeFS.mkdirSync(FIXTURE_SKILL_DIRECTORY, { recursive: true });
+  NodeFS.writeFileSync(FIXTURE_SKILL_PATH, FIXTURE_SKILL_CONTENT, { encoding: "utf8", flag: "wx" });
+}
+
+function removeFixtureSkill() {
+  assertOwnedSkillPath(REPO_ROOT, FIXTURE_SKILL_PATH);
+  if (!NodeFS.existsSync(FIXTURE_SKILL_PATH)) return;
+  assertOwnedSkillContent(NodeFS.readFileSync(FIXTURE_SKILL_PATH, "utf8"));
+  NodeFS.unlinkSync(FIXTURE_SKILL_PATH);
+  if (NodeFS.existsSync(FIXTURE_SKILL_DIRECTORY) && NodeFS.readdirSync(FIXTURE_SKILL_DIRECTORY).length === 0) {
+    NodeFS.rmdirSync(FIXTURE_SKILL_DIRECTORY);
+  }
+}
+
 function deleteCreatedThread(database, state) {
   const thread = database.query(
     "SELECT workspace_id, title FROM threads WHERE id = ?",
@@ -191,12 +233,14 @@ async function setupFixture() {
   try {
     const workspace = findFixtureWorkspace(database);
     state = createFixtureState(workspace.id);
+    writeFixtureSkill();
     insertFixtureRows(database, state);
     writeFixtureState(state);
   } catch (error) {
     if (state) {
       rollBackCreatedThread(database, state);
       NodeFS.rmSync(STATE_PATH, { force: true });
+      removeFixtureSkill();
     }
     throw error;
   } finally {
@@ -229,12 +273,15 @@ function removeFixtureRows(database, state) {
 async function cleanupFixture() {
   assertElectronSessionState("cleanup", await isElectronSessionHealthy());
   const state = readFixtureState();
+  assertOwnedSkillPath(REPO_ROOT, FIXTURE_SKILL_PATH);
+  assertOwnedSkillContent(NodeFS.readFileSync(FIXTURE_SKILL_PATH, "utf8"));
   const database = openDatabase();
   try {
     removeFixtureRows(database, state);
   } finally {
     database.close();
   }
+  removeFixtureSkill();
   NodeFS.rmSync(STATE_PATH);
 }
 
