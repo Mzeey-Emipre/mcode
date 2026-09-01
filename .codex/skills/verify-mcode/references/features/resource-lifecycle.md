@@ -14,9 +14,9 @@
 3. Confirm that no running indicator remains.
 4. Remove verification evidence when you no longer need it.
 
-## Driving it with verify-agent-runtime
+## Driving it with verify-mcode
 
-Run `inspect` before and after the stop scenario. The live command requires `thread.delete` to confirm deletion of its own direct thread unless `--keep-thread` is present. Run `cleanup` to remove harness-created files under `.dev/verification/agent-runtime`.
+Run `runtime inspect` before and after the stop scenario. The live command requires `thread.delete` to confirm deletion of its own direct thread unless `--keep-thread` is present. Run `runtime cleanup` to remove harness-created files under `.dev/verification/agent-runtime`.
 
 ## Gotchas
 

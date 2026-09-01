@@ -54,10 +54,10 @@ const FIXED_PROMPTS = {
   stop: "Inspect this repository with read-only file-search and file-reading tools. Do not write files, change settings, or run mutating commands. Explain the repository structure in detail.",
 };
 
-const HELP = `Verify Agent Runtime
+const HELP = `Verify Mcode runtime
 
 Usage:
-  bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs <command> [options]
+  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime <command> [options]
 
 Commands:
   health
@@ -278,7 +278,7 @@ async function health(repoRoot) {
     throw actionable("/health returned invalid JSON", "Restart this worktree runtime with bun run --shell system agent:down and bun run --shell system agent:up.");
   }
   if (!payload || payload.status !== "ok" || !Number.isInteger(payload.activeAgents) || payload.activeAgents < 0) {
-    throw actionable("/health did not return status=ok with a non-negative activeAgents count", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then restart this worktree runtime.");
+    throw actionable("/health did not return status=ok with a non-negative activeAgents count", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then restart this worktree runtime.");
   }
   if (!pathsMatch(ports.worktreeIdentity, repoRoot)) {
     throw actionable("The runtime worktree identity does not match this repository", "Run bun run --shell system agent:down in the mismatched worktree, then start this worktree with bun run --shell system agent:up.");
@@ -309,7 +309,7 @@ async function inspect(repoRoot) {
       socket.rpc("workspace.list", {}),
     ]);
     if (!Array.isArray(running) || !Array.isArray(workspaces) || !Number.isInteger(activeCount) || activeCount < 0) {
-      throw actionable("Runtime RPC returned an unexpected active-agent, running-turn, or workspace summary", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then retry inspect.");
+      throw actionable("Runtime RPC returned an unexpected active-agent, running-turn, or workspace summary", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then retry inspect.");
     }
     const currentWorktreeRegistered = workspaces.some((workspace) => workspace && pathsMatch(workspace.path, repoRoot));
     if (!currentWorktreeRegistered) {
@@ -439,14 +439,14 @@ async function prepareLiveRun(repoRoot, options, run) {
   const subscription = await subscribeToLiveThread(run.socket, run.threadId, run.proofDeadline);
   run.report.subscription = subscription;
   if (subscription.hydrationRequired) {
-    throw actionable("The retained event journal requires hydration for the created thread", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs inspect, then retry live verification after hydration is available.");
+    throw actionable("The retained event journal requires hydration for the created thread", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime inspect, then retry live verification after hydration is available.");
   }
 }
 
 async function findCurrentWorkspace(socket, repoRoot) {
   const workspaces = await socket.rpc("workspace.list", {});
   if (!Array.isArray(workspaces)) {
-    throw actionable("workspace.list returned an unexpected value", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs inspect, then retry live verification.");
+    throw actionable("workspace.list returned an unexpected value", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime inspect, then retry live verification.");
   }
   const workspace = workspaces.find((candidate) => candidate && pathsMatch(candidate.path, repoRoot));
   if (workspace) return workspace;
@@ -464,7 +464,7 @@ async function createLiveThread(socket, workspace, repoRoot, options, deadline) 
     permissionMode: "full",
   }, deadline);
   if (typeof created?.id === "string" && created.id.length > 0) return created.id;
-  throw actionable("agent.createAndSend did not return a thread ID", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then inspect the server response.");
+  throw actionable("agent.createAndSend did not return a thread ID", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then inspect the server response.");
 }
 
 async function subscribeToLiveThread(socket, threadId, deadline) {
@@ -488,7 +488,7 @@ async function proveCompletion(run) {
 async function requireTerminalEvent(report, deadline) {
   const outcome = await waitFor(() => findCompletionOutcome(report.events), deadline);
   if (!outcome) {
-    throw actionable("No terminal provider event arrived before the 120-second live deadline", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then inspect the receipt and retry with an available model.");
+    throw actionable("No terminal provider event arrived before the 120-second live deadline", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then inspect the receipt and retry with an available model.");
   }
   if (!outcome.succeeded) {
     throw actionable(`The target thread ended with ${outcome.label} before successful completion`, "Inspect the redacted receipt and provider availability, then retry with an available model.");
@@ -520,7 +520,7 @@ async function requireDurableAssistant(socket, threadId, report, deadline) {
     return report.conversationAssistant && report.messageAssistant;
   }, deadline);
   if (durable) return;
-  throw actionable("Durable assistant data did not appear through both conversation.page and message.list before the 120-second live deadline", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then inspect the receipt and retry completion.");
+  throw actionable("Durable assistant data did not appear through both conversation.page and message.list before the 120-second live deadline", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then inspect the receipt and retry completion.");
 }
 
 async function proveStop(run) {
@@ -531,7 +531,7 @@ async function proveStop(run) {
   ]);
   run.report.sharedStopResult = hasSharedStopResult(run.report.stopResults, run.threadId);
   if (!run.report.sharedStopResult) {
-    throw actionable("Concurrent agent.stop calls did not return one shared cancelled outcome", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then inspect the receipt and retry stop verification.");
+    throw actionable("Concurrent agent.stop calls did not return one shared cancelled outcome", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then inspect the receipt and retry stop verification.");
   }
   await requireStoppedOutcome(run.report, run.proofDeadline);
   await requireCancelledRuntimeState(run.socket, run.threadId, run.report, run.proofDeadline);
@@ -540,13 +540,13 @@ async function proveStop(run) {
 async function requireTurnStarted(report, deadline) {
   const started = await waitFor(() => report.events.some((event) => event.kind === "agent" && event.type === "turnStarted"), deadline);
   if (started) return;
-  throw actionable("No turnStarted event arrived before the 120-second live deadline", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then inspect the receipt and retry stop verification.");
+  throw actionable("No turnStarted event arrived before the 120-second live deadline", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then inspect the receipt and retry stop verification.");
 }
 
 async function requireStoppedOutcome(report, deadline) {
   const stopped = await waitFor(() => hasStoppedStatus(report.events), deadline);
   if (stopped) return;
-  throw actionable("Concurrent agent.stop calls did not produce a cancelled, interrupted, or paused outcome", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then inspect the receipt and retry stop verification.");
+  throw actionable("Concurrent agent.stop calls did not produce a cancelled, interrupted, or paused outcome", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then inspect the receipt and retry stop verification.");
 }
 
 function hasStoppedStatus(events) {
@@ -600,7 +600,7 @@ async function requireCancelledRuntimeState(socket, threadId, report, deadline) 
     return activeCountCleared && cancelledSnapshotRetained;
   }, deadline);
   if (verified) return;
-  throw actionable("The stopped turn did not clear agent.activeCount while retaining its matching cancelled snapshot before the 120-second live deadline", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then inspect teardown and retry stop verification.");
+  throw actionable("The stopped turn did not clear agent.activeCount while retaining its matching cancelled snapshot before the 120-second live deadline", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then inspect teardown and retry stop verification.");
 }
 
 async function disposeLiveRun(run, keepThread) {
@@ -655,7 +655,7 @@ function hasDurableAssistant(value) {
 
 function summarizeSubscription(subscription, threadId) {
   if (!subscription || typeof subscription !== "object" || Array.isArray(subscription)) {
-    throw actionable("push.setThreadSubscriptions returned an unexpected replay result", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then retry live verification.");
+    throw actionable("push.setThreadSubscriptions returned an unexpected replay result", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then retry live verification.");
   }
   const hydrationRequiredThreadIds = Array.isArray(subscription.hydrationRequiredThreadIds)
     ? subscription.hydrationRequiredThreadIds
@@ -805,9 +805,9 @@ async function openSocket(repoRoot, ports, onPush = () => {}) {
 }
 
 function attachSocketHandlers(ws, state, pending, onPush) {
-  ws.on("error", () => failSocket(ws, state, pending, socketFailure("The WebSocket connection failed", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs health, then retry inspect or live.")));
+  ws.on("error", () => failSocket(ws, state, pending, socketFailure("The WebSocket connection failed", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime health, then retry inspect or live.")));
   ws.on("close", () => {
-    if (!state.closing) failSocket(ws, state, pending, socketFailure("The WebSocket closed unexpectedly", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs health, then retry inspect or live."));
+    if (!state.closing) failSocket(ws, state, pending, socketFailure("The WebSocket closed unexpectedly", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime health, then retry inspect or live."));
   });
   ws.on("message", (raw) => handleSocketMessage(ws, state, pending, onPush, raw));
 }
@@ -837,7 +837,7 @@ function settleRpcResponse(pending, message) {
   clearTimeout(entry.timer);
   pending.delete(message.id);
   if (message.error) {
-    entry.reject(actionable(`RPC ${entry.method} failed (${String(message.error.code ?? "UNKNOWN")})`, "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then retry the command."));
+    entry.reject(actionable(`RPC ${entry.method} failed (${String(message.error.code ?? "UNKNOWN")})`, "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then retry the command."));
     return;
   }
   entry.resolve(message.result);
@@ -855,7 +855,7 @@ async function waitForSocketOpen(ws, state, pending) {
       else resolve();
     };
     const timer = setTimeout(() => {
-      const error = socketFailure("The WebSocket did not connect within 15 seconds", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs health, then retry inspect or live.");
+      const error = socketFailure("The WebSocket did not connect within 15 seconds", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime health, then retry inspect or live.");
       failSocket(ws, state, pending, error);
       finish(error);
     }, HEALTH_TIMEOUT_MS);
@@ -875,7 +875,7 @@ function createSocketClient(ws, state, pending) {
 function sendSocketRpc(ws, state, pending, method, params, deadline) {
   if (state.failure) return Promise.reject(state.failure);
   if (ws.readyState !== state.openState) {
-    return Promise.reject(socketFailure("The WebSocket is not open", "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs health, then retry the command."));
+    return Promise.reject(socketFailure("The WebSocket is not open", "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime health, then retry the command."));
   }
   const id = `verify-${++state.counter}`;
   const timeout = deadline === undefined ? HEALTH_TIMEOUT_MS : Math.max(1, deadline - Date.now());
@@ -883,7 +883,7 @@ function sendSocketRpc(ws, state, pending, method, params, deadline) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(actionable(`RPC ${method} did not respond ${timeoutDescription}`, "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs diagnostics, then retry the command."));
+      reject(actionable(`RPC ${method} did not respond ${timeoutDescription}`, "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then retry the command."));
     }, timeout);
     pending.set(id, { method, resolve, reject, timer });
     try {
@@ -891,7 +891,7 @@ function sendSocketRpc(ws, state, pending, method, params, deadline) {
     } catch {
       clearTimeout(timer);
       pending.delete(id);
-      reject(socketFailure(`RPC ${method} could not be sent`, "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs health, then retry the command."));
+      reject(socketFailure(`RPC ${method} could not be sent`, "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime health, then retry the command."));
     }
   });
 }
@@ -998,7 +998,7 @@ function firstFailure(stdout, stderr) {
 }
 
 function cliError(condition) {
-  return actionable(condition, "Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs --help.");
+  return actionable(condition, "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime --help.");
 }
 
 function actionable(condition, nextAction) {
@@ -1009,7 +1009,7 @@ function safeError(error) {
   const message = safeText(error instanceof Error ? error.message : String(error));
   return message.startsWith("Condition:")
     ? message
-    : `Condition: ${message} Next action: Run bun .codex/skills/verify-agent-runtime/scripts/verify-agent-runtime.mjs --help.`;
+    : `Condition: ${message} Next action: Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime --help.`;
 }
 
 function safeText(value) {
