@@ -58,7 +58,7 @@ describe("resolveComposerSession", () => {
     expect(session.codexFastMode).toBe(true);
   });
 
-  it("restores one selected-text comment without sharing its source range", () => {
+  it("restores saved cards and an open editor without sharing their source ranges", () => {
     const draft: ComposerDraft = {
       input: "",
       attachments: [],
@@ -77,7 +77,36 @@ describe("resolveComposerSession", () => {
         },
         note: "Explain this.",
         mentions: [],
+      }, {
+        id: "550e8400-e29b-41d4-a716-446655440004",
+        displayNumber: 2,
+        source: {
+          threadId: "thread-a",
+          messageId: "assistant-2",
+          sourceRole: "assistant",
+          start: 0,
+          end: 4,
+          quote: "next",
+        },
+        note: "Explain this too.",
+        mentions: [],
       }],
+      selectedTextCommentEditor: {
+        source: {
+          threadId: "thread-a",
+          messageId: "assistant-2",
+          sourceRole: "assistant",
+          start: 0,
+          end: 4,
+          quote: "next",
+        },
+        commentId: "550e8400-e29b-41d4-a716-446655440004",
+        note: "Unsent edit",
+        mentions: [],
+        escapeWarned: true,
+        outsideWarned: false,
+        anchor: "card",
+      },
     };
 
     const session = resolveComposerSession({
@@ -90,6 +119,8 @@ describe("resolveComposerSession", () => {
 
     expect(session.selectedTextComments).toEqual(draft.selectedTextComments);
     expect(session.selectedTextComments[0]?.source).not.toBe(draft.selectedTextComments?.[0]?.source);
+    expect(session.selectedTextCommentEditor).toEqual(draft.selectedTextCommentEditor);
+    expect(session.selectedTextCommentEditor?.source).not.toBe(draft.selectedTextCommentEditor?.source);
   });
 
   it("uses thread row defaults when no draft exists", () => {

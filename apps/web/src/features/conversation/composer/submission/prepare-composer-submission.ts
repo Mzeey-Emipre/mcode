@@ -25,6 +25,11 @@ export async function prepareComposerSubmission({
   resolvePreviewAnnotations,
 }: PrepareComposerSubmissionOptions): Promise<PreparedComposerSubmission | null> {
   if (await form.attachmentBindings.awaitPreparation()) return null;
+  const editorDismissalAnnouncement = form.requestSelectedTextCommentEditorDismissal();
+  if (editorDismissalAnnouncement) {
+    useToastStore.getState().show("error", editorDismissalAnnouncement);
+    return null;
+  }
 
   const snapshot = form.readSubmission();
   const currentAnnotations = readPreviewAnnotations(annotationScopeId);

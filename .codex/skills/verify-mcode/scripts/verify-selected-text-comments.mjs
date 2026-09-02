@@ -9,6 +9,7 @@ const PHRASE = "verification phrase";
 const MESSAGE_TEXT = "Select this verification phrase";
 const FIXTURE_SKILL_NAME = "verification-comment";
 const COMMENT_TEXT = "Review the selected phrase.";
+const SECOND_COMMENT_TEXT = "Review the selected phrase again.";
 const EVIDENCE_DIR = NodePath.join(ROOT, ".dev/verification");
 const ACTION_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-action.png");
 const EDITOR_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-editor.png");
@@ -453,9 +454,98 @@ async function run() {
   await waitForStatus("Comment 1 added.");
   const commentAttachment = page.getByTestId("selected-text-comment-attachment");
   await commentAttachment.waitFor({ state: "visible" });
-  const details = commentAttachment.getByRole("button", { name: "1 comment. Details available.", exact: true });
   mark("saved_comment_attachment_visible", true);
-  mark("saved_comment_attachment_label", await details.isVisible());
+  const commentAttachmentChip = commentAttachment.getByTestId("selected-text-comment-chip");
+  const commentAttachmentChipBox = await commentAttachmentChip.boundingBox();
+  mark("saved_comment_attachment_is_compact", commentAttachmentChipBox !== null && Math.abs(commentAttachmentChipBox.height - 32) <= 1, commentAttachmentChipBox?.height);
+  const firstAnnotationPreview = commentAttachment.getByRole("button", { name: "1 annotation. Preview available.", exact: true });
+  const commentPreview = page.getByTestId("selected-text-comment-preview");
+  mark("annotation_preview_hidden_at_rest", await commentPreview.count() === 0);
+  await firstAnnotationPreview.hover();
+  await commentPreview.waitFor({ state: "visible" });
+  mark("annotation_preview_opens_on_hover", true);
+  mark("annotation_preview_selected_text_label", await commentPreview.getByText("1. Selected text:", { exact: true }).isVisible());
+  mark("annotation_preview_user_comment_label", await commentPreview.getByText("User comment:", { exact: true }).isVisible());
+  mark("single_annotation_preview_omits_item_delete", await page.getByRole("button", { name: "Delete comment 1", exact: true }).count() === 0);
+  await page.mouse.move(0, 0);
+  await commentPreview.waitFor({ state: "hidden" });
+  await firstAnnotationPreview.focus();
+  await commentPreview.waitFor({ state: "visible" });
+  mark("annotation_preview_opens_on_keyboard_focus", true);
+
+  dialog = await openEditor(content);
+  const secondEditor = await editorTextBox(dialog);
+  await secondEditor.pressSequentially(SECOND_COMMENT_TEXT);
+  await secondEditor.press("Control+Enter");
+  await dialog.waitFor({ state: "hidden" });
+  await waitForStatus("Comment 2 added.");
+  const secondAnnotationPreview = commentAttachment.getByRole("button", { name: "2 annotations. Preview available.", exact: true });
+  await secondAnnotationPreview.hover();
+  const firstPreviewItem = page.getByTestId("selected-text-comment-preview-item-1");
+  const secondPreviewItem = page.getByTestId("selected-text-comment-preview-item-2");
+  await secondPreviewItem.waitFor({ state: "visible" });
+  mark("second_annotation_preview_visible_on_hover", true);
+  mark("multi_annotation_preview_actions_hidden_at_rest", await page.getByRole("button", { name: /^Delete comment [12]$/ }).count() === 0);
+  await firstPreviewItem.hover();
+  mark(
+    "multi_annotation_preview_reveals_relevant_item_actions",
+    await page.getByRole("button", { name: "Edit comment 1", exact: true }).count() === 1
+      && await page.getByRole("button", { name: "Delete comment 1", exact: true }).count() === 1
+      && await page.getByRole("button", { name: "Delete comment 2", exact: true }).count() === 0,
+  );
+  await page.getByRole("button", { name: "Open source for comment 1", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Comment on selected text", exact: true });
+  await dialog.waitFor({ state: "visible" });
+  mark("open_source_returns_to_editor", true);
+  await dialog.getByRole("button", { name: "Close comment editor", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await secondAnnotationPreview.hover();
+  await firstPreviewItem.hover();
+  await page.getByRole("button", { name: "Edit comment 1", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Comment on selected text", exact: true });
+  await dialog.waitFor({ state: "visible" });
+  mark("card_edit_opens_editor", true);
+  await dialog.getByRole("button", { name: "Close comment editor", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await secondAnnotationPreview.hover();
+  await secondPreviewItem.hover();
+  await page.getByRole("button", { name: "Delete comment 2", exact: true }).click();
+  await page.getByTestId("selected-text-comment-preview-item-2").waitFor({ state: "hidden" });
+  mark("item_delete_removes_annotation", await page.getByTestId("selected-text-comment-preview-item-1").isVisible());
+  await firstAnnotationPreview.hover();
+  await firstAnnotationPreview.focus();
+  await page.waitForFunction(() => {
+    const annotationCount = document.querySelector('button[aria-label="1 annotation. Preview available."]');
+    const preview = document.querySelector("[data-testid='selected-text-comment-preview']");
+    if (!annotationCount || !preview || document.activeElement !== annotationCount || !annotationCount.matches(":hover")) return false;
+    return [...preview.querySelectorAll("[data-testid^='selected-text-comment-preview-item-']")].every((item) => {
+      const actionGroup = item.querySelector("div.absolute.top-2.right-0");
+      if (!actionGroup) return true;
+      const styles = getComputedStyle(actionGroup);
+      return styles.display === "none" || styles.visibility === "hidden" || styles.opacity === "0";
+    });
+  });
+  const restingActionChrome = await commentPreview.locator("[data-testid^='selected-text-comment-preview-item-']").evaluateAll((items) => (
+    items.map((item) => {
+      const actionGroup = item.querySelector("div.absolute.top-2.right-0");
+      if (!actionGroup) return { rendered: false };
+      const styles = getComputedStyle(actionGroup);
+      return {
+        rendered: true,
+        display: styles.display,
+        visibility: styles.visibility,
+        opacity: styles.opacity,
+      };
+    })
+  ));
+  mark(
+    "result_preview_item_action_chrome_hidden_at_rest",
+    restingActionChrome.every((action) => !action.rendered
+      || action.display === "none"
+      || action.visibility === "hidden"
+      || action.opacity === "0"),
+    restingActionChrome,
+  );
   await page.screenshot({ path: RESULT_SCREENSHOT, fullPage: true });
 
   dialog = await openEditor(content);
@@ -471,7 +561,7 @@ async function run() {
   const contextMenu = await rightClickSelectedPhrase(content);
   mark("pointer_right_click_context_menu_not_prevented", contextMenu.prevented === "false", contextMenu.prevented);
   mark("selection_preserved", contextMenu.selection === PHRASE, contextMenu.selection);
-  await commentAttachment.getByRole("button", { name: "Remove 1 comment", exact: true }).click();
+  await commentAttachment.getByRole("button", { name: "Remove 1 annotation", exact: true }).click();
   await commentAttachment.waitFor({ state: "hidden" });
   mark("aggregate_remove_clears_comment_attachment", true);
 

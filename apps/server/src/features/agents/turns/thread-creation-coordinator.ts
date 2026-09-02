@@ -80,6 +80,7 @@ interface BranchedInitialTurnParams {
   displayContent?: string;
   mentions: SendMessageCommand["mentions"];
   previewAnnotations?: SendMessageCommand["previewAnnotations"];
+  selectedTextComments?: SendMessageCommand["selectedTextComments"];
   goalObjective?: string;
   orchestrationMode?: OrchestrationMode;
 }
@@ -129,6 +130,7 @@ export class ThreadCreationCoordinator {
       displayContent,
       mentions = [],
       previewAnnotations,
+      selectedTextComments,
       goalObjective,
       orchestrationMode,
     } = command;
@@ -138,7 +140,7 @@ export class ThreadCreationCoordinator {
       provider, interactionMode, parentThreadId, forkedFromMessageId,
       title: titleFrom(displayContent ?? content), maxBudgetUsd, maxTurns, copilotAgent,
       contextWindowMode, thinking, codexFastMode, displayContent, mentions,
-      previewAnnotations, goalObjective, orchestrationMode,
+      previewAnnotations, selectedTextComments, goalObjective, orchestrationMode,
     };
     return params;
   }
@@ -191,6 +193,7 @@ export class ThreadCreationCoordinator {
       displayContent: params.displayContent,
       mentions: params.mentions,
       previewAnnotations: params.previewAnnotations,
+      selectedTextComments: params.selectedTextComments,
       goalObjective: params.goalObjective,
       orchestrationMode: params.orchestrationMode,
       codexFastMode: params.codexFastMode,
@@ -217,6 +220,7 @@ export class ThreadCreationCoordinator {
         displayContent: params.displayContent,
         mentions: params.mentions,
         previewAnnotations: params.previewAnnotations,
+        selectedTextComments: params.selectedTextComments,
         goalObjective: params.goalObjective,
         orchestrationMode: params.orchestrationMode,
         ...(automatic.kind === "ready" ? {
@@ -363,6 +367,7 @@ export class ThreadCreationCoordinator {
         displayContent: params.displayContent,
         mentions: params.mentions,
         previewAnnotations: params.previewAnnotations,
+        selectedTextComments: params.selectedTextComments,
         goalObjective: params.goalObjective,
         orchestrationMode: params.orchestrationMode,
       },

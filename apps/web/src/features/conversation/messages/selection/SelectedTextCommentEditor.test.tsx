@@ -69,9 +69,9 @@ describe("SelectedTextCommentEditor", () => {
 
     expect(focusOrder(container)).toEqual([
       "Comment note",
-      "Close comment editor",
       "Save comment",
       "Delete comment",
+      "Close comment editor",
     ]);
     expect(container.querySelector("blockquote")).toBeNull();
     expect(screen.getByRole("textbox", { name: "Comment note" })).toHaveAttribute("aria-placeholder", "Write a note");
@@ -124,7 +124,7 @@ describe("SelectedTextCommentEditor", () => {
       writeComposerContent(editorRef.current!, "/review @notes.ts\nExplain this.", mentions);
     });
     await vi.waitFor(() => expect(screen.getByRole("button", { name: "Add comment" })).toBeEnabled());
-    expect(focusOrder(container)).toEqual(["Comment note", "Close comment editor", "Add comment"]);
+    expect(focusOrder(container)).toEqual(["Comment note", "Add comment", "Close comment editor"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
 
@@ -137,6 +137,46 @@ describe("SelectedTextCommentEditor", () => {
     });
     expect(onAnnouncement).toHaveBeenCalledWith("Comment 1 added.");
     expect(onClose).toHaveBeenCalledWith({ restoreFocus: false });
+  });
+
+  it("restores an unsaved card edit and retains the assigned creation number", async () => {
+    const editorRef: { current: LexicalEditor | null } = { current: null };
+    const onSave = vi.fn();
+    const restoredMentions: MessageMention[] = [{
+      id: "file:src/app.ts",
+      kind: "file",
+      label: "src/app.ts",
+      path: "src/app.ts",
+      range: { start: 0, end: 10 },
+    }];
+    render(
+      <SelectedTextCommentEditor
+        source={source}
+        draft={{
+          source,
+          note: "Restored unsaved note",
+          mentions: restoredMentions,
+          escapeWarned: false,
+          outsideWarned: true,
+          anchor: "card",
+        }}
+        nextDisplayNumber={3}
+        editorRef={editorRef}
+        onSave={onSave}
+        onClose={vi.fn()}
+        onAnnouncement={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(editorRef.current).not.toBeNull());
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Add comment" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      displayNumber: 3,
+      note: "Restored unsaved note",
+      mentions: restoredMentions,
+    }));
   });
 
   it("requires independent dirty confirmations and resets them when the draft changes", async () => {

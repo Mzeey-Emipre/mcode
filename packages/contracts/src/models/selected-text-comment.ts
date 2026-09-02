@@ -3,11 +3,12 @@ import { THREAD_SEND_MESSAGE_MAX_LENGTH } from "../thread-control.js";
 import { lazySchema } from "../utils/lazySchema.js";
 import { MessageMentionsSchema } from "./mention.js";
 
-/** The one selected-text comment that a ComposerDraft can send in this slice. */
-export const MAX_SELECTED_TEXT_COMMENTS = 1;
-
 /** Maximum source quote or note length, bounded by the accepted thread-message payload. */
 export const MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS = THREAD_SEND_MESSAGE_MAX_LENGTH;
+/** Maximum structural entries accepted from one untrusted transport payload. */
+export const MAX_SELECTED_TEXT_COMMENTS = 128;
+/** Maximum combined source quote and note characters accepted from one payload. */
+export const MAX_SELECTED_TEXT_COMMENT_TOTAL_CHARS = THREAD_SEND_MESSAGE_MAX_LENGTH;
 
 const SourceIdentitySchema = z.string().trim().min(1).max(256);
 const CommentTextSchema = z.string()
@@ -35,16 +36,50 @@ export const SelectedTextCommentSourceSchema = lazySchema(() =>
 export const SelectedTextCommentSchema = lazySchema(() =>
   z.object({
     id: z.string().uuid(),
-    displayNumber: z.literal(1),
+    displayNumber: z.number().int().min(1),
     source: SelectedTextCommentSourceSchema(),
     note: CommentTextSchema,
     mentions: MessageMentionsSchema(),
   }).strict(),
 );
 
-/** One-comment collection carried unchanged across renderer, transport, and persistence. */
+/** Selected-text comments carried unchanged across renderer, transport, and persistence. */
 export const SelectedTextCommentsSchema = lazySchema(() =>
-  z.array(SelectedTextCommentSchema()).max(MAX_SELECTED_TEXT_COMMENTS),
+  z.array(SelectedTextCommentSchema()).max(MAX_SELECTED_TEXT_COMMENTS).superRefine((comments, context) => {
+    const ids = new Set<string>();
+    let totalCharacters = 0;
+    for (const [index, comment] of comments.entries()) {
+      if (ids.has(comment.id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Selected text comment IDs must be unique",
+          path: [index, "id"],
+        });
+      }
+      ids.add(comment.id);
+      if (comment.displayNumber !== index + 1) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Selected text comment display numbers must be contiguous",
+          path: [index, "displayNumber"],
+        });
+      }
+      totalCharacters += comment.source.quote.length + comment.note.length;
+    }
+    // The UI has no count limit. Transport input still needs one shared budget.
+    if (totalCharacters > MAX_SELECTED_TEXT_COMMENT_TOTAL_CHARS) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Selected text comments exceed the message payload budget",
+      });
+    }
+    if (JSON.stringify(comments).length > MAX_SELECTED_TEXT_COMMENT_TOTAL_CHARS) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Selected text comments exceed the serialized message payload budget",
+      });
+    }
+  }),
 );
 
 /** Durable source coordinates for one selected-text comment. */

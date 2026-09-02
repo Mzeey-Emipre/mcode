@@ -35,6 +35,7 @@ import { useReplyStore } from "@/stores/replyStore";
 import { useQueueStore } from "@/stores/queueStore";
 import { attachmentAcceptAttribute, isGoalOpen } from "@mcode/contracts";
 import type { MessageMention, SelectedTextComment } from "@mcode/contracts";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { useComposerFormController } from "./draft/useComposerFormController";
 import { useComposerExecutionTarget } from "./execution/useComposerExecutionTarget";
@@ -47,6 +48,10 @@ import {
 import { ComposerContentSurface } from "./ComposerContentSurface";
 import { ComposerStatusStrip } from "./ComposerStatusStrip";
 import { useComposerSurfaceState } from "./useComposerSurfaceState";
+import {
+  removeSelectedTextComment,
+  saveSelectedTextComment,
+} from "./draft/composer-selected-text-comments";
 
 export {
   isThreadRunningForSubmit,
@@ -69,6 +74,14 @@ function createPopupKeyboardEvent(key: string): React.KeyboardEvent {
 
 function showComposerOptionsInline(composerWidth: number): boolean {
   return composerWidth === 0 || composerWidth >= 640;
+}
+
+function popupAnchorRect(
+  isOpen: boolean,
+  container: React.RefObject<HTMLDivElement | null>,
+): DOMRect | null {
+  if (!isOpen) return null;
+  return container.current?.getBoundingClientRect() ?? null;
 }
 
 function resetPendingGoal(
@@ -135,6 +148,53 @@ function ComposerCheckoutDialog({
   );
 }
 
+function useSelectedTextCommentComposerHandoffs({
+  threadId,
+  selectedTextComment,
+  onSelectedTextCommentConsumed,
+  selectedTextCommentEditorUpdate,
+  onSelectedTextCommentEditorUpdateConsumed,
+  selectedTextComments,
+  setSelectedTextComments,
+  setSelectedTextCommentEditor,
+}: {
+  readonly threadId: string | undefined;
+  readonly selectedTextComment: SelectedTextComment | undefined;
+  readonly onSelectedTextCommentConsumed: (() => void) | undefined;
+  readonly selectedTextCommentEditorUpdate: { editor: SelectedTextCommentEditorDraft | undefined } | undefined;
+  readonly onSelectedTextCommentEditorUpdateConsumed: (() => void) | undefined;
+  readonly selectedTextComments: readonly SelectedTextComment[];
+  readonly setSelectedTextComments: (
+    comments: readonly SelectedTextComment[],
+    editor?: SelectedTextCommentEditorDraft,
+  ) => void;
+  readonly setSelectedTextCommentEditor: (editor: SelectedTextCommentEditorDraft | undefined) => void;
+}): void {
+  useEffect(() => {
+    if (!threadId || !selectedTextComment || selectedTextComment.source.threadId !== threadId) return;
+    setSelectedTextComments(saveSelectedTextComment(selectedTextComments, selectedTextComment));
+    onSelectedTextCommentConsumed?.();
+  }, [
+    onSelectedTextCommentConsumed,
+    selectedTextComment,
+    selectedTextComments,
+    setSelectedTextComments,
+    threadId,
+  ]);
+  useEffect(() => {
+    if (!threadId || !selectedTextCommentEditorUpdate) return;
+    const { editor } = selectedTextCommentEditorUpdate;
+    if (editor && editor.source.threadId !== threadId) return;
+    setSelectedTextCommentEditor(editor);
+    onSelectedTextCommentEditorUpdateConsumed?.();
+  }, [
+    onSelectedTextCommentEditorUpdateConsumed,
+    selectedTextCommentEditorUpdate,
+    setSelectedTextCommentEditor,
+    threadId,
+  ]);
+}
+
 interface ComposerProps {
   threadId?: string;
   isNewThread?: boolean;
@@ -153,6 +213,14 @@ interface ComposerProps {
   selectedTextComment?: SelectedTextComment;
   /** Clears the one-shot transcript handoff after this Composer stores it. */
   onSelectedTextCommentConsumed?: () => void;
+  /** Pending editor update from the transcript for this ComposerDraft. */
+  selectedTextCommentEditorUpdate?: { editor: SelectedTextCommentEditorDraft | undefined };
+  /** Clears the consumed transcript editor update. */
+  onSelectedTextCommentEditorUpdateConsumed?: () => void;
+  /** Requests source navigation from the transcript owner. */
+  onOpenSelectedTextCommentSource?: (comment: SelectedTextComment) => void;
+  /** Comment IDs whose transcript sources failed to load or reconstruct. */
+  unavailableSelectedTextCommentIds?: readonly string[];
 }
 
 /**
@@ -175,6 +243,10 @@ export function Composer({
   onThreadCreated,
   selectedTextComment,
   onSelectedTextCommentConsumed,
+  selectedTextCommentEditorUpdate,
+  onSelectedTextCommentEditorUpdateConsumed,
+  onOpenSelectedTextCommentSource,
+  unavailableSelectedTextCommentIds = [],
 }: ComposerProps) {
   // Mode/permissions/tasks toggles render inline when the composer's own
   // container is wide enough; below the threshold they collapse behind a
@@ -254,15 +326,21 @@ export function Composer({
     markAgentSettingsTouched,
     replaceDraft,
     setSelectedTextComments,
+    setSelectedTextCommentEditor,
     setGoalPending,
     updateDraft,
     updateSelection,
   } = form;
-  useEffect(() => {
-    if (!threadId || !selectedTextComment || selectedTextComment.source.threadId !== threadId) return;
-    setSelectedTextComments([selectedTextComment]);
-    onSelectedTextCommentConsumed?.();
-  }, [onSelectedTextCommentConsumed, selectedTextComment, setSelectedTextComments, threadId]);
+  useSelectedTextCommentComposerHandoffs({
+    threadId,
+    selectedTextComment,
+    onSelectedTextCommentConsumed,
+    selectedTextCommentEditorUpdate,
+    onSelectedTextCommentEditorUpdateConsumed,
+    selectedTextComments: form.state.selectedTextComments,
+    setSelectedTextComments,
+    setSelectedTextCommentEditor,
+  });
   const execution = useComposerExecutionTarget({
     input,
     activeThread,
@@ -375,9 +453,7 @@ export function Composer({
     onDismiss: fileAutocomplete.dismiss,
   });
 
-  const filePopupAnchorRect = fileAutocomplete.isOpen
-    ? composerContainerRef.current?.getBoundingClientRect() ?? null
-    : null;
+  const filePopupAnchorRect = popupAnchorRect(fileAutocomplete.isOpen, composerContainerRef);
 
 
   const slashCommand = useSlashCommand({
@@ -583,6 +659,8 @@ export function Composer({
             annotationScopeId: surfaceState.annotationScopeId,
             attachments,
             selectedTextComments: form.state.selectedTextComments,
+            selectedTextCommentEditor: form.state.selectedTextCommentEditor,
+            unavailableSelectedTextCommentIds,
             isCompacting,
             hasRetryState,
             isThreadScaffold: surfaceState.isThreadScaffold,
@@ -640,7 +718,29 @@ export function Composer({
             onDetachGoal: agentControls.detachGoal,
             onDetachOrchestration: agentControls.detachOrchestration,
             onStop: handleStop,
-            onClearSelectedTextComments: () => setSelectedTextComments([]),
+            onClearSelectedTextComments: () => setSelectedTextComments([], undefined),
+            onOpenSelectedTextCommentSource: (comment) => onOpenSelectedTextCommentSource?.(comment),
+            onEditSelectedTextComment: (comment) => setSelectedTextCommentEditor({
+              source: comment.source,
+              commentId: comment.id,
+              note: comment.note,
+              mentions: comment.mentions,
+              escapeWarned: false,
+              outsideWarned: false,
+              anchor: "card",
+            }),
+            onDeleteSelectedTextComment: (comment) => setSelectedTextComments(
+              removeSelectedTextComment(form.state.selectedTextComments, comment.id),
+              form.state.selectedTextCommentEditor?.commentId === comment.id
+                ? undefined
+                : form.state.selectedTextCommentEditor,
+            ),
+            onFocusComposer: focusEditor,
+            onSaveSelectedTextComment: (comment) => setSelectedTextComments(
+              saveSelectedTextComment(form.state.selectedTextComments, comment),
+              undefined,
+            ),
+            onSelectedTextCommentEditorChange: setSelectedTextCommentEditor,
           }}
         />
         <ComposerStatusStrip

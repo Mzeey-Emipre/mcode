@@ -18,12 +18,13 @@ import { ThreadWarningBanner } from "@/components/chat/ThreadWarningBanner";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { SidebarRevealButton } from "@/components/sidebar/SidebarRevealButton";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import { ProjectAutomaticSetupCard, useProjectAutomaticSetup } from "@/features/projects/environment";
 import { preparingStatusLabel, type WorkspaceThread } from "@/lib/workspace-thread";
 import type { SubagentRosterTarget } from "../../narrative";
 import { Composer } from "../../composer/Composer";
 import { SavingDelayedDialog } from "../../saving/SavingDelayedDialog";
-import { MessageList } from "../MessageList";
+import { MessageList, type SelectedTextCommentSourceNavigationRequest } from "../MessageList";
 import type { ChatViewState } from "./useChatViewState";
 
 const NEW_THREAD_STARTERS = [
@@ -59,6 +60,18 @@ export interface ChatViewInteractions {
   onSelectedTextComment: (comment: SelectedTextComment) => void;
   /** Clears the composer selected-text comment after it is consumed. */
   onSelectedTextCommentConsumed: () => void;
+  /** Stores transcript editor changes in the active ComposerDraft. */
+  onSelectedTextCommentEditorChange: (editor: SelectedTextCommentEditorDraft | undefined) => void;
+  /** Clears a consumed transcript editor update. */
+  onSelectedTextCommentEditorChangeConsumed: () => void;
+  /** Starts transcript-owned navigation for one aggregate card source. */
+  onOpenSelectedTextCommentSource: (comment: SelectedTextComment) => void;
+  /** Installs a source-anchored editor after its active request reconstructs canonically. */
+  onSelectedTextCommentSourceOpened: (request: SelectedTextCommentSourceNavigationRequest) => void;
+  /** Installs a card-anchored fallback when its active aggregate-card request fails. */
+  onSelectedTextCommentSourceUnavailable: (request: SelectedTextCommentSourceNavigationRequest) => void;
+  /** Moves a restored source editor to its card when source loading fails. */
+  onSelectedTextCommentEditorSourceUnavailable: (editor: SelectedTextCommentEditorDraft) => void;
   /** Prefills the new-thread composer with a starter prompt. */
   onPromptSelect: (text: string) => void;
   /** Stops the active agent after saving has stalled. */
@@ -99,6 +112,14 @@ export interface ChatViewSurfaceProps {
   onEditingThreadIdChange: (threadId: string | null) => void;
   /** Pending composer comment from selected transcript text. */
   pendingSelectedTextComment: SelectedTextComment | null;
+  /** Pending transcript editor mutation for the active ComposerDraft. */
+  pendingSelectedTextCommentEditor?: { editor: SelectedTextCommentEditorDraft | undefined };
+  /** Restored open-editor state for the active ComposerDraft. */
+  selectedTextCommentEditor?: SelectedTextCommentEditorDraft;
+  /** Source navigation request for the active virtualized transcript. */
+  selectedTextCommentSourceNavigation?: SelectedTextCommentSourceNavigationRequest;
+  /** Cards whose source failed to load or reconstruct for this active thread. */
+  unavailableSelectedTextCommentIds: readonly string[];
   /** Opens a selected canonical child through the composition root. */
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
@@ -289,7 +310,7 @@ function ConversationStageContent({
 }
 
 /** Renders the conversation stage without taking over MessageList scrolling. */
-function ChatMessageStage({ state, interactions, automaticSetup, onSubagentSelect, onOpenSubagents }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "onSubagentSelect" | "onOpenSubagents"> & { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
+function ChatMessageStage({ state, interactions, automaticSetup, selectedTextCommentEditor, selectedTextCommentSourceNavigation, onSubagentSelect, onOpenSubagents }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "selectedTextCommentEditor" | "selectedTextCommentSourceNavigation" | "onSubagentSelect" | "onOpenSubagents"> & { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
   const thread = state.activeThread!;
   const automaticSetupTranscriptBlock = thread.mode === "worktree" && thread.worktree_managed === true
     ? <ProjectAutomaticSetupCard snapshot={automaticSetup.snapshot} busy={automaticSetup.busy} error={automaticSetup.error} onContinue={automaticSetup.continueWithoutSetup} onRetry={automaticSetup.retrySetup} onApprove={automaticSetup.approveSetup} />
@@ -298,6 +319,12 @@ function ChatMessageStage({ state, interactions, automaticSetup, onSubagentSelec
     onBranch: interactions.onBranch,
     onReply: interactions.onReply,
     onSelectedTextComment: interactions.onSelectedTextComment,
+    onSelectedTextCommentEditorChange: interactions.onSelectedTextCommentEditorChange,
+    selectedTextCommentEditor,
+    selectedTextCommentSourceNavigation,
+    onSelectedTextCommentSourceOpened: interactions.onSelectedTextCommentSourceOpened,
+    onSelectedTextCommentSourceUnavailable: interactions.onSelectedTextCommentSourceUnavailable,
+    onSelectedTextCommentEditorSourceUnavailable: interactions.onSelectedTextCommentEditorSourceUnavailable,
     selectedTextCommentEditorScope: {
       workspaceId: state.activeWorkspaceId ?? undefined,
       providerId: thread.provider,
@@ -313,12 +340,12 @@ function ChatMessageStage({ state, interactions, automaticSetup, onSubagentSelec
 }
 
 /** Renders the composer and plan question wizard for an active thread. */
-function ActiveThreadComposer({ state, interactions, pendingSelectedTextComment, setupBlocked }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "pendingSelectedTextComment"> & { readonly setupBlocked: boolean }) {
+function ActiveThreadComposer({ state, interactions, pendingSelectedTextComment, pendingSelectedTextCommentEditor, unavailableSelectedTextCommentIds, setupBlocked }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "pendingSelectedTextComment" | "pendingSelectedTextCommentEditor" | "unavailableSelectedTextCommentIds"> & { readonly setupBlocked: boolean }) {
   const thread = state.activeThread!;
   return (
     <div data-testid="chat-composer-stage" className="relative flex-shrink-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>
       <PlanQuestionWizard threadId={thread.id} />
-      <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} branchFromMessageId={state.branchFromMessageId} branchFromMessageContent={state.branchFromMessageContent} selectedTextComment={pendingSelectedTextComment ?? undefined} onSelectedTextCommentConsumed={interactions.onSelectedTextCommentConsumed} onBranchModeExit={interactions.onExitForkMode} setupBlocked={setupBlocked} />
+      <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} branchFromMessageId={state.branchFromMessageId} branchFromMessageContent={state.branchFromMessageContent} selectedTextComment={pendingSelectedTextComment ?? undefined} onSelectedTextCommentConsumed={interactions.onSelectedTextCommentConsumed} selectedTextCommentEditorUpdate={pendingSelectedTextCommentEditor} onSelectedTextCommentEditorUpdateConsumed={interactions.onSelectedTextCommentEditorChangeConsumed} onOpenSelectedTextCommentSource={interactions.onOpenSelectedTextCommentSource} unavailableSelectedTextCommentIds={unavailableSelectedTextCommentIds} onBranchModeExit={interactions.onExitForkMode} setupBlocked={setupBlocked} />
     </div>
   );
 }
@@ -335,7 +362,21 @@ function ConversationTransitionState({ threadId, threadTitle }: { threadId: stri
 
 /** Renders the fully active conversation surface. */
 function ActiveThreadSurface(props: ChatViewSurfaceProps) {
-  const { state, interactions, recovery, editingThreadId, onEditingThreadIdChange, pendingSelectedTextComment, onSubagentSelect, onOpenSubagents, dismissedError } = props;
+  const {
+    state,
+    interactions,
+    recovery,
+    editingThreadId,
+    onEditingThreadIdChange,
+    pendingSelectedTextComment,
+    pendingSelectedTextCommentEditor,
+    selectedTextCommentEditor,
+    selectedTextCommentSourceNavigation,
+    unavailableSelectedTextCommentIds,
+    onSubagentSelect,
+    onOpenSubagents,
+    dismissedError,
+  } = props;
   const thread = state.activeThread!;
   const automaticSetup = useProjectAutomaticSetup(
     thread.id,
@@ -351,9 +392,9 @@ function ActiveThreadSurface(props: ChatViewSurfaceProps) {
       {showConversationErrorBanner ? <div className="mx-3 mb-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3"><p data-testid="conversation-error-banner" role="alert" className="text-sm text-destructive">Could not refresh conversation: {state.sessionError}</p></div> : null}
       <HandoffFallbackBanner threadId={thread.id} />
       <SavingDelayedDialog open={state.savingStatus?.mode === "saving-delayed"} onStopSafely={interactions.onStopSafely} onContinueWithoutSaving={interactions.onContinueWithoutSaving} />
-      <ChatMessageStage state={state} interactions={interactions} automaticSetup={automaticSetup} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} />
+      <ChatMessageStage state={state} interactions={interactions} automaticSetup={automaticSetup} selectedTextCommentEditor={selectedTextCommentEditor} selectedTextCommentSourceNavigation={selectedTextCommentSourceNavigation} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} />
       {showCliError && <CliErrorBanner error={state.sessionError!} onDismiss={interactions.onDismissCliError} onOpenSettings={interactions.onOpenSettings} />}
-      <ActiveThreadComposer state={state} interactions={interactions} pendingSelectedTextComment={pendingSelectedTextComment} setupBlocked={automaticSetup.snapshot.gate === "blocked"} />
+      <ActiveThreadComposer state={state} interactions={interactions} pendingSelectedTextComment={pendingSelectedTextComment} pendingSelectedTextCommentEditor={pendingSelectedTextCommentEditor} unavailableSelectedTextCommentIds={unavailableSelectedTextCommentIds} setupBlocked={automaticSetup.snapshot.gate === "blocked"} />
     </div>
   );
 }

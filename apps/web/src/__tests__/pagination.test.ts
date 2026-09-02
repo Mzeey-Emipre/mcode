@@ -499,8 +499,9 @@ await activateTestConversation(threadId);
       new Error("Network error"),
     );
 
-    await useThreadStore.getState().loadOlderMessages(threadId);
+    const result = await useThreadStore.getState().loadOlderMessages(threadId);
 
+    expect(result).toBe("failed");
     expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
     expect(getTestActiveMessages()).toHaveLength(1);
   });

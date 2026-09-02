@@ -12,7 +12,10 @@
 - `Add comment` opens the prototype compact editor with an empty note field and close action.
 - The compact editor contains only the note field and icon-only close and conditional save actions.
 - The editor accepts project slash skills, workspace file mentions, line breaks, and `Ctrl+Enter` save.
-- Saved comments appear as one compact composer attachment. Its details list each note, and its remove action clears the active draft's comments.
+- Saved comments appear as one compact aggregate annotation pill. Hover or keyboard-focus its count to inspect each creation number, source quote, and note. Hover or keyboard-focus a preview item to reveal its edit action and, when multiple annotations exist, its delete action. Each item also has a direct source action.
+- Deleting an annotation preview item renumbers the survivors. Removing the aggregate clears every saved annotation.
+- Source reconstruction opens the editor at the source range. If the source is unavailable, the card remains editable and deletable.
+- The active thread draft retains saved cards and an open editor, including unsaved note text, when the user changes threads.
 - Clean editors close once. Dirty editors require two close, outside-click, or Escape attempts. Editing resets a pending discard warning.
 
 ## How to get to it (user POV)
@@ -21,8 +24,9 @@
 2. Drag across text in the assistant message.
 3. Release the pointer in message whitespace after the phrase, then select the `Add comment` action.
 4. Add a slash skill, a file mention, and a multiline note.
-5. Save the comment with `Ctrl+Enter`.
-6. Drag across the text again, then right-click it to use the native context menu.
+5. Save the comment with `Ctrl+Enter`, then add a second annotation.
+6. Hover or keyboard-focus the aggregate annotation count, then use the preview's source, edit, and multi-item delete actions.
+7. Drag across the text again, then right-click it to use the native context menu.
 
 ## Driving it with verify-mcode
 
@@ -40,7 +44,7 @@ The first Electron launch initializes `.dev/electron-live-testing/runtime/db/app
 10. Run `bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments cleanup`.
 11. Run `bun run --shell system agent:down`.
 
-The verifier writes `.dev/verification/selected-text-comments-action.png`, `.dev/verification/selected-text-comments-editor.png`, `.dev/verification/selected-text-comments-result.png`, and `.dev/verification/selected-text-comments.json`. The JSON receipt records source, action, and editor geometry with their measured range gaps. The proof releases a pointer drag in message whitespace while the exact phrase stays selected, then requires the action and editor to remain within a small tolerance of the preferred 8px source-range gap when it fits. It scrolls an open editor's source beyond the viewport to prove nearest-edge docking, then restores the source to prove reconstructed-range reanchoring from current geometry. Popovers flip or clamp at viewport edges. It also covers a real secondary pointer click that the app does not prevent, editor focus and control boundaries, typed skill and file chips, multiline save, a visible composer-draft result, and clean and dirty dismissal states.
+The verifier writes `.dev/verification/selected-text-comments-action.png`, `.dev/verification/selected-text-comments-editor.png`, `.dev/verification/selected-text-comments-result.png`, and `.dev/verification/selected-text-comments.json`. The JSON receipt records source, action, and editor geometry with their measured range gaps. The proof keeps the exact phrase selected during its pointer drag and checks the preferred 8px source-range gap where it fits. It validates source docking and reconstructed-range reanchoring after scroll, two multiline saves, the aggregate annotation pill and preview, source and edit actions, multi-item deletion, aggregate removal, and clean and dirty dismissal states. It also covers a real secondary pointer click that the app does not prevent, editor focus and control boundaries, and typed skill and file chips.
 
 ## Gotchas
 
@@ -49,4 +53,4 @@ The verifier writes `.dev/verification/selected-text-comments-action.png`, `.dev
 - Automated desktop coverage uses a real secondary pointer click and proves that the app does not prevent it. It cannot inspect native OS menu rendering.
 - Setup creates one owned Claude fixture skill in `.dev/fixture-repo/.claude/skills/verification-comment/`. Cleanup removes it only when its path and contents still match the verifier.
 - The live UI proves visible chips and the composer draft. The focused editor test proves the hidden `MessageMention[]` payload without sending a provider turn.
-- Do not add edit, delete, or marker-focus proof until #1557 and #1558 provide production entry points.
+- The live proof exercises source, edit, and multi-item deletion for a rendered source. Focus return and unavailable sources remain covered by focused UI tests.

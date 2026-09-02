@@ -4,12 +4,17 @@ import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useRecoveryIncidentStore, useVisibleRecoveryIncident } from "@/features/recovery/state/recoveryIncidentStore";
 import { useReplyStore } from "@/stores/replyStore";
 import { useThreadStore } from "@/stores/threadStore";
+import {
+  useComposerDraftStore,
+  type SelectedTextCommentEditorDraft,
+} from "@/stores/composerDraftStore";
 import { getTransport } from "@/transport";
 import type { SubagentRosterTarget } from "../narrative";
 import { readThreadRecord } from "../state";
 import { useThreadSubscriptionReconciler } from "../subscriptions/useThreadSubscriptionReconciler";
 import { ChatViewSurface, type ChatViewInteractions, type ChatRecoveryBannerState } from "./chat-view/ChatViewSurface";
 import { useChatViewState } from "./chat-view/useChatViewState";
+import type { SelectedTextCommentSourceNavigationRequest } from "./MessageList";
 
 const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024;
 
@@ -21,6 +26,153 @@ interface DismissedSessionError {
 interface ThreadScopedState<T> {
   threadEpoch: number;
   value: T;
+}
+
+interface SelectedTextCommentEditorUpdate {
+  editor: SelectedTextCommentEditorDraft | undefined;
+}
+
+function cardEditorForComment(
+  comment: SelectedTextComment,
+  anchor: SelectedTextCommentEditorDraft["anchor"],
+): SelectedTextCommentEditorDraft {
+  return {
+    source: comment.source,
+    commentId: comment.id,
+    note: comment.note,
+    mentions: comment.mentions,
+    escapeWarned: false,
+    outsideWarned: false,
+    anchor,
+  };
+}
+
+function valueForThreadEpoch<T>(state: ThreadScopedState<T>, threadEpoch: number, fallback: T): T {
+  return state.threadEpoch === threadEpoch ? state.value : fallback;
+}
+
+function addUnavailableComment(
+  current: ThreadScopedState<readonly string[]>,
+  threadEpoch: number,
+  commentId: string,
+): ThreadScopedState<readonly string[]> {
+  const previous = current.threadEpoch === threadEpoch ? current.value : [];
+  return {
+    threadEpoch,
+    value: previous.includes(commentId) ? previous : [...previous, commentId],
+  };
+}
+
+interface SelectedTextCommentPresentation {
+  readonly pendingSelectedTextComment: SelectedTextComment | null;
+  readonly pendingSelectedTextCommentEditor: SelectedTextCommentEditorUpdate | null;
+  readonly selectedTextCommentSourceNavigation: SelectedTextCommentSourceNavigationRequest | null;
+  readonly unavailableSelectedTextCommentIds: readonly string[];
+  readonly interactions: Pick<
+    ChatViewInteractions,
+    | "onSelectedTextComment"
+    | "onSelectedTextCommentConsumed"
+    | "onSelectedTextCommentEditorChange"
+    | "onSelectedTextCommentEditorChangeConsumed"
+    | "onOpenSelectedTextCommentSource"
+    | "onSelectedTextCommentSourceOpened"
+    | "onSelectedTextCommentSourceUnavailable"
+    | "onSelectedTextCommentEditorSourceUnavailable"
+  >;
+}
+
+function useSelectedTextCommentPresentation(
+  activeThreadId: string | null,
+  threadEpoch: number,
+): SelectedTextCommentPresentation {
+  const [pendingCommentState, setPendingCommentState] = useState<ThreadScopedState<SelectedTextComment | null>>({
+    threadEpoch: 0,
+    value: null,
+  });
+  const [pendingEditorState, setPendingEditorState] =
+    useState<ThreadScopedState<SelectedTextCommentEditorUpdate | null>>({
+      threadEpoch: 0,
+      value: null,
+    });
+  const [sourceNavigationState, setSourceNavigationState] =
+    useState<ThreadScopedState<SelectedTextCommentSourceNavigationRequest | null>>({
+      threadEpoch: 0,
+      value: null,
+    });
+  const [unavailableCommentIdsState, setUnavailableCommentIdsState] =
+    useState<ThreadScopedState<readonly string[]>>({ threadEpoch: 0, value: [] });
+  const sourceNavigationIdRef = useRef(0);
+  const activeSourceNavigationRequestRef = useRef<SelectedTextCommentSourceNavigationRequest | null>(null);
+  const handleSelectedTextComment = useCallback((comment: SelectedTextComment) => {
+    setPendingCommentState({ threadEpoch, value: comment });
+  }, [threadEpoch]);
+  const consumeSelectedTextComment = useCallback(() => {
+    setPendingCommentState({ threadEpoch, value: null });
+  }, [threadEpoch]);
+  const handleEditorChange = useCallback((editor: SelectedTextCommentEditorDraft | undefined) => {
+    setPendingEditorState({ threadEpoch, value: { editor } });
+  }, [threadEpoch]);
+  const consumeEditorChange = useCallback(() => {
+    setPendingEditorState({ threadEpoch, value: null });
+  }, [threadEpoch]);
+  const handleOpenSource = useCallback((comment: SelectedTextComment) => {
+    const request = { id: ++sourceNavigationIdRef.current, comment };
+    setUnavailableCommentIdsState((current) => ({
+      threadEpoch,
+      value: current.threadEpoch === threadEpoch
+        ? current.value.filter((commentId) => commentId !== comment.id)
+        : [],
+    }));
+    activeSourceNavigationRequestRef.current = request;
+    setSourceNavigationState({
+      threadEpoch,
+      value: request,
+    });
+  }, [threadEpoch]);
+  const handleSourceOpened = useCallback((request: SelectedTextCommentSourceNavigationRequest) => {
+    if (request.comment.source.threadId !== activeThreadId) return;
+    if (activeSourceNavigationRequestRef.current?.id !== request.id) return;
+    activeSourceNavigationRequestRef.current = null;
+    setSourceNavigationState({ threadEpoch, value: null });
+    setPendingEditorState({
+      threadEpoch,
+      value: { editor: cardEditorForComment(request.comment, "source") },
+    });
+  }, [activeThreadId, threadEpoch]);
+  const handleSourceUnavailable = useCallback((request: SelectedTextCommentSourceNavigationRequest) => {
+    if (request.comment.source.threadId !== activeThreadId) return;
+    if (activeSourceNavigationRequestRef.current?.id !== request.id) return;
+    activeSourceNavigationRequestRef.current = null;
+    setSourceNavigationState({ threadEpoch, value: null });
+    setUnavailableCommentIdsState((current) => addUnavailableComment(current, threadEpoch, request.comment.id));
+    setPendingEditorState({
+      threadEpoch,
+      value: { editor: cardEditorForComment(request.comment, "card") },
+    });
+  }, [activeThreadId, threadEpoch]);
+  const handleRestoredEditorUnavailable = useCallback((editor: SelectedTextCommentEditorDraft) => {
+    if (editor.source.threadId !== activeThreadId) return;
+    setPendingEditorState({ threadEpoch, value: { editor: { ...editor, anchor: "card" } } });
+    const commentId = editor.commentId;
+    if (!commentId) return;
+    setUnavailableCommentIdsState((current) => addUnavailableComment(current, threadEpoch, commentId));
+  }, [activeThreadId, threadEpoch]);
+  return {
+    pendingSelectedTextComment: valueForThreadEpoch(pendingCommentState, threadEpoch, null),
+    pendingSelectedTextCommentEditor: valueForThreadEpoch(pendingEditorState, threadEpoch, null),
+    selectedTextCommentSourceNavigation: valueForThreadEpoch(sourceNavigationState, threadEpoch, null),
+    unavailableSelectedTextCommentIds: valueForThreadEpoch(unavailableCommentIdsState, threadEpoch, []),
+    interactions: {
+      onSelectedTextComment: handleSelectedTextComment,
+      onSelectedTextCommentConsumed: consumeSelectedTextComment,
+      onSelectedTextCommentEditorChange: handleEditorChange,
+      onSelectedTextCommentEditorChangeConsumed: consumeEditorChange,
+      onOpenSelectedTextCommentSource: handleOpenSource,
+      onSelectedTextCommentSourceOpened: handleSourceOpened,
+      onSelectedTextCommentSourceUnavailable: handleSourceUnavailable,
+      onSelectedTextCommentEditorSourceUnavailable: handleRestoredEditorUnavailable,
+    },
+  };
 }
 
 /** Props for the composed Conversation chat surface. */
@@ -35,10 +187,6 @@ export interface ChatViewProps {
 export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = {}) {
   const state = useChatViewState();
   const [editingThreadState, setEditingThreadState] = useState<ThreadScopedState<string | null>>({
-    threadEpoch: 0,
-    value: null,
-  });
-  const [pendingSelectedTextCommentState, setPendingSelectedTextCommentState] = useState<ThreadScopedState<SelectedTextComment | null>>({
     threadEpoch: 0,
     value: null,
   });
@@ -57,9 +205,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const visibleEditingThreadId = editingThreadState.threadEpoch === threadEpoch
     ? editingThreadState.value
     : null;
-  const visiblePendingSelectedTextComment = pendingSelectedTextCommentState.threadEpoch === threadEpoch
-    ? pendingSelectedTextCommentState.value
-    : null;
   const dismissedError = dismissedErrorState?.threadEpoch === threadEpoch
     ? dismissedErrorState.error
     : null;
@@ -70,6 +215,10 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     setPendingPrefill,
     updateThreadTitle,
   } = state;
+  const selectedTextCommentEditor = useComposerDraftStore((store) =>
+    activeThreadId ? store.drafts[activeThreadId]?.selectedTextCommentEditor : undefined,
+  );
+  const selectedTextComments = useSelectedTextCommentPresentation(activeThreadId, threadEpoch);
 
   const previousConnectionStatusRef = useRef(state.connectionStatus);
   useEffect(() => {
@@ -119,12 +268,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     useReplyStore.getState().setReply(activeThreadId, messageId, role, content.slice(0, 150), content.slice(0, 2000));
   }, []);
 
-  const handleSelectedTextComment = useCallback((comment: SelectedTextComment) => {
-    setPendingSelectedTextCommentState({ threadEpoch, value: comment });
-  }, [threadEpoch]);
-  const consumeSelectedTextComment = useCallback(() => {
-    setPendingSelectedTextCommentState({ threadEpoch, value: null });
-  }, [threadEpoch]);
   const handleStopSafely = useCallback(async () => {
     if (state.activeThreadId) await useThreadStore.getState().stopAgent(state.activeThreadId);
   }, [state.activeThreadId]);
@@ -159,8 +302,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const interactions = useMemo<ChatViewInteractions>(() => ({
     onBranch: handleBranch,
     onReply: handleReply,
-    onSelectedTextComment: handleSelectedTextComment,
-    onSelectedTextCommentConsumed: consumeSelectedTextComment,
+    ...selectedTextComments.interactions,
     onPromptSelect: setPendingPrefill,
     onStopSafely: handleStopSafely,
     onContinueWithoutSaving: handleContinueWithoutSaving,
@@ -169,7 +311,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     onSaveTitle: handleSaveTitle,
     onExitForkMode: handleExitForkMode,
   }), [
-    consumeSelectedTextComment,
     handleBranch,
     handleContinueWithoutSaving,
     handleDismissCliError,
@@ -177,8 +318,8 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     handleOpenSettings,
     handleReply,
     handleSaveTitle,
-    handleSelectedTextComment,
     handleStopSafely,
+    selectedTextComments.interactions,
     setPendingPrefill,
   ]);
   const recovery: ChatRecoveryBannerState = {
@@ -197,7 +338,11 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
       onEditingThreadIdChange={(threadId) =>
         setEditingThreadState({ threadEpoch, value: threadId })
       }
-      pendingSelectedTextComment={visiblePendingSelectedTextComment}
+      pendingSelectedTextComment={selectedTextComments.pendingSelectedTextComment}
+      pendingSelectedTextCommentEditor={selectedTextComments.pendingSelectedTextCommentEditor ?? undefined}
+      selectedTextCommentEditor={selectedTextCommentEditor}
+      selectedTextCommentSourceNavigation={selectedTextComments.selectedTextCommentSourceNavigation ?? undefined}
+      unavailableSelectedTextCommentIds={selectedTextComments.unavailableSelectedTextCommentIds}
       onSubagentSelect={onSubagentSelect}
       onOpenSubagents={onOpenSubagents}
       dismissedError={dismissedError}

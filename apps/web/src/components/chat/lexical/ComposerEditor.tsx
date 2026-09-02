@@ -28,6 +28,10 @@ interface ComposerEditorProps {
   isSlashPopupOpen: boolean;
   /** Ref callback to expose the LexicalEditor instance */
   editorRef?: React.MutableRefObject<LexicalEditor | null>;
+  /** Ref for the rendered editable element. */
+  contentEditableRef?: React.Ref<HTMLDivElement>;
+  /** Focuses the editable element when it mounts. */
+  autoFocus?: boolean;
   disabled?: boolean;
   placeholder?: string;
   /** DOM identifier for a focus target outside the editor. */
@@ -103,6 +107,8 @@ export function ComposerEditor({
   onSlashDismiss,
   isSlashPopupOpen,
   editorRef,
+  contentEditableRef,
+  autoFocus,
   disabled,
   placeholder = "Ask for follow-up changes or attach images",
   id,
@@ -141,6 +147,8 @@ export function ComposerEditor({
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
+              ref={contentEditableRef}
+              autoFocus={autoFocus}
               className={compact
                 ? "w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none"
                 : "w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"}

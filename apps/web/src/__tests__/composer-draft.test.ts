@@ -105,6 +105,46 @@ describe("composerDraftStore", () => {
     expect(getDraft("thread-1")).toBeUndefined();
   });
 
+  it("keeps saved cards and a dirty open editor without text input", () => {
+    const { saveDraft, getDraft } = useComposerDraftStore.getState();
+    const selectedTextComments = [{
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-1",
+        messageId: "message-1",
+        sourceRole: "assistant" as const,
+        start: 0,
+        end: 5,
+        quote: "focus",
+      },
+      note: "Saved note",
+      mentions: [],
+    }];
+
+    saveDraft("thread-1", {
+      input: "",
+      attachments: [],
+      modelId: "claude-sonnet-4-6",
+      reasoning: "high",
+      selectedTextComments,
+      selectedTextCommentEditor: {
+        source: selectedTextComments[0]!.source,
+        commentId: selectedTextComments[0]!.id,
+        note: "Unsent edit",
+        mentions: [],
+        escapeWarned: false,
+        outsideWarned: true,
+        anchor: "card",
+      },
+    });
+
+    expect(getDraft("thread-1")).toMatchObject({
+      selectedTextComments,
+      selectedTextCommentEditor: { note: "Unsent edit", anchor: "card" },
+    });
+  });
+
   it("preserves attachments in the draft", () => {
     const { saveDraft, getDraft } = useComposerDraftStore.getState();
 
