@@ -637,8 +637,8 @@
 }
 
 @keyframes startup-shimmer {
-  0%, 55% { background-position: 120% 0; }
-  100% { background-position: -20% 0; }
+  from { background-position: 120% 0; }
+  to { background-position: -20% 0; }
 }
 
 .startup-shimmer-text {
@@ -646,7 +646,7 @@
   background-size: 220% 100%;
   background-clip: text;
   color: transparent;
-  animation: startup-shimmer 2.8s ease-in-out infinite;
+  animation: startup-shimmer 1.8s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
