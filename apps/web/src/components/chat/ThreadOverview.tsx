@@ -2138,7 +2138,7 @@ function useThreadOverviewOpenState(
     value: null,
   });
   const currentChoice = choice.threadId === threadId ? choice.value : null;
-  const open = !(panelVisible && !hasRoom) && (openRequested || (currentChoice ?? hasRoom));
+  const open = openRequested || (currentChoice ?? (hasRoom || panelVisible));
 
   useEffect(() => {
     if (!openRequested) return;
@@ -2230,9 +2230,8 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const [loadedRepository, setLoadedRepository] = useState<LoadedRepository | null>(null);
   const [changeSummaryStatus, setChangeSummaryStatus] = useState<LoadStatus>("idle");
 
-  // Space-aware open: the Overview sits open when there is room and steps aside
-  // when the right panel or a narrow viewport leaves none, until the user takes
-  // manual control of it for this thread.
+  // Space-aware open: the Overview opens when the chat has room or the normal
+  // right panel is visible, until the user takes manual control for this thread.
   const panelVisible = useDiffStore((s) => s.getRightPanelVisible(thread.workspace_id, thread.id));
   const openRequested = useOverviewStore(
     (state) => state.requestedThreadId === thread.id,

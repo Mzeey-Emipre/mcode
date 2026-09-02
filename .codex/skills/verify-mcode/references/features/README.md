@@ -27,6 +27,7 @@
 | Pointer-selected assistant text opens a compact comment editor and retains native copy actions | [Selected text comments](selected-text-comments.md) | Electron public UI proof |
 | A New worktree completes checkout before automatic Setup starts | [Managed-worktree Setup readiness](managed-worktree-setup.md) | `runtime worktree-setup --confirm-cleanup` and `runtime check` |
 | A user completes a worktree thread and the app schedules its cleanup | [Completed-thread cleanup](completed-thread-cleanup.md) | `thread-lifecycle proof --confirm-cleanup` and `thread-lifecycle check` |
+| Thread Overview defaults open beside the right panel in split mode, even when the narrowed chat is below the usual threshold, and is unavailable while the panel is maximized | [Thread Overview and right panel](thread-overview-right-panel.md) | Electron public UI proof with the stable live-testing interface |
 
 Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that crosses the server, web or Electron UI, provider adapters, persistence, or managed worktrees.
 
@@ -37,7 +38,8 @@ Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that cro
 3. Run the selected-text-comments workflow when its desktop surface changed.
 4. Run `runtime worktree-setup --confirm-cleanup` when managed-worktree checkout or automatic Setup changed.
 5. Run `thread-lifecycle health`, `thread-lifecycle check`, and the completed-thread proof when thread completion or worktree cleanup changed.
-6. Run the applicable multi-surface journey last, inspect receipts, then run cleanup.
+6. Run the Thread Overview and right-panel workflow when shared workspace navigation or panel layout changed.
+7. Run the applicable multi-surface journey last, inspect receipts, then run cleanup.
 
 ## Coverage gaps
 
