@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { ThreadStartup, ThreadStartupKind, ThreadStartupStepState } from "@mcode/contracts";
+import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { getTransport } from "@/transport";
@@ -84,7 +85,6 @@ const CANCELLING_ACTIVITY: StartupActivity = { lead: "Cancelling startup", chang
 const STABLE_ACTIVITIES: Partial<Record<ThreadStartup["state"], StartupActivity>> = {
   blocked: { lead: "Startup paused", changing: "", active: false },
   cancelled: { lead: "Startup cancelled", changing: "", active: false },
-  completed: { lead: "Startup ready", changing: "", active: false },
   failed: { lead: "Startup failed", changing: "", active: false },
   interrupted: { lead: "Startup interrupted", changing: "", active: false },
 };
@@ -180,18 +180,11 @@ function canCancelStartup(startupId: string | undefined, startup: StartupDisplay
 }
 
 function StartupActivityLine({ activity }: { activity: StartupActivity }) {
+  const message = activity.changing ? `${activity.lead} ${activity.changing}` : activity.lead;
   return (
     <div data-testid="startup-activity" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <span aria-hidden className="text-primary">↗</span>
-      <span>{activity.lead}</span>
-      {activity.changing ? (
-        <span className={cn(
-          activity.active && "startup-shimmer-text motion-reduce:animate-none",
-          !activity.active && "text-muted-foreground",
-        )}>
-          {activity.changing}
-        </span>
-      ) : null}
+      <WorktreeModeIcon data-testid="startup-activity-icon" aria-hidden size={12} className="text-primary" />
+      <span className={cn(activity.active && "startup-shimmer-text motion-reduce:animate-none")}>{message}</span>
     </div>
   );
 }
@@ -284,6 +277,8 @@ export function StartupProgressCard({ startup, context, startupId, actions }: St
   const display = startup ?? fallbackStartup(context);
   const activity = activityCopy(display, context);
   const cancellation = useStartupCancellation(startupId, display);
+
+  if (display.state === "completed") return null;
 
   return (
     <section data-testid="startup-progress" aria-label="Thread startup" className="space-y-2">

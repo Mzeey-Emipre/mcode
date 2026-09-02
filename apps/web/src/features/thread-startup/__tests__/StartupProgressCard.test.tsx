@@ -149,6 +149,12 @@ describe("StartupProgressCard", () => {
 
   it("disables shimmer animation when reduced motion is requested", () => {
     render(<StartupProgressCard startupId={startupId} context="managed-worktree" />);
-    expect(screen.getByText("checkout")).toHaveClass("startup-shimmer-text", "motion-reduce:animate-none");
+    expect(screen.getByText("Preparing checkout")).toHaveClass("startup-shimmer-text", "motion-reduce:animate-none");
+    expect(screen.getByTestId("startup-activity-icon")).toHaveAttribute("data-slot", "worktree-mode-icon");
+  });
+
+  it("removes the startup display after successful completion", () => {
+    render(<StartupProgressCard startup={startup({ state: "completed" })} startupId={startupId} context="managed-worktree" />);
+    expect(screen.queryByTestId("startup-progress")).toBeNull();
   });
 });
