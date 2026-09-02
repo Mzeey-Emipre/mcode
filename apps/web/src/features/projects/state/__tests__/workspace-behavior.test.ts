@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "../workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useComposerDraftStore, type ComposerDraft } from "@/stores/composerDraftStore";
+import { toComposerAttachmentMetas } from "@/features/conversation/composer/draft/composer-attachment-operations";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
 import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
@@ -850,7 +851,7 @@ describe("Workspace Behavior", () => {
           pendingComposerDraft.contextWindow,
           true,
           pendingComposerDraft.codexFastMode ?? undefined,
-          undefined,
+          pendingComposerDraft.input,
           pendingComposerDraft.mentions,
           undefined,
           undefined,
@@ -864,9 +865,25 @@ describe("Workspace Behavior", () => {
           .toMatchObject({ clientPreparing: false, clientError: String(cancellation) });
         expect(useComposerDraftStore.getState().getDraft(placeholderId)).toEqual(pendingComposerDraft);
 
+        const editedComment = {
+          ...selectedTextComments[0]!,
+          note: "Use the edited comment.",
+        };
+        const editedDraft = {
+          ...pendingComposerDraft,
+          input: "Send the edited request.",
+          selectedTextComments: [editedComment],
+        };
+        useComposerDraftStore.getState().saveDraft(placeholderId, editedDraft);
+
         await useWorkspaceStore.getState().retryPreparingThread(placeholderId);
 
         expect(useComposerDraftStore.getState().getDraft(placeholderId)).toBeUndefined();
+        expect(mockTransport.createAndSendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+          content: editedDraft.input,
+          displayContent: editedDraft.input,
+          selectedTextComments: [editedComment],
+        }));
       },
     );
 
@@ -890,6 +907,7 @@ describe("Workspace Behavior", () => {
       await expect(useWorkspaceStore.getState().branchThread({
         sourceThreadId: parent.id,
         content: pendingComposerDraft.input,
+        displayContent: pendingComposerDraft.input,
         model: pendingComposerDraft.modelId,
         mode: "direct",
         selectedTextComments: pendingComposerDraft.selectedTextComments,
@@ -899,10 +917,164 @@ describe("Workspace Behavior", () => {
       const placeholderId = useWorkspaceStore.getState().activeThreadId!;
       expect(useComposerDraftStore.getState().getDraft(placeholderId)).toEqual(pendingComposerDraft);
 
+      const commentOnlyDraft = {
+        ...pendingComposerDraft,
+        input: "",
+        selectedTextComments: [{
+          ...selectedTextComments[0]!,
+          note: "Retry only this edited comment.",
+        }],
+      };
+      useComposerDraftStore.getState().saveDraft(placeholderId, commentOnlyDraft);
+
       await useWorkspaceStore.getState().retryPreparingThread(placeholderId);
 
       expect(useComposerDraftStore.getState().getDraft(placeholderId)).toBeUndefined();
+      expect(mockTransport.createAndSendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+        content: "",
+        displayContent: "",
+        selectedTextComments: commentOnlyDraft.selectedTextComments,
+      }));
     });
+
+    it("keeps attachment preview ownership with the submitting composer after acknowledgement", async () => {
+      const ws = createMockWorkspace({ id: "ws-preview-ownership" });
+      const previewUrl = "blob:pending-preview";
+      const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+      const draft = {
+        ...pendingComposerDraft,
+        attachments: [{
+          id: "attachment-1",
+          name: "preview.png",
+          mimeType: "image/png",
+          sizeBytes: 128,
+          previewUrl,
+          filePath: "C:/tmp/preview.png",
+        }],
+      };
+      useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id });
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockCreateAndSendResult({ id: "persisted-preview", workspace_id: ws.id }),
+      );
+
+      await useWorkspaceStore.getState().createAndSendMessage(
+        draft.input,
+        draft.modelId,
+        undefined,
+        toComposerAttachmentMetas(draft.attachments),
+        draft.reasoning,
+        draft.provider,
+        undefined,
+        undefined,
+        draft.contextWindow,
+        true,
+        draft.codexFastMode ?? undefined,
+        draft.input,
+        draft.mentions,
+        undefined,
+        undefined,
+        undefined,
+        draft.selectedTextComments,
+        draft,
+      );
+
+      expect(revokeObjectUrl).not.toHaveBeenCalled();
+
+      const retryPreviewUrl = "blob:retry-preview";
+      const retryDraft = {
+        ...draft,
+        attachments: [{ ...draft.attachments[0]!, previewUrl: retryPreviewUrl }],
+      };
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error("Creation failed"))
+        .mockResolvedValueOnce(createMockCreateAndSendResult({
+          id: "persisted-retry-preview",
+          workspace_id: ws.id,
+        }));
+      await expect(useWorkspaceStore.getState().createAndSendMessage(
+        retryDraft.input,
+        retryDraft.modelId,
+        undefined,
+        toComposerAttachmentMetas(retryDraft.attachments),
+        retryDraft.reasoning,
+        retryDraft.provider,
+        undefined,
+        undefined,
+        retryDraft.contextWindow,
+        true,
+        retryDraft.codexFastMode ?? undefined,
+        retryDraft.input,
+        retryDraft.mentions,
+        undefined,
+        undefined,
+        undefined,
+        retryDraft.selectedTextComments,
+        retryDraft,
+      )).rejects.toThrow("Creation failed");
+
+      const placeholderId = useWorkspaceStore.getState().activeThreadId!;
+      await useWorkspaceStore.getState().retryPreparingThread(placeholderId);
+
+      expect(revokeObjectUrl).toHaveBeenCalledOnce();
+      expect(revokeObjectUrl).toHaveBeenCalledWith(retryPreviewUrl);
+      revokeObjectUrl.mockRestore();
+    });
+
+    it.each(["dismiss", "workspace-removal"] as const)(
+      "releases an abandoned placeholder draft on %s",
+      async (abandonment) => {
+        const ws = createMockWorkspace({ id: `ws-abandon-${abandonment}` });
+        const previewUrl = `blob:${abandonment}`;
+        const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+        const draft = {
+          ...pendingComposerDraft,
+          attachments: [{
+            id: `attachment-${abandonment}`,
+            name: "preview.png",
+            mimeType: "image/png",
+            sizeBytes: 128,
+            previewUrl,
+            filePath: "C:/tmp/preview.png",
+          }],
+        };
+        useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id });
+        (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>)
+          .mockRejectedValue(new Error("Creation failed"));
+
+        await expect(useWorkspaceStore.getState().createAndSendMessage(
+          draft.input,
+          draft.modelId,
+          undefined,
+          toComposerAttachmentMetas(draft.attachments),
+          draft.reasoning,
+          draft.provider,
+          undefined,
+          undefined,
+          draft.contextWindow,
+          true,
+          draft.codexFastMode ?? undefined,
+          draft.input,
+          draft.mentions,
+          undefined,
+          undefined,
+          undefined,
+          draft.selectedTextComments,
+          draft,
+        )).rejects.toThrow("Creation failed");
+
+        const placeholderId = useWorkspaceStore.getState().activeThreadId!;
+        if (abandonment === "dismiss") {
+          useWorkspaceStore.getState().dismissPreparingThread(placeholderId);
+        } else {
+          useWorkspaceStore.getState().removeWorkspaceFromState(ws.id);
+        }
+
+        expect(useComposerDraftStore.getState().getDraft(placeholderId)).toBeUndefined();
+        expect(revokeObjectUrl).toHaveBeenCalledOnce();
+        expect(revokeObjectUrl).toHaveBeenCalledWith(previewUrl);
+        revokeObjectUrl.mockRestore();
+      },
+    );
 
     it("createAndSendMessage sends a base branch when attaching a detached existing worktree", async () => {
       const ws = createMockWorkspace({ id: "ws-detached-existing" });

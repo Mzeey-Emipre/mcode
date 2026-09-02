@@ -105,7 +105,10 @@ export interface UseComposerFormControllerOptions {
   workspaceId?: string;
   branchFromMessageId?: string;
   branchFromMessageContent?: string;
-  activeThread?: Thread;
+  activeThread?: Thread & {
+    clientPreparing?: boolean;
+    clientError?: string | null;
+  };
 }
 
 /** Form state, attachment bindings, and editor operations owned by one Composer session. */
@@ -182,6 +185,7 @@ export function useComposerFormController({
   const submissionRevisionRef = useRef(0);
   const submittedDraftClearRef = useRef<SubmittedDraftClear | null>(null);
   const threadSwitchRef = useRef(false);
+  const restoredDraftOwnerRef = useRef<string | undefined>(undefined);
   const lastServerThreadModelKeyRef = useRef("");
   const saveDraft = useComposerDraftStore((state) => state.saveDraft);
   const getDraft = useComposerDraftStore((state) => state.getDraft);
@@ -390,6 +394,31 @@ export function useComposerFormController({
   });
 
   useEffect(() => {
+    if (
+      !threadId
+      || restoredDraftOwnerRef.current !== threadId
+      || (!activeThread?.clientPreparing && !activeThread?.clientError)
+    ) return;
+    saveDraft(threadId, snapshotComposerDraft(draftRef.current));
+  }, [
+    activeThread?.clientError,
+    activeThread?.clientPreparing,
+    attachments.attachments,
+    input,
+    mentions,
+    saveDraft,
+    selectedTextCommentEditor,
+    selectedTextComments,
+    selection.codexFastMode,
+    selection.contextWindow,
+    selection.modelId,
+    selection.provider,
+    selection.reasoning,
+    selection.thinking,
+    threadId,
+  ]);
+
+  useEffect(() => {
     const submittedDraftClear = submittedDraftClearRef.current;
     if (!submittedDraftClear) return;
     if (
@@ -518,6 +547,7 @@ export function useComposerFormController({
       if (isNewThread) queueMicrotask(() => editorRef.current?.focus());
     }
     threadSwitchRef.current = true;
+    restoredDraftOwnerRef.current = threadId;
     previousThreadIdRef.current = threadId;
   }, [getDraft, isNewThread, replaceAttachments, saveDraft, setSelection, threadId]);
 

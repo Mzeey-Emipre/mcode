@@ -1,6 +1,9 @@
-import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SelectedTextComment } from "@mcode/contracts";
+import { createMockThread } from "@/__tests__/mocks/transport";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useComposerFormController } from "./useComposerFormController";
 
 const comment: SelectedTextComment = {
@@ -19,6 +22,11 @@ const comment: SelectedTextComment = {
 };
 
 describe("useComposerFormController selected-text drafts", () => {
+  beforeEach(() => {
+    useComposerDraftStore.setState({ drafts: {}, pendingPrefill: null });
+    useWorkspaceStore.setState({ threads: [] });
+  });
+
   it("keeps a saved card when the source editor closes in the same update batch", () => {
     const { result } = renderHook(() => useComposerFormController({ isNewThread: true }));
     const editor = {
@@ -70,5 +78,55 @@ describe("useComposerFormController selected-text drafts", () => {
     });
     expect(secondAttempt).toBeNull();
     expect(result.current.state.selectedTextCommentEditor).toBeUndefined();
+  });
+
+  it("persists live edits while a failed thread creation waits for retry", async () => {
+    const previewUrl = "blob:restored-preview";
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const placeholder = {
+      ...createMockThread({ id: "pending-thread" }),
+      clientPreparing: false,
+      clientError: "Creation failed",
+    };
+    useWorkspaceStore.setState({ threads: [placeholder] });
+    useComposerDraftStore.getState().saveDraft(placeholder.id, {
+      input: "Original request.",
+      mentions: [],
+      selectedTextComments: [comment],
+      attachments: [{
+        id: "attachment-1",
+        name: "preview.png",
+        mimeType: "image/png",
+        sizeBytes: 128,
+        previewUrl,
+        filePath: "C:/tmp/preview.png",
+      }],
+      modelId: "gpt-5.5",
+      provider: "codex",
+      reasoning: "high",
+    });
+    const { result } = renderHook(() => useComposerFormController({
+      threadId: placeholder.id,
+      isNewThread: false,
+      activeThread: placeholder,
+    }));
+
+    await waitFor(() => expect(result.current.state.text).toBe("Original request."));
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.updateDraft("Send the edited request.", []);
+      result.current.setSelectedTextComments([comment]);
+      result.current.updateSelection({ modelId: "gpt-5.5", provider: "codex" });
+    });
+
+    await waitFor(() => expect(useComposerDraftStore.getState().getDraft(placeholder.id)).toMatchObject({
+      input: "Send the edited request.",
+      selectedTextComments: [comment],
+      modelId: "gpt-5.5",
+      provider: "codex",
+    }));
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+    revokeObjectUrl.mockRestore();
   });
 });

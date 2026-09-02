@@ -7,6 +7,10 @@ import type {
   SelectedTextComment,
   SelectedTextCommentSource,
 } from "@mcode/contracts";
+import {
+  collectSpillPathsFromPendingAttachments,
+  releaseBrowserCaptureSpills,
+} from "@/features/preview/capture/browser-capture-spill";
 
 /** Restorable open-editor state for one selected-text comment in a ComposerDraft. */
 export interface SelectedTextCommentEditorDraft {
@@ -72,6 +76,9 @@ interface ComposerDraftState {
   /** Remove the draft for a thread (e.g. after sending a message). */
   clearDraft: (threadId: string) => void;
 
+  /** Remove a draft after the submitting Composer takes over attachment cleanup. */
+  removeDraftAfterAttachmentTransfer: (threadId: string) => void;
+
   /** Set a prefill text to be picked up by the Composer on next render. */
   setPendingPrefill: (text: string) => void;
 
@@ -86,10 +93,12 @@ function draftHasNoSendableContent(draft: ComposerDraft): boolean {
     && !draft.selectedTextCommentEditor;
 }
 
-function revokeAttachmentPreviewUrls(attachments: readonly PendingAttachment[]): void {
+function releaseAttachmentResources(attachments: readonly PendingAttachment[]): void {
   for (const attachment of attachments) {
     if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
   }
+  const spillPaths = collectSpillPathsFromPendingAttachments(attachments);
+  if (spillPaths.length > 0) void releaseBrowserCaptureSpills(spillPaths);
 }
 
 function removeDraft(
@@ -107,7 +116,7 @@ function revokeReplacedAttachmentPreviewUrls(
 ): void {
   if (!existing) return;
   const retainedUrls = new Set(draft.attachments.map((attachment) => attachment.previewUrl));
-  revokeAttachmentPreviewUrls(existing.attachments.filter(
+  releaseAttachmentResources(existing.attachments.filter(
     (attachment) => attachment.previewUrl && !retainedUrls.has(attachment.previewUrl),
   ));
 }
@@ -122,7 +131,7 @@ export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
     if (draftHasNoSendableContent(draft)) {
       // Don't store empty drafts; clean up if one existed
       if (!existing) return;
-      revokeAttachmentPreviewUrls(existing.attachments);
+      releaseAttachmentResources(existing.attachments);
       set({ drafts: removeDraft(get().drafts, threadId) });
       return;
     }
@@ -138,7 +147,12 @@ export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
   clearDraft: (threadId) => {
     const draft = get().drafts[threadId];
     if (!draft) return;
-    revokeAttachmentPreviewUrls(draft.attachments);
+    releaseAttachmentResources(draft.attachments);
+    set({ drafts: removeDraft(get().drafts, threadId) });
+  },
+
+  removeDraftAfterAttachmentTransfer: (threadId) => {
+    if (!get().drafts[threadId]) return;
     set({ drafts: removeDraft(get().drafts, threadId) });
   },
 
