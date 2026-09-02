@@ -425,45 +425,88 @@ function SelectedTextCommentPopover({
         </Button>
       </PopoverContent>
     )
-    : (
-      <PopoverContent
-        key={overlay.stage}
-        anchor={virtualAnchor}
-        side="bottom"
-        align="start"
-        sideOffset={0}
-        collisionBoundary={viewportRef.current ?? undefined}
-        collisionPadding={0}
-        collisionAvoidance={{ side: "none", align: "none", fallbackAxisSide: "none" }}
-        positionMethod="fixed"
-        initialFocus={() => document.getElementById("selected-text-comment-note")}
-        finalFocus={false}
-        style={editorStyle}
-        className="border-0 bg-transparent p-0 shadow-none"
-      >
-        <SelectedTextCommentEditor
-          key={`${overlay.source.messageId}:${overlay.source.start}:${overlay.source.end}`}
-          source={overlay.source}
-          comment={overlay.editor?.commentId
-            ? comments.find((comment) => comment.id === overlay.editor?.commentId)
-            : undefined}
-          draft={overlay.editor}
-          nextDisplayNumber={comments.length + 1}
-          workspaceId={editorScope?.workspaceId}
-          providerId={editorScope?.providerId}
-          maxHeight={typeof editorStyle?.maxHeight === "number" ? editorStyle.maxHeight : undefined}
-          onElementChange={onEditorElementChange}
-          onSave={onSave}
-          onDraftChange={onEditorChange}
-          onClose={onCloseEditor}
-          onAnnouncement={onAnnouncement}
-        />
-      </PopoverContent>
-    );
+    : <SelectedTextCommentEditorPopoverContent
+      overlay={overlay}
+      virtualAnchor={virtualAnchor}
+      viewportRef={viewportRef}
+      editorScope={editorScope}
+      editorStyle={editorStyle}
+      onEditorElementChange={onEditorElementChange}
+      comments={comments}
+      onSave={onSave}
+      onEditorChange={onEditorChange}
+      onClose={onCloseEditor}
+      onAnnouncement={onAnnouncement}
+    />;
 
   return (
     <Popover open modal={false} onOpenChange={handleOpenChange}>
       {content}
     </Popover>
+  );
+}
+
+function SelectedTextCommentEditorPopoverContent({
+  overlay,
+  virtualAnchor,
+  viewportRef,
+  editorScope,
+  editorStyle,
+  onEditorElementChange,
+  comments,
+  onSave,
+  onEditorChange,
+  onClose,
+  onAnnouncement,
+}: {
+  readonly overlay: CommentOverlay;
+  readonly virtualAnchor: VirtualAnchor;
+  readonly viewportRef: RefObject<HTMLElement | null>;
+  readonly editorScope?: SelectedTextCommentEditorScope;
+  readonly editorStyle?: CSSProperties;
+  readonly onEditorElementChange: (element: HTMLElement | null) => void;
+  readonly comments: readonly SelectedTextComment[];
+  readonly onSave: (comment: SelectedTextComment) => void;
+  readonly onEditorChange?: (editor: SelectedTextCommentEditorDraft | undefined) => void;
+  readonly onClose: (options?: { readonly restoreFocus?: boolean }) => void;
+  readonly onAnnouncement: (message: string) => void;
+}) {
+  const comment = overlay.editor?.commentId
+    ? comments.find((candidate) => candidate.id === overlay.editor?.commentId)
+    : undefined;
+  const maxHeight = typeof editorStyle?.maxHeight === "number" ? editorStyle.maxHeight : undefined;
+
+  return (
+    <PopoverContent
+      key={overlay.stage}
+      anchor={virtualAnchor}
+      side="bottom"
+      align="start"
+      sideOffset={0}
+      collisionBoundary={viewportRef.current ?? undefined}
+      collisionPadding={0}
+      collisionAvoidance={{ side: "none", align: "none", fallbackAxisSide: "none" }}
+      positionMethod="fixed"
+      initialFocus={() => document.getElementById("selected-text-comment-note")}
+      finalFocus={false}
+      style={editorStyle}
+      className="border-0 bg-transparent p-0 shadow-none"
+    >
+      <SelectedTextCommentEditor
+        key={`${overlay.source.messageId}:${overlay.source.start}:${overlay.source.end}`}
+        source={overlay.source}
+        comment={comment}
+        draft={overlay.editor}
+        nextDisplayNumber={comments.length + 1}
+        workspaceId={editorScope?.workspaceId}
+        providerId={editorScope?.providerId}
+        maxHeight={maxHeight}
+        onElementChange={onEditorElementChange}
+        onSave={onSave}
+        onDraftChange={onEditorChange}
+        onClose={onClose}
+        onAnnouncement={onAnnouncement}
+      />
+    </PopoverContent>
   );
 }
