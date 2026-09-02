@@ -132,8 +132,8 @@ export class ReviewWorktreeService {
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject(ProviderAvailabilityService)
     private readonly providerAvailability: ProviderAvailabilityService,
-    @inject(ThreadStartupService, { isOptional: true })
-    private readonly threadStartups?: ThreadStartupService,
+    @inject(ThreadStartupService)
+    private readonly threadStartups: ThreadStartupService,
   ) {}
 
   /** Prepare or complete the confirmed local Review task flow. */
