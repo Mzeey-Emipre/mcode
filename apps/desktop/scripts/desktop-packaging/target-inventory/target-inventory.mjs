@@ -21,13 +21,34 @@ export const SUPPORTED_DESKTOP_TARGETS = Object.freeze([
   Object.freeze({ id: "macos-x64", platform: "macos", arch: "x64" }),
 ]);
 
-const DESKTOP_WORKFLOW_MATRIX_NAMES = ["nightly", "stable", "pull-request"];
+const DESKTOP_WORKFLOW_MATRIX_NAMES = [
+  "nightly",
+  "stable",
+  "pull-request-canary",
+  "pull-request-full",
+];
 
-function parseWorkflowTargetMatrix(source, workflowName) {
+function findJobBlockLines(lines, jobName) {
+  const start = lines.findIndex((line) => new RegExp(`^  ${jobName}:\\s*$`).test(line));
+  if (start < 0) {
+    throw new Error(`Desktop packaging job is missing: ${jobName}`);
+  }
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^  [A-Za-z0-9_-]+:\s*$/.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end);
+}
+
+function parseWorkflowTargetMatrix(source, workflowName, jobName) {
   const lines = requireWorkflowSource(source, workflowName).split(/\r?\n/);
-  const includeIndex = findMatrixIncludeIndex(lines, workflowName);
+  const scopeLines = jobName ? findJobBlockLines(lines, jobName) : lines;
+  const includeIndex = findMatrixIncludeIndex(scopeLines, workflowName);
   return validateWorkflowTargets(
-    collectWorkflowMatrixEntries(lines.slice(includeIndex + 1), workflowName),
+    collectWorkflowMatrixEntries(scopeLines.slice(includeIndex + 1), workflowName),
     workflowName,
   );
 }
@@ -106,23 +127,31 @@ function assertUniqueWorkflowTarget(target, seen, workflowName) {
   seen.add(target.id);
 }
 
-/** Parses one packaging workflow matrix into platform and architecture targets. */
+/** Parses one packaging workflow job matrix into platform and architecture targets. */
 export function parseDesktopWorkflowTargetMatrix(
   source,
   workflowName = "workflow",
+  jobName,
 ) {
-  return parseWorkflowTargetMatrix(source, workflowName);
+  return parseWorkflowTargetMatrix(source, workflowName, jobName);
 }
 
-/** Validates the Nightly, Stable, and pull-request matrices against the canonical target set. */
+/** Validates release-channel matrices against the canonical target inventory. */
 export function assertDesktopWorkflowMatrices(workflows) {
   const expectedById = new Map(
     SUPPORTED_DESKTOP_TARGETS.map((target) => [target.id, target]),
   );
   const matrices = {};
   for (const workflowName of DESKTOP_WORKFLOW_MATRIX_NAMES) {
-    const targets = parseWorkflowTargetMatrix(workflows?.[workflowName], workflowName);
-    if (targets.length !== SUPPORTED_DESKTOP_TARGETS.length) {
+    const config = workflows?.[workflowName];
+    const source = typeof config === "string" ? config : config?.source;
+    const jobName = typeof config === "string" ? undefined : config?.job;
+    const expectedCount =
+      typeof config === "string"
+        ? SUPPORTED_DESKTOP_TARGETS.length
+        : (config?.expectedCount ?? SUPPORTED_DESKTOP_TARGETS.length);
+    const targets = parseWorkflowTargetMatrix(source, workflowName, jobName);
+    if (targets.length !== expectedCount) {
       throw new Error(
         `Desktop target matrix does not match supported targets in ${workflowName}`,
       );
