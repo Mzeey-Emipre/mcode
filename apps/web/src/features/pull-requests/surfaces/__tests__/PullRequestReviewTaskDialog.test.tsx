@@ -9,6 +9,16 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PullRequestReviewTaskTransport } from "@/transport/pull-request-review-task";
 
+const startupTransport = vi.hoisted(() => ({
+  getThreadStartup: vi.fn().mockResolvedValue(null),
+  listThreadStartups: vi.fn().mockResolvedValue({ records: [] }),
+  cancelThreadStartup: vi.fn(),
+}));
+
+vi.mock("@/transport", () => ({
+  getTransport: () => startupTransport,
+}));
+
 const { workspaceState } = vi.hoisted(() => ({
   workspaceState: {
     activeWorkspaceId: "workspace-other" as string | null,
@@ -169,6 +179,41 @@ describe("PullRequestReviewTaskDialog", () => {
     expect(useOverviewStore.getState().requestedThreadId).toBe(reviewLink.threadId);
     expect(useUiStore.getState().primarySurface).toBe("chat");
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("shows pull request startup progress during confirmed creation", async () => {
+    let resolveCreation!: (result: PullRequestCreateReviewTaskResult) => void;
+    const pendingCreation = new Promise<PullRequestCreateReviewTaskResult>((resolve) => {
+      resolveCreation = resolve;
+    });
+    const transport: PullRequestReviewTaskTransport = {
+      createReviewTask: vi.fn()
+        .mockResolvedValueOnce(confirmation)
+        .mockReturnValueOnce(pendingCreation),
+      reviewLink: vi.fn().mockResolvedValue(null),
+    };
+    const user = userEvent.setup();
+    render(
+      <PullRequestReviewTaskDialog
+        open
+        onOpenChange={vi.fn()}
+        identity={identity}
+        currentHeadOid={source.expectedHeadOid}
+        transport={transport}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Create Review task" }));
+
+    expect(await screen.findByText("Load pull request")).toBeInTheDocument();
+    expect(screen.getByText("Prepare review checkout")).toBeInTheDocument();
+    expect(screen.getByText("Start agent")).toBeInTheDocument();
+    expect(vi.mocked(transport.createReviewTask).mock.calls[1]?.[0]).toMatchObject({
+      startupId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+
+    resolveCreation({ ok: true, status: "ready", reused: false, reviewLink });
+    await waitFor(() => expect(workspaceState.loadThreads).toHaveBeenCalledWith(workspace.id));
   });
 
   it("reuses a compatible worktree by opaque candidate ID, never display path", async () => {

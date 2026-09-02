@@ -763,6 +763,7 @@ describe("Workspace Behavior", () => {
       const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
       expect(command).toEqual({
         workspaceId: ws.id,
+        startupId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         content: "Hello",
         model: "gpt-5.5",
         permissionMode: undefined,
@@ -784,6 +785,8 @@ describe("Workspace Behavior", () => {
         displayContent: undefined,
         mentions: undefined,
         previewAnnotations: undefined,
+        goalObjective: undefined,
+        orchestrationMode: undefined,
       });
     });
 
@@ -837,6 +840,7 @@ describe("Workspace Behavior", () => {
       const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
       expect(command).toEqual({
         workspaceId: ws.id,
+        startupId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         content: "Review this",
         model: "gpt-5.5",
         permissionMode: undefined,
@@ -858,6 +862,8 @@ describe("Workspace Behavior", () => {
         displayContent: undefined,
         mentions: undefined,
         previewAnnotations: undefined,
+        goalObjective: undefined,
+        orchestrationMode: undefined,
       });
       expect(useWorkspaceStore.getState().newThreadBranchSource).toBe("branch");
 
@@ -909,6 +915,7 @@ describe("Workspace Behavior", () => {
       const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
       expect(command).toEqual({
         workspaceId: ws.id,
+        startupId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         content: "Hello",
         model: "gpt-5.5",
         permissionMode: undefined,
@@ -930,6 +937,8 @@ describe("Workspace Behavior", () => {
         displayContent: undefined,
         mentions: undefined,
         previewAnnotations: undefined,
+        goalObjective: undefined,
+        orchestrationMode: undefined,
       });
 
       resolveRpc(createMockCreateAndSendResult({
@@ -974,6 +983,7 @@ describe("Workspace Behavior", () => {
       const mid = useWorkspaceStore.getState();
       expect(mid.activeThreadId).not.toBeNull();
       expectPreparedCodexThread(mid.threads[0]);
+      expect(mid.threads[0]?.clientStartupId).toBe(mid.activeThreadId);
 
       const created = createMockThread({
         id: "server-thread-1",
@@ -992,6 +1002,7 @@ describe("Workspace Behavior", () => {
       expect(fin.threads[0]?.model).toBe("gpt-5.5");
       expect(fin.threads[0]?.provider).toBe("codex");
       expect(fin.threads[0]?.reasoning_level).toBe("high");
+      expect(fin.threads[0]?.clientStartupId).toBe(mid.activeThreadId);
     });
 
     it("transfers placeholder runtime identity and narrative state to the persisted first turn", async () => {
@@ -1204,6 +1215,7 @@ describe("Workspace Behavior", () => {
       const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
       expect(command).toEqual({
         workspaceId: ws.id,
+        startupId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         content: "Branch this",
         model: "gpt-5.5",
         permissionMode: undefined,
@@ -1225,6 +1237,8 @@ describe("Workspace Behavior", () => {
         displayContent: undefined,
         mentions: undefined,
         previewAnnotations: undefined,
+        goalObjective: undefined,
+        orchestrationMode: undefined,
       });
     });
 

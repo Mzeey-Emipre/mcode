@@ -39,6 +39,10 @@ const {
       getAutomaticSetup: vi.fn(),
       continueAutomaticSetup: vi.fn(),
       cancelQueuedAutomaticTurn: vi.fn(),
+      retryAutomaticSetup: vi.fn(),
+      getThreadStartup: vi.fn(),
+      listThreadStartups: vi.fn(),
+      cancelThreadStartup: vi.fn(),
     },
     chatViewStopAgentMock: vi.fn(),
     chatViewThreadStoreSetStateMock: vi.fn(),
@@ -140,14 +144,17 @@ vi.mock("../MessageList", () => ({
   MessageList: ({
     displayThreadId,
     leadingContent,
+    afterFirstUserContent,
   }: {
     displayThreadId?: string;
     leadingContent?: ReactNode;
+    afterFirstUserContent?: ReactNode;
   }) => {
     return (
       <div data-testid="message-list" data-display-thread-id={displayThreadId}>
         {leadingContent}
         <div data-testid="queued-first-user-message">Build the feature</div>
+        {afterFirstUserContent}
       </div>
     );
   },
@@ -170,6 +177,7 @@ import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useRecoveryIncidentStore } from "@/features/recovery/state/recoveryIncidentStore";
 import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { createMockMessage } from "@/__tests__/mocks/transport";
+import { useThreadStartupStore } from "@/features/thread-startup";
 import {
   __resetThreadSwitchTelemetryForTests,
   getThreadSwitchTelemetryCounters,
@@ -357,6 +365,13 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewTransportMock.getRecoveryIncident.mockClear();
     chatViewTransportMock.retryTurn.mockClear();
     chatViewTransportMock.continueWithoutSaving.mockClear();
+    chatViewTransportMock.retryAutomaticSetup.mockReset();
+    chatViewTransportMock.getThreadStartup.mockReset();
+    chatViewTransportMock.listThreadStartups.mockReset();
+    chatViewTransportMock.cancelThreadStartup.mockReset();
+    chatViewTransportMock.getThreadStartup.mockResolvedValue(null);
+    chatViewTransportMock.listThreadStartups.mockResolvedValue({ records: [] });
+    chatViewTransportMock.cancelThreadStartup.mockResolvedValue(undefined);
     chatViewStopAgentMock.mockClear();
     useRecoveryIncidentStore.setState({
       incident: null,
@@ -372,6 +387,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewDisplayLeaseIdsRef.current = [];
     chatViewDisplayLeaseListeners.clear();
     __resetThreadSwitchTelemetryForTests();
+    useThreadStartupStore.setState({ recordsByStartupId: {}, startupIdByThreadId: {} });
     disableAtomicSubscriptionTransport();
     setupWorkspaceMock(defaultWorkspaceState());
     chatViewThreadMockRef.current = defaultThreadState();
@@ -562,6 +578,86 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.getByLabelText("Environment setup terminal")).toHaveTextContent("di");
     expect(screen.getByTestId("composer")).toBeDisabled();
     expect(chatViewTransportMock.getAutomaticSetup).toHaveBeenCalledWith(thread.id);
+  });
+
+  it("keeps the bound startup card after placeholder replacement while Setup is blocked", async () => {
+    const startupId = "00000000-0000-4000-8000-000000000001";
+    const thread = {
+      ...makeThread({ mode: "worktree", worktree_managed: true }),
+      clientStartupId: startupId,
+      clientQueuedMessage: "Build the feature",
+      clientPreparingContext: "new-worktree" as const,
+    };
+    const automaticSetup: WorkspaceEnvironmentAutomaticSetupSnapshot = {
+      gate: "blocked",
+      attempt: {
+        id: "attempt-1",
+        state: "failed",
+        reason: "setup_failed",
+        snapshot: {
+          platform: "windows",
+          script: "bun run setup",
+          checkoutPath: "C:\\repo",
+          terminal: { executable: "pwsh.exe", arguments: ["-Command", "bun run setup"] },
+        },
+        outcome: "command_failure",
+        createdAt: "2026-09-02T12:00:00.000Z",
+        startedAt: "2026-09-02T12:00:00.000Z",
+        finishedAt: "2026-09-02T12:00:01.000Z",
+        exitCode: 1,
+        output: "command not found",
+        outputTruncated: false,
+      },
+      queuedTurns: [{
+        id: "submission-1",
+        messageId: "message-1",
+        state: "queued",
+        createdAt: "2026-09-02T12:00:00.000Z",
+        dispatchedAt: null,
+      }],
+    };
+    useThreadStartupStore.getState().apply({
+      startupId,
+      workspaceId: thread.workspace_id,
+      kind: "managed-worktree",
+      state: "blocked",
+      phase: "setup",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "setup", state: "blocked" },
+        { phase: "agent", state: "pending" },
+      ],
+      transcript: [{ phase: "setup", content: "command not found", createdAt: "2026-09-02T12:00:01.000Z" }],
+      cancellation: "none",
+      revision: 3,
+      threadId: thread.id,
+      block: { code: "SETUP_FAILED", message: "Project setup failed", actions: ["retry", "continue"] },
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:01.000Z",
+    });
+    chatViewTransportMock.getAutomaticSetup.mockResolvedValue(automaticSetup);
+    chatViewTransportMock.retryAutomaticSetup.mockResolvedValue(automaticSetup);
+    chatViewTransportMock.continueAutomaticSetup.mockResolvedValue(automaticSetup);
+    setupWorkspaceMock(defaultWorkspaceState({ threads: [thread] }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      activeRecord: {
+        ...createEmptyThreadRecord(),
+        messages: [createMockMessage({ id: "message-1", thread_id: thread.id, role: "user", content: "Build the feature" })],
+      },
+    });
+    const user = userEvent.setup();
+
+    render(<ChatView />);
+
+    const card = await screen.findByTestId("startup-progress");
+    const queuedMessage = screen.getByTestId("queued-first-user-message");
+    expect(queuedMessage.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(screen.queryByLabelText("Environment setup")).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Retry setup" }));
+    await user.click(screen.getByRole("button", { name: "Continue without setup" }));
+    expect(chatViewTransportMock.retryAutomaticSetup).toHaveBeenCalledWith(thread.id);
+    expect(chatViewTransportMock.continueAutomaticSetup).toHaveBeenCalledWith(thread.id);
   });
 
   it("enters edit mode on double click", async () => {

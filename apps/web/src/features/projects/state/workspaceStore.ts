@@ -62,8 +62,15 @@ function optimisticCreationSuccessState(
   const createdThread = warnings?.length
     ? { ...hydratedThread, clientWarnings: warnings }
     : hydratedThread;
+  const startupIdentity = pending?.startupId
+    ? {
+      clientStartupId: pending.startupId,
+      clientPreparingContext: pending.clientPreparingContext,
+      clientQueuedMessage: pending.displayContent ?? pending.content,
+    }
+    : {};
   return {
-    threads: [createdThread, ...state.threads.filter((candidate) => candidate.id !== placeholderId && candidate.id !== thread.id)],
+    threads: [{ ...createdThread, ...startupIdentity }, ...state.threads.filter((candidate) => candidate.id !== placeholderId && candidate.id !== thread.id)],
     activeThreadId: state.activeThreadId === placeholderId ? thread.id : state.activeThreadId,
     error: null,
     ...(transportWasWorktree ? { worktreesLoadedForWorkspace: null } : {}),
@@ -225,6 +232,10 @@ interface PendingThreadCreation {
   codexFastMode?: boolean;
   /** Goal objective installed atomically with this thread's first turn. */
   goalObjective?: string;
+  /** Client-generated identity for the current authoritative startup attempt. */
+  startupId?: string;
+  /** UI context retained when placeholder identity transfers to the durable Thread. */
+  clientPreparingContext?: ClientPreparingContext;
 }
 
 interface ThreadCreationTarget {
@@ -384,6 +395,7 @@ function buildOptimisticThreadPlaceholder(
     branch: pending.branch,
     ...placeholderWorktreeSettings(pending),
     clientPreparingContext,
+    startupId: pending.startupId,
     model: pending.model,
     provider: pending.provider,
     reasoningLevel: pending.reasoningLevel,
@@ -403,6 +415,7 @@ const pendingThreadCreationByPlaceholderId = new Map<string, PendingThreadCreati
 async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateAndSendResult> {
   return getTransport().createAndSendMessage({
     workspaceId: pending.workspaceId,
+    startupId: pending.startupId,
     content: pending.content,
     model: pending.model,
     permissionMode: pending.permissionMode,
@@ -706,14 +719,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     clientPreparingContext: ClientPreparingContext,
   ) => {
     const placeholderId = crypto.randomUUID();
+    const attempt = {
+      ...pending,
+      startupId: placeholderId,
+      clientPreparingContext,
+    };
     const placeholder = buildOptimisticThreadPlaceholder(
       placeholderId,
-      pending,
+      attempt,
       clientPreparingContext,
     );
-    bumpThreadListMutationEpoch(pending.workspaceId);
-    pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
-    useDiffStore.getState().hideRightPanel(pending.workspaceId, placeholderId);
+    bumpThreadListMutationEpoch(attempt.workspaceId);
+    pendingThreadCreationByPlaceholderId.set(placeholderId, attempt);
+    useDiffStore.getState().hideRightPanel(attempt.workspaceId, placeholderId);
     set((state) => ({
       threads: [placeholder, ...state.threads],
       activeThreadId: placeholderId,
@@ -724,21 +742,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     }));
     reconcileSelectedConversation();
     markPlaceholderRunning(placeholderId);
-    return placeholderId;
+    return { placeholderId, attempt };
   };
 
   const createPendingThread = async (
     pending: PendingThreadCreation,
     clientPreparingContext: ClientPreparingContext,
   ) => {
-    const placeholderId = beginOptimisticThreadCreation(pending, clientPreparingContext);
+    const { placeholderId, attempt } = beginOptimisticThreadCreation(pending, clientPreparingContext);
     try {
-      const result = await runCreateAndSend(pending);
+      const result = await runCreateAndSend(attempt);
       applyOptimisticSuccess(
         placeholderId,
-        pending.workspaceId,
+        attempt.workspaceId,
         result,
-        pending.transportMode === "worktree",
+        attempt.transportMode === "worktree",
       );
       return result;
     } catch (error) {
@@ -1230,11 +1248,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     if (!row?.clientError) {
       throw new Error("Thread is not in a retryable state");
     }
+    const attempt = { ...pending, startupId: crypto.randomUUID() };
+    pendingThreadCreationByPlaceholderId.set(placeholderId, attempt);
     set((state) => ({
       error: null,
       threads: state.threads.map((t) =>
         t.id === placeholderId
-          ? { ...t, clientPreparing: true, clientError: null }
+          ? { ...t, clientPreparing: true, clientError: null, clientStartupId: attempt.startupId }
           : t,
       ),
     }));
@@ -1246,8 +1266,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }),
     }));
     try {
-      const result = await runCreateAndSend(pending);
-      applyOptimisticSuccess(placeholderId, pending.workspaceId, result, pending.transportMode === "worktree");
+      const result = await runCreateAndSend(attempt);
+      applyOptimisticSuccess(placeholderId, attempt.workspaceId, result, attempt.transportMode === "worktree");
       return result;
     } catch (e) {
       applyOptimisticFailure(placeholderId, e);

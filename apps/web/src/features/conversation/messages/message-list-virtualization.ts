@@ -7,6 +7,10 @@ export type MessageListItem = ChatVirtualItem | {
   readonly key: "leading-content";
   readonly type: "leading-content";
   readonly content: ReactNode;
+} | {
+  readonly key: "after-first-user-content";
+  readonly type: "after-first-user-content";
+  readonly content: ReactNode;
 };
 
 /** Fallback height used until a virtual row is rendered and measured. */
@@ -33,7 +37,7 @@ const PROVISIONAL_HEIGHT_BY_ITEM_TYPE: Record<ChatVirtualItem["type"], number> =
  * only on row kind, never on an attempt to parse markdown in the list layer.
  */
 export function estimateMessageListItemHeight(item: MessageListItem): number {
-  return item.type === "leading-content"
+  return item.type === "leading-content" || item.type === "after-first-user-content"
     ? DEFAULT_MESSAGE_LIST_ITEM_HEIGHT
     : PROVISIONAL_HEIGHT_BY_ITEM_TYPE[item.type];
 }

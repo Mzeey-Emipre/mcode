@@ -33,7 +33,29 @@ type MessageListItemsInput = Pick<
   | "turnSummariesByMessageId"
 > & {
   readonly leadingContent?: ReactNode;
+  readonly afterFirstUserContent?: ReactNode;
 };
+
+function insertAfterFirstUserMessage(
+  items: MessageListItem[],
+  content: ReactNode | undefined,
+): MessageListItem[] {
+  if (content === undefined) return items;
+  const firstUserIndex = items.findIndex((item) =>
+    item.type === "message" && item.message.role === "user" && !item.message.is_internal,
+  );
+  const startupItem: MessageListItem = {
+    key: "after-first-user-content",
+    type: "after-first-user-content",
+    content,
+  };
+  if (firstUserIndex < 0) return [startupItem, ...items];
+  return [
+    ...items.slice(0, firstUserIndex + 1),
+    startupItem,
+    ...items.slice(firstUserIndex + 1),
+  ];
+}
 
 function createCurrentTurn({
   renderedThreadId,
@@ -151,10 +173,13 @@ export function useMessageListItems(input: MessageListItemsInput) {
     ],
   );
   const items = useMemo<MessageListItem[]>(
-    () => input.leadingContent === undefined
-      ? virtualItems
-      : [{ key: "leading-content", type: "leading-content", content: input.leadingContent }, ...virtualItems],
-    [input.leadingContent, virtualItems],
+    () => insertAfterFirstUserMessage(
+      input.leadingContent === undefined
+        ? virtualItems
+        : [{ key: "leading-content", type: "leading-content", content: input.leadingContent }, ...virtualItems],
+      input.afterFirstUserContent,
+    ),
+    [input.afterFirstUserContent, input.leadingContent, virtualItems],
   );
   const lastUserMessage = useMemo(() => findLastUserMessage({ messages }), [messages]);
   const lastUserMessagePreview = useMemo(

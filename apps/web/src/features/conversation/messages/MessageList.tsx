@@ -97,6 +97,8 @@ export interface MessageListProps {
   displayThreadId?: string;
   /** Content that must appear before all persisted transcript messages. */
   leadingContent?: ReactNode;
+  /** Content inserted immediately after the first persisted user message. */
+  afterFirstUserContent?: ReactNode;
   /** Called when the user clicks the branch icon on a message. */
   onBranch?: (messageId: string) => void;
   /** Called when the user uses a message reply control. */
@@ -117,6 +119,7 @@ export interface MessageListProps {
 export function MessageList({
   displayThreadId,
   leadingContent,
+  afterFirstUserContent,
   onBranch,
   onReply,
   onSelectedTextComment,
@@ -461,6 +464,7 @@ export function MessageList({
     isAgentRunning,
     latestTurnWithChanges,
     leadingContent,
+    afterFirstUserContent,
     messages,
     permissions,
     persistedFilesChanged,
@@ -1156,7 +1160,7 @@ export function MessageList({
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  {item.type === "leading-content" ? (
+                  {item.type === "leading-content" || item.type === "after-first-user-content" ? (
                     <div data-testid="message-list-leading-content">{item.content}</div>
                   ) : (
                     <TranscriptItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />

@@ -19,7 +19,9 @@ import { McodeLogo } from "@/components/brand/McodeLogo";
 import { SidebarRevealButton } from "@/components/sidebar/SidebarRevealButton";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { ProjectAutomaticSetupCard, useProjectAutomaticSetup } from "@/features/projects/environment";
-import { preparingStatusLabel, type WorkspaceThread } from "@/lib/workspace-thread";
+import { ProjectCommandApprovalDialog } from "@/features/projects/environment/ProjectCommandApprovalDialog";
+import { StartupProgressCard, useThreadStartup, type StartupDisplayContext } from "@/features/thread-startup";
+import { type WorkspaceThread } from "@/lib/workspace-thread";
 import type { SubagentRosterTarget } from "../../narrative";
 import { Composer } from "../../composer/Composer";
 import { SavingDelayedDialog } from "../../saving/SavingDelayedDialog";
@@ -154,8 +156,21 @@ function NewThreadSurface({ state, onPromptSelect }: { state: ChatViewState; onP
 }
 
 /** Renders a selected row while the server creates the backing thread. */
+function startupContext(thread: WorkspaceThread, startupKind?: "direct" | "managed-worktree" | "pull-request-review"): StartupDisplayContext {
+  if (startupKind === "pull-request-review") return "pull-request-review";
+  if (startupKind === "managed-worktree") return "managed-worktree";
+  if (thread.clientPreparingContext === "new-existing-worktree" || thread.clientPreparingContext === "branch-existing-worktree") return "attached-worktree";
+  if (thread.clientPreparingContext === "new-worktree" || thread.clientPreparingContext === "branch-worktree") return "managed-worktree";
+  return "direct";
+}
+
+/** Renders a selected row while the server creates the backing thread. */
 function ThreadPreparingShell({ thread, state }: { thread: WorkspaceThread; state: ChatViewState }) {
-  const statusLabel = thread.clientPreparingContext ? preparingStatusLabel(thread.clientPreparingContext) : "Preparing…";
+  const startup = useThreadStartup({
+    startupId: thread.clientStartupId,
+    workspaceId: thread.workspace_id,
+    enabled: Boolean(thread.clientStartupId),
+  });
   return (
     <div className="flex h-full flex-col bg-background" data-testid="thread-preparing-shell">
       <div className="flex h-11 items-center justify-between border-b border-border pr-4 pl-2">
@@ -178,7 +193,7 @@ function ThreadPreparingShell({ thread, state }: { thread: WorkspaceThread; stat
         <div className="mx-auto w-full max-w-xl rounded-xl border border-border/50 bg-muted/15 px-4 py-3 text-sm text-foreground/90"><p className="whitespace-pre-wrap break-words">{thread.clientQueuedMessage ?? ""}</p></div>
         {thread.clientError ? (
           <CollapsibleError error={thread.clientError} onRetry={() => { void useWorkspaceStore.getState().retryPreparingThread(thread.id); }} onDismiss={() => useWorkspaceStore.getState().dismissPreparingThread(thread.id)} />
-        ) : <div className="text-muted-foreground flex items-center justify-center gap-2 text-sm"><Spinner size={16} /><span>{statusLabel}</span></div>}
+        ) : <div className="mx-auto w-full max-w-xl"><StartupProgressCard startup={startup} startupId={thread.clientStartupId} context={startupContext(thread, startup?.kind)} /></div>}
       </div>
       <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} />
     </div>
@@ -272,12 +287,14 @@ function ConversationStageContent({
   state,
   thread,
   leadingContent,
+  afterFirstUserContent,
   messageListProps,
 }: {
   stage: ConversationStage;
   state: ChatViewState;
   thread: WorkspaceThread;
   leadingContent: ReactNode;
+  afterFirstUserContent?: ReactNode;
   messageListProps: Omit<ComponentProps<typeof MessageList>, "leadingContent" | "displayThreadId">;
 }) {
   if (stage === "hold") {
@@ -285,14 +302,60 @@ function ConversationStageContent({
   }
   if (stage === "transition") return <ConversationTransitionState threadId={thread.id} threadTitle={thread.title || "Conversation"} />;
   if (stage === "error") return <ConversationErrorState error={state.sessionError ?? ""} />;
-  return <MessageList {...messageListProps} leadingContent={leadingContent} />;
+  return <MessageList {...messageListProps} leadingContent={leadingContent} afterFirstUserContent={afterFirstUserContent} />;
 }
 
 /** Renders the conversation stage without taking over MessageList scrolling. */
-function ChatMessageStage({ state, interactions, automaticSetup, onSubagentSelect, onOpenSubagents }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "onSubagentSelect" | "onOpenSubagents"> & { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
+function SetupRecoveryActions({ automaticSetup }: { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
+  const retrying = automaticSetup.busy === "retry";
+  const continuing = automaticSetup.busy === "continue";
+  return (
+    <>
+      <Button type="button" variant="outline" size="sm" disabled={automaticSetup.busy !== null} onClick={() => { void automaticSetup.retrySetup(); }}>
+        {retrying ? <Spinner size={13} aria-hidden /> : null}
+        Retry setup
+      </Button>
+      <Button type="button" variant="outline" size="sm" disabled={automaticSetup.busy !== null} onClick={() => { void automaticSetup.continueWithoutSetup(); }}>
+        {continuing ? <Spinner size={13} aria-hidden /> : null}
+        Continue without setup
+      </Button>
+    </>
+  );
+}
+
+function StartupAutomaticSetupActions({ automaticSetup }: { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
+  return <StartupAutomaticSetupAction automaticSetup={automaticSetup} />;
+}
+
+function StartupAutomaticSetupAction({ automaticSetup }: { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
+  const attempt = automaticSetup.snapshot.attempt;
+  switch (attempt?.state) {
+    case "awaiting-approval":
+      return (
+        <ProjectCommandApprovalDialog
+          approval={attempt.snapshot?.approval ?? null}
+          script={attempt.snapshot?.script ?? null}
+          onApprove={async () => {
+            await automaticSetup.approveSetup();
+            return true;
+          }}
+          onCancel={() => undefined}
+        />
+      );
+    case "failed":
+    case "interrupted":
+      return <SetupRecoveryActions automaticSetup={automaticSetup} />;
+    default:
+      return null;
+  }
+}
+
+function ChatMessageStage({ state, interactions, automaticSetup, startup, onSubagentSelect, onOpenSubagents }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "onSubagentSelect" | "onOpenSubagents"> & { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup>; readonly startup: ReturnType<typeof useThreadStartup> }) {
   const thread = state.activeThread!;
-  const automaticSetupTranscriptBlock = thread.mode === "worktree" && thread.worktree_managed === true
-    ? <ProjectAutomaticSetupCard snapshot={automaticSetup.snapshot} busy={automaticSetup.busy} error={automaticSetup.error} onContinue={automaticSetup.continueWithoutSetup} onRetry={automaticSetup.retrySetup} onApprove={automaticSetup.approveSetup} />
+  const startupTranscriptBlock = startup
+    ? <StartupProgressCard startup={startup} startupId={startup.startupId} context={startupContext(thread, startup.kind)} actions={<StartupAutomaticSetupActions automaticSetup={automaticSetup} />} />
+    : thread.mode === "worktree" && thread.worktree_managed === true
+      ? <ProjectAutomaticSetupCard snapshot={automaticSetup.snapshot} busy={automaticSetup.busy} error={automaticSetup.error} onContinue={automaticSetup.continueWithoutSetup} onRetry={automaticSetup.retrySetup} onApprove={automaticSetup.approveSetup} />
     : undefined;
   const messageListProps = {
     onBranch: interactions.onBranch,
@@ -307,7 +370,7 @@ function ChatMessageStage({ state, interactions, automaticSetup, onSubagentSelec
   };
   return (
     <div data-testid="chat-message-stage" className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>
-      <ConversationStageContent stage={getConversationStage(state)} state={state} thread={thread} leadingContent={automaticSetupTranscriptBlock} messageListProps={messageListProps} />
+      <ConversationStageContent stage={getConversationStage(state)} state={state} thread={thread} afterFirstUserContent={startup ? startupTranscriptBlock : undefined} leadingContent={startup ? undefined : startupTranscriptBlock} messageListProps={messageListProps} />
     </div>
   );
 }
@@ -341,6 +404,12 @@ function ActiveThreadSurface(props: ChatViewSurfaceProps) {
     thread.id,
     thread.mode === "worktree" && thread.worktree_managed === true,
   );
+  const startup = useThreadStartup({
+    startupId: thread.clientStartupId,
+    threadId: thread.id,
+    workspaceId: thread.workspace_id,
+    enabled: Boolean(thread.clientStartupId) || (thread.mode === "worktree" && thread.worktree_managed === true),
+  });
   const showConversationError = isConversationError(state.sessionError);
   const showConversationErrorBanner = showConversationError && (state.messageCount > 0 || state.isAgentRunning);
   const showCliError = isVisibleCliError(state.sessionError, dismissedError);
@@ -351,7 +420,7 @@ function ActiveThreadSurface(props: ChatViewSurfaceProps) {
       {showConversationErrorBanner ? <div className="mx-3 mb-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3"><p data-testid="conversation-error-banner" role="alert" className="text-sm text-destructive">Could not refresh conversation: {state.sessionError}</p></div> : null}
       <HandoffFallbackBanner threadId={thread.id} />
       <SavingDelayedDialog open={state.savingStatus?.mode === "saving-delayed"} onStopSafely={interactions.onStopSafely} onContinueWithoutSaving={interactions.onContinueWithoutSaving} />
-      <ChatMessageStage state={state} interactions={interactions} automaticSetup={automaticSetup} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} />
+      <ChatMessageStage state={state} interactions={interactions} automaticSetup={automaticSetup} startup={startup} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} />
       {showCliError && <CliErrorBanner error={state.sessionError!} onDismiss={interactions.onDismissCliError} onOpenSettings={interactions.onOpenSettings} />}
       <ActiveThreadComposer state={state} interactions={interactions} pendingSelectedTextComment={pendingSelectedTextComment} setupBlocked={automaticSetup.snapshot.gate === "blocked"} />
     </div>

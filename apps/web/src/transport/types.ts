@@ -45,6 +45,8 @@ import type {
   PermissionDecision,
   PermissionRequest,
   CreateAndSendResult,
+  ThreadStartup,
+  ThreadStartupListResult,
   ConversationPage,
   ConversationNewerPage,
   ConversationNewerPageRequest,
@@ -407,6 +409,12 @@ export interface McodeTransport {
   getRecoveryIncident(): Promise<RecoveryIncident | null>;
   /** Retry one interrupted turn as a fresh provider execution. */
   retryTurn(executionId: string): Promise<void>;
+  /** Read one authoritative startup lifecycle by its client-generated identity. */
+  getThreadStartup(startupId: string): Promise<ThreadStartup | null>;
+  /** List retained startup lifecycles for one workspace during recovery. */
+  listThreadStartups(workspaceId: string): Promise<ThreadStartupListResult>;
+  /** Request cancellation for one startup lifecycle. */
+  cancelThreadStartup(startupId: string): Promise<ThreadStartup>;
   createAndSendMessage(input: CreateAndSendInput): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<AgentStopResult>;
   /** Continue an active turn after the user accepts that its remaining text will not be saved. */

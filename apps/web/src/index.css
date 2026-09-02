@@ -636,6 +636,25 @@
   animation: text-pulse 1.8s ease-in-out infinite;
 }
 
+@keyframes startup-shimmer {
+  0%, 55% { background-position: 120% 0; }
+  100% { background-position: -20% 0; }
+}
+
+.startup-shimmer-text {
+  background: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%);
+  background-size: 220% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: startup-shimmer 2.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startup-shimmer-text {
+    animation: none;
+  }
+}
+
 @keyframes text-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
