@@ -968,6 +968,43 @@ export {
   PullRequestMergeRequestSchema,
   PullRequestMergeResultSchema,
 } from "./pull-requests.js";
+
+// Thread startup
+export {
+  THREAD_STARTUP_TRANSCRIPT_MAX_ENTRIES,
+  THREAD_STARTUP_TRANSCRIPT_ENTRY_MAX_CHARS,
+  THREAD_STARTUP_TRANSCRIPT_MAX_CHARS,
+  ThreadStartupKindSchema,
+  ThreadStartupPhaseSchema,
+  ThreadStartupStateSchema,
+  ThreadStartupStepStateSchema,
+  ThreadStartupCancellationSchema,
+  ThreadStartupStepSchema,
+  ThreadStartupTranscriptEntrySchema,
+  ThreadStartupErrorSchema,
+  ThreadStartupSchema,
+  ThreadStartupStartInputSchema,
+  ThreadStartupGetInputSchema,
+  ThreadStartupListInputSchema,
+  ThreadStartupListResultSchema,
+  ThreadStartupCancelInputSchema,
+} from "./thread-startup.js";
+export type {
+  ThreadStartupKind,
+  ThreadStartupPhase,
+  ThreadStartupState,
+  ThreadStartupStepState,
+  ThreadStartupCancellation,
+  ThreadStartupStep,
+  ThreadStartupTranscriptEntry,
+  ThreadStartupError,
+  ThreadStartup,
+  ThreadStartupStartInput,
+  ThreadStartupGetInput,
+  ThreadStartupListInput,
+  ThreadStartupListResult,
+  ThreadStartupCancelInput,
+} from "./thread-startup.js";
 export type {
   PullRequestProvider,
   PullRequestOperationId,

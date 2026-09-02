@@ -58,6 +58,7 @@ import {
   ThreadDeletionTeardownService,
   ThreadService,
 } from "../../features/thread-control";
+import { ThreadStartupService } from "../../features/thread-startup";
 import {
   AgentPermissionService,
   AgentService,
@@ -300,6 +301,7 @@ workspaceEnvironmentService.setAutomaticSetupDispatcher({
   const subagentLifecycleService = container.resolve(SubagentLifecycleService);
 const turnRecoveryService = container.resolve(TurnRecoveryService);
 const threadControlService = container.resolve(ThreadControlService);
+const threadStartupService = container.resolve(ThreadStartupService);
 const externalThreadControlPairingService = container.resolve(ExternalThreadControlPairingService);
 const externalThreadControlMcpRuntime = container.resolve(ExternalThreadControlMcpRuntime);
 const gitComparison = container.resolve(GitComparisonService);
@@ -560,6 +562,18 @@ function recoverTurnsAtStartup(): void {
 
 recoverTurnsAtStartup();
 
+/** Marks startup records interrupted because no process survives server restart. */
+function interruptThreadStartupsAtStartup(): void {
+  const interrupted = threadStartupService.interruptNonterminalOnStartup();
+  if (interrupted.length > 0) {
+    logger.info("Interrupted incomplete thread startups during server startup", {
+      count: interrupted.length,
+    });
+  }
+}
+
+interruptThreadStartupsAtStartup();
+
 // Register broadcast callback so settings changes propagate to clients
 providerAvailability.onChange((list) => {
   broadcast("providers.availability", list);
@@ -689,6 +703,7 @@ const { httpServer, wss } = createWsServer({
   subagentLifecycleService,
   turnRecoveryService,
   threadControlService,
+  threadStartupService,
   externalThreadControlPairingService,
   externalThreadControlMcpRuntime,
   gitComparison,

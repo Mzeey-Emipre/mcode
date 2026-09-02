@@ -19,7 +19,10 @@ import type { WorkspaceService } from "../workspace-service.js";
 
 type WorkspaceThreadRpcMethod = Exclude<
   Extract<WsMethodName, `workspace.${string}` | `thread.${string}` | "filesystem.browse">,
-  `workspace.environment.${string}` | `thread.control.${string}` | "thread.getTasks"
+  | `workspace.environment.${string}`
+  | `thread.control.${string}`
+  | `thread.startup.${string}`
+  | "thread.getTasks"
 >;
 
 type WorkspaceThreadRpcParamsByMethod = {
