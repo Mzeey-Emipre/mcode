@@ -26,7 +26,7 @@ const RUN_ID_TEXT = "\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[0-9a-f]{
 const RUN_ID_PATTERN = new RegExp(`^${RUN_ID_TEXT}$`, "i");
 const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 const OWNED_RECEIPT_PATTERN = new RegExp(`^${RUN_ID_TEXT}-(?:receipt|failure)\\.json$|^${RUN_ID_TEXT}-(?:completed|failure)\\.png$`, "i");
-const OWNED_LOG_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:thread-lifecycle-server|thread-lifecycle-web|verify-changed|lint-fast)\.log$/;
+const OWNED_LOG_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:thread-lifecycle-server|thread-lifecycle-web|lint)\.log$/;
 const FOCUSED_SERVER_TESTS = [
   "src/features/projects/worktrees/__tests__/sandbox-worktree-cleanup-policy.test.ts",
   "src/features/thread-control/cleanup/__tests__/cleanup-integration.test.ts",
@@ -155,8 +155,7 @@ async function check(repoRoot) {
       name: "thread-lifecycle-web",
       args: ["run", "--cwd", "apps/web", "test", "--", ...FOCUSED_WEB_TESTS],
     },
-    { name: "verify-changed", args: ["run", "verify:changed"] },
-    { name: "lint-fast", args: ["run", "lint:fast"] },
+    { name: "lint", args: ["run", "lint"] },
   ];
   const results = [];
   for (const phase of phases) {

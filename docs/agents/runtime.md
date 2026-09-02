@@ -44,7 +44,7 @@ tray, window management).
 ```sh
 bun run test        # Vitest unit tests (apps/web, apps/desktop)
 bun run typecheck   # tsc --noEmit across all packages
-bun run lint        # ESLint
+bun run lint        # Oxlint
 bun run doctor      # Verify all prerequisites (run this first)
 ```
 
@@ -230,12 +230,12 @@ not return `authToken` and does not set `mcode-auth`. Set
 ## Agent Write Boundaries
 
 **Allowed write areas:**
-- Repo working tree (any file not blocked by the `.env` hook in `.claude/settings.json`)
+- Repo working tree
 - `.worktrees/` directory
 - `MCODE_DATA_DIR` and its contents
 
 **Restricted (do not touch unless explicitly asked):**
-- `.env` files — update `.env.example` instead; a PreToolUse hook blocks direct `.env` edits
+- `.env` files — update `.env.example` instead
 - Home directory outside of `MCODE_DATA_DIR`
 
 ---
@@ -281,7 +281,6 @@ Slash commands are first-class in Claude Code. Other harnesses (Cursor, Codex, O
 
 | Workflow | Claude command | Equivalent shell |
 |----------|----------------|------------------|
-| Typecheck + lint + unit tests | `/verify` | `bun run verify` |
 | Start web runtime | Shared agent guidance | `bun run dev:web` |
 | Launch desktop runtime | Shared agent guidance | `bun run dev:desktop` |
 

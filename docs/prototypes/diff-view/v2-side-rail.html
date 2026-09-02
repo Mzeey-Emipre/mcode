@@ -1107,16 +1107,14 @@ bun run dev</pre>
           </div>
 
           <h2>Supported agent harnesses</h2>
-          <p>This repo is configured for four agent harnesses. All four read <code>AGENTS.md</code>, share the same Stop-hook verify, and load the Playwright MCP for visual verification.</p>
+          <p>This repo supports four agent harnesses. All four read <code>AGENTS.md</code> and load the Playwright MCP for visual verification.</p>
 
           <ul>
-            <li>Claude Code — <code>.claude/settings.json</code></li>
-            <li>Cursor — <code>.cursor/hooks.json</code></li>
-            <li>Codex — <code>.codex/hooks.json</code></li>
-            <li>OpenCode — <code>.opencode/opencode.json</code></li>
+            <li>Claude Code</li>
+            <li>Cursor</li>
+            <li>Codex</li>
+            <li>OpenCode</li>
           </ul>
-
-          <p>All four harnesses expose the shared <code>/verify</code> command.</p>
 
           <p>The narrative pipeline classifies <span class="word-rem">model thoughts</span><span class="word-add"> text and thinking blocks</span> separately, with the Whisper redesign surfacing prose-first content and rail-only nesting for sub-agents.</p>
 

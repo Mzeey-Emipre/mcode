@@ -17,7 +17,7 @@ This skill adapts the workflow from [Emanuele-web04/skills](https://github.com/E
 4. Capture a repeatable baseline before you edit. Separate cold from warm, development from release, and small from realistic input. Use multiple samples for noisy timings.
 5. Attribute the cost. Classify it as early work, repeated work, excess work, serial work, wrong data shape, N+1 work, render churn, layout churn, or an unsafe cache boundary.
 6. Make the smallest change that removes the measured cost. Keep public behavior, ordering, permissions, pagination, accessibility, and error behavior stable.
-7. Repeat the same measurement under the same conditions. Run focused behavior tests, live verification, and `bun run verify` when the repository workflow requires them.
+7. Repeat the same measurement under the same conditions. Run focused behavior tests and live verification.
 
 ## Frontend and Electron rule
 

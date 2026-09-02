@@ -817,7 +817,7 @@ bun run dev:web
 | Type | Command | Framework |
 |------|---------|-----------|
 | Unit, component, and integration | `bun run test` | Vitest and Testing Library |
-| Full regression gate | `bun run verify` | Typecheck, lint, and maintained tests |
+| Full regression gate | Hosted CI | Typecheck, lint, and maintained tests |
 | Pull request production performance | `cd apps/web && bun run perf:pull-requests` | Vite manifest, Vitest, and Playwright |
 
 Behavior changes are also exercised against the running app. Agents prefer browser use for web surfaces and computer use for Electron-only surfaces. Disposable verification scripts and artifacts belong under `.dev/verification/`.

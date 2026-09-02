@@ -300,7 +300,7 @@ This migration is complete when:
    `@cursor/sdk`.
 6. A new test verifies that path B fires for Cursor (and that path A is
    never reached).
-7. `bun run verify` passes.
+7. Focused tests and typecheck pass.
 8. `CONTEXT.md` and `docs/guides/chat-fork-handoff.md` reflect the simplified
    ladder.
 

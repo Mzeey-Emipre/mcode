@@ -448,7 +448,7 @@ Run the canonical worktree runtime and Electron desktop. For each supported prov
 6. Repeat with a background tab, cold tab, closed tab, offline server, and reconnected desktop.
 7. Check permission prompts, blocked schemes, popup denial, redaction, and log output.
 
-Run this suite on Windows, macOS, and Linux. Keyboard modifiers, hidden guest behavior, CDP attachment, and recording differ by platform. Finish every slice with focused tests and `bun run verify`.
+Run this suite on Windows, macOS, and Linux. Keyboard modifiers, hidden guest behavior, CDP attachment, and recording differ by platform. Finish every slice with focused tests, typecheck, and lint.
 
 ## Rollout and Compatibility
 
@@ -501,7 +501,7 @@ The feature is done only when:
 - Human input reliably interrupts agent control.
 - Authentication, routing, URL validation, redaction, permissions, limits, cleanup, and typed failures have focused tests.
 - Live desktop scenarios pass on Windows, macOS, and Linux.
-- `bun run verify` passes from the monorepo root.
+- Focused tests, typecheck, and lint pass from the monorepo root.
 - Browser v2 diagnostics remain bounded and content-free.
 - Architecture, provider, settings, and runtime documentation match the shipped behavior.
 

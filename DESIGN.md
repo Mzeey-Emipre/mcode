@@ -1143,7 +1143,7 @@ state the condition; supporting copy explains the next useful move.
 7. Compare the result with neighboring Mcode patterns and the reference
    translation above. Preserve Mcode when the two differ.
 8. Run the live UI checks in `docs/guides/ui-components.md`, add a focused
-   behavior test, and run `bun run verify`.
+   behavior test, and run typecheck.
 
 ### Implementation status
 

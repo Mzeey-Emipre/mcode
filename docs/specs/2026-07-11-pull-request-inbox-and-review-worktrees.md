@@ -372,7 +372,7 @@ The feature follows Mcode's dark, warm, instrument-grade visual system.
     and partial local creation have recoverable inline states.
 11. The inbox, detail tabs, diff navigation, and Review Change Stack flow are
     usable by keyboard and expose accessible names and states.
-12. The feature passes focused tests, `bun run verify`, and live desktop checks
+12. The feature passes focused tests, typecheck, lint, and live desktop checks
     against an Mcode pull request without submitting a review or merge.
 
 ## Verification protocol
@@ -402,7 +402,7 @@ Use a real Mcode pull request and record the observed result for:
 8. stop before posting a comment, submitting a review, pushing, closing, or
    merging.
 
-Run `bun run verify` after the live path and report both results.
+Run focused tests, typecheck, and lint after the live path. Report all results.
 
 ### Performance and accessibility gate
 

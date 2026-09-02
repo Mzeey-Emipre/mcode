@@ -72,12 +72,9 @@ jobs:
     permissions:
       contents: read
     env:
-      # Lint runs ESLint under Node, not Electron; skip the binary download and
-      # better-sqlite3 Electron prebuild so bun install does not flake on 504s.
+      # Oxlint does not require Electron. Skip the binary download and rebuild during dependency install.
       SKIP_ELECTRON_REBUILD: "1"
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,27 +94,8 @@ jobs:
           key: ${{ runner.os }}-bun-runtime-${{ hashFiles('package.json') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-runtime-${{ hashFiles('package.json') }}-lock-
-      - name: Cache Turbo outputs
-        uses: actions/cache@v4
-        continue-on-error: true
-        with:
-          path: .turbo/cache
-          key: ${{ runner.os }}-turbo-lint-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-lint-
-      - name: Cache ESLint results
-        uses: actions/cache@v4
-        continue-on-error: true
-        with:
-          path: apps/web/node_modules/.cache/.eslintcache
-          key: ${{ runner.os }}-eslint-${{ hashFiles('bun.lock', 'apps/web/eslint.config.*', 'apps/web/src/**/*.{ts,tsx,js,jsx}') }}
-          restore-keys: |
-            ${{ runner.os }}-eslint-
       - run: bun install --frozen-lockfile
-      - run: bun run lint:fast
       - run: bun run lint
-        env:
-          DEBUG: eslint:lint-result-cache
 
   test:
     name: Test

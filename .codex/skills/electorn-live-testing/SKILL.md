@@ -85,4 +85,4 @@ bun .codex/skills/electorn-live-testing/scripts/stop-electron.mjs
 
 Then run `bun run --shell system agent:down` only when this workflow started the runtime. The stop helper verifies the recorded executable and dynamic CDP port before stopping the PID tree. If verification fails, inspect `.dev/electron-live-testing.json` and the live command before cleanup. Never kill Electron processes by name.
 
-Report desktop evidence separately from focused automated tests and `bun run verify`.
+Report desktop evidence separately from focused automated tests.

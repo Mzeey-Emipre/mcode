@@ -130,8 +130,7 @@ Clients communicate over typed WebSockets (`packages/contracts`). `apps/server` 
 
 ## Verifying
 
-- Fast lint & complexity check: `bun run lint:fast`
+- Smallest proof that the change works. `bun test <path-to-test-file>` for the test you touched, targeted lint and typecheck for the scope you changed.
+- Lint and complexity check: `bun run lint`
 - Type checking: `bun run typecheck`
-- Changed package check: `bun run verify:changed`
-- Targeted tests: `bun test <path-to-test-file>`
-- **Prefer focused checks.** Run repo-wide checks when requested or when the change risk requires a full gate; CI also owns the full repository test suite.
+- Do not run repo wide checks, CI owns the full test suite

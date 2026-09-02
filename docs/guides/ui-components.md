@@ -81,7 +81,7 @@ Start with focused Vitest or Testing Library coverage when you touch:
 
 ### Minimum check
 
-Add or update the nearest focused test. Run `bun run verify:changed`.
+Add or update the nearest focused test. Run it.
 
 Use `$electorn-live-testing` when the user requests live proof or the focused
 test cannot cover an Electron-only boundary. Check the exact state, interaction,

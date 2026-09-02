@@ -27,7 +27,7 @@ The Zed / Theo angle. Mapped to Mcode's targets: idle < 150MB, startup < 2s, fir
 - **Lazy-load heavy panels.** `lazy(() => import("../components/DiffPanel"))` keeps syntax-highlighting + worker pool off the critical path.
 - **`optimizeDeps.include` for Effect sub-paths + diff worker.** Cuts Vite cold-start churn in dev if Mcode uses Effect on the frontend.
 - **Bundle the Electron main process to a single `.cjs`** (`vp pack`, `alwaysBundle` for workspace packages). Shortens the require chain at startup; helps < 2s.
-- **`typecheck --concurrency-limit 2`.** Unbounded `tsc` parallelism across a monorepo exhausts memory on CI. `bun run verify` should cap concurrency.
+- **`typecheck --concurrency-limit 2`.** Unbounded `tsc` parallelism across a monorepo exhausts memory on CI. Cap typecheck concurrency.
 - **Custom oxlint rule `no-inline-schema-compile`** (`oxlint-plugin-t3code/rules/`). Forbids building/compiling schemas inside hot paths. Mcode's Zod analog: flag `Schema.parse` / `ZodSchema.parse` constructed inside component bodies or request handlers.
 
 ### Skip / already-have

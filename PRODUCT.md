@@ -139,7 +139,7 @@ In flight as of May 2026:
 | Doc | When to open it |
 |-----|----------------|
 | `README.md` | Install, run, prerequisites. |
-| `AGENTS.md` | Repo conventions, workflow gates, where `bun run verify` lives. |
+| `AGENTS.md` | Repo conventions and workflow guidance. |
 | `CONTEXT.md` | Domain glossary. If you don't know what a "worktree" or "narration segment" means here, read this first. |
 | `ARCHITECTURE.md` | IPC flow, data model, directory layout. |
 | `DESIGN.md` | The complete visual and interaction contract: creative direction, tokens, typography, layout, components, states, accessibility, and motion. Read it before changing UI. |
