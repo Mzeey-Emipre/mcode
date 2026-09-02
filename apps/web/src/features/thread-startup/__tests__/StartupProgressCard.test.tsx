@@ -52,19 +52,46 @@ describe("StartupProgressCard", () => {
 
   it("uses the approved Direct and managed placeholder step layouts", () => {
     const direct = render(<StartupProgressCard startupId={startupId} context="direct" />);
-    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      expect.stringContaining("Create thread"),
+    const directSteps = screen.getAllByRole("listitem");
+    expect(directSteps).toHaveLength(2);
+    expect(directSteps.map((item) => item.textContent)).toEqual([
+      expect.stringContaining("Use project checkout"),
       expect.stringContaining("Start agent"),
     ]);
     direct.unmount();
 
     render(<StartupProgressCard startupId={startupId} context="managed-worktree" />);
-    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      expect.stringContaining("Create thread"),
+    const managedSteps = screen.getAllByRole("listitem");
+    expect(managedSteps).toHaveLength(3);
+    expect(managedSteps.map((item) => item.textContent)).toEqual([
       expect.stringContaining("Prepare checkout"),
       expect.stringContaining("Run project setup"),
       expect.stringContaining("Start agent"),
     ]);
+  });
+
+  it("projects managed thread creation into checkout preparation", () => {
+    render(
+      <StartupProgressCard
+        startup={startup({
+          phase: "thread",
+          steps: [
+            { phase: "thread", state: "running" },
+            { phase: "worktree", state: "pending" },
+            { phase: "setup", state: "pending" },
+            { phase: "agent", state: "pending" },
+          ],
+        })}
+        startupId={startupId}
+        context="managed-worktree"
+      />,
+    );
+
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getByText("Prepare checkout").closest("li")).toHaveAttribute("data-state", "running");
+    expect(screen.getByTestId("startup-activity")).toHaveTextContent("Creating a");
+    expect(screen.getByTestId("startup-activity")).toHaveTextContent("worktree");
+    expect(screen.queryByText("Creating a thread")).toBeNull();
   });
 
   it("uses native details and updates the live transcript", async () => {
@@ -122,6 +149,6 @@ describe("StartupProgressCard", () => {
 
   it("disables shimmer animation when reduced motion is requested", () => {
     render(<StartupProgressCard startupId={startupId} context="managed-worktree" />);
-    expect(screen.getByText("thread")).toHaveClass("startup-shimmer-text", "motion-reduce:animate-none");
+    expect(screen.getByText("checkout")).toHaveClass("startup-shimmer-text", "motion-reduce:animate-none");
   });
 });

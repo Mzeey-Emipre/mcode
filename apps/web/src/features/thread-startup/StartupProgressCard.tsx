@@ -21,7 +21,7 @@ function fallbackStartup(context: StartupDisplayContext): StartupDisplay {
       ? "managed-worktree"
       : "direct";
   const phases = kind === "managed-worktree"
-    ? ["thread", "worktree", "setup", "agent"] as const
+    ? ["worktree", "setup", "agent"] as const
     : kind === "pull-request-review"
       ? ["thread", "worktree", "agent"] as const
       : ["thread", "agent"] as const;
@@ -42,7 +42,7 @@ function stepLabel(phase: ThreadStartup["phase"], context: StartupDisplayContext
     return "Start agent";
   }
   if (context === "attached-worktree" && phase === "thread") return "Attach existing checkout";
-  if (phase === "thread") return "Create thread";
+  if (phase === "thread") return "Use project checkout";
   if (phase === "worktree") return "Prepare checkout";
   if (phase === "setup") return "Run project setup";
   return "Start agent";
@@ -101,6 +101,7 @@ const REVIEW_ACTIVITIES: Record<ThreadStartup["phase"], StartupActivity> = {
   agent: { lead: "Starting", changing: "agent", active: true },
 };
 const ATTACHING_ACTIVITY: StartupActivity = { lead: "Attaching", changing: "checkout", active: true };
+const CREATING_WORKTREE_ACTIVITY: StartupActivity = { lead: "Creating a", changing: "worktree", active: true };
 
 function activityCopy(startup: StartupDisplay, context: StartupDisplayContext): StartupActivity {
   if (startup.cancellation === "requested" && startup.state !== "cancelled") return CANCELLING_ACTIVITY;
@@ -113,7 +114,25 @@ function activeActivity(
 ): StartupActivity {
   if (context === "pull-request-review") return REVIEW_ACTIVITIES[phase];
   if (context === "attached-worktree") return ATTACHING_ACTIVITY;
+  if (context === "managed-worktree" && phase === "thread") return CREATING_WORKTREE_ACTIVITY;
   return STANDARD_ACTIVITIES[phase];
+}
+
+function managedCheckoutState(startup: StartupDisplay): ThreadStartupStepState {
+  const threadStep = startup.steps.find((step) => step.phase === "thread");
+  if (startup.phase !== "thread") return startup.steps.find((step) => step.phase === "worktree")?.state ?? "pending";
+  if (startup.state === "pending" || startup.state === "running") return "running";
+  return threadStep?.state ?? "pending";
+}
+
+function visibleSteps(startup: StartupDisplay, context: StartupDisplayContext): ThreadStartup["steps"] {
+  if (context !== "managed-worktree") return startup.steps;
+  return (["worktree", "setup", "agent"] as const).map((phase) => ({
+    phase,
+    state: phase === "worktree"
+      ? managedCheckoutState(startup)
+      : startup.steps.find((step) => step.phase === phase)?.state ?? "pending",
+  }));
 }
 
 function stepTone(state: ThreadStartupStepState): string {
@@ -178,9 +197,10 @@ function StartupActivityLine({ activity }: { activity: StartupActivity }) {
 }
 
 function StartupSteps({ startup, context }: { startup: StartupDisplay; context: StartupDisplayContext }) {
+  const steps = visibleSteps(startup, context);
   return (
     <ol className="mt-4 grid gap-2.5">
-      {startup.steps.map((step, index) => (
+      {steps.map((step, index) => (
         <li key={step.phase} data-state={step.state} className={cn("flex items-center gap-2.5 text-sm", stepTone(step.state))}>
           <span aria-label={stateText(step.state)} className="grid size-5 shrink-0 place-items-center rounded-full border text-[11px] font-medium">
             {step.state === "running" ? <Spinner size={11} className="motion-reduce:animate-none" /> : index + 1}
