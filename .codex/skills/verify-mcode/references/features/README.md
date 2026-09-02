@@ -45,7 +45,7 @@ Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that cro
 - Provider discovery does not prove provider account login.
 - The public subscription RPC cannot prove a pre-create subscription without a caller-supplied thread ID or workspace subscription.
 - The selected-text-comments proof cannot show native operating-system menu rendering.
-- Saved-comment edit, delete, and focus return need the card and marker entry points planned for #1557 and #1558.
+- The selected-text-comments live proof covers rendered source cards. It does not load a source that is absent from the current transcript window.
 - Thread retention has a minimum of one day. The live proof shows the scheduled deletion, while focused integration checks show later worktree cleanup.
 - If `agent.createAndSend` creates a thread but its response is lost before the ID arrives, the public RPC has no safe cleanup identifier. Record this as a coverage gap. Do not delete threads by heuristic.
 - If `thread.create` creates a managed-worktree thread but its response is lost before the ID arrives, the lifecycle verifier has no safe cleanup identifier. Record this as a coverage gap. Do not delete threads by heuristic.
