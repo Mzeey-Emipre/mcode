@@ -12,7 +12,11 @@ const STATE_PATH = NodePath.join(REPO_ROOT, ".dev", "verification", "selected-te
 const FIXTURE_THREAD_ID = "mcode-verification-selected-text-thread";
 const FIXTURE_MESSAGE_ID = "mcode-verification-selected-text-message";
 const FIXTURE_TITLE = "Selected text comments verification";
-const FIXTURE_MESSAGE_CONTENT = "Select this verification phrase";
+const FIXTURE_MESSAGE_CONTENT = [
+  ...Array.from({ length: 24 }, (_, index) => `Verification context before the selected phrase ${index + 1}.`),
+  "Select this verification phrase",
+  ...Array.from({ length: 24 }, (_, index) => `Verification context after the selected phrase ${index + 1}.`),
+].join("\n\n");
 const FIXTURE_SKILL_DIRECTORY = NodePath.join(FIXTURE_WORKSPACE_PATH, ".claude", "skills", "verification-comment");
 const FIXTURE_SKILL_PATH = NodePath.join(FIXTURE_SKILL_DIRECTORY, "SKILL.md");
 const FIXTURE_SKILL_CONTENT = `---

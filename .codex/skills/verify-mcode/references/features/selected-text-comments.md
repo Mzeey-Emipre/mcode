@@ -4,6 +4,7 @@
 
 - A pointer drag across selected assistant text exposes an `Add comment` action.
 - The action and compact editor prefer an 8px gap from the last visible selected-range rect, not the pointer release point, and flip or clamp at viewport edges.
+- An open editor docks 8px from the nearest transcript edge after its source scrolls out. It reconstructs the current source range and reanchors when the source returns.
 - The editor remains at that source range after the browser clears native Selection.
 - The app does not add a competing visible `Copy` button.
 - A secondary pointer click leaves the context-menu event available to the native operating system.
@@ -39,7 +40,7 @@ The first Electron launch initializes `.dev/electron-live-testing/runtime/db/app
 10. Run `bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments cleanup`.
 11. Run `bun run --shell system agent:down`.
 
-The verifier writes `.dev/verification/selected-text-comments-action.png`, `.dev/verification/selected-text-comments-editor.png`, `.dev/verification/selected-text-comments-result.png`, and `.dev/verification/selected-text-comments.json`. The JSON receipt records source, action, and editor geometry with their measured range gaps. The proof releases a pointer drag in message whitespace while the exact phrase stays selected, then requires the action and editor to remain within a small tolerance of the preferred 8px source-range gap when it fits. Popovers flip or clamp at viewport edges. It also covers a real secondary pointer click that the app does not prevent, editor focus and control boundaries, typed skill and file chips, multiline save, a visible composer-draft result, and clean and dirty dismissal states.
+The verifier writes `.dev/verification/selected-text-comments-action.png`, `.dev/verification/selected-text-comments-editor.png`, `.dev/verification/selected-text-comments-result.png`, and `.dev/verification/selected-text-comments.json`. The JSON receipt records source, action, and editor geometry with their measured range gaps. The proof releases a pointer drag in message whitespace while the exact phrase stays selected, then requires the action and editor to remain within a small tolerance of the preferred 8px source-range gap when it fits. It scrolls an open editor's source beyond the viewport to prove nearest-edge docking, then restores the source to prove reconstructed-range reanchoring from current geometry. Popovers flip or clamp at viewport edges. It also covers a real secondary pointer click that the app does not prevent, editor focus and control boundaries, typed skill and file chips, multiline save, a visible composer-draft result, and clean and dirty dismissal states.
 
 ## Gotchas
 

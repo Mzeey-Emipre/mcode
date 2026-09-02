@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StickyUserMessage } from "@/components/chat/StickyUserMessage";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import type { SelectedTextComment } from "@mcode/contracts";
-import type { RefObject } from "react";
+import { useMemo, type RefObject } from "react";
 import type { Message } from "@/transport/types";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { SelectedTextCommentControls } from "./selection/SelectedTextCommentControls";
@@ -52,6 +52,8 @@ export function MessageListOverlays({
   hasNewContent,
   onScrollToBottom,
 }: MessageListOverlaysProps) {
+  const messageIds = useMemo(() => messages.map((message) => message.id), [messages]);
+
   return (
     <>
       {shouldShowHandoffSkeleton(handoffStatus, messages) && (
@@ -71,6 +73,7 @@ export function MessageListOverlays({
         selectedTextCommentEditorScope={selectedTextCommentEditorScope}
         viewportRef={viewportRef}
         renderedThreadId={renderedThreadId}
+        messageIds={messageIds}
       />
       {stickyPreview && (
         <StickyUserMessage

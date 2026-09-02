@@ -67,6 +67,7 @@ async function phrasePointerCoordinates(content) {
     for (let node = walker.nextNode(); node; node = walker.nextNode()) textNodes.push(node);
     const textNode = textNodes.find((node) => node.textContent.includes(phrase));
     if (!textNode) throw new Error("Verification phrase text node not found");
+    textNode.parentElement?.scrollIntoView({ block: "center", inline: "nearest" });
     const start = textNode.textContent.indexOf(phrase);
     const startCharacter = document.createRange();
     startCharacter.setStart(textNode, start);
@@ -208,16 +209,41 @@ async function assertEditorShell(dialog, source) {
   const editor = await editorTextBox(dialog);
   mark("comment_editor_visible", true);
   await assertPopupAnchor("editor", dialog, source);
-  mark("comment_editor_focuses_note", await editor.evaluate((element) => document.activeElement === element));
+  const activeElement = await page.evaluate(() => {
+    const element = document.activeElement;
+    return {
+      tagName: element?.tagName ?? null,
+      role: element?.getAttribute("role") ?? null,
+      ariaLabel: element?.getAttribute("aria-label") ?? null,
+      id: element?.id ?? null,
+    };
+  });
+  mark("comment_editor_focuses_note", await editor.evaluate((element) => document.activeElement === element), activeElement);
   mark("selected_quote_absent", await dialog.locator("blockquote").count() === 0);
   mark("prototype_note_placeholder", await editor.getAttribute("aria-placeholder") === "Write a note");
   const editorBox = await dialog.boundingBox();
-  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  const viewportBounds = await page.evaluate(() => {
+    const viewport = document.querySelector(".overflow-y-auto");
+    const bounds = viewport?.getBoundingClientRect();
+    return bounds && { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom };
+  });
   mark(
     "prototype_editor_width",
-    editorBox !== null && Math.abs(editorBox.width - Math.min(328, viewportWidth - 16)) <= 1,
+    editorBox !== null
+      && viewportBounds !== null
+      && editorBox.width <= Math.min(328, viewportBounds.right - viewportBounds.left - 16) + 1
+      && editorBox.x >= viewportBounds.left + 8 - 1
+      && editorBox.x + editorBox.width <= viewportBounds.right - 8 + 1,
     editorBox?.width,
   );
+  mark(
+    "editor_height_stays_in_visible_transcript",
+    editorBox !== null
+      && viewportBounds !== null
+      && editorBox.height <= viewportBounds.bottom - viewportBounds.top - 16 + 1,
+    editorBox?.height,
+  );
+  mark("comment_note_scrolls_internally", await editor.evaluate((element) => getComputedStyle(element).overflowY === "auto"));
   mark("empty_comment_has_no_save_action", await dialog.getByRole("button", { name: "Add comment", exact: true }).count() === 0);
   const focusOrder = await dialog.locator('[contenteditable="true"], button').evaluateAll((elements) => elements.map((element) => element.getAttribute("aria-label") ?? element.textContent?.trim() ?? ""));
   mark("new_comment_control_order", JSON.stringify(focusOrder) === JSON.stringify(["Comment note", "Close comment editor"]), focusOrder);
@@ -225,6 +251,94 @@ async function assertEditorShell(dialog, source) {
     + await dialog.getByRole("button", { name: /attach|model|provider/i }).count();
   mark("editor_has_no_attachment_model_or_provider_control", restrictedControls === 0, restrictedControls);
   return editor;
+}
+
+async function assertSourceDockAndReturn(content) {
+  await content.evaluate((element, phrase) => {
+    const viewport = element.closest(".overflow-y-auto");
+    if (!viewport || !element.textContent?.includes(phrase)) throw new Error("Scrollable verification source is unavailable");
+    viewport.scrollTop = 0;
+  }, PHRASE);
+  await page.waitForFunction((phrase) => {
+    const content = [...document.querySelectorAll("[data-selected-text-content]")]
+      .find((element) => element.textContent?.includes(phrase));
+    const viewport = content?.closest(".overflow-y-auto");
+    const dialog = document.querySelector('[role="dialog"][aria-label="Comment on selected text"]');
+    if ([content, viewport, dialog].some((value) => !value)) return false;
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    let textNode = null;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.textContent?.includes(phrase)) {
+        textNode = node;
+        break;
+      }
+    }
+    if (!textNode) return false;
+    const start = textNode.textContent.indexOf(phrase);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + phrase.length);
+    const source = range.getBoundingClientRect();
+    const viewportBounds = viewport.getBoundingClientRect();
+    const editorBounds = dialog.getBoundingClientRect();
+    return source.top >= viewportBounds.bottom
+      && Math.abs(editorBounds.bottom - (viewportBounds.bottom - 8)) <= 3;
+  }, PHRASE);
+  mark("source_scroll_out_docks_editor_at_nearest_edge", true);
+
+  await content.evaluate((element, phrase) => {
+    const viewport = element.closest(".overflow-y-auto");
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let textNode = null;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.textContent?.includes(phrase)) {
+        textNode = node;
+        break;
+      }
+    }
+    if (!viewport || !textNode) throw new Error("Scrollable verification source is unavailable");
+    const start = textNode.textContent.indexOf(phrase);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + phrase.length);
+    const source = range.getBoundingClientRect();
+    const viewportBounds = viewport.getBoundingClientRect();
+    viewport.scrollBy({ top: source.top - viewportBounds.top - viewportBounds.height / 2 });
+  }, PHRASE);
+  await page.waitForFunction((phrase) => {
+    const content = [...document.querySelectorAll("[data-selected-text-content]")]
+      .find((element) => element.textContent?.includes(phrase));
+    const viewport = content?.closest(".overflow-y-auto");
+    const dialog = document.querySelector('[role="dialog"][aria-label="Comment on selected text"]');
+    if ([content, viewport, dialog].some((value) => !value)) return false;
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    let textNode = null;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.textContent?.includes(phrase)) {
+        textNode = node;
+        break;
+      }
+    }
+    if (!textNode) return false;
+    const start = textNode.textContent.indexOf(phrase);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + phrase.length);
+    const source = [...range.getClientRects()].reverse().find((candidate) => {
+      const viewportBounds = viewport.getBoundingClientRect();
+      return candidate.right > viewportBounds.left
+        && candidate.left < viewportBounds.right
+        && candidate.bottom > viewportBounds.top
+        && candidate.top < viewportBounds.bottom;
+    });
+    if (!source) return false;
+    const editorBounds = dialog.getBoundingClientRect();
+    return [
+      Math.abs(editorBounds.top - source.bottom - 8) <= 3,
+      Math.abs(editorBounds.bottom - source.top + 8) <= 3,
+    ].includes(true);
+  }, PHRASE);
+  mark("source_return_reconstructs_current_range_and_reanchors_editor", true);
 }
 
 async function clickOutsideDialog() {
@@ -314,6 +428,7 @@ async function run() {
   await page.screenshot({ path: ACTION_SCREENSHOT, fullPage: true });
   let dialog = await openEditorFromSelection();
   const editor = await assertEditorShell(dialog, sourceGeometry);
+  await assertSourceDockAndReturn(content);
   await editor.pressSequentially(`/${FIXTURE_SKILL_NAME}`);
   const slashSkill = page.getByRole("option", { name: new RegExp(FIXTURE_SKILL_NAME, "i") });
   await slashSkill.waitFor({ state: "visible" });
@@ -347,6 +462,9 @@ async function run() {
   await dialog.getByRole("button", { name: "Close comment editor", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
   mark("clean_close_discards_editor", true);
+  const returnedAction = page.getByRole("button", { name: "Add comment", exact: true });
+  await returnedAction.waitFor({ state: "visible" });
+  mark("clean_close_returns_focus_to_add_comment", await returnedAction.evaluate((element) => document.activeElement === element));
   await assertDirtyDismissal(content);
 
   await dragSelectPhrase(content);

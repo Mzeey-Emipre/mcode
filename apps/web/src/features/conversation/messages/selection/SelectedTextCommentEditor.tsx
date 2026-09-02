@@ -26,6 +26,7 @@ import {
 } from "./comment-editor-model";
 
 const EMPTY_MENTIONS: readonly MessageMention[] = [];
+const COMMENT_EDITOR_VERTICAL_CHROME = 10;
 
 /** Props for the compact editor that creates or updates one selected-text comment. */
 export interface SelectedTextCommentEditorProps {
@@ -37,14 +38,18 @@ export interface SelectedTextCommentEditorProps {
   readonly workspaceId?: string;
   /** Provider that scopes mention and slash suggestions. */
   readonly providerId?: string;
+  /** Maximum visible editor height derived from the transcript viewport. */
+  readonly maxHeight?: number;
   /** Receives the compact Lexical editor for owner-managed focus. */
   readonly editorRef?: MutableRefObject<LexicalEditor | null>;
+  /** Receives the rendered editor element for current-size positioning. */
+  readonly onElementChange?: (element: HTMLElement | null) => void;
   /** Stores the saved comment state. */
   readonly onSave: (comment: SelectedTextComment) => void;
   /** Removes the saved comment state. */
   readonly onDelete?: (comment: SelectedTextComment) => void;
-  /** Closes the editor. */
-  readonly onClose: () => void;
+  /** Closes the editor and optionally restores focus to its invoker. */
+  readonly onClose: (options?: { readonly restoreFocus?: boolean }) => void;
   /** Announces editor state changes to the persistent live region. */
   readonly onAnnouncement: (message: string) => void;
 }
@@ -142,6 +147,7 @@ function CommentEditorComposer({
   editorRef,
   rootRef,
   isPopupOpenRef,
+  maxHeight,
   onChange,
   onSubmit,
 }: {
@@ -153,6 +159,7 @@ function CommentEditorComposer({
   readonly editorRef: MutableRefObject<LexicalEditor | null>;
   readonly rootRef: RefObject<HTMLElement | null>;
   readonly isPopupOpenRef: RefObject<boolean>;
+  readonly maxHeight?: number;
   readonly onChange: (note: string, mentions: MessageMention[]) => void;
   readonly onSubmit: () => void;
 }) {
@@ -167,8 +174,7 @@ function CommentEditorComposer({
   isPopupOpenRef.current = fileAutocomplete.isOpen || slashCommand.isOpen;
 
   useEffect(() => {
-    const editor = editorRef.current;
-    const frame = requestAnimationFrame(() => editor?.focus());
+    const frame = requestAnimationFrame(() => editorRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [editorRef]);
 
@@ -243,6 +249,7 @@ function CommentEditorComposer({
         placeholder="Write a note"
         submitOnEnter={false}
         compact
+        compactMaxHeight={maxHeight}
         isPopupOpen={isPopupOpenRef.current}
         onPopupKeyDown={handlePopupKeyDown}
       />
@@ -346,10 +353,12 @@ export function SelectedTextCommentEditor({
   comment,
   workspaceId,
   providerId,
+  maxHeight,
   editorRef: providedEditorRef,
   onSave,
   onDelete,
   onClose,
+  onElementChange,
   onAnnouncement,
 }: SelectedTextCommentEditorProps) {
   const rootRef = useRef<HTMLElement | null>(null);
@@ -369,6 +378,11 @@ export function SelectedTextCommentEditor({
     onAnnouncement,
   });
 
+  const setRootElement = useCallback((element: HTMLElement | null) => {
+    rootRef.current = element;
+    onElementChange?.(element);
+  }, [onElementChange]);
+
   const handleChange = useCallback((nextNote: string, nextMentions: MessageMention[]) => {
     setNote(nextNote);
     setMentions(nextMentions);
@@ -381,7 +395,7 @@ export function SelectedTextCommentEditor({
     resetWarnings();
     onSave(nextComment);
     onAnnouncement(`Comment ${nextComment.displayNumber} ${comment ? "updated" : "added"}.`);
-    onClose();
+    onClose({ restoreFocus: false });
   }, [canSave, comment, mentions, note, onAnnouncement, onClose, onSave, resetWarnings, source]);
 
   const deleteComment = useCallback(() => {
@@ -389,14 +403,15 @@ export function SelectedTextCommentEditor({
     resetWarnings();
     onDelete(comment);
     onAnnouncement("Comment deleted.");
-    onClose();
+    onClose({ restoreFocus: false });
   }, [comment, onAnnouncement, onClose, onDelete, resetWarnings]);
 
   return (
     <section
-      ref={rootRef}
+      ref={setRootElement}
       role="dialog"
       aria-label="Comment on selected text"
+      style={{ maxHeight }}
       className={cn(
         "relative overflow-hidden rounded-2xl border border-border/70 bg-popover text-popover-foreground shadow-lg",
         isShaking && "animate-preview-annotation-shake",
@@ -413,6 +428,7 @@ export function SelectedTextCommentEditor({
             editorRef={editorRef}
             rootRef={rootRef}
             isPopupOpenRef={isPopupOpenRef}
+            maxHeight={maxHeight === undefined ? undefined : Math.max(0, maxHeight - COMMENT_EDITOR_VERTICAL_CHROME)}
             onChange={handleChange}
             onSubmit={save}
           />

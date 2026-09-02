@@ -38,6 +38,8 @@ interface ComposerEditorProps {
   submitOnEnter?: boolean;
   /** Uses the compact annotation sizing required by selected-text comments. */
   compact?: boolean;
+  /** Caps the compact editor content without affecting the full composer. */
+  compactMaxHeight?: number;
   /** When true, intercept navigation keys for popup keyboard handling. */
   isPopupOpen?: boolean;
   /** Called when a navigation key is pressed while popup is open. Returns true if handled. */
@@ -47,6 +49,7 @@ interface ComposerEditorProps {
 const COMPOSER_MIN_HEIGHT = "80px";
 const COMPOSER_MAX_HEIGHT = "30vh";
 const COMPACT_EDITOR_MIN_HEIGHT = "2.25rem";
+const COMPACT_EDITOR_MIN_HEIGHT_PX = 36;
 
 const EDITOR_THEME = {
   paragraph: `min-h-[${COMPOSER_MIN_HEIGHT}]`,
@@ -55,6 +58,17 @@ const EDITOR_THEME = {
 const COMPACT_EDITOR_THEME = {
   paragraph: "min-h-0",
 };
+
+function editorHeightStyle(compact: boolean, compactMaxHeight: number | undefined) {
+  const maximumCompactHeight = compactMaxHeight === undefined ? undefined : Math.max(0, compactMaxHeight);
+  const minimumCompactHeight = maximumCompactHeight === undefined
+    ? COMPACT_EDITOR_MIN_HEIGHT
+    : Math.min(COMPACT_EDITOR_MIN_HEIGHT_PX, maximumCompactHeight);
+  return {
+    minHeight: compact ? minimumCompactHeight : COMPOSER_MIN_HEIGHT,
+    maxHeight: compact ? maximumCompactHeight ?? COMPOSER_MAX_HEIGHT : COMPOSER_MAX_HEIGHT,
+  };
+}
 
 /** Internal plugin that exposes the editor instance via ref. */
 function EditorRefPlugin({
@@ -95,11 +109,13 @@ export function ComposerEditor({
   ariaLabel,
   submitOnEnter,
   compact = false,
+  compactMaxHeight,
   isPopupOpen,
   onPopupKeyDown,
 }: ComposerEditorProps) {
   const internalRef = useRef<LexicalEditor | null>(null);
   const ref = editorRef ?? internalRef;
+  const heightStyle = editorHeightStyle(compact, compactMaxHeight);
 
   const initialConfig = useRef({
     namespace: "McodeComposer",
@@ -139,8 +155,7 @@ export function ComposerEditor({
                 </div>
               }
               style={{
-                minHeight: compact ? COMPACT_EDITOR_MIN_HEIGHT : COMPOSER_MIN_HEIGHT,
-                maxHeight: COMPOSER_MAX_HEIGHT,
+                ...heightStyle,
                 overflowY: "auto",
               }}
             />
