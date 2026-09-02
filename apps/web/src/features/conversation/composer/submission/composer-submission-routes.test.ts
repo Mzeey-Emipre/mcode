@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SelectedTextComment } from "@mcode/contracts";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import { createDefaultComposerAgentSelection } from "../draft/composer-selection-state";
 import type { ComposerExecutionTargetController } from "../execution/useComposerExecutionTarget";
 import type { PreparedComposerSubmission } from "./composer-submission-types";
@@ -32,13 +33,27 @@ const comments: SelectedTextComment[] = [{
   mentions: [],
 }];
 
-function submission(content: string, selectedTextComments: SelectedTextComment[]): PreparedComposerSubmission {
+const editor: SelectedTextCommentEditorDraft = {
+  source: comments[0]!.source,
+  note: "Unsaved addition.",
+  mentions: [],
+  escapeWarned: false,
+  outsideWarned: false,
+  anchor: "card",
+};
+
+function submission(
+  content: string,
+  selectedTextComments: SelectedTextComment[],
+  selectedTextCommentEditor?: SelectedTextCommentEditorDraft,
+): PreparedComposerSubmission {
   return {
     snapshot: {
       revision: 1,
       rawInput: content,
       mentions: [],
       selectedTextComments,
+      selectedTextCommentEditor,
       attachments: [],
       selection: createDefaultComposerAgentSelection(),
       goalPending: false,
@@ -78,7 +93,7 @@ function execution(target: ComposerExecutionTargetController["target"]): Compose
 }
 
 describe("dispatchComposerTarget selected-text comments", () => {
-  it("keeps a comment-only new-thread submission intact through the creation route", async () => {
+  it("transfers a full new-thread draft to the optimistic placeholder", async () => {
     workspaceActions.createAndSendMessage.mockResolvedValue({ id: "thread-2" });
     const target = { kind: "new-thread" as const, mode: "direct" as const, branch: "main", branchSource: "branch" as const, hasWorktree: false };
 
@@ -86,7 +101,7 @@ describe("dispatchComposerTarget selected-text comments", () => {
       workspaceId: "workspace-1",
       target,
       execution: execution(target),
-      submission: submission("", comments),
+      submission: submission("", comments, editor),
     });
 
     expect(workspaceActions.createAndSendMessage).toHaveBeenCalledWith(
@@ -107,10 +122,16 @@ describe("dispatchComposerTarget selected-text comments", () => {
       undefined,
       expect.anything(),
       comments,
+      expect.objectContaining({
+        input: "",
+        selectedTextComments: comments,
+        selectedTextCommentEditor: editor,
+        attachments: [],
+      }),
     );
   });
 
-  it("keeps saved cards when a branch submission also has a prompt", async () => {
+  it("transfers a branch draft with saved cards and an open editor", async () => {
     workspaceActions.branchThread.mockResolvedValue({ id: "thread-2" });
     const target = { kind: "branch" as const, mode: "direct" as const, branch: "main", worktreePath: null, worktreeIsDetached: false };
 
@@ -119,12 +140,17 @@ describe("dispatchComposerTarget selected-text comments", () => {
       branchFromMessageId: "message-1",
       target,
       execution: execution(target),
-      submission: submission("Continue from this point.", comments),
+      submission: submission("Continue from this point.", comments, editor),
     });
 
     expect(workspaceActions.branchThread).toHaveBeenCalledWith(expect.objectContaining({
       content: "Continue from this point.",
       selectedTextComments: comments,
+      composerDraft: expect.objectContaining({
+        input: "Continue from this point.",
+        selectedTextComments: comments,
+        selectedTextCommentEditor: editor,
+      }),
     }));
   });
 });

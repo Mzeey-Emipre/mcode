@@ -21,7 +21,7 @@ import { getConversationResidency } from "@/features/conversation/residency/conv
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useQueueStore } from "@/stores/queueStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { useComposerDraftStore } from "@/stores/composerDraftStore";
+import { useComposerDraftStore, type ComposerDraft } from "@/stores/composerDraftStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
 import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
@@ -208,6 +208,8 @@ interface PendingThreadCreation {
   previewAnnotations?: PreviewAnnotationBundle;
   /** Saved selected-text comments sent with the first turn. */
   selectedTextComments?: SelectedTextComment[];
+  /** Complete Composer state restored while optimistic creation awaits persistence. */
+  composerDraft?: ComposerDraft;
   model: string;
   permissionMode?: PermissionMode;
   transportMode: "direct" | "worktree";
@@ -260,6 +262,7 @@ interface BranchThreadParams {
   mentions?: MessageMention[];
   previewAnnotations?: PreviewAnnotationBundle;
   selectedTextComments?: SelectedTextComment[];
+  composerDraft?: ComposerDraft;
   goalObjective?: string;
   orchestrationMode?: OrchestrationMode;
 }
@@ -525,6 +528,7 @@ interface WorkspaceState {
     goalObjective?: string,
     orchestrationMode?: OrchestrationMode,
     selectedTextComments?: SelectedTextComment[],
+    composerDraft?: ComposerDraft,
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: BranchThreadParams) => Promise<Thread>;
@@ -661,6 +665,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     const pending = pendingThreadCreationByPlaceholderId.get(placeholderId);
     bumpThreadListMutationEpoch(workspaceId);
     pendingThreadCreationByPlaceholderId.delete(placeholderId);
+    useComposerDraftStore.getState().clearDraft(placeholderId);
     useThreadStore.getState().transferThreadRuntime(placeholderId, thread.id);
     useThreadStore.getState().applyThreadRuntimeSnapshot(runtimeSnapshot);
     useDiffStore.getState().hideRightPanel(workspaceId, thread.id);
@@ -719,6 +724,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     );
     bumpThreadListMutationEpoch(pending.workspaceId);
     pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
+    if (pending.composerDraft) {
+      useComposerDraftStore.getState().saveDraft(placeholderId, pending.composerDraft);
+    }
     useDiffStore.getState().hideRightPanel(pending.workspaceId, placeholderId);
     set((state) => ({
       threads: [placeholder, ...state.threads],
@@ -1164,6 +1172,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     goalObjective,
     orchestrationMode,
     selectedTextComments,
+    composerDraft,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -1193,6 +1202,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       mentions,
       previewAnnotations,
       selectedTextComments,
+      composerDraft,
       goalObjective,
     };
 
@@ -1224,6 +1234,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       mentions: params.mentions,
       previewAnnotations: params.previewAnnotations,
       selectedTextComments: params.selectedTextComments,
+      composerDraft: params.composerDraft,
       goalObjective: params.goalObjective,
     };
 

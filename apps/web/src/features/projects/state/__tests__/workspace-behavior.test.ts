@@ -7,6 +7,7 @@ import { createEmptyThreadRecord, patchThreadRecord, type ThreadRecord } from "@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "../workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useComposerDraftStore, type ComposerDraft } from "@/stores/composerDraftStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
 import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
@@ -31,6 +32,26 @@ const selectedTextComments: SelectedTextComment[] = [{
   note: "Explain this choice.",
   mentions: [],
 }];
+
+const pendingComposerDraft: ComposerDraft = {
+  input: "Keep this request.",
+  mentions: [],
+  selectedTextComments,
+  selectedTextCommentEditor: {
+    source: selectedTextComments[0]!.source,
+    note: "Keep this editor open.",
+    mentions: [],
+    escapeWarned: false,
+    outsideWarned: false,
+    anchor: "card",
+  },
+  attachments: [],
+  modelId: "gpt-5.5",
+  provider: "codex",
+  reasoning: "high",
+  contextWindow: "1m",
+  codexFastMode: true,
+};
 
 function createMockCreateAndSendResult(
   overrides?: Parameters<typeof createMockThread>[0],
@@ -101,6 +122,7 @@ describe("Workspace Behavior", () => {
     });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     usePreviewReferenceQueueStore.setState({ signal: 0, queueByThread: {} });
+    useComposerDraftStore.setState({ drafts: {}, pendingPrefill: null });
     useDiffStore.setState({
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
@@ -798,6 +820,90 @@ describe("Workspace Behavior", () => {
   });
 
   describe("optimistic thread scaffolding", () => {
+    it.each(["direct", "worktree"] as const)(
+      "retains the pending composer draft through a cancelled new %s creation until acknowledgement",
+      async (mode) => {
+        const ws = createMockWorkspace({ id: `ws-retain-${mode}` });
+        const cancellation = new Error("Creation cancelled before acknowledgement");
+        useWorkspaceStore.setState({
+          workspaces: [ws],
+          activeWorkspaceId: ws.id,
+          newThreadMode: mode,
+          newThreadBranch: "main",
+        });
+        (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>)
+          .mockRejectedValueOnce(cancellation)
+          .mockResolvedValueOnce(createMockCreateAndSendResult({
+            id: `persisted-${mode}`,
+            workspace_id: ws.id,
+          }));
+
+        await expect(useWorkspaceStore.getState().createAndSendMessage(
+          pendingComposerDraft.input,
+          pendingComposerDraft.modelId,
+          undefined,
+          undefined,
+          pendingComposerDraft.reasoning,
+          pendingComposerDraft.provider,
+          undefined,
+          undefined,
+          pendingComposerDraft.contextWindow,
+          true,
+          pendingComposerDraft.codexFastMode ?? undefined,
+          undefined,
+          pendingComposerDraft.mentions,
+          undefined,
+          undefined,
+          undefined,
+          pendingComposerDraft.selectedTextComments,
+          pendingComposerDraft,
+        )).rejects.toBe(cancellation);
+
+        const placeholderId = useWorkspaceStore.getState().activeThreadId!;
+        expect(useWorkspaceStore.getState().threads.find((thread) => thread.id === placeholderId))
+          .toMatchObject({ clientPreparing: false, clientError: String(cancellation) });
+        expect(useComposerDraftStore.getState().getDraft(placeholderId)).toEqual(pendingComposerDraft);
+
+        await useWorkspaceStore.getState().retryPreparingThread(placeholderId);
+
+        expect(useComposerDraftStore.getState().getDraft(placeholderId)).toBeUndefined();
+      },
+    );
+
+    it("retains a branch composer draft through rejection until acknowledgement", async () => {
+      const ws = createMockWorkspace({ id: "ws-retain-branch" });
+      const parent = createMockThread({ id: "parent-retain-branch", workspace_id: ws.id });
+      const rejection = new Error("Creation rejected before acknowledgement");
+      useWorkspaceStore.setState({
+        workspaces: [ws],
+        activeWorkspaceId: ws.id,
+        threads: [parent],
+      });
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(rejection)
+        .mockResolvedValueOnce(createMockCreateAndSendResult({
+          id: "persisted-branch",
+          workspace_id: ws.id,
+          parent_thread_id: parent.id,
+        }));
+
+      await expect(useWorkspaceStore.getState().branchThread({
+        sourceThreadId: parent.id,
+        content: pendingComposerDraft.input,
+        model: pendingComposerDraft.modelId,
+        mode: "direct",
+        selectedTextComments: pendingComposerDraft.selectedTextComments,
+        composerDraft: pendingComposerDraft,
+      })).rejects.toBe(rejection);
+
+      const placeholderId = useWorkspaceStore.getState().activeThreadId!;
+      expect(useComposerDraftStore.getState().getDraft(placeholderId)).toEqual(pendingComposerDraft);
+
+      await useWorkspaceStore.getState().retryPreparingThread(placeholderId);
+
+      expect(useComposerDraftStore.getState().getDraft(placeholderId)).toBeUndefined();
+    });
+
     it("createAndSendMessage sends a base branch when attaching a detached existing worktree", async () => {
       const ws = createMockWorkspace({ id: "ws-detached-existing" });
       const created = createMockThread({
