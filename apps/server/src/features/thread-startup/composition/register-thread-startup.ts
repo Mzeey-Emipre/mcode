@@ -1,4 +1,4 @@
-import { Lifecycle, type DependencyContainer } from "tsyringe";
+import { instanceCachingFactory, Lifecycle, type DependencyContainer } from "tsyringe";
 import { ThreadStartupRepo } from "../persistence/thread-startup-repo.js";
 import { ThreadStartupService } from "../thread-startup-service.js";
 
@@ -9,9 +9,9 @@ export function registerThreadStartupServices(container: DependencyContainer): v
     { useClass: ThreadStartupRepo },
     { lifecycle: Lifecycle.Singleton },
   );
-  container.register(
-    ThreadStartupService,
-    { useClass: ThreadStartupService },
-    { lifecycle: Lifecycle.Singleton },
-  );
+  container.register(ThreadStartupService, {
+    useFactory: instanceCachingFactory(
+      (childContainer) => new ThreadStartupService(childContainer.resolve(ThreadStartupRepo)),
+    ),
+  });
 }
