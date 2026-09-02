@@ -5,14 +5,35 @@ import type {
   MessageMention,
   ReasoningLevel,
   SelectedTextComment,
+  SelectedTextCommentSource,
 } from "@mcode/contracts";
+
+/** Restorable open-editor state for one selected-text comment in a ComposerDraft. */
+export interface SelectedTextCommentEditorDraft {
+  /** The immutable selected-text source that the editor targets. */
+  source: SelectedTextCommentSource;
+  /** Saved comment being edited. Omit while the editor creates a new comment. */
+  commentId?: string;
+  /** Current note text, including unsaved changes. */
+  note: string;
+  /** Current structured mention metadata, including unsaved changes. */
+  mentions: MessageMention[];
+  /** The first Escape warning has been shown. */
+  escapeWarned: boolean;
+  /** The first close or outside warning has been shown. */
+  outsideWarned: boolean;
+  /** The editor is anchored to its source range or to an aggregate card. */
+  anchor: "source" | "card";
+}
 
 /** Draft state for a single composer instance, keyed by thread ID. */
 export interface ComposerDraft {
   input: string;
   mentions?: MessageMention[];
-  /** One selected-text comment awaiting persistence with this draft. */
+  /** Saved selected-text comments awaiting persistence with this draft. */
   selectedTextComments?: SelectedTextComment[];
+  /** Open selected-text comment editor state restored with this draft. */
+  selectedTextCommentEditor?: SelectedTextCommentEditorDraft;
   attachments: PendingAttachment[];
   modelId: string;
   /** Provider ID stored alongside the model because multiple providers share model IDs. */
@@ -61,7 +82,8 @@ interface ComposerDraftState {
 function draftHasNoSendableContent(draft: ComposerDraft): boolean {
   return draft.input.trim() === ""
     && draft.attachments.length === 0
-    && (draft.selectedTextComments?.length ?? 0) === 0;
+    && (draft.selectedTextComments?.length ?? 0) === 0
+    && !draft.selectedTextCommentEditor;
 }
 
 function revokeAttachmentPreviewUrls(attachments: readonly PendingAttachment[]): void {

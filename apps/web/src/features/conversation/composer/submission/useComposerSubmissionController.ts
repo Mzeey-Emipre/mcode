@@ -139,15 +139,14 @@ export function useComposerSubmissionController({
         onBranchModeExit,
         onThreadCreated,
       });
-      const draftCleared = form.clearSubmittedDraft(submission.snapshot);
       try {
         await dispatch;
       } catch (error) {
-        if (draftCleared) form.restoreFailedDispatch();
         annotations.restoreAfterFailure();
-        showDispatchFailure(error);
+        showDispatchFailure(error, submission.snapshot.selectedTextComments.length > 0);
         return;
       }
+      form.clearSubmittedDraft(submission.snapshot);
       annotations.stopWatching();
       completeSuccessfulComposerSubmission({
         threadId,
@@ -345,10 +344,10 @@ function createCheckoutConfirmation({
 }
 
 /** Displays a failed transport without clearing the submitted form state. */
-function showDispatchFailure(error: unknown): void {
+function showDispatchFailure(error: unknown, keptSelectedTextComments: boolean): void {
   useToastStore.getState().show(
     "error",
-    "Could not send message",
+    keptSelectedTextComments ? "Message not sent. Comments kept." : "Could not send message",
     error instanceof Error ? error.message : "Message dispatch failed",
   );
 }

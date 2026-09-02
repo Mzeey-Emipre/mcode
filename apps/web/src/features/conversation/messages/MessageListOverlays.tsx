@@ -4,6 +4,7 @@ import { StickyUserMessage } from "@/components/chat/StickyUserMessage";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import type { SelectedTextComment } from "@mcode/contracts";
 import { useMemo, type RefObject } from "react";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import type { Message } from "@/transport/types";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { SelectedTextCommentControls } from "./selection/SelectedTextCommentControls";
@@ -16,6 +17,10 @@ interface MessageListOverlaysProps {
   readonly isLoadingMore: boolean;
   readonly isLoadingNewer: boolean;
   readonly onSelectedTextComment: ((comment: SelectedTextComment) => void) | undefined;
+  readonly onSelectedTextCommentEditorChange:
+    | ((editor: SelectedTextCommentEditorDraft | undefined) => void)
+    | undefined;
+  readonly selectedTextCommentEditor: SelectedTextCommentEditorDraft | undefined;
   readonly selectedTextCommentEditorScope: SelectedTextCommentEditorScope | undefined;
   /** Scroll viewport that bounds selected-text controls. */
   readonly viewportRef: RefObject<HTMLElement | null>;
@@ -41,6 +46,8 @@ export function MessageListOverlays({
   isLoadingMore,
   isLoadingNewer,
   onSelectedTextComment,
+  onSelectedTextCommentEditorChange,
+  selectedTextCommentEditor,
   selectedTextCommentEditorScope,
   viewportRef,
   renderedThreadId,
@@ -70,6 +77,8 @@ export function MessageListOverlays({
       <SelectedTextCommentControls
         key={renderedThreadId ?? "no-rendered-thread"}
         onSelectedTextComment={onSelectedTextComment}
+        editor={selectedTextCommentEditor}
+        onSelectedTextCommentEditorChange={onSelectedTextCommentEditorChange}
         selectedTextCommentEditorScope={selectedTextCommentEditorScope}
         viewportRef={viewportRef}
         renderedThreadId={renderedThreadId}

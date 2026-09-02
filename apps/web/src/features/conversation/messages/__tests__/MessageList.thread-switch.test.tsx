@@ -18,8 +18,10 @@
  * `positionAtBottom({ measureFirst: true })` calls `scrollToIndex` with
  * `behavior: "auto"` so the list anchors to the tail before rows finish measuring.
  */
-import { render, act, fireEvent } from "@testing-library/react";
+import { render, act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { SelectedTextComment } from "@mcode/contracts";
 
 const measureSpy = vi.fn();
 const scrollToIndexSpy = vi.fn();
@@ -182,7 +184,7 @@ vi.mock("../../narrative", () => ({
     isAgentRunning ? <div>Thinking</div> : null,
 }));
 
-import { MessageList } from "../MessageList";
+import { MessageList, type SelectedTextCommentSourceNavigationRequest } from "../MessageList";
 import { preservePrependedVirtualRange } from "../message-list-virtualization";
 import {
   rememberScrollTop,
@@ -193,6 +195,7 @@ import {
 } from "@/components/chat/scrollPositionMemory";
 
 const rangeClientRectsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+const rangeBoundingRectDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
 
 function mockSelectedTextViewport(container: HTMLElement): HTMLDivElement {
   const viewport = container.querySelector(".overflow-y-auto") as HTMLDivElement;
@@ -221,6 +224,10 @@ beforeEach(() => {
     configurable: true,
     value: () => [new DOMRect(120, 160, 96, 20)],
   });
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => new DOMRect(120, 160, 96, 20),
+  });
 });
 
 afterEach(() => {
@@ -228,11 +235,231 @@ afterEach(() => {
   document.getSelection()?.removeAllRanges();
   if (rangeClientRectsDescriptor) Object.defineProperty(Range.prototype, "getClientRects", rangeClientRectsDescriptor);
   else Reflect.deleteProperty(Range.prototype, "getClientRects");
+  if (rangeBoundingRectDescriptor) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeBoundingRectDescriptor);
+  else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
   if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
   else Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("MessageList thread switch", () => {
+  it("loads and scrolls a virtualized source before it reconstructs the saved range", async () => {
+    messagesValue = [{ id: "m1", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Current message" }];
+    hasMoreMessagesValue = true;
+    const comment: SelectedTextComment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "m2",
+        sourceRole: "assistant",
+        start: 0,
+        end: 14,
+        quote: "Virtual source",
+      },
+      note: "Saved note",
+      mentions: [],
+    };
+    const onSelectedTextCommentSourceOpened = vi.fn();
+    loadOlderMessagesSpy.mockImplementationOnce(async () => {
+      messagesValue = [
+        { id: "m2", sequence: 1, thread_id: "thread-A", role: "assistant", content: "Virtual source" },
+        { id: "m1", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Current message" },
+      ];
+      // More pages can remain after the target page loads. The navigation
+      // effect must react to the newly resident source, not pagination state.
+      hasMoreMessagesValue = true;
+    });
+    const request = { id: 1, comment };
+    const props = {
+      selectedTextCommentSourceNavigation: request,
+      onSelectedTextCommentSourceOpened,
+    };
+    const { container, rerender } = render(<MessageList {...props} />);
+    mockSelectedTextViewport(container);
+
+    await waitFor(() => expect(loadOlderMessagesSpy).toHaveBeenCalledWith("thread-A"));
+    rerender(<MessageList {...props} />);
+    await waitFor(() => expect(onSelectedTextCommentSourceOpened).toHaveBeenCalledWith(request));
+    expect(scrollToIndexSpy).toHaveBeenCalledWith(0, { align: "center", behavior: "smooth" });
+  });
+
+  it("marks a source unavailable only after its resident message fails canonical reconstruction", async () => {
+    messagesValue = [{ id: "m1", sequence: 1, thread_id: "thread-A", role: "assistant", content: "Loaded message" }];
+    const comment: SelectedTextComment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "m1",
+        sourceRole: "assistant",
+        start: 0,
+        end: 7,
+        quote: "Missing",
+      },
+      note: "Saved note",
+      mentions: [],
+    };
+    const onSelectedTextCommentSourceUnavailable = vi.fn();
+    const request = { id: 2, comment };
+    const { container } = render(
+      <MessageList
+        selectedTextCommentSourceNavigation={request}
+        onSelectedTextCommentSourceUnavailable={onSelectedTextCommentSourceUnavailable}
+      />,
+    );
+    mockSelectedTextViewport(container);
+
+    await waitFor(() => expect(onSelectedTextCommentSourceUnavailable).toHaveBeenCalledWith(request));
+    expect(loadOlderMessagesSpy).not.toHaveBeenCalled();
+    expect(loadNewerMessagesSpy).not.toHaveBeenCalled();
+  });
+
+  it("marks a source unavailable after its required history page fails to load", async () => {
+    messagesValue = [{ id: "m1", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Current message" }];
+    hasMoreMessagesValue = true;
+    loadOlderMessagesSpy.mockResolvedValueOnce("failed");
+    const comment: SelectedTextComment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "m2",
+        sourceRole: "assistant",
+        start: 0,
+        end: 14,
+        quote: "Virtual source",
+      },
+      note: "Saved note",
+      mentions: [],
+    };
+    const onSelectedTextCommentSourceUnavailable = vi.fn();
+    const request = { id: 3, comment };
+    const { container, rerender } = render(
+      <MessageList
+        selectedTextCommentSourceNavigation={request}
+        onSelectedTextCommentSourceUnavailable={onSelectedTextCommentSourceUnavailable}
+      />,
+    );
+    mockSelectedTextViewport(container);
+
+    await waitFor(() => expect(onSelectedTextCommentSourceUnavailable).toHaveBeenCalledWith(request));
+    rerender(
+      <MessageList
+        selectedTextCommentSourceNavigation={request}
+        onSelectedTextCommentSourceUnavailable={onSelectedTextCommentSourceUnavailable}
+      />,
+    );
+    expect(loadOlderMessagesSpy).toHaveBeenCalledOnce();
+    expect(onSelectedTextCommentSourceUnavailable).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the latest source request active when an earlier history request fails", async () => {
+    messagesValue = [{ id: "m1", sequence: 3, thread_id: "thread-A", role: "assistant", content: "Current message" }];
+    hasMoreMessagesValue = true;
+    const commentA: SelectedTextComment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "missing-a",
+        sourceRole: "assistant",
+        start: 0,
+        end: 1,
+        quote: "A",
+      },
+      note: "Saved note A",
+      mentions: [],
+    };
+    const commentB: SelectedTextComment = {
+      id: "22222222-2222-4222-8222-222222222222",
+      displayNumber: 2,
+      source: {
+        threadId: "thread-A",
+        messageId: "missing-b",
+        sourceRole: "assistant",
+        start: 0,
+        end: 1,
+        quote: "B",
+      },
+      note: "Saved note B",
+      mentions: [],
+    };
+    const requestA = {
+      id: 4,
+      comment: commentA,
+    };
+    const requestB = {
+      id: 5,
+      comment: commentB,
+    };
+    let rejectA!: (reason?: unknown) => void;
+    loadOlderMessagesSpy
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectA = reject; }))
+      .mockReturnValueOnce(new Promise(() => undefined));
+    const onSelectedTextCommentSourceUnavailable = vi.fn();
+
+    function NavigationHarness() {
+      const [request, setRequest] = useState<SelectedTextCommentSourceNavigationRequest | undefined>(requestA);
+      return (
+        <>
+          <button type="button" onClick={() => setRequest(requestB)}>Open B</button>
+          <output data-testid="active-source-request">{request?.id}</output>
+          <MessageList
+            selectedTextCommentSourceNavigation={request}
+            onSelectedTextCommentSourceUnavailable={(resolvedRequest) => {
+              onSelectedTextCommentSourceUnavailable(resolvedRequest);
+              setRequest(undefined);
+            }}
+          />
+        </>
+      );
+    }
+
+    const { container } = render(<NavigationHarness />);
+    mockSelectedTextViewport(container);
+    await waitFor(() => expect(loadOlderMessagesSpy).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "Open B" }));
+    await waitFor(() => expect(loadOlderMessagesSpy).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      rejectA(new Error("History unavailable"));
+      await Promise.resolve();
+    });
+
+    expect(onSelectedTextCommentSourceUnavailable).not.toHaveBeenCalled();
+    expect(screen.getByTestId("active-source-request")).toHaveTextContent("5");
+  });
+
+  it("restores an open source editor after its source is virtualized and scrolled into view", async () => {
+    messagesValue = [
+      { id: "m1", sequence: 1, thread_id: "thread-A", role: "assistant", content: "Earlier message" },
+      { id: "m2", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Virtual source" },
+    ];
+    const { container } = render(
+      <MessageList
+        selectedTextCommentEditor={{
+          source: {
+            threadId: "thread-A",
+            messageId: "m2",
+            sourceRole: "assistant",
+            start: 0,
+            end: 14,
+            quote: "Virtual source",
+          },
+          note: "Unsaved edit",
+          mentions: [],
+          escapeWarned: false,
+          outsideWarned: false,
+          anchor: "source",
+        }}
+      />,
+    );
+    mockSelectedTextViewport(container);
+
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Comment on selected text" })).toBeVisible());
+    expect(scrollToIndexSpy).toHaveBeenCalledWith(1, { align: "center", behavior: "smooth" });
+  });
+
   it("keeps selected-text actions open through the selection click sequence", async () => {
     messagesValue = [{
       id: "assistant-1",
@@ -267,7 +494,11 @@ describe("MessageList thread switch", () => {
     fireEvent.click(addComment);
     expect(getByRole("dialog", { name: "Comment on selected text" })).toBeInTheDocument();
     const noteInput = getByRole("textbox", { name: "Comment note" });
-    await vi.waitFor(() => expect(noteInput).toHaveFocus());
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    expect(noteInput).toHaveFocus();
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
     expect(getByRole("button", { name: "Close comment editor" })).toBeInTheDocument();
     selection.removeAllRanges();

@@ -15,7 +15,22 @@ import {
   createMockWorkspace,
   createMockThread,
 } from "../../../../__tests__/mocks/transport";
-import type { CreateAndSendResult, TurnRuntimeSnapshot } from "@mcode/contracts";
+import type { CreateAndSendResult, SelectedTextComment, TurnRuntimeSnapshot } from "@mcode/contracts";
+
+const selectedTextComments: SelectedTextComment[] = [{
+  id: "11111111-1111-4111-8111-111111111111",
+  displayNumber: 1,
+  source: {
+    threadId: "parent-thread",
+    messageId: "message-1",
+    sourceRole: "assistant",
+    start: 0,
+    end: 5,
+    quote: "focus",
+  },
+  note: "Explain this choice.",
+  mentions: [],
+}];
 
 function createMockCreateAndSendResult(
   overrides?: Parameters<typeof createMockThread>[0],
@@ -292,6 +307,60 @@ describe("Workspace Behavior", () => {
     await Promise.resolve();
 
     expect(useWorkspaceStore.getState().threads.some((t) => t.id === "new-first-send")).toBe(true);
+  });
+
+  it("keeps saved cards in comment-only new and prompt-and-card branch creation transport", async () => {
+    const workspace = createMockWorkspace({ id: "workspace-comments" });
+    const created = createMockThread({ id: "thread-comments", workspace_id: workspace.id });
+    const parent = createMockThread({ id: "parent-thread", workspace_id: workspace.id });
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(createMockCreateAndSendResult(created))
+      .mockResolvedValueOnce(createMockCreateAndSendResult(created));
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+    });
+
+    await useWorkspaceStore.getState().createAndSendMessage(
+      "",
+      "composer-2-fast",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "",
+      [],
+      undefined,
+      undefined,
+      "standard",
+      selectedTextComments,
+    );
+    useWorkspaceStore.setState({ threads: [parent], activeThreadId: parent.id });
+    await useWorkspaceStore.getState().branchThread({
+      sourceThreadId: parent.id,
+      content: "Continue from this point.",
+      model: "composer-2-fast",
+      mode: "direct",
+      selectedTextComments,
+    });
+
+    const [newThreadCommand, branchCommand] = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    expect(newThreadCommand?.[0]).toEqual(expect.objectContaining({
+      content: "",
+      selectedTextComments,
+    }));
+    expect(branchCommand?.[0]).toEqual(expect.objectContaining({
+      content: "Continue from this point.",
+      parentThreadId: parent.id,
+      selectedTextComments,
+    }));
   });
 
   it("when first send creates a real thread, the new thread does not inherit the threadless right panel", async () => {

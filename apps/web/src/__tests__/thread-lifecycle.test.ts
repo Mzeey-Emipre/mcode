@@ -77,6 +77,26 @@ function makeSelectedTextComment(): SelectedTextComment {
   };
 }
 
+function makeSelectedTextComments(): SelectedTextComment[] {
+  const first = makeSelectedTextComment();
+  return [
+    first,
+    {
+      ...first,
+      id: "550e8400-e29b-41d4-a716-446655440004",
+      displayNumber: 2,
+      source: {
+        ...first.source,
+        messageId: "assistant-2",
+        start: 0,
+        end: 4,
+        quote: "next",
+      },
+      note: "Explain this next choice.",
+    },
+  ];
+}
+
 describe("Thread Lifecycle Behavior", () => {
   beforeEach(() => {
     clearRecordCache();
@@ -91,9 +111,9 @@ describe("Thread Lifecycle Behavior", () => {
     expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
   });
 
-  it("sends one selected-text comment with a normal prompt after persistence acknowledges", async () => {
+  it("sends saved selected-text comments with a normal prompt after persistence acknowledges", async () => {
     const threadId = "thread-1";
-    const comment = makeSelectedTextComment();
+    const comments = makeSelectedTextComments();
     resetThreadStoreForTests({ currentThreadId: threadId });
 
     const persisted = await useThreadStore.getState().sendMessage(
@@ -116,15 +136,15 @@ describe("Thread Lifecycle Behavior", () => {
       undefined,
       undefined,
       undefined,
-      [comment],
+      comments,
     );
 
     expect(persisted).toBe(true);
     expect(mockTransport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       content: "Please explain it.",
-      selectedTextComments: [comment],
+      selectedTextComments: comments,
     }));
-    expect(getTestThreadMessages(threadId)[0]?.selectedTextComments).toEqual([comment]);
+    expect(getTestThreadMessages(threadId)[0]?.selectedTextComments).toEqual(comments);
   });
 
   it("reports a rejected selected-text send so the Composer can retain its draft", async () => {

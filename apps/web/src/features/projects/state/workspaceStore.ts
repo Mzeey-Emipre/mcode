@@ -12,6 +12,7 @@ import {
   type CreateAndSendResult,
   type MessageMention,
   type PreviewAnnotationBundle,
+  type SelectedTextComment,
 } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "@/stores/threadStore";
@@ -205,6 +206,8 @@ interface PendingThreadCreation {
   mentions?: MessageMention[];
   /** Structured Preview Annotation bundle sent beside normal attachments. */
   previewAnnotations?: PreviewAnnotationBundle;
+  /** Saved selected-text comments sent with the first turn. */
+  selectedTextComments?: SelectedTextComment[];
   model: string;
   permissionMode?: PermissionMode;
   transportMode: "direct" | "worktree";
@@ -256,6 +259,7 @@ interface BranchThreadParams {
   codexFastMode?: boolean;
   mentions?: MessageMention[];
   previewAnnotations?: PreviewAnnotationBundle;
+  selectedTextComments?: SelectedTextComment[];
   goalObjective?: string;
   orchestrationMode?: OrchestrationMode;
 }
@@ -424,6 +428,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     displayContent: pending.displayContent,
     mentions: pending.mentions,
     previewAnnotations: pending.previewAnnotations,
+    selectedTextComments: pending.selectedTextComments,
     goalObjective: pending.goalObjective,
     orchestrationMode: pending.orchestrationMode,
   });
@@ -519,6 +524,7 @@ interface WorkspaceState {
     previewAnnotations?: PreviewAnnotationBundle,
     goalObjective?: string,
     orchestrationMode?: OrchestrationMode,
+    selectedTextComments?: SelectedTextComment[],
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: BranchThreadParams) => Promise<Thread>;
@@ -1157,6 +1163,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     previewAnnotations,
     goalObjective,
     orchestrationMode,
+    selectedTextComments,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -1185,6 +1192,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       codexFastMode,
       mentions,
       previewAnnotations,
+      selectedTextComments,
       goalObjective,
     };
 
@@ -1215,6 +1223,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       codexFastMode: params.codexFastMode,
       mentions: params.mentions,
       previewAnnotations: params.previewAnnotations,
+      selectedTextComments: params.selectedTextComments,
       goalObjective: params.goalObjective,
     };
 

@@ -1,4 +1,5 @@
 import type { Thread } from "@/transport";
+import type { SelectedTextComment } from "@mcode/contracts";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
 import type { ComposerExecutionTarget, ComposerExecutionTargetController } from "../execution/useComposerExecutionTarget";
 import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
@@ -20,6 +21,12 @@ export interface DispatchComposerTargetOptions {
   replyContext?: ComposerReplyContext;
   onBranchModeExit?(): void;
   onThreadCreated?(thread: Thread): void;
+}
+
+function savedCommentsForTransport(
+  comments: SelectedTextComment[],
+): SelectedTextComment[] | undefined {
+  return comments.length > 0 ? comments : undefined;
 }
 
 /** Dispatches a prepared Composer submit to the target selected by the user. */
@@ -72,6 +79,7 @@ async function dispatchNewThread(
     submission.previewAnnotations,
     submission.goalObjective,
     selection.orchestrationMode,
+    savedCommentsForTransport(snapshot.selectedTextComments),
   );
   onThreadCreated?.(thread);
 }
@@ -122,6 +130,7 @@ function createBranchThreadRequest(
     existingWorktreeBaseBranch: resolveDetachedBaseBranch(target, activeThread),
     forkedFromMessageId,
     mentions: snapshot.mentions,
+    selectedTextComments: savedCommentsForTransport(snapshot.selectedTextComments),
     previewAnnotations: submission.previewAnnotations,
     goalObjective: submission.goalObjective,
     ...branchThreadAgentOptions(snapshot.selection),
