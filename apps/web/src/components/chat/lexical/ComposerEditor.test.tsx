@@ -24,6 +24,28 @@ describe("ComposerEditor", () => {
     expect(screen.getByRole("textbox", { name: "Comment note" })).toHaveStyle({ minHeight: "2.25rem" });
   });
 
+  it("uses regular composer sizing", () => {
+    render(
+      <ComposerEditor
+        onChange={() => {}}
+        onSubmit={() => {}}
+        onMentionTrigger={() => {}}
+        onMentionDismiss={() => {}}
+        isMentionPopupOpen={false}
+        onSlashTrigger={() => {}}
+        onSlashDismiss={() => {}}
+        isSlashPopupOpen={false}
+        ariaLabel="Composer"
+      />,
+    );
+
+    expect(screen.getByRole("textbox", { name: "Composer" })).toHaveStyle({
+      minHeight: "80px",
+      maxHeight: "30vh",
+      overflowY: "auto",
+    });
+  });
+
   it("keeps Enter as a line break and reserves Ctrl+Enter for compact-editor submit", async () => {
     const editorRef: { current: LexicalEditor | null } = { current: null };
     const onChange = vi.fn();

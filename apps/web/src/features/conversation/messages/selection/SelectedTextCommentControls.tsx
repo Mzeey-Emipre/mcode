@@ -38,6 +38,10 @@ type CachedAnchor = {
   readonly scrollTop: number;
 };
 
+type VirtualAnchor = {
+  readonly getBoundingClientRect: () => DOMRect;
+};
+
 function copyRect(rect: DOMRect): DOMRect {
   return new DOMRect(rect.x, rect.y, rect.width, rect.height);
 }
@@ -118,11 +122,6 @@ export function SelectedTextCommentControls({
   }, [openAction]);
 
   useEffect(() => {
-    if (!overlay || overlay.source.threadId === renderedThreadId) return;
-    closeOverlay();
-  }, [closeOverlay, overlay, renderedThreadId]);
-
-  useEffect(() => {
     if (overlay?.stage !== "action") return;
     const closeOnOutsidePress = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest('[data-slot="popover-content"]')) return;
@@ -174,10 +173,6 @@ export function SelectedTextCommentControls({
     setAnnouncement("Comment editor opened.");
   }, [overlay]);
 
-  const closeSelectedTextCommentEditor = useCallback(() => {
-    closeOverlay();
-  }, [closeOverlay]);
-
   const saveSelectedTextComment = useCallback((comment: SelectedTextComment) => {
     onSelectedTextComment?.(comment);
   }, [onSelectedTextComment]);
@@ -186,70 +181,111 @@ export function SelectedTextCommentControls({
     getBoundingClientRect: () => anchorRect,
   }), [anchorRect]);
 
-  const handlePopoverOpenChange = useCallback((open: boolean) => {
-    if (open || overlay?.stage !== "action" || ignoreSelectionClickDismissalRef.current) return;
-    closeOverlay();
-  }, [closeOverlay, overlay]);
-
   return (
     <>
-      <Popover
-        open={overlay !== null && virtualAnchor !== null}
-        modal={false}
-        onOpenChange={handlePopoverOpenChange}
-      >
-        {overlay?.stage === "action" && virtualAnchor && (
-          <PopoverContent
-            anchor={virtualAnchor}
-            side="bottom"
-            align="start"
-            sideOffset={8}
-            collisionBoundary={viewportRef.current ?? undefined}
-            collisionPadding={8}
-            collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
-            positionMethod="fixed"
-            finalFocus={false}
-            className="!w-40 p-1"
-          >
-            <button
-              type="button"
-              className="flex w-full rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent"
-              onClick={openSelectedTextCommentEditor}
-            >
-              Add comment
-            </button>
-          </PopoverContent>
-        )}
-        {overlay?.stage === "editor" && virtualAnchor && (
-          <PopoverContent
-            anchor={virtualAnchor}
-            side="bottom"
-            align="start"
-            sideOffset={8}
-            collisionBoundary={viewportRef.current ?? undefined}
-            collisionPadding={8}
-            collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
-            positionMethod="fixed"
-            sticky
-            initialFocus={() => document.getElementById("selected-text-comment-note")}
-            finalFocus={false}
-            className="w-[min(328px,calc(100vw-16px))] border-0 bg-transparent p-0 shadow-none"
-          >
-            <SelectedTextCommentEditor
-              key={`${overlay.source.messageId}:${overlay.source.start}:${overlay.source.end}`}
-              source={overlay.source}
-              workspaceId={selectedTextCommentEditorScope?.workspaceId}
-              providerId={selectedTextCommentEditorScope?.providerId}
-              onSave={saveSelectedTextComment}
-              onClose={closeSelectedTextCommentEditor}
-              onAnnouncement={setAnnouncement}
-            />
-          </PopoverContent>
-        )}
-      </Popover>
+      <SelectedTextCommentPopover
+        overlay={overlay}
+        virtualAnchor={virtualAnchor}
+        viewportRef={viewportRef}
+        ignoreSelectionClickDismissalRef={ignoreSelectionClickDismissalRef}
+        editorScope={selectedTextCommentEditorScope}
+        onOpenEditor={openSelectedTextCommentEditor}
+        onClose={closeOverlay}
+        onSave={saveSelectedTextComment}
+        onAnnouncement={setAnnouncement}
+      />
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announcement}
       </span>
     </>
+  );
+}
+
+function SelectedTextCommentPopover({
+  overlay,
+  virtualAnchor,
+  viewportRef,
+  ignoreSelectionClickDismissalRef,
+  editorScope,
+  onOpenEditor,
+  onClose,
+  onSave,
+  onAnnouncement,
+}: {
+  readonly overlay: CommentOverlay | null;
+  readonly virtualAnchor: VirtualAnchor | null;
+  readonly viewportRef: RefObject<HTMLElement | null>;
+  readonly ignoreSelectionClickDismissalRef: Readonly<{ current: boolean }>;
+  readonly editorScope?: SelectedTextCommentEditorScope;
+  readonly onOpenEditor: () => void;
+  readonly onClose: () => void;
+  readonly onSave: (comment: SelectedTextComment) => void;
+  readonly onAnnouncement: (message: string) => void;
+}) {
+  if (!overlay || !virtualAnchor) return null;
+
+  const handleOpenChange = (open: boolean) => {
+    if (open || overlay.stage !== "action" || ignoreSelectionClickDismissalRef.current) return;
+    onClose();
+  };
+
+  const content = overlay.stage === "action"
+    ? (
+      <PopoverContent
+        anchor={virtualAnchor}
+        side="bottom"
+        align="start"
+        sideOffset={8}
+        collisionBoundary={viewportRef.current ?? undefined}
+        collisionPadding={8}
+        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
+        positionMethod="fixed"
+        finalFocus={false}
+        className="!w-40 p-1"
+      >
+        <button
+          type="button"
+          className="flex w-full rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent"
+          onClick={onOpenEditor}
+        >
+          Add comment
+        </button>
+      </PopoverContent>
+    )
+    : (
+      <PopoverContent
+        anchor={virtualAnchor}
+        side="bottom"
+        align="start"
+        sideOffset={8}
+        collisionBoundary={viewportRef.current ?? undefined}
+        collisionPadding={8}
+        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
+        positionMethod="fixed"
+        sticky
+        initialFocus={() => document.getElementById("selected-text-comment-note")}
+        finalFocus={false}
+        className="w-[min(328px,calc(100vw-16px))] border-0 bg-transparent p-0 shadow-none"
+      >
+        <SelectedTextCommentEditor
+          key={`${overlay.source.messageId}:${overlay.source.start}:${overlay.source.end}`}
+          source={overlay.source}
+          workspaceId={editorScope?.workspaceId}
+          providerId={editorScope?.providerId}
+          onSave={onSave}
+          onClose={onClose}
+          onAnnouncement={onAnnouncement}
+        />
+      </PopoverContent>
+    );
+
+  return (
+    <Popover
+      open
+      modal={false}
+      onOpenChange={handleOpenChange}
+    >
+      {content}
+    </Popover>
   );
 }

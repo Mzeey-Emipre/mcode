@@ -14,6 +14,7 @@ import { SlashCommandPopup } from "@/components/chat/SlashCommandPopup";
 import { handleSlashCommandPopupKey, type Command, useSlashCommand } from "@/components/chat/useSlashCommand";
 import { useFileAutocomplete, type MentionSuggestion } from "@/components/chat/useFileAutocomplete";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { writeComposerContent } from "@/features/conversation/composer/draft/composer-editor-content";
 import type { SelectedTextCommentSource } from "../selected-text-projection";
@@ -281,41 +282,59 @@ function CommentEditorControls({
 }) {
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        className="rounded-full"
-        aria-label="Close comment editor"
-        title="Close comment editor"
-        onClick={onClose}
-      >
-        <X size={14} aria-hidden />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={(
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="rounded-full"
+              aria-label="Close comment editor"
+              onClick={onClose}
+            >
+              <X size={14} aria-hidden />
+            </Button>
+          )}
+        />
+        <TooltipContent>Close comment editor</TooltipContent>
+      </Tooltip>
       {canSave && (
-        <Button
-          type="button"
-          size="icon-xs"
-          className="rounded-full"
-          aria-label={comment ? "Save comment" : "Add comment"}
-          title={comment ? "Save comment" : "Add comment"}
-          onClick={onSave}
-        >
-          <Check size={13} aria-hidden />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={(
+              <Button
+                type="button"
+                size="icon-xs"
+                className="rounded-full"
+                aria-label={comment ? "Save comment" : "Add comment"}
+                onClick={onSave}
+              >
+                <Check size={13} aria-hidden />
+              </Button>
+            )}
+          />
+          <TooltipContent>{comment ? "Save comment" : "Add comment"}</TooltipContent>
+        </Tooltip>
       )}
       {comment && onDelete && (
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className="rounded-full text-destructive hover:text-destructive"
-          aria-label="Delete comment"
-          title="Delete comment"
-          onClick={onDelete}
-        >
-          <X size={14} aria-hidden />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={(
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                className="rounded-full text-destructive hover:text-destructive"
+                aria-label="Delete comment"
+                onClick={onDelete}
+              >
+                <X size={14} aria-hidden />
+              </Button>
+            )}
+          />
+          <TooltipContent>Delete comment</TooltipContent>
+        </Tooltip>
       )}
     </div>
   );

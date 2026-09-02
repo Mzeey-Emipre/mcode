@@ -66,6 +66,7 @@ export function MessageListOverlays({
       {isLoadingMore && <PaginationIndicator placement="top" />}
       {isLoadingNewer && <PaginationIndicator placement="bottom" />}
       <SelectedTextCommentControls
+        key={renderedThreadId ?? "no-rendered-thread"}
         onSelectedTextComment={onSelectedTextComment}
         selectedTextCommentEditorScope={selectedTextCommentEditorScope}
         viewportRef={viewportRef}
