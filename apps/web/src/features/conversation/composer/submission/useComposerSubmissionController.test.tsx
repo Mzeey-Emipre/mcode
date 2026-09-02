@@ -94,7 +94,7 @@ describe("useComposerSubmissionController selected-text comments", () => {
     vi.clearAllMocks();
   });
 
-  it("dispatches comment-only drafts and clears them only after acknowledgement", async () => {
+  it("dispatches comment-only drafts and clears them while acknowledgement is pending", async () => {
     let acknowledge!: () => void;
     routeMocks.dispatchComposerTarget.mockReturnValueOnce(new Promise<void>((resolve) => {
       acknowledge = resolve;
@@ -114,7 +114,7 @@ describe("useComposerSubmissionController selected-text comments", () => {
         snapshot: expect.objectContaining({ rawInput: "", selectedTextComments: [comment] }),
       }),
     })));
-    expect(result.current.form.state.selectedTextComments).toEqual([comment]);
+    expect(result.current.form.state.selectedTextComments).toEqual([]);
 
     await act(async () => {
       acknowledge();
