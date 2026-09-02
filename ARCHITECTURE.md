@@ -870,8 +870,11 @@ evidence, hashes, and target metadata. Nightly and Stable are publication
 adapters over the same staged target evidence. Nightly uses unsigned targets;
 Stable requires production signing and notarization.
 
-The pull-request dry run uses the complete four-target matrix. An
-electron-builder failure is retryable only when its output identifies an
-Electron release download and EOF, ECONNRESET, ETIMEDOUT, or a temporary
-connection failure. Native rebuild, package validation, Terminal attestation,
-signing, and unknown failures remain deterministic failures and are not retried.
+Pull-request packaging uses a Linux x64 canary when desktop or packaging
+paths change. Release Please PRs and manual full-matrix dispatches run the
+complete four-target matrix. Nightly and stable release keep their existing
+matrices. An electron-builder failure is retryable only when its output
+identifies an Electron release download and EOF, ECONNRESET, ETIMEDOUT, or a
+temporary connection failure. Native rebuild, package validation, Terminal
+attestation, signing, and unknown failures remain deterministic failures and
+are not retried.
