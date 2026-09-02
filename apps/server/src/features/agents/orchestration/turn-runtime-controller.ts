@@ -1216,12 +1216,21 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
         ...(created.thread.warnings?.length ? { warnings: created.thread.warnings } : {}),
       };
     }
-    const runtimeSnapshot = await this.sendInitialMessageAndSnapshot(created.command, (err) => {
-      logger.error("createAndSend initial send failed", {
-        threadId: created.thread.id,
-        error: err instanceof Error ? err.message : String(err),
+    let runtimeSnapshot: TurnRuntimeSnapshot;
+    try {
+      this.threadCreation.startInitialAgent(created.startupId);
+      runtimeSnapshot = await this.sendInitialMessageAndSnapshot(created.command, (err) => {
+        logger.error("createAndSend initial send failed", {
+          threadId: created.thread.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        this.threadCreation.failInitialAgent(created.startupId);
       });
-    });
+      if (runtimeSnapshot.turnExecutionId) this.threadCreation.completeInitialAgent(created.startupId);
+    } catch (error) {
+      this.threadCreation.failInitialAgent(created.startupId);
+      throw error;
+    }
     return {
       ...created.thread,
       runtimeSnapshot,
@@ -1233,6 +1242,7 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
   async dispatchQueuedAutomaticTurn(
     submission: WorkspaceEnvironmentQueuedTurnSubmission,
   ): Promise<WorkspaceEnvironmentAutomaticSetupDispatch> {
+    const startupId = this.threadCreation.startQueuedAgent(submission.threadId);
     let resolveStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       resolveStarted = resolve;
@@ -1245,15 +1255,21 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
       ...this.turnAdmissions.queuedCommand(submission),
       onTurnStarted: (runtime) => {
         this.automaticQueuedTurnCompletionResolvers.set(runtime.turnExecutionId!, resolveCompletion);
+        this.threadCreation.completeInitialAgent(startupId);
         resolveStarted();
       },
     });
-    await Promise.race([
-      started,
-      send.then(() => {
-        throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
-      }),
-    ]);
+    try {
+      await Promise.race([
+        started,
+        send.then(() => {
+          throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
+        }),
+      ]);
+    } catch (error) {
+      this.threadCreation.failInitialAgent(startupId);
+      throw error;
+    }
     return { completion };
   }
 

@@ -109,6 +109,42 @@ describe("ThreadStartupService", () => {
     db.close();
   });
 
+  it("keeps blocked Setup recoverable through Retry and Continue", () => {
+    const { db, service } = createHarness();
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, mode, worktree_managed, provider) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(threadId, "workspace-1", "Started", "main", "worktree", 1, "claude");
+    service.start(input(firstStartupId, "workspace-1", "managed-worktree"));
+    service.advance(firstStartupId, "thread");
+    service.bindThread(firstStartupId, threadId);
+    service.advance(firstStartupId, "worktree");
+    service.advance(firstStartupId, "setup");
+
+    const blocked = service.block(firstStartupId, {
+      code: "SETUP_FAILED",
+      message: "Project Setup did not complete successfully",
+      actions: ["retry", "continue"],
+    });
+    expect(service.interruptNonterminalOnStartup()).toEqual([]);
+    const resumed = service.resume(firstStartupId);
+    const skipped = service.skip(firstStartupId, "setup");
+
+    expect(blocked).toMatchObject({
+      state: "blocked",
+      phase: "setup",
+      steps: expect.arrayContaining([{ phase: "setup", state: "blocked" }]),
+      block: { actions: ["retry", "continue"] },
+    });
+    expect(resumed).toMatchObject({ state: "running", phase: "setup", block: undefined });
+    expect(skipped).toMatchObject({
+      state: "running",
+      phase: "agent",
+      steps: expect.arrayContaining([{ phase: "setup", state: "skipped" }, { phase: "agent", state: "running" }]),
+    });
+    expect(service.findByThreadId(threadId)?.startupId).toBe(firstStartupId);
+    db.close();
+  });
+
   it("scopes list results to one workspace", () => {
     const { db, service } = createHarness();
     service.start(input(firstStartupId, "workspace-1"));

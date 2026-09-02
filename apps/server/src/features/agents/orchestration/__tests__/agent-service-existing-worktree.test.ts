@@ -15,6 +15,8 @@ import type { GitService } from "../../../projects/index.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
+import { ThreadStartupRepo } from "../../../thread-startup/persistence/thread-startup-repo.js";
+import { ThreadStartupService } from "../../../thread-startup/thread-startup-service.js";
 
 const roots: string[] = [];
 
@@ -44,12 +46,17 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
 
 function createAgentServiceHarness(automaticSetup?:
   | { queueAutomaticFirstTurn: ReturnType<typeof vi.fn>; admitAutomaticTurn?: ReturnType<typeof vi.fn> }
-  | ((deps: { readonly db: Database.Database; readonly threadRepo: ThreadRepo }) => WorkspaceEnvironmentService),
+  | ((deps: {
+    readonly db: Database.Database;
+    readonly threadRepo: ThreadRepo;
+    readonly threadStartups: ThreadStartupService;
+  }) => WorkspaceEnvironmentService),
 ) {
   const db: Database.Database = openMemoryDatabase();
   const threadRepo = new ThreadRepo(db);
   const workspaceRepo = new WorkspaceRepo(db);
   const messageRepo = new MessageRepo(db);
+  const threadStartups = new ThreadStartupService(new ThreadStartupRepo(db));
   const gitService = {
     listWorktrees: vi.fn(),
     resolveWorkingDir: vi.fn(() => process.cwd()),
@@ -73,7 +80,7 @@ function createAgentServiceHarness(automaticSetup?:
   };
   const goals = { routeCommand: vi.fn(async () => ({ kind: "passthrough" as const })) };
   const resolvedAutomaticSetup = typeof automaticSetup === "function"
-    ? automaticSetup({ db, threadRepo })
+    ? automaticSetup({ db, threadRepo, threadStartups })
     : automaticSetup;
   const service = createAgentServiceForTest(
     threadRepo,
@@ -124,6 +131,8 @@ function createAgentServiceHarness(automaticSetup?:
     undefined,
     undefined,
     undefined,
+    undefined,
+    threadStartups,
   );
   return {
     db,
@@ -138,6 +147,7 @@ function createAgentServiceHarness(automaticSetup?:
     attachmentService,
     goals,
     automaticSetup: resolvedAutomaticSetup,
+    threadStartups,
   };
 }
 
@@ -169,18 +179,22 @@ describe("AgentService.createAndSend defaults", () => {
     const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-automatic-setup-"));
     roots.push(root);
     const prepare = vi.fn();
-    const { threadRepo, workspaceRepo, threadService, service, provider, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
+    const { threadRepo, workspaceRepo, threadService, service, provider, automaticSetup, threadStartups } = createAgentServiceHarness(({ db, threadRepo: threads, threadStartups: startups }) =>
       new WorkspaceEnvironmentService({
         mcodeDir: root,
         database: db,
         threads: { findById: (id) => threads.findById(id) },
         terminalCommands: { prepare },
+        threadStartups: startups,
         platform: "linux",
       }),
     );
     const workspace = workspaceRepo.create("Repo", "/repo");
     const managed = threadRepo.create(workspace.id, "Managed first Turn", "worktree", "feature/managed", true, "claude");
-    vi.mocked(threadService.create).mockResolvedValue(managed);
+    vi.mocked(threadService.create).mockImplementation(async (_workspaceId, _title, _mode, _branch, options) => {
+      options.lifecycle?.onThreadPersisted(managed);
+      return managed;
+    });
     const providerCompletion = deferred<void>();
     provider.sendTurn.mockImplementation(async () => await providerCompletion.promise);
     const environment = automaticSetup as WorkspaceEnvironmentService;
@@ -191,6 +205,7 @@ describe("AgentService.createAndSend defaults", () => {
       content: "Dispatch without Setup",
       mode: "worktree",
       branch: "feature/managed",
+      startupId: "00000000-0000-4000-8000-000000000001",
     });
 
     await eventually(() => expect(provider.sendTurn).toHaveBeenCalledOnce());
@@ -199,6 +214,16 @@ describe("AgentService.createAndSend defaults", () => {
       gate: "not-required",
       attempt: null,
       queuedTurns: [{ state: "dispatched", dispatchedAt: expect.any(String) }],
+    });
+    expect(threadStartups.get("00000000-0000-4000-8000-000000000001")).toMatchObject({
+      state: "completed",
+      phase: "agent",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "setup", state: "skipped" },
+        { phase: "agent", state: "completed" },
+      ],
     });
     providerCompletion.resolve();
   });

@@ -4,6 +4,7 @@ import {
   THREAD_STARTUP_TRANSCRIPT_MAX_ENTRIES,
   ThreadStartupTranscriptEntrySchema,
   type ThreadStartup,
+  type ThreadStartupBlock,
   type ThreadStartupError,
   type ThreadStartupKind,
   type ThreadStartupPhase,
@@ -75,10 +76,16 @@ export class ThreadStartupService {
     return this.startupRepo.listByWorkspace(workspaceId);
   }
 
+  /** Find the active startup record currently associated with one Thread. */
+  findByThreadId(threadId: string): ThreadStartup | null {
+    return this.startupRepo.findNonterminalByThreadId(threadId);
+  }
+
   /** Mark the current phase active or move from it to the next phase. */
   advance(startupId: string, phase: ThreadStartupPhase): ThreadStartup {
     const startup = this.require(startupId);
     if (isTerminal(startup)) return startup;
+    if (startup.state === "blocked") throw new Error("Blocked startup must resume before advancing");
     const targetIndex = startup.steps.findIndex((step) => step.phase === phase);
     if (targetIndex < 0) throw new Error(`Phase ${phase} does not apply to startup ${startupId}`);
 
@@ -143,6 +150,60 @@ export class ThreadStartupService {
     });
   }
 
+  /** Keep the current phase recoverably blocked until the user retries or continues. */
+  block(startupId: string, block: ThreadStartupBlock): ThreadStartup {
+    const startup = this.require(startupId);
+    if (isTerminal(startup) || startup.state === "blocked") return startup;
+    const activeIndex = this.activeIndex(startup);
+    return this.persistNext({
+      ...startup,
+      state: "blocked",
+      phase: startup.steps[activeIndex].phase,
+      steps: startup.steps.map((step, index) => index === activeIndex
+        ? { ...step, state: "blocked" }
+        : step),
+      block,
+    });
+  }
+
+  /** Resume the current blocked phase for a new Setup attempt. */
+  resume(startupId: string): ThreadStartup {
+    const startup = this.require(startupId);
+    if (isTerminal(startup) || startup.state !== "blocked") return startup;
+    const activeIndex = this.currentIndex(startup);
+    return this.persistNext({
+      ...startup,
+      state: "running",
+      steps: startup.steps.map((step, index) => index === activeIndex
+        ? { ...step, state: "running" }
+        : step),
+      block: undefined,
+    });
+  }
+
+  /** Skip the current recoverable phase and enter the next phase. */
+  skip(startupId: string, phase: ThreadStartupPhase): ThreadStartup {
+    const startup = this.require(startupId);
+    if (isTerminal(startup)) return startup;
+    const activeIndex = this.currentIndex(startup);
+    if (startup.steps[activeIndex]?.phase !== phase) {
+      throw new Error(`Startup ${startupId} cannot skip phase ${phase}`);
+    }
+    const next = startup.steps[activeIndex + 1];
+    if (!next) throw new Error("Startup cannot skip its final phase");
+    return this.persistNext({
+      ...startup,
+      state: "running",
+      phase: next.phase,
+      steps: startup.steps.map((step, index) => {
+        if (index === activeIndex) return { ...step, state: "skipped" };
+        if (index === activeIndex + 1) return { ...step, state: "running" };
+        return step;
+      }),
+      block: undefined,
+    });
+  }
+
   /** Fail the current phase with structured error detail. */
   fail(startupId: string, error: ThreadStartupError): ThreadStartup {
     const startup = this.require(startupId);
@@ -156,6 +217,7 @@ export class ThreadStartupService {
         ? { ...step, state: "failed" }
         : step),
       error,
+      block: undefined,
     });
   }
 
@@ -179,6 +241,7 @@ export class ThreadStartupService {
         ? { ...step, state: "cancelled" }
         : step),
       cancellation: "requested",
+      block: undefined,
     });
   }
 
@@ -189,7 +252,7 @@ export class ThreadStartupService {
 
   /** Mark all incomplete startup records as interrupted after a server restart. */
   interruptNonterminalOnStartup(): ThreadStartup[] {
-    return this.startupRepo.listNonterminal().map((startup) => {
+    return this.startupRepo.listInterruptible().map((startup) => {
       const activeIndex = this.currentIndex(startup);
       return this.persistNext({
         ...startup,
@@ -198,6 +261,7 @@ export class ThreadStartupService {
         steps: startup.steps.map((step, index) => index === activeIndex
           ? { ...step, state: "interrupted" }
           : step),
+        block: undefined,
       });
     });
   }

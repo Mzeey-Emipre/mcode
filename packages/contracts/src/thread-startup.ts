@@ -31,6 +31,7 @@ export type ThreadStartupPhase = z.infer<typeof ThreadStartupPhaseSchema>;
 export const ThreadStartupStateSchema = z.enum([
   "pending",
   "running",
+  "blocked",
   "completed",
   "failed",
   "cancelled",
@@ -43,6 +44,7 @@ export type ThreadStartupState = z.infer<typeof ThreadStartupStateSchema>;
 export const ThreadStartupStepStateSchema = z.enum([
   "pending",
   "running",
+  "blocked",
   "completed",
   "failed",
   "cancelled",
@@ -91,6 +93,17 @@ export const ThreadStartupErrorSchema = lazySchema(() =>
 /** Structured startup failure detail. */
 export type ThreadStartupError = z.infer<ReturnType<typeof ThreadStartupErrorSchema>>;
 
+/** Recoverable reason that keeps a startup waiting for a user decision. */
+export const ThreadStartupBlockSchema = lazySchema(() =>
+  z.object({
+    code: z.string().trim().min(1).max(64),
+    message: z.string().trim().min(1).max(512),
+    actions: z.array(z.enum(["retry", "continue"])).min(1).max(2),
+  }).strict(),
+);
+/** Recoverable reason that keeps a startup waiting for a user decision. */
+export type ThreadStartupBlock = z.infer<ReturnType<typeof ThreadStartupBlockSchema>>;
+
 const phasesByKind: Record<ThreadStartupKind, readonly ThreadStartupPhase[]> = {
   direct: ["thread", "agent"],
   "managed-worktree": ["thread", "worktree", "setup", "agent"],
@@ -110,6 +123,7 @@ export interface ThreadStartup {
   revision: number;
   threadId?: string;
   error?: ThreadStartupError;
+  block?: ThreadStartupBlock;
   createdAt: string;
   updatedAt: string;
 }
@@ -129,6 +143,7 @@ export const ThreadStartupSchema: () => z.ZodType<ThreadStartup> = lazySchema(()
     revision: z.number().int().positive(),
     threadId: z.string().uuid().optional(),
     error: ThreadStartupErrorSchema().optional(),
+    block: ThreadStartupBlockSchema().optional(),
     createdAt: z.string().datetime({ offset: true }),
     updatedAt: z.string().datetime({ offset: true }),
   }).strict().superRefine(validateThreadStartup) as z.ZodType<ThreadStartup>,
@@ -179,6 +194,7 @@ function validateThreadStartup(value: ThreadStartup, context: z.RefinementCtx): 
   validateTranscript(value, context);
   validateState(value, expectedPhases, context);
   validateError(value, context);
+  validateBlock(value, context);
   validateCancellation(value, context);
 }
 
@@ -217,6 +233,9 @@ function validateState(
     case "running":
       validateRunningState(value, expectedPhases, context);
       return;
+    case "blocked":
+      validateBlockedState(value, expectedPhases, context);
+      return;
     case "completed":
       validateCompletedState(value, expectedPhases, context);
       return;
@@ -224,6 +243,27 @@ function validateState(
     case "cancelled":
     case "interrupted":
       validateTerminalState(value, expectedPhases, context);
+  }
+}
+
+function validateBlockedState(
+  value: ThreadStartup,
+  expectedPhases: readonly ThreadStartupPhase[],
+  context: z.RefinementCtx,
+): void {
+  const blockedIndex = value.steps.findIndex((step) => step.state === "blocked");
+  if (blockedIndex < 0 || value.steps.findIndex((step, index) => index > blockedIndex && step.state === "blocked") >= 0) {
+    startupIssue(context, [], "Blocked startup must have one blocked phase after completed phases");
+    return;
+  }
+  if (!value.steps.slice(0, blockedIndex).every((step) => isFinishedStep(step.state))) {
+    startupIssue(context, [], "Blocked startup must have one blocked phase after completed phases");
+  }
+  if (!value.steps.slice(blockedIndex + 1).every((step) => step.state === "pending")) {
+    startupIssue(context, [], "Blocked startup must have one blocked phase after completed phases");
+  }
+  if (value.phase !== expectedPhases[blockedIndex]) {
+    startupIssue(context, [], "Blocked startup must stop at its blocked phase");
   }
 }
 
@@ -295,6 +335,15 @@ function validateError(value: ThreadStartup, context: z.RefinementCtx): void {
   }
   if (value.state !== "failed" && value.error) {
     startupIssue(context, ["error"], "Only failed startup may include an error");
+  }
+}
+
+function validateBlock(value: ThreadStartup, context: z.RefinementCtx): void {
+  if (value.state === "blocked" && !value.block) {
+    startupIssue(context, ["block"], "Blocked startup requires a block reason");
+  }
+  if (value.state !== "blocked" && value.block) {
+    startupIssue(context, ["block"], "Only blocked startup may include a block reason");
   }
 }
 

@@ -143,6 +143,7 @@ export class TerminalCommandService {
     readonly script: string;
     readonly timeoutMs: number;
     readonly outputMaxBytes?: number;
+    readonly onOutput?: (chunk: Uint8Array) => void;
   }): Promise<TerminalCommandPreparation> {
     let checkoutPath: string;
     try {
@@ -193,6 +194,7 @@ export class TerminalCommandService {
           replayBytesForScrollback(this.deps.settings.get().terminal.behavior.scrollback),
           input.outputMaxBytes ?? Number.POSITIVE_INFINITY,
         ),
+        input.onOutput,
       ),
     };
   }
@@ -201,6 +203,7 @@ export class TerminalCommandService {
     snapshot: TerminalCommandLaunchSnapshot,
     timeoutMs: number,
     outputMaxBytes: number,
+    onOutput: ((chunk: Uint8Array) => void) | undefined,
   ): PreparedTerminalCommand {
     const terminal = snapshot.terminal;
     const checkoutPath = snapshot.checkoutPath;
@@ -305,8 +308,12 @@ export class TerminalCommandService {
         void close();
         return;
       }
-      process.stdout.on("data", (chunk: Uint8Array) => capture.append(chunk));
-      process.stderr.on("data", (chunk: Uint8Array) => capture.append(chunk));
+      const captureOutput = (chunk: Uint8Array) => {
+        capture.append(chunk);
+        onOutput?.(chunk);
+      };
+      process.stdout.on("data", captureOutput);
+      process.stderr.on("data", captureOutput);
       timeout = this.schedule(() => {
         timedOut = true;
         void close();

@@ -39,6 +39,7 @@ import {
 import { getMcodeDir } from "@mcode/shared";
 import { ZodError } from "zod";
 import type Database from "better-sqlite3";
+import type { ThreadStartupService } from "../../thread-startup/thread-startup-service.js";
 import type {
   TerminalCommandCompletion,
   TerminalCommandPreparation,
@@ -113,6 +114,7 @@ export interface WorkspaceEnvironmentTerminalCommandExecutor {
     readonly script: string;
     readonly timeoutMs: number;
     readonly outputMaxBytes: number;
+    readonly onOutput?: (chunk: Uint8Array) => void;
   }): Promise<TerminalCommandPreparation>;
 }
 
@@ -148,6 +150,10 @@ export interface WorkspaceEnvironmentServiceOptions {
   readonly terminalCommands?: WorkspaceEnvironmentTerminalCommandExecutor;
   readonly terminalRecovery?: WorkspaceEnvironmentTerminalRecoveryExecutor;
   readonly attachmentStorage?: WorkspaceEnvironmentAttachmentStorage;
+  readonly threadStartups?: Pick<
+    ThreadStartupService,
+    "appendOutput" | "block" | "findByThreadId" | "resume" | "skip"
+  >;
   readonly platform?: WorkspaceEnvironmentPlatform;
   readonly manualSetupTimeoutMs?: number;
   readonly setupCancellationWaitMs?: number;
@@ -390,6 +396,7 @@ export class WorkspaceEnvironmentService {
       );
     }
     if (!repository.continueWithoutSetup(input.threadId)) return repository.snapshot(input.threadId);
+    this.skipStartupSetup(input.threadId);
     await this.drainReleasedAutomaticTurn(input.threadId);
     this.requireAutomaticSetupThread(input.threadId);
     return repository.snapshot(input.threadId);
@@ -504,6 +511,7 @@ export class WorkspaceEnvironmentService {
       const thread = this.requireAutomaticSetupThread(input.threadId);
       this.requireAutomaticResourceReleased(input.threadId);
       if (this.requireAutomaticRepository().retryCurrentAttempt(input.threadId)) {
+        this.resumeStartupSetup(input.threadId);
         await this.startAutomaticSetup(thread);
         this.requireAutomaticSetupThread(input.threadId);
       }
@@ -862,6 +870,7 @@ export class WorkspaceEnvironmentService {
     target: WorkspaceEnvironmentCommandTarget,
   ): void {
     if (target.kind !== "setup" || !this.automaticRepository?.resumeAwaitingApproval(thread.id)) return;
+    this.resumeStartupSetup(thread.id);
     void this.startAutomaticSetup(thread);
   }
 
@@ -1222,6 +1231,11 @@ export class WorkspaceEnvironmentService {
       snapshot: unavailableSnapshot(platform, null),
       outcome: invalid ? "configuration_failure" : "unavailable",
     });
+    this.blockStartupSetup(
+      threadId,
+      invalid ? "SETUP_CONFIGURATION_INVALID" : "SETUP_UNAVAILABLE",
+      invalid ? "Project Setup configuration is invalid" : "Project Setup is unavailable",
+    );
   }
 
   private isAutomaticAttemptReadyToStart(
@@ -1238,6 +1252,7 @@ export class WorkspaceEnvironmentService {
     threadId: string,
     attemptId: string,
   ): Promise<void> {
+    this.skipStartupSetup(threadId);
     repository.releaseWithoutSetup(threadId, attemptId);
     await this.drainReleasedAutomaticTurn(threadId);
   }
@@ -1259,6 +1274,7 @@ export class WorkspaceEnvironmentService {
         script: configuration.script,
         timeoutMs: this.options.manualSetupTimeoutMs ?? DEFAULT_MANUAL_SETUP_TIMEOUT_MS,
         outputMaxBytes: WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES,
+        onOutput: (chunk) => this.appendStartupOutput(thread.id, chunk),
       });
       return this.acceptAutomaticSetupPreparation(repository, thread.id, attemptId, configuration, preparation);
     } catch {
@@ -1269,6 +1285,7 @@ export class WorkspaceEnvironmentService {
         snapshot: unavailableSnapshot(configuration.platform, configuration.script),
         outcome: "launch_failure",
       });
+      this.blockStartupSetup(thread.id, "SETUP_UNAVAILABLE", "Project Setup could not start");
       return null;
     }
   }
@@ -1288,6 +1305,11 @@ export class WorkspaceEnvironmentService {
       snapshot: snapshotForPreparation(configuration.platform, configuration.script, preparation),
       outcome: preparation.kind === "unavailable" ? "unavailable" : "configuration_failure",
     });
+    this.blockStartupSetup(
+      threadId,
+      preparation.kind === "unavailable" ? "SETUP_UNAVAILABLE" : "SETUP_CONFIGURATION_INVALID",
+      preparation.kind === "unavailable" ? "Project Setup is unavailable" : "Project Setup configuration is invalid",
+    );
     return null;
   }
 
@@ -1305,6 +1327,7 @@ export class WorkspaceEnvironmentService {
       snapshot: unavailableSnapshot(platform, script),
       outcome: "unavailable",
     });
+    this.blockStartupSetup(threadId, "SETUP_UNAVAILABLE", "Project Setup is unavailable");
   }
 
   private async launchPreparedAutomaticSetup(
@@ -1318,6 +1341,7 @@ export class WorkspaceEnvironmentService {
     const approval = this.automaticSetupApproval(thread, configuration, preparation.command);
     if (approval) {
       await this.deferAutomaticSetupForApproval(repository, thread.id, queuedAttemptId, configuration, preparation.command, approval);
+      this.blockStartupSetup(thread.id, "SETUP_APPROVAL_REQUIRED", "Project Setup requires approval");
       return;
     }
     if (!this.isAutomaticSetupAdmissionAllowed(thread.id)) {
@@ -1333,6 +1357,7 @@ export class WorkspaceEnvironmentService {
       await this.closeUnstartedCommand(preparation.command);
       return;
     }
+    this.resumeStartupSetup(thread.id);
     this.startAutomaticSetupCommand(repository, thread, attemptId, preparation.command);
   }
 
@@ -1395,6 +1420,9 @@ export class WorkspaceEnvironmentService {
     if (result.outcome === "containment_failure" && this.activeAutomaticSetupResources.get(threadId) === resource) {
       resource.cleanupPending = true;
     }
+    if (completed && result.state === "failed") {
+      this.blockStartupSetup(threadId, "SETUP_FAILED", "Project Setup did not complete successfully");
+    }
     if (completed && result.state === "passed") await this.drainReleasedAutomaticTurn(threadId);
   }
 
@@ -1413,6 +1441,35 @@ export class WorkspaceEnvironmentService {
       output: "",
       outputTruncated: false,
     });
+    this.blockStartupSetup(threadId, "SETUP_UNAVAILABLE", "Project Setup could not start");
+  }
+
+  private appendStartupOutput(threadId: string, chunk: Uint8Array): void {
+    const startup = this.options.threadStartups?.findByThreadId(threadId);
+    if (!startup || startup.phase !== "setup" || startup.state !== "running") return;
+    const content = Buffer.from(chunk).toString("utf8");
+    for (let offset = 0; offset < content.length; offset += 4_096) {
+      const part = content.slice(offset, offset + 4_096);
+      if (part) this.options.threadStartups?.appendOutput(startup.startupId, part);
+    }
+  }
+
+  private blockStartupSetup(threadId: string, code: string, message: string): void {
+    const startup = this.options.threadStartups?.findByThreadId(threadId);
+    if (!startup || startup.phase !== "setup" || startup.state !== "running") return;
+    this.options.threadStartups?.block(startup.startupId, { code, message, actions: ["retry", "continue"] });
+  }
+
+  private resumeStartupSetup(threadId: string): void {
+    const startup = this.options.threadStartups?.findByThreadId(threadId);
+    if (!startup || startup.phase !== "setup" || startup.state !== "blocked") return;
+    this.options.threadStartups?.resume(startup.startupId);
+  }
+
+  private skipStartupSetup(threadId: string): void {
+    const startup = this.options.threadStartups?.findByThreadId(threadId);
+    if (!startup || startup.phase !== "setup" || (startup.state !== "running" && startup.state !== "blocked")) return;
+    this.options.threadStartups?.skip(startup.startupId, "setup");
   }
 
   private async interruptActiveAutomaticSetups(): Promise<void> {

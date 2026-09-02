@@ -69,6 +69,7 @@ import {
 import { TurnConversationProjectionService } from "../turns/turn-conversation-projection-service.js";
 import { PostTerminalHookCompletionEffect } from "../turns/post-terminal-hook-completion-effect.js";
 import { ThreadCreationCoordinator } from "../turns/thread-creation-coordinator.js";
+import { ThreadStartupService } from "../../thread-startup/thread-startup-service.js";
 import { ProviderSessionCursorPersistence } from "../turns/provider-session-cursor-persistence.js";
 import { ProviderTurnEventApplication } from "../turns/provider-turn-event-application.js";
 import {
@@ -224,6 +225,7 @@ export function registerAgentServices(container: DependencyContainer): void {
       c.resolve(TURN_ADMISSION_DISPATCH_COORDINATOR),
       () => c.resolve(ThreadBranchingService),
       () => c.resolve(PlanTurnService),
+      () => c.resolve(ThreadStartupService),
     )),
   });
   container.register<TurnRuntimeEventControl>(TURN_RUNTIME_EVENT_CONTROL, {

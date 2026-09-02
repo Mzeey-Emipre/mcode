@@ -17,6 +17,7 @@ interface ThreadStartupRow {
   revision: number;
   thread_id: string | null;
   error_json: string | null;
+  block_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -31,8 +32,8 @@ export class ThreadStartupRepo {
     this.db.prepare(
       `INSERT INTO thread_startups (
         startup_id, workspace_id, kind, state, phase, steps_json, transcript_json,
-        cancellation, revision, thread_id, error_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        cancellation, revision, thread_id, error_json, block_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       startup.startupId,
       startup.workspaceId,
@@ -45,6 +46,7 @@ export class ThreadStartupRepo {
       startup.revision,
       startup.threadId ?? null,
       startup.error ? JSON.stringify(startup.error) : null,
+      startup.block ? JSON.stringify(startup.block) : null,
       startup.createdAt,
       startup.updatedAt,
     );
@@ -54,7 +56,7 @@ export class ThreadStartupRepo {
   findById(startupId: string): ThreadStartup | null {
     const row = this.db.prepare(
       `SELECT startup_id, workspace_id, kind, state, phase, steps_json, transcript_json,
-              cancellation, revision, thread_id, error_json, created_at, updated_at
+              cancellation, revision, thread_id, error_json, block_json, created_at, updated_at
        FROM thread_startups
        WHERE startup_id = ?`,
     ).get(startupId) as ThreadStartupRow | undefined;
@@ -66,7 +68,7 @@ export class ThreadStartupRepo {
     const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
     const rows = this.db.prepare(
       `SELECT startup_id, workspace_id, kind, state, phase, steps_json, transcript_json,
-              cancellation, revision, thread_id, error_json, created_at, updated_at
+              cancellation, revision, thread_id, error_json, block_json, created_at, updated_at
        FROM thread_startups
        WHERE workspace_id = ?
        ORDER BY updated_at DESC, startup_id DESC
@@ -75,15 +77,28 @@ export class ThreadStartupRepo {
     return rows.map(rowToStartup);
   }
 
-  /** Return all nonterminal startup snapshots for startup interruption recovery. */
-  listNonterminal(): ThreadStartup[] {
+  /** Return startups with in-flight work that cannot survive a server restart. */
+  listInterruptible(): ThreadStartup[] {
     const rows = this.db.prepare(
       `SELECT startup_id, workspace_id, kind, state, phase, steps_json, transcript_json,
-              cancellation, revision, thread_id, error_json, created_at, updated_at
+              cancellation, revision, thread_id, error_json, block_json, created_at, updated_at
        FROM thread_startups
        WHERE state IN ('pending', 'running')`,
     ).all() as ThreadStartupRow[];
     return rows.map(rowToStartup);
+  }
+
+  /** Return the newest nonterminal startup currently bound to one Thread. */
+  findNonterminalByThreadId(threadId: string): ThreadStartup | null {
+    const row = this.db.prepare(
+      `SELECT startup_id, workspace_id, kind, state, phase, steps_json, transcript_json,
+              cancellation, revision, thread_id, error_json, block_json, created_at, updated_at
+       FROM thread_startups
+       WHERE thread_id = ? AND state IN ('pending', 'running', 'blocked')
+       ORDER BY updated_at DESC, startup_id DESC
+       LIMIT 1`,
+    ).get(threadId) as ThreadStartupRow | undefined;
+    return row ? rowToStartup(row) : null;
   }
 
   /** Replace one persisted startup snapshot after its next revision is calculated. */
@@ -91,7 +106,7 @@ export class ThreadStartupRepo {
     this.db.prepare(
       `UPDATE thread_startups
        SET state = ?, phase = ?, steps_json = ?, transcript_json = ?, cancellation = ?,
-           revision = ?, thread_id = ?, error_json = ?, updated_at = ?
+           revision = ?, thread_id = ?, error_json = ?, block_json = ?, updated_at = ?
        WHERE startup_id = ?`,
     ).run(
       startup.state,
@@ -102,6 +117,7 @@ export class ThreadStartupRepo {
       startup.revision,
       startup.threadId ?? null,
       startup.error ? JSON.stringify(startup.error) : null,
+      startup.block ? JSON.stringify(startup.block) : null,
       startup.updatedAt,
       startup.startupId,
     );
@@ -121,6 +137,7 @@ function rowToStartup(row: ThreadStartupRow): ThreadStartup {
     revision: row.revision,
     ...(row.thread_id ? { threadId: row.thread_id } : {}),
     ...(row.error_json ? { error: JSON.parse(row.error_json) } : {}),
+    ...(row.block_json ? { block: JSON.parse(row.block_json) } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { reapOrphanedPtys } from "../../../../runtime/process/orphan-cleanup.js";
 import { PtyPidRegistry } from "../../../terminal/host/pty-pid-registry.js";
-import { WorkspaceEnvironmentService } from "../workspace-environment-service.js";
+import { WorkspaceEnvironmentService, type WorkspaceEnvironmentServiceOptions } from "../workspace-environment-service.js";
 import { WorkspaceEnvironmentAutomaticRepository } from "../workspace-environment-automatic-repository.js";
 import type { TerminalCommandCompletion, TerminalCommandPreparation } from "../../../terminal/commands/terminal-command-service.js";
 
@@ -36,10 +36,11 @@ async function eventually(assertion: () => void): Promise<void> {
   throw failure;
 }
 
-async function automaticHarness({ setup = true, prepareFailure = false, attachmentStorage }: {
+async function automaticHarness({ setup = true, prepareFailure = false, attachmentStorage, threadStartups }: {
   readonly setup?: boolean;
   readonly prepareFailure?: boolean;
   readonly attachmentStorage?: { removeStoredAttachments: ReturnType<typeof vi.fn> };
+  readonly threadStartups?: WorkspaceEnvironmentServiceOptions["threadStartups"];
 } = {}) {
   const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-automatic-setup-"));
   roots.push(root);
@@ -73,6 +74,7 @@ async function automaticHarness({ setup = true, prepareFailure = false, attachme
     terminalCommands,
     terminalRecovery,
     attachmentStorage,
+    threadStartups,
     platform: "linux",
     now: () => new Date(milliseconds++),
   });
@@ -193,6 +195,89 @@ describe("automatic Project Setup", () => {
       attempt: null,
       queuedTurns: [{ state: "dispatched", dispatchedAt: expect.any(String) }],
     });
+  });
+
+  it("marks no automatic Setup as skipped before its released first Turn starts", async () => {
+    const startup = {
+      appendOutput: vi.fn(),
+      block: vi.fn(),
+      findByThreadId: vi.fn(() => ({
+        startupId: "00000000-0000-4000-8000-000000000001",
+        state: "running",
+        phase: "setup",
+      })),
+      resume: vi.fn(),
+      skip: vi.fn(),
+    } as unknown as NonNullable<WorkspaceEnvironmentServiceOptions["threadStartups"]>;
+    const { service } = await automaticHarness({ setup: false, threadStartups: startup });
+    service.setAutomaticSetupDispatcher({ dispatch: vi.fn().mockResolvedValue({ completion: Promise.resolve() }) });
+
+    service.queueAutomaticFirstTurn(queuedInput());
+
+    await eventually(() => expect(startup.skip).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000001",
+      "setup",
+    ));
+  });
+
+  it("forwards automatic Setup output before completion and blocks a failed attempt", async () => {
+    const startup = {
+      appendOutput: vi.fn(),
+      block: vi.fn(),
+      findByThreadId: vi.fn(() => ({
+        startupId: "00000000-0000-4000-8000-000000000001",
+        state: "running",
+        phase: "setup",
+      })),
+      resume: vi.fn(),
+      skip: vi.fn(),
+    } as unknown as NonNullable<WorkspaceEnvironmentServiceOptions["threadStartups"]>;
+    const { service, completion, prepare, start } = await automaticHarness({ threadStartups: startup });
+
+    service.queueAutomaticFirstTurn(queuedInput());
+    await eventually(() => expect(start).toHaveBeenCalledOnce());
+    const preparedInput = prepare.mock.calls[0]?.[0] as { onOutput?: (chunk: Uint8Array) => void } | undefined;
+    preparedInput?.onOutput?.(Buffer.from("installing\\n"));
+
+    expect(startup.appendOutput).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000001",
+      "installing\\n",
+    );
+    expect(startup.block).not.toHaveBeenCalled();
+
+    completion.resolve({ kind: "exited", exitCode: 1, output: "failed", outputTruncated: false });
+    await eventually(() => expect(startup.block).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000001",
+      expect.objectContaining({ code: "SETUP_FAILED", actions: ["retry", "continue"] }),
+    ));
+  });
+
+  it("resumes blocked Setup for Retry and skips it for Continue", async () => {
+    let startupState: "running" | "blocked" = "running";
+    const startup = {
+      appendOutput: vi.fn(),
+      block: vi.fn(() => { startupState = "blocked"; }),
+      findByThreadId: vi.fn(() => ({
+        startupId: "00000000-0000-4000-8000-000000000001",
+        state: startupState,
+        phase: "setup",
+      })),
+      resume: vi.fn(() => { startupState = "running"; }),
+      skip: vi.fn(),
+    } as unknown as NonNullable<WorkspaceEnvironmentServiceOptions["threadStartups"]>;
+    const { service, completion, start } = await automaticHarness({ threadStartups: startup });
+
+    service.queueAutomaticFirstTurn(queuedInput());
+    await eventually(() => expect(start).toHaveBeenCalledOnce());
+    completion.resolve({ kind: "exited", exitCode: 1, output: "failed", outputTruncated: false });
+    await eventually(() => expect(startup.block).toHaveBeenCalledOnce());
+
+    await service.retryAutomaticSetup({ threadId: "thread-1" });
+    expect(startup.resume).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000001");
+    await eventually(() => expect(startup.block).toHaveBeenCalledTimes(2));
+
+    await service.continueAutomaticSetup({ threadId: "thread-1" });
+    expect(startup.skip).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000001", "setup");
   });
 
   it("re-resolves an approval-waiting shared Setup when the command is removed", async () => {

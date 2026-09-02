@@ -386,6 +386,13 @@
       "when": 1788357173956,
       "tag": "0053_panoramic_cammi",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1788358408655,
+      "tag": "0054_wise_supernaut",
+      "breakpoints": true
     }
   ]
 }

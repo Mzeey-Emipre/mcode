@@ -161,6 +161,7 @@ export const threadStartups = sqliteTable(
     revision: integer("revision").notNull(),
     threadId: text("thread_id").references(() => threads.id, { onDelete: "set null" }),
     errorJson: text("error_json"),
+    blockJson: text("block_json"),
     createdAt: text("created_at").notNull().default(timestampDefault),
     updatedAt: text("updated_at").notNull().default(timestampDefault),
   },
