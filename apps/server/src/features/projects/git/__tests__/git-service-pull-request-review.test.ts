@@ -99,10 +99,12 @@ describe("PullRequestReviewGitService", () => {
   });
 
   it("creates a branch from the verified immutable head without mutating the Workspace checkout", async () => {
+    const output: string[] = [];
     const result = await service.provisionPullRequestReviewWorktree(
       repoPath,
       source,
       { action: "create_new", worktreeName: "pr-42-mcode-aaaaaaa" },
+      { output: (chunk) => output.push(chunk) },
     );
 
     expect(result).toMatchObject({
@@ -128,6 +130,17 @@ describe("PullRequestReviewGitService", () => {
     expect(commands.some((args) =>
       ["checkout", "switch", "reset", "pull", "push"].includes(args[0] ?? ""),
     )).toBe(false);
+    expect(output).toEqual(expect.arrayContaining([
+      "Resolving a remote for the pull request head.\n",
+      "Fetching the pull request head.\n",
+      "Verifying the fetched pull request head.\n",
+      "Recording the verified pull request ref.\n",
+      "Preparing the Review checkout.\n",
+      "Setting the Review branch upstream.\n",
+    ]));
+    expect(executor.calls.find((call) => call.args.includes("fetch"))?.opts?.onStdout).toEqual(expect.any(Function));
+    expect(executor.calls.find((call) => call.args.includes("worktree") && call.args.includes("add"))?.opts?.onStderr)
+      .toEqual(expect.any(Function));
 
     if (result.kind === "ready") await result.rollback();
   });
@@ -221,6 +234,42 @@ describe("PullRequestReviewGitService", () => {
     expect(
       executor.calls.some((call) => call.args.includes("worktree") && call.args.includes("add")),
     ).toBe(false);
+    NodeFS.rmSync(existingPath, { recursive: true, force: true });
+  });
+
+  it("rolls back reuse metadata without removing the reused checkout", async () => {
+    const existingPath = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-review-reused-"));
+    const branchOutput = ["feature/review", headOid, "contrib/feature/review", existingPath].join("\t");
+    executor.setResponse(
+      [
+        "for-each-ref",
+        "--format=%(refname:short)%09%(objectname)%09%(upstream:short)%09%(worktreepath)",
+        "refs/heads",
+      ],
+      { stdout: `${branchOutput}\n`, stderr: "" },
+    );
+
+    const [candidate] = await service.findCompatiblePullRequestReviewWorktrees(repoPath, source);
+    expect(candidate).toBeDefined();
+    const output: string[] = [];
+    const result = await service.provisionPullRequestReviewWorktree(
+      repoPath,
+      source,
+      { action: "reuse_existing", candidateId: candidate!.candidateId },
+      { output: (chunk) => output.push(chunk) },
+    );
+
+    if (result.kind === "ready") await result.rollback();
+    expect(result).toMatchObject({ kind: "ready", disposition: "reused", path: NodeFS.realpathSync(existingPath) });
+    expect(executor.calls.some((call) =>
+      call.args.includes("worktree") && call.args.includes("remove"),
+    )).toBe(false);
+    expect(output).toEqual(expect.arrayContaining([
+      "Checking the selected Review worktree.\n",
+      "Reusing the compatible Review worktree.\n",
+    ]));
+    expect(output).not.toContain("Preparing the Review checkout.\n");
+    expect(NodeFS.existsSync(existingPath)).toBe(true);
     NodeFS.rmSync(existingPath, { recursive: true, force: true });
   });
 

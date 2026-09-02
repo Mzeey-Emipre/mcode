@@ -10,6 +10,10 @@ export interface GitExecOptions {
   timeout?: number;
   /** Environment variables to merge into the subprocess environment. */
   env?: NodeJS.ProcessEnv;
+  /** Receive stdout chunks while Git runs. Enables the observed execution path. */
+  onStdout?: (chunk: string) => void;
+  /** Receive stderr chunks while Git runs. Enables the observed execution path. */
+  onStderr?: (chunk: string) => void;
 }
 
 /** Stdout/stderr pair returned by a successful git invocation. */

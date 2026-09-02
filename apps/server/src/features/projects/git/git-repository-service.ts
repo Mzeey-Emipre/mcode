@@ -3,7 +3,7 @@ import { inject, injectable } from "tsyringe";
 import { logger, validateBranchName } from "@mcode/shared";
 import type { GitBranch, GitRemoteUrl } from "@mcode/contracts";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
-import type { GitExecutor } from "./execution/index.js";
+import type { GitExecOptions, GitExecutor } from "./execution/index.js";
 
 /** Normalized configured remote used for repository-identity matching. */
 export interface NormalizedGitRemote {
@@ -183,12 +183,15 @@ export class GitRepositoryService {
   }
 
   /** List bounded configured remotes normalized to repository identities. */
-  async listNormalizedRemotes(repoPath: string): Promise<NormalizedGitRemote[]> {
+  async listNormalizedRemotes(
+    repoPath: string,
+    output?: Pick<GitExecOptions, "onStdout" | "onStderr">,
+  ): Promise<NormalizedGitRemote[]> {
     let stdout: string;
     try {
       ({ stdout } = await this.gitExecutor.exec(
         ["-C", repoPath, "config", "--get-regexp", "^remote\\..*\\.url$"],
-        { timeout: 5_000 },
+        { timeout: 5_000, ...output },
       ));
     } catch {
       return [];
