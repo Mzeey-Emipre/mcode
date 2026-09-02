@@ -1,4 +1,5 @@
 import type { Thread } from "@/transport";
+import type { WorkspaceThread } from "@/lib/workspace-thread";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
 import type { ComposerExecutionTarget, ComposerExecutionTargetController } from "../execution/useComposerExecutionTarget";
 import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
@@ -20,6 +21,8 @@ export interface DispatchComposerTargetOptions {
   replyContext?: ComposerReplyContext;
   onBranchModeExit?(): void;
   onThreadCreated?(thread: Thread): void;
+  onThreadPreparing?(thread: WorkspaceThread): void;
+  onThreadCreationFailed?(): void;
 }
 
 /** Dispatches a prepared Composer submit to the target selected by the user. */
@@ -50,12 +53,20 @@ export function isComposerTargetReady(target: ComposerExecutionTarget): boolean 
 async function dispatchNewThread(
   options: DispatchComposerTargetOptions,
 ): Promise<void> {
-  const { target, execution, submission, onThreadCreated } = options;
+  const {
+    target,
+    execution,
+    submission,
+    onThreadCreated,
+    onThreadPreparing,
+    onThreadCreationFailed,
+  } = options;
   if (target.kind !== "new-thread") return;
   synchronizeNewThreadTarget(execution, target);
   const { snapshot, prepared } = submission;
   const selection = snapshot.selection;
-  const thread = await useWorkspaceStore.getState().createAndSendMessage(
+  const workspace = useWorkspaceStore.getState();
+  const creatingThread = workspace.createAndSendMessage(
     prepared.content,
     selection.modelId,
     selection.permissionMode,
@@ -73,7 +84,33 @@ async function dispatchNewThread(
     submission.goalObjective,
     selection.orchestrationMode,
   );
-  onThreadCreated?.(thread);
+  notifyThreadPreparing(onThreadPreparing);
+  await completeNewThreadCreation(creatingThread, onThreadCreated, onThreadCreationFailed);
+}
+
+async function completeNewThreadCreation(
+  creatingThread: Promise<Thread>,
+  onThreadCreated: ((thread: Thread) => void) | undefined,
+  onThreadCreationFailed: (() => void) | undefined,
+): Promise<void> {
+  try {
+    const thread = await creatingThread;
+    onThreadCreated?.(thread);
+  } catch (error) {
+    onThreadCreationFailed?.();
+    throw error;
+  }
+}
+
+function notifyThreadPreparing(
+  onThreadPreparing: ((thread: WorkspaceThread) => void) | undefined,
+): void {
+  if (!onThreadPreparing) return;
+  const workspace = useWorkspaceStore.getState();
+  const placeholder = workspace.threads.find((thread) => (
+    thread.id === workspace.activeThreadId && thread.clientPreparing === true
+  ));
+  if (placeholder) onThreadPreparing(placeholder);
 }
 
 /** Synchronizes workspace selection state before creating a new thread. */

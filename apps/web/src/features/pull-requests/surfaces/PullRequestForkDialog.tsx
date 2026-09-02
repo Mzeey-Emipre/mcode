@@ -6,9 +6,11 @@ import type {
   WorktreeInfo,
 } from "@mcode/contracts";
 import type { Thread } from "@/transport";
+import type { WorkspaceThread } from "@/lib/workspace-thread";
 import { AlertCircle, GitFork } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Composer } from "@/features/conversation";
+import { StartupProgressCard, useThreadStartup } from "@/features/thread-startup";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -184,14 +186,36 @@ function PullRequestForkError({
 function PullRequestForkComposer({
   target,
   mode,
+  preparingThread,
+  onThreadPreparing,
+  onThreadCreationFailed,
   onThreadCreated,
 }: {
   target: ForkTarget;
   mode: PullRequestForkMode;
+  preparingThread: WorkspaceThread | null;
+  onThreadPreparing: (thread: WorkspaceThread) => void;
+  onThreadCreationFailed: () => void;
   onThreadCreated: (thread: Thread) => void;
 }) {
+  const startup = useThreadStartup({
+    startupId: preparingThread?.clientStartupId,
+    workspaceId: target.workspaceId,
+    enabled: preparingThread !== null,
+  });
+  if (preparingThread) {
+    return (
+      <div className="p-5">
+        <StartupProgressCard
+          startup={startup}
+          startupId={preparingThread.clientStartupId}
+          context={target.mode === "existing-worktree" ? "attached-worktree" : "managed-worktree"}
+        />
+      </div>
+    );
+  }
   return (
-    <div className="min-h-0 bg-background"><div className="flex items-center gap-2 border-b border-border/35 px-5 py-2 text-xs text-muted-foreground"><span className="font-medium text-foreground/85">{target.mode === "existing-worktree" ? "Existing worktree" : "New worktree"}</span><span aria-hidden>·</span><span className="min-w-0 truncate font-mono">{target.branch}</span>{mode === "background" ? <span className="ml-auto shrink-0">The pull request stays open</span> : null}</div><Composer isNewThread workspaceId={target.workspaceId} onThreadCreated={onThreadCreated} /></div>
+    <div className="min-h-0 bg-background"><div className="flex items-center gap-2 border-b border-border/35 px-5 py-2 text-xs text-muted-foreground"><span className="font-medium text-foreground/85">{target.mode === "existing-worktree" ? "Existing worktree" : "New worktree"}</span><span aria-hidden>·</span><span className="min-w-0 truncate font-mono">{target.branch}</span>{mode === "background" ? <span className="ml-auto shrink-0">The pull request stays open</span> : null}</div><Composer isNewThread workspaceId={target.workspaceId} onThreadPreparing={onThreadPreparing} onThreadCreationFailed={onThreadCreationFailed} onThreadCreated={onThreadCreated} /></div>
   );
 }
 
@@ -204,6 +228,9 @@ function PullRequestForkDialogStatus({
   onClose,
   onPrepare,
   mode,
+  preparingThread,
+  onThreadPreparing,
+  onThreadCreationFailed,
   onThreadCreated,
 }: {
   preparing: boolean;
@@ -214,11 +241,14 @@ function PullRequestForkDialogStatus({
   onClose: () => void;
   onPrepare: (workspaceId?: string) => void;
   mode: PullRequestForkMode;
+  preparingThread: WorkspaceThread | null;
+  onThreadPreparing: (thread: WorkspaceThread) => void;
+  onThreadCreationFailed: () => void;
   onThreadCreated: (thread: Thread) => void;
 }) {
   if (preparing) return <PullRequestForkPreparing />;
   if (error) return <PullRequestForkError error={error} selectedWorkspaceId={selectedWorkspaceId} setSelectedWorkspaceId={setSelectedWorkspaceId} onClose={onClose} onPrepare={onPrepare} />;
-  return target ? <PullRequestForkComposer target={target} mode={mode} onThreadCreated={onThreadCreated} /> : null;
+  return target ? <PullRequestForkComposer target={target} mode={mode} preparingThread={preparingThread} onThreadPreparing={onThreadPreparing} onThreadCreationFailed={onThreadCreationFailed} onThreadCreated={onThreadCreated} /> : null;
 }
 
 /** Props for the pull request fork composer. */
@@ -247,6 +277,7 @@ export function PullRequestForkDialog({
     null,
   );
   const [preparing, setPreparing] = useState(false);
+  const [preparingThread, setPreparingThread] = useState<WorkspaceThread | null>(null);
   const generationRef = useRef(0);
   const previousContextRef = useRef<PreviousWorkspaceContext | null>(null);
   const completedRef = useRef(false);
@@ -289,6 +320,7 @@ export function PullRequestForkDialog({
       const generation = ++generationRef.current;
       setPreparing(true);
       setTarget(null);
+      setPreparingThread(null);
       setError(null);
       try {
         const result = await prepareForkTask(detail, workspaceId, transport);
@@ -396,7 +428,7 @@ export function PullRequestForkDialog({
           </div>
         </header>
 
-        <PullRequestForkDialogStatus preparing={preparing} error={error} target={target} selectedWorkspaceId={selectedWorkspaceId} setSelectedWorkspaceId={setSelectedWorkspaceId} onClose={() => close(false)} onPrepare={(workspaceId) => void prepare(workspaceId)} mode={mode} onThreadCreated={handleThreadCreated} />
+        <PullRequestForkDialogStatus preparing={preparing} error={error} target={target} selectedWorkspaceId={selectedWorkspaceId} setSelectedWorkspaceId={setSelectedWorkspaceId} onClose={() => close(false)} onPrepare={(workspaceId) => void prepare(workspaceId)} mode={mode} preparingThread={preparingThread} onThreadPreparing={setPreparingThread} onThreadCreationFailed={() => setPreparingThread(null)} onThreadCreated={handleThreadCreated} />
       </DialogContent>
     </Dialog>
   );
