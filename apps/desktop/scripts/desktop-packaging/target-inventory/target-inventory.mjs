@@ -136,6 +136,36 @@ export function parseDesktopWorkflowTargetMatrix(
   return parseWorkflowTargetMatrix(source, workflowName, jobName);
 }
 
+function resolveWorkflowMatrixConfig(config) {
+  if (typeof config === "string") {
+    return {
+      source: config,
+      jobName: undefined,
+      expectedCount: SUPPORTED_DESKTOP_TARGETS.length,
+    };
+  }
+  return {
+    source: config?.source,
+    jobName: config?.job,
+    expectedCount: config?.expectedCount ?? SUPPORTED_DESKTOP_TARGETS.length,
+  };
+}
+
+function assertWorkflowTargetsMatchInventory(targets, expectedById, workflowName) {
+  for (const target of targets) {
+    const expected = expectedById.get(target.id);
+    if (
+      !expected ||
+      expected.platform !== target.platform ||
+      expected.arch !== target.arch
+    ) {
+      throw new Error(
+        `Unsupported desktop target in ${workflowName}: ${target.id}`,
+      );
+    }
+  }
+}
+
 /** Validates release-channel matrices against the canonical target inventory. */
 export function assertDesktopWorkflowMatrices(workflows) {
   const expectedById = new Map(
@@ -143,31 +173,16 @@ export function assertDesktopWorkflowMatrices(workflows) {
   );
   const matrices = {};
   for (const workflowName of DESKTOP_WORKFLOW_MATRIX_NAMES) {
-    const config = workflows?.[workflowName];
-    const source = typeof config === "string" ? config : config?.source;
-    const jobName = typeof config === "string" ? undefined : config?.job;
-    const expectedCount =
-      typeof config === "string"
-        ? SUPPORTED_DESKTOP_TARGETS.length
-        : (config?.expectedCount ?? SUPPORTED_DESKTOP_TARGETS.length);
+    const { source, jobName, expectedCount } = resolveWorkflowMatrixConfig(
+      workflows?.[workflowName],
+    );
     const targets = parseWorkflowTargetMatrix(source, workflowName, jobName);
     if (targets.length !== expectedCount) {
       throw new Error(
         `Desktop target matrix does not match supported targets in ${workflowName}`,
       );
     }
-    for (const target of targets) {
-      const expected = expectedById.get(target.id);
-      if (
-        !expected ||
-        expected.platform !== target.platform ||
-        expected.arch !== target.arch
-      ) {
-        throw new Error(
-          `Unsupported desktop target in ${workflowName}: ${target.id}`,
-        );
-      }
-    }
+    assertWorkflowTargetsMatchInventory(targets, expectedById, workflowName);
     matrices[workflowName] = targets;
   }
   return matrices;
