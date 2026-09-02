@@ -274,7 +274,37 @@ describe("MessageList thread switch", () => {
     content.removeEventListener("contextmenu", contextMenuSpy);
   });
 
-  it("anchors selected-text actions and the editor to the selected range after native selection clears", async () => {
+  it("closes the selected-text editor when mounted canonical content no longer reconstructs", async () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    const viewport = mockSelectedTextViewport(container);
+    const content = getByText("Select this phrase");
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.click(getByRole("button", { name: "Add comment" }));
+    expect(getByRole("dialog", { name: "Comment on selected text" })).toBeInTheDocument();
+
+    content.textContent = "Changed canonical content";
+    fireEvent.scroll(viewport);
+
+    await vi.waitFor(() => {
+      expect(queryByRole("dialog", { name: "Comment on selected text" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("reconstructs current range geometry after the native selection clears", async () => {
     messagesValue = [{
       id: "assistant-1",
       sequence: 1,
@@ -287,14 +317,14 @@ describe("MessageList thread switch", () => {
     const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
     const resizeObservers: ResizeObserverMock[] = [];
     let rangeRectReads = 0;
-    class ResizeObserverMock {
+    class ResizeObserverMock implements ResizeObserver {
       readonly observed = new Set<Element>();
 
       constructor(readonly callback: ResizeObserverCallback) {
         resizeObservers.push(this);
       }
 
-      observe(target: Element) {
+      observe(target: Element, _options?: ResizeObserverOptions) {
         this.observed.add(target);
       }
 
@@ -304,6 +334,10 @@ describe("MessageList thread switch", () => {
 
       disconnect() {
         this.observed.clear();
+      }
+
+      trigger() {
+        this.callback([], this);
       }
     }
     Object.defineProperty(Range.prototype, "getClientRects", {
@@ -334,14 +368,11 @@ describe("MessageList thread switch", () => {
 
       const action = getByRole("button", { name: "Add comment" });
       const actionPositioner = action.closest('[data-slot="popover-content"]')?.parentElement;
-      expect(
-        actionPositioner,
-        "the action must use the selected range Popover anchor at (120, 188), not the pointer release at (900, 700)",
-      ).toBeTruthy();
+      expect(actionPositioner).toBeTruthy();
       await vi.waitFor(() => {
         expect(actionPositioner).toHaveStyle({
-          "--anchor-width": "96px",
-          "--anchor-height": "20px",
+          "--anchor-width": "160px",
+          "--anchor-height": "40px",
         });
       });
       expect(document.querySelector('[data-slot="popover-trigger"]')).toBeNull();
@@ -363,22 +394,41 @@ describe("MessageList thread switch", () => {
       selectedRangeRect = new DOMRect(120, 80, 128, 20);
       const readsBeforeViewportResize = rangeRectReads;
       act(() => {
-        viewportObserver.callback([], viewportObserver as unknown as ResizeObserver);
+        viewportObserver.trigger();
       });
       await vi.waitFor(() => {
         expect(rangeRectReads).toBeGreaterThan(readsBeforeViewportResize);
-        expect(actionPositioner).toHaveStyle({ "--anchor-width": "128px" });
       });
 
       fireEvent.click(action);
       selection.removeAllRanges();
       const editor = getByRole("dialog", { name: "Comment on selected text" });
       const editorPositioner = editor.closest('[data-slot="popover-content"]')?.parentElement;
+      vi.spyOn(editor, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 328, 46));
+      const editorObserver = resizeObservers.find((observer) => observer.observed.has(editor));
+      expect(editorObserver).toBeDefined();
+      act(() => {
+        editorObserver!.trigger();
+      });
       await vi.waitFor(() => {
         expect(editorPositioner).toHaveStyle({
-          "--anchor-width": "128px",
-          "--anchor-height": "20px",
+          "--anchor-width": "328px",
+          "--anchor-height": "46px",
         });
+      });
+
+      selectedRangeRect = new DOMRect(120, 840, 128, 20);
+      const readsBeforeDock = rangeRectReads;
+      fireEvent.scroll(viewport);
+      await vi.waitFor(() => {
+        expect(rangeRectReads).toBeGreaterThan(readsBeforeDock);
+      });
+
+      selectedRangeRect = new DOMRect(160, 220, 128, 20);
+      const readsBeforeReturn = rangeRectReads;
+      fireEvent.scroll(viewport);
+      await vi.waitFor(() => {
+        expect(rangeRectReads).toBeGreaterThan(readsBeforeReturn);
       });
     } finally {
       Object.defineProperty(Range.prototype, "getClientRects", {
@@ -524,7 +574,7 @@ describe("MessageList thread switch", () => {
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
   });
 
-  it("focuses the selected-text note editor and closes it on Escape", async () => {
+  it("returns focus to Add comment when the selected-text editor closes", async () => {
     messagesValue = [{
       id: "assistant-1",
       sequence: 1,
@@ -543,15 +593,19 @@ describe("MessageList thread switch", () => {
     selection.addRange(range);
 
     fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
-    fireEvent.click(getByRole("button", { name: "Add comment" }));
+    const action = getByRole("button", { name: "Add comment" });
+    const actionPopup = action.closest('[data-slot="popover-content"]');
+    fireEvent.click(action);
 
     const noteInput = getByRole("textbox", { name: "Comment note" });
+    expect(noteInput.closest('[data-slot="popover-content"]')).not.toBe(actionPopup);
     await vi.waitFor(() => expect(noteInput).toHaveFocus());
     fireEvent.keyDown(noteInput, { key: "Escape" });
 
     await vi.waitFor(() => {
       expect(queryByRole("dialog", { name: "Comment on selected text" })).not.toBeInTheDocument();
     });
+    await vi.waitFor(() => expect(getByRole("button", { name: "Add comment" })).toHaveFocus());
   });
 
   it("does not open the selected-text menu for cross-message or ineligible selections", () => {

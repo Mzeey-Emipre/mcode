@@ -80,7 +80,25 @@ describe("SelectedTextCommentEditor", () => {
 
     expect(onSave).toHaveBeenCalledWith(comment);
     expect(onAnnouncement).toHaveBeenCalledWith("Comment 1 updated.");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith({ restoreFocus: false });
+  });
+
+  it("limits the note to the shell's available height so its own scrollbar remains usable", () => {
+    render(
+      <SelectedTextCommentEditor
+        source={source}
+        maxHeight={46}
+        onSave={() => {}}
+        onClose={() => {}}
+        onAnnouncement={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Comment on selected text" })).toHaveStyle({ maxHeight: "46px" });
+    expect(screen.getByRole("textbox", { name: "Comment note" })).toHaveStyle({
+      maxHeight: "36px",
+      overflowY: "auto",
+    });
   });
 
   it("saves a new multiline comment with its typed slash and mention metadata", async () => {
@@ -118,7 +136,7 @@ describe("SelectedTextCommentEditor", () => {
       mentions,
     });
     expect(onAnnouncement).toHaveBeenCalledWith("Comment 1 added.");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith({ restoreFocus: false });
   });
 
   it("requires independent dirty confirmations and resets them when the draft changes", async () => {
