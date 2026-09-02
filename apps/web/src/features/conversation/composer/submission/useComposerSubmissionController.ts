@@ -139,14 +139,15 @@ export function useComposerSubmissionController({
         onBranchModeExit,
         onThreadCreated,
       });
+      const draftCleared = form.clearSubmittedDraft(submission.snapshot);
       try {
         await dispatch;
       } catch (error) {
+        if (draftCleared) form.restoreFailedDispatch();
         annotations.restoreAfterFailure();
         showDispatchFailure(error, submission.snapshot.selectedTextComments.length > 0);
         return;
       }
-      form.clearSubmittedDraft(submission.snapshot);
       annotations.stopWatching();
       completeSuccessfulComposerSubmission({
         threadId,

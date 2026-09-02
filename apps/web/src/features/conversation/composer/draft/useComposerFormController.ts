@@ -77,6 +77,8 @@ export interface ComposerFormSubmission {
 }
 
 interface SubmittedDraftClear {
+  ownerThreadId: string | undefined;
+  submission: ComposerFormSubmission;
   attachments: PendingAttachment[];
 }
 
@@ -137,6 +139,7 @@ export interface ComposerFormController {
   snapshotAttachmentMetas(): AttachmentMeta[];
   restoreQueued(message: QueuedMessage): void;
   clearSubmittedDraft(submission: ComposerFormSubmission): boolean;
+  restoreFailedDispatch(): void;
   confirmSubmittedDispatch(): boolean;
   clear(reason: "dispatch" | "queue-cancel"): AttachmentMeta[];
   focus(): void;
@@ -184,6 +187,8 @@ export function useComposerFormController({
   const agentSettingsTouchedRef = useRef(false);
   const submissionRevisionRef = useRef(0);
   const submittedDraftClearRef = useRef<SubmittedDraftClear | null>(null);
+  const currentThreadIdRef = useRef(threadId);
+  currentThreadIdRef.current = threadId;
   const threadSwitchRef = useRef(false);
   const restoredDraftOwnerRef = useRef<string | undefined>(undefined);
   const lastServerThreadModelKeyRef = useRef("");
@@ -219,6 +224,9 @@ export function useComposerFormController({
     (state) => state.clearComposerRecallFromStop,
   );
   const clearDraft = useComposerDraftStore((state) => state.clearDraft);
+  const removeDraftAfterAttachmentTransfer = useComposerDraftStore(
+    (state) => state.removeDraftAfterAttachmentTransfer,
+  );
   const previewReferenceQueueSignal = usePreviewReferenceQueueStore((state) => state.signal);
   const previewReferenceScopeId = threadId ?? workspaceId;
   const markAgentSettingsTouched = useCallback(() => {
@@ -362,12 +370,34 @@ export function useComposerFormController({
     replaceDraft("");
     setSelectedTextComments([]);
     setSelectedTextCommentEditor(undefined);
-    if (threadId) clearDraft(threadId);
+    if (threadId) removeDraftAfterAttachmentTransfer(threadId);
     submittedDraftClearRef.current = {
+      ownerThreadId: threadId,
+      submission,
       attachments: dispatchedAttachments,
     };
     return true;
-  }, [clearDraft, detachAttachments, replaceDraft, threadId]);
+  }, [detachAttachments, removeDraftAfterAttachmentTransfer, replaceDraft, threadId]);
+
+  const restoreFailedDispatch = useCallback(() => {
+    const submittedDraftClear = submittedDraftClearRef.current;
+    submittedDraftClearRef.current = null;
+    if (!submittedDraftClear) return;
+    if (submittedDraftClear.ownerThreadId !== currentThreadIdRef.current) {
+      releaseAttachments(submittedDraftClear.attachments);
+      return;
+    }
+    replaceDraft(
+      submittedDraftClear.submission.rawInput,
+      submittedDraftClear.submission.mentions,
+    );
+    replaceAttachments(submittedDraftClear.attachments);
+    setSelectedTextCommentDraft(
+      submittedDraftClear.submission.selectedTextComments,
+      submittedDraftClear.submission.selectedTextCommentEditor,
+    );
+    focus();
+  }, [focus, releaseAttachments, replaceAttachments, replaceDraft, setSelectedTextCommentDraft]);
 
   const confirmSubmittedDispatch = useCallback((): boolean => {
     const submittedDraftClear = submittedDraftClearRef.current;
@@ -704,6 +734,7 @@ export function useComposerFormController({
     snapshotAttachmentMetas: attachments.snapshotAttachmentMetas,
     restoreQueued,
     clearSubmittedDraft,
+    restoreFailedDispatch,
     confirmSubmittedDispatch,
     clear,
     focus,
