@@ -19,6 +19,7 @@ import {
 } from "@/performance/message-list-performance";
 import { TranscriptItemRenderer } from "./timeline/TranscriptItemRenderer";
 import { MessageListOverlays } from "./MessageListOverlays";
+import type { SelectedTextCommentEditorScope } from "./selection/SelectedTextCommentControls";
 import {
   canLoadNewerHistory,
   canLoadOlderHistory,
@@ -102,6 +103,8 @@ export interface MessageListProps {
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Adds one selected-text comment to the active Composer draft. */
   onSelectedTextComment?: (comment: SelectedTextComment) => void;
+  /** Scopes selected-text comment mention and slash-skill suggestions. */
+  selectedTextCommentEditorScope?: SelectedTextCommentEditorScope;
   /** Opens a selected canonical child through the composition root. */
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
@@ -117,6 +120,7 @@ export function MessageList({
   onBranch,
   onReply,
   onSelectedTextComment,
+  selectedTextCommentEditorScope,
   onSubagentSelect,
   onOpenSubagents,
   showParentAgentProvenance = true,
@@ -1170,6 +1174,9 @@ export function MessageList({
         isLoadingMore={isLoadingMore}
         isLoadingNewer={isLoadingNewer}
         onSelectedTextComment={onSelectedTextComment}
+        selectedTextCommentEditorScope={selectedTextCommentEditorScope}
+        viewportRef={containerRef}
+        renderedThreadId={renderedThreadId}
         stickyPreview={lastUserMessagePreview}
         isStickyVisible={showStickyUserMessage && isPositioned}
         onJumpToLastUserMessage={handleJumpToLastUserMessage}

@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS } from "@mcode/contracts";
 import {
   createSelectedTextCommentSource,
   createCanonicalMessageTextProjection,
+  findSelectedTextCommentContent,
+  lastVisibleRangeRect,
   reconstructCanonicalMessageRange,
 } from "../selected-text-projection";
 
@@ -31,6 +33,51 @@ describe("selected-text message projection", () => {
 
     expect(exact?.toString()).toBe("β");
     expect(changed).toBeNull();
+  });
+
+  it("finds an exact source and uses the last range rect visible in the message viewport", () => {
+    const host = document.createElement("div");
+    host.innerHTML = [
+      '<div data-testid="message-viewport">',
+      '<article data-message-id="message-1" data-message-role="assistant" data-thread-id="thread-1">',
+      '<div data-selected-text-content data-selected-text-eligible="true">Alpha beta</div>',
+      "</article>",
+      '<article data-message-id="message-1" data-message-role="assistant" data-thread-id="thread-2">',
+      '<div data-selected-text-content data-selected-text-eligible="true">Other thread</div>',
+      "</article>",
+      '<article data-message-id="message-2" data-message-role="assistant" data-thread-id="thread-1">',
+      '<div data-selected-text-content data-selected-text-eligible="false">Ineligible</div>',
+      "</article>",
+      "</div>",
+      '<article data-message-id="message-1" data-message-role="assistant" data-thread-id="thread-1">',
+      '<div data-selected-text-content data-selected-text-eligible="true">Duplicate surface</div>',
+      "</article>",
+    ].join("");
+    document.body.append(host);
+    const viewport = host.querySelector<HTMLElement>('[data-testid="message-viewport"]')!;
+    const source = {
+      threadId: "thread-1",
+      messageId: "message-1",
+      sourceRole: "assistant" as const,
+      start: 0,
+      end: 5,
+      quote: "Alpha",
+    };
+    const first = new DOMRect(40, 80, 60, 20);
+    const second = new DOMRect(40, 140, 60, 20);
+    const third = new DOMRect(40, 220, 60, 20);
+    const range = { getClientRects: () => [first, second, third] } as unknown as Range;
+    let viewportRect = new DOMRect(0, 100, 400, 100);
+    vi.spyOn(viewport, "getBoundingClientRect").mockImplementation(() => viewportRect);
+
+    expect(findSelectedTextCommentContent(source, viewport, "thread-1")?.textContent).toBe("Alpha beta");
+    expect(findSelectedTextCommentContent(source, viewport, "thread-2")).toBeNull();
+    expect(findSelectedTextCommentContent({ ...source, messageId: "message-2", quote: "Ineligible" }, viewport, "thread-1")).toBeNull();
+    expect(lastVisibleRangeRect(range, viewport)).toBe(second);
+
+    viewportRect = new DOMRect(0, 200, 400, 100);
+    expect(lastVisibleRangeRect(range, viewport)).toBe(third);
+    host.remove();
   });
 
   it("accepts a pointer-selected UTF-16 range from one completed eligible message only", () => {

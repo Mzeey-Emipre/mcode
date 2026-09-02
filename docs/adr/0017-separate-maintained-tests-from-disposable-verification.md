@@ -10,7 +10,7 @@ The tracked web and desktop Playwright E2E suites, demo harnesses, specialized d
 
 ## Consequences
 
-- `bun run verify` is the maintained automated regression gate after the retired E2E suite is removed.
+- Hosted CI runs the maintained automated regression gate after the retired E2E suite is removed.
 - UI and runtime behavior still require fresh live evidence before completion.
 - Browser use and computer use are preferred for live verification when available.
 - Playwright remains an optional external verification tool, not a repository default.

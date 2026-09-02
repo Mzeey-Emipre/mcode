@@ -21,8 +21,7 @@
     "prod:desktop": "cd apps/desktop && bun run prod",
     "build": "turbo run build",
     "test": "turbo run test",
-    "lint": "turbo run lint",
-    "lint:fast": "bun run --cwd packages/oxlint-plugin build && oxlint",
+    "lint": "bun run --cwd packages/oxlint-plugin build && oxlint",
     "test:oxlint-plugin": "bun --cwd packages/oxlint-plugin test",
     "lint:deadcode": "knip",
     "typecheck": "turbo run typecheck",
@@ -40,8 +39,6 @@
     "agent:down": "bun scripts/agent/agent-down.mjs",
     "agent:reset": "bun scripts/agent/agent-reset.mjs",
     "sync:cursor-models": "bun apps/server/scripts/sync-cursor-models-snapshot.ts",
-    "verify": "bun scripts/agent/verify-tests.mjs --full",
-    "verify:changed": "bun scripts/agent/verify-tests.mjs",
     "audit:baseline": "bun scripts/security/check-bun-audit-baseline.mjs",
     "test:scripts": "bun scripts/agent/test-scripts.mjs"
   },

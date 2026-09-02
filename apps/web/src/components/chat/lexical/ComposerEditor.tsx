@@ -30,6 +30,14 @@ interface ComposerEditorProps {
   editorRef?: React.MutableRefObject<LexicalEditor | null>;
   disabled?: boolean;
   placeholder?: string;
+  /** DOM identifier for a focus target outside the editor. */
+  id?: string;
+  /** Accessible name for the editor control. */
+  ariaLabel?: string;
+  /** When false, Ctrl/Cmd+Enter submits and Enter inserts a line break. */
+  submitOnEnter?: boolean;
+  /** Uses the compact annotation sizing required by selected-text comments. */
+  compact?: boolean;
   /** When true, intercept navigation keys for popup keyboard handling. */
   isPopupOpen?: boolean;
   /** Called when a navigation key is pressed while popup is open. Returns true if handled. */
@@ -38,9 +46,14 @@ interface ComposerEditorProps {
 
 const COMPOSER_MIN_HEIGHT = "80px";
 const COMPOSER_MAX_HEIGHT = "30vh";
+const COMPACT_EDITOR_MIN_HEIGHT = "2.25rem";
 
 const EDITOR_THEME = {
   paragraph: `min-h-[${COMPOSER_MIN_HEIGHT}]`,
+};
+
+const COMPACT_EDITOR_THEME = {
+  paragraph: "min-h-0",
 };
 
 /** Internal plugin that exposes the editor instance via ref. */
@@ -78,6 +91,10 @@ export function ComposerEditor({
   editorRef,
   disabled,
   placeholder = "Ask for follow-up changes or attach images",
+  id,
+  ariaLabel,
+  submitOnEnter,
+  compact = false,
   isPopupOpen,
   onPopupKeyDown,
 }: ComposerEditorProps) {
@@ -86,7 +103,7 @@ export function ComposerEditor({
 
   const initialConfig = useRef({
     namespace: "McodeComposer",
-    theme: EDITOR_THEME,
+    theme: compact ? COMPACT_EDITOR_THEME : EDITOR_THEME,
     nodes: [MentionNode, SlashCommandNode],
     onError: (error: Error) => {
       console.error("[ComposerEditor]", error);
@@ -108,14 +125,24 @@ export function ComposerEditor({
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
-              className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+              className={compact
+                ? "w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none"
+                : "w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"}
+              id={id}
+              aria-label={ariaLabel}
               aria-placeholder={placeholder}
               placeholder={
-                <div className="pointer-events-none absolute left-4 top-3 text-sm text-muted-foreground">
+                <div className={compact
+                  ? "pointer-events-none absolute left-2 top-1.5 text-sm text-muted-foreground"
+                  : "pointer-events-none absolute left-4 top-3 text-sm text-muted-foreground"}>
                   {placeholder}
                 </div>
               }
-              style={{ minHeight: COMPOSER_MIN_HEIGHT, maxHeight: COMPOSER_MAX_HEIGHT, overflowY: "auto" }}
+              style={{
+                minHeight: compact ? COMPACT_EDITOR_MIN_HEIGHT : COMPOSER_MIN_HEIGHT,
+                maxHeight: COMPOSER_MAX_HEIGHT,
+                overflowY: "auto",
+              }}
             />
           }
           ErrorBoundary={LexicalErrorBoundary}
@@ -137,6 +164,7 @@ export function ComposerEditor({
         <KeyboardPlugin
           onSubmit={onSubmit}
           disabled={disabled}
+          submitOnEnter={submitOnEnter}
           isPopupOpen={isPopupOpen}
           onPopupKeyDown={onPopupKeyDown}
         />

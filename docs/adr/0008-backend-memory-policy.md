@@ -103,7 +103,7 @@ budget per operation, and report when older history was elided.
 ## Consequences
 
 - The `ToolResult` contract gains truncation metadata; the schema change lives
-  in `packages/contracts` and every consumer must typecheck (`bun run verify`).
+  in `packages/contracts` and every consumer must typecheck.
 - ARCHITECTURE.md and the settings reference must match the new defaults; the
   512 MB figure in the docs becomes true instead of aspirational.
 - Users who explicitly chose 96 MB get silently migrated to 512. Accepted:

@@ -13,6 +13,7 @@ export {
   $isSlashCommandNode,
 } from "./SlashCommandNode";
 export { insertMentionNode } from "./MentionPlugin";
+export { createMentionNodeData } from "./mention-suggestion";
 export {
   insertPluginMentionNode,
   insertSelectedPluginMention,

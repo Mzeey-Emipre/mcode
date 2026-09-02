@@ -78,7 +78,7 @@ Commands:
   health
       Validate this worktree's .dev/ports.json and GET /health. Does not start a runtime.
   check
-      Run focused AgentService/event tests, bun run verify:changed, and bun run lint:fast.
+      Run focused AgentService/event tests and bun run lint.
   inspect
       Read active runtime and workspace summaries through the authenticated WebSocket RPC API.
   live --provider <codex|claude|cursor> --model <id> --scenario <completion|stop> --confirm-provider-call [--keep-thread]
@@ -366,8 +366,7 @@ async function check(repoRoot) {
   const stamp = fileStamp();
   const phases = [
     { name: "focused-agent-runtime", args: ["--cwd", "apps/server", "run", "test", "--", ...FOCUSED_TEST_FILES] },
-    { name: "verify-changed", args: ["run", "verify:changed"] },
-    { name: "lint-fast", args: ["run", "lint:fast"] },
+    { name: "lint", args: ["run", "lint"] },
   ];
   const results = [];
   for (const phase of phases) {
@@ -1302,7 +1301,7 @@ function cleanup(repoRoot) {
 function isHarnessEvidenceFile(name) {
   const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/;
   if (!timestamp.test(name)) return false;
-  return /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:completion|stop)-(?:receipt\.json|timeline\.html)|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-worktree-setup-receipt\.json|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:focused-agent-runtime|verify-changed|lint-fast)\.log)$/.test(name);
+  return /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:completion|stop)-(?:receipt\.json|timeline\.html)|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-worktree-setup-receipt\.json|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:focused-agent-runtime|lint)\.log)$/.test(name);
 }
 
 function ensureEvidenceDirectory(repoRoot) {

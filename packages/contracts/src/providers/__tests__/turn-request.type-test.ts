@@ -3,9 +3,8 @@ import type { TurnRequest } from "../interfaces.js";
 
 /**
  * These assertions are compile-time first: if the discriminated `providerOptions`
- * bag stops walling knobs by Provider, the file fails to typecheck and
- * `bun run verify` breaks. The runtime bodies are trivial so Vitest registers
- * the file as a passing suite.
+ * bag stops walling knobs by Provider, the file fails to typecheck. The runtime
+ * bodies are trivial so Vitest registers the file as a passing suite.
  */
 describe("TurnRequest providerOptions discrimination", () => {
   it("accepts Claude knobs on a claude request", () => {

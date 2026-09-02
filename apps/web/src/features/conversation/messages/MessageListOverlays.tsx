@@ -3,9 +3,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StickyUserMessage } from "@/components/chat/StickyUserMessage";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import type { SelectedTextComment } from "@mcode/contracts";
+import type { RefObject } from "react";
 import type { Message } from "@/transport/types";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { SelectedTextCommentControls } from "./selection/SelectedTextCommentControls";
+import type { SelectedTextCommentEditorScope } from "./selection/SelectedTextCommentControls";
 
 /** Props for transcript controls that float above the virtual rows. */
 interface MessageListOverlaysProps {
@@ -14,6 +16,11 @@ interface MessageListOverlaysProps {
   readonly isLoadingMore: boolean;
   readonly isLoadingNewer: boolean;
   readonly onSelectedTextComment: ((comment: SelectedTextComment) => void) | undefined;
+  readonly selectedTextCommentEditorScope: SelectedTextCommentEditorScope | undefined;
+  /** Scroll viewport that bounds selected-text controls. */
+  readonly viewportRef: RefObject<HTMLElement | null>;
+  /** Thread whose transcript is currently rendered in the viewport. */
+  readonly renderedThreadId: string | null | undefined;
   readonly stickyPreview: string | null;
   readonly isStickyVisible: boolean;
   readonly onJumpToLastUserMessage: () => void;
@@ -34,6 +41,9 @@ export function MessageListOverlays({
   isLoadingMore,
   isLoadingNewer,
   onSelectedTextComment,
+  selectedTextCommentEditorScope,
+  viewportRef,
+  renderedThreadId,
   stickyPreview,
   isStickyVisible,
   onJumpToLastUserMessage,
@@ -55,7 +65,13 @@ export function MessageListOverlays({
       )}
       {isLoadingMore && <PaginationIndicator placement="top" />}
       {isLoadingNewer && <PaginationIndicator placement="bottom" />}
-      <SelectedTextCommentControls onSelectedTextComment={onSelectedTextComment} />
+      <SelectedTextCommentControls
+        key={renderedThreadId ?? "no-rendered-thread"}
+        onSelectedTextComment={onSelectedTextComment}
+        selectedTextCommentEditorScope={selectedTextCommentEditorScope}
+        viewportRef={viewportRef}
+        renderedThreadId={renderedThreadId}
+      />
       {stickyPreview && (
         <StickyUserMessage
           preview={stickyPreview}

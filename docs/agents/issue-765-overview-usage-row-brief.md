@@ -205,7 +205,7 @@ For implementation work, verify in this order:
 3. Seed or use a thread with Cursor percentage categories and observe API and Auto usage in Overview.
 4. Confirm dollar amounts render only for provider-proven API-key session cost.
 5. Confirm no browser console errors.
-6. Run `bun run verify`.
+6. Run focused tests and typecheck.
 7. Run focused Vitest or Testing Library coverage for the changed behavior.
 
 ## PR Body Note
@@ -220,4 +220,4 @@ If Codex has no supported machine-readable usage source, add:
 
 ## Implementation Prompt
 
-Implement GitHub issue #765 in this worktree with the revised scope in this brief. Add the Overview Usage row and provider-backed usage limit plumbing. Reuse Claude and Copilot usage sources. Add Cursor usage limits through a bounded, configured Admin API source. Investigate Codex and add `getUsage` only if a supported machine-readable source exists. Render capped usage-limit percentages, plus provider-proven API-key session cost when available. Do not render prices, token costs, paid overage, or scraped dashboard data. Add focused backend and frontend tests, run live verification, then run `bun run verify`.
+Implement GitHub issue #765 in this worktree with the revised scope in this brief. Add the Overview Usage row and provider-backed usage limit plumbing. Reuse Claude and Copilot usage sources. Add Cursor usage limits through a bounded, configured Admin API source. Investigate Codex and add `getUsage` only if a supported machine-readable source exists. Render capped usage-limit percentages, plus provider-proven API-key session cost when available. Do not render prices, token costs, paid overage, or scraped dashboard data. Add focused backend and frontend tests, then run live verification and typecheck.

@@ -117,4 +117,4 @@ same path. Reused unmanaged worktrees and shared worktrees remain on disk.
 
 Cover same-repository and fork remotes, push URL drift, equivalent remotes, head
 drift, branch collisions, stale or escaping paths, partial creation, concurrency,
-migration constraints, and deletion ownership. Then run `bun run verify`.
+migration constraints, and deletion ownership. Then run focused tests and typecheck.

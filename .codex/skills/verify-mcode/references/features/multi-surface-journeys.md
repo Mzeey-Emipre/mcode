@@ -38,8 +38,19 @@ Use `runtime worktree-setup --confirm-cleanup` for the public server proof. The 
 
 Use `thread-lifecycle proof --confirm-cleanup` for the desktop action and receipt. Use `thread-lifecycle check` for the retention-worker result.
 
+## Selected-text comment draft
+
+1. Drag across assistant text in the Electron transcript and open the compact comment editor.
+2. Load the selected thread's Claude skill catalog and select the owned project skill.
+3. Load workspace files and select `README.md` as a typed mention.
+4. Save the multiline comment into the active composer draft.
+5. Drag across the text again and right-click it.
+
+Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, and composer-draft result. The proof does not send a provider turn.
+
 ## Coverage gaps
 
 - The provider workflows need an available model and a logged-in provider CLI. Record missing access as a blocked provider path.
 - The public subscription begins after thread creation. It cannot show lossless events before creation.
 - The completed-thread proof does not wait one day. Its focused integration checks use a controlled clock for the retention path.
+- The selected-text comment proof cannot inspect the hidden `MessageMention[]` payload without sending a provider turn. The focused editor test covers that payload.

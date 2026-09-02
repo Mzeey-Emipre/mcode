@@ -70,7 +70,7 @@ The diff also adds focused coverage for the canvas, toolbar, cooperative invalid
 
 ## Verification evidence
 
-\#1049 requires live web and Electron checks for user resize, agent resize, panel resize, tab switching, hiding, remounting, normal completion, and interruption. #1034 adds the shared live tracer story for resize, background activity, narrative rendering, and return to visible control. The local UI guide separately requires interaction, keyboard, accessibility, responsive-width, console, and visual checks, plus focused tests and `bun run verify` at [lines 59 to 86](../guides/ui-components.md#L59-L86).
+\#1049 requires live web and Electron checks for user resize, agent resize, panel resize, tab switching, hiding, remounting, normal completion, and interruption. #1034 adds the shared live tracer story for resize, background activity, narrative rendering, and return to visible control. The local UI guide separately requires interaction, keyboard, accessibility, responsive-width, console, visual checks, and focused tests at [lines 59 to 86](../guides/ui-components.md#L59-L86).
 
 ### Web live pass
 
@@ -102,7 +102,7 @@ These are verification gaps, not known code defects. \#1049's complete live acce
 - Monorepo typechecking passed across all six packages.
 - The focused web suites passed 117 tests, and the exact PreviewPanel regression proved that the same iframe remains mounted while Responsive mode opens and closes.
 - The desktop viewport suite passed 86 tests, including stale-operation admission across more than 128 live tabs. The contracts suite passed 301 tests.
-- `bun run verify` passed typechecking and linting. Its unit-test phase timed out after eight unrelated sidebar-search tests failed because this runner had no usable `localStorage`. The issue-specific viewport suites passed independently. The full gate evidence is in [manifest.json](../../.dev/verification/runs/2026-08-03T21-19-04-050Z-35908-8b1b9ef9/manifest.json).
+- Typechecking and linting passed. Its unit-test phase timed out after eight unrelated sidebar-search tests failed because this runner had no usable `localStorage`. The issue-specific viewport suites passed independently.
 
 ## Background and superseded material
 

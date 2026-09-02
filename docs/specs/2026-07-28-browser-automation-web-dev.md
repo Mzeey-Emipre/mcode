@@ -208,8 +208,8 @@ or extension bridge if product requirements justify that boundary.
    private DOM implementation details or merely restate constants.
 8. Sensitive values must be verified absent from logs, action history, error
    messages, screenshots, and broker diagnostics.
-9. Run focused package tests for contracts, server, and web first. Then run the
-   repository regression floor with `bun run verify`.
+9. Run focused package tests for contracts, server, and web first. Then run
+   typecheck and lint.
 10. Keep live browser evidence, logs, and disposable fixtures under the existing
     development verification area. Do not commit task-specific browser-driving
     scripts.

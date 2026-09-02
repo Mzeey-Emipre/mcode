@@ -24,7 +24,7 @@
 | A thread starts, runs, stops, clears active state, and retains a cancelled reconnect snapshot | [Thread lifecycle](thread-lifecycle.md) | `runtime live --scenario stop` |
 | Provider events become durable assistant conversation data | [Provider events and durability](provider-events-and-durability.md) | `runtime live --scenario completion` |
 | Thread deletion and provider-session cleanup retain runtime ownership | [Resource lifecycle](resource-lifecycle.md) | `runtime check` and controlled thread cleanup |
-| Selected assistant text exposes comment and native copy actions separately | [Selected text comments](selected-text-comments.md) | Electron public UI proof |
+| Pointer-selected assistant text opens a compact comment editor and retains native copy actions | [Selected text comments](selected-text-comments.md) | Electron public UI proof |
 | A New worktree completes checkout before automatic Setup starts | [Managed-worktree Setup readiness](managed-worktree-setup.md) | `runtime worktree-setup --confirm-cleanup` and `runtime check` |
 | A user completes a worktree thread and the app schedules its cleanup | [Completed-thread cleanup](completed-thread-cleanup.md) | `thread-lifecycle proof --confirm-cleanup` and `thread-lifecycle check` |
 
@@ -45,6 +45,7 @@ Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that cro
 - Provider discovery does not prove provider account login.
 - The public subscription RPC cannot prove a pre-create subscription without a caller-supplied thread ID or workspace subscription.
 - The selected-text-comments proof cannot show native operating-system menu rendering.
+- Saved-comment edit, delete, and focus return need the card and marker entry points planned for #1557 and #1558.
 - Thread retention has a minimum of one day. The live proof shows the scheduled deletion, while focused integration checks show later worktree cleanup.
 - If `agent.createAndSend` creates a thread but its response is lost before the ID arrives, the public RPC has no safe cleanup identifier. Record this as a coverage gap. Do not delete threads by heuristic.
 - If `thread.create` creates a managed-worktree thread but its response is lost before the ID arrives, the lifecycle verifier has no safe cleanup identifier. Record this as a coverage gap. Do not delete threads by heuristic.

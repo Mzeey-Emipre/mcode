@@ -198,8 +198,8 @@ Add focused tests for:
 - unchanged Cursor event-mapper fixtures and permission-mapper behavior;
 - regression coverage for `SessionRuntime` PID handoff and stop order.
 
-Run `bun run verify` after implementation because this extraction changes
-cross-module TypeScript contracts.
+Run focused tests and typecheck after implementation because this extraction
+changes cross-module TypeScript contracts.
 
 ## Out Of Scope
 

@@ -99,7 +99,7 @@ An exact patch pin is appropriate here because native-addon installation is part
 - Local bootstrap on Windows from a clean dependency install under the pinned Node 24 patch.
 - `bun run doctor`, including both the Node and Electron `better-sqlite3` checks.
 - `bun run test:scripts` for runtime-pin and verification-entry behavior.
-- `bun run verify`.
+- Focused tests, typecheck, and lint.
 - Worktree-local `bun run --shell system agent:up`, health check, and `agent:down`.
 - Desktop Package Dry Run on Windows, macOS arm64, macOS x64, and Linux.
 - Nightly Desktop packaging and packaged-server smoke tests on the same matrix.

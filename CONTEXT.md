@@ -1313,9 +1313,6 @@ lifecycle within a thread. Two kinds today:
 - **Stop hook** — runs after a turn ends. Useful for verification,
   notifications, or post-processing.
 
-Distinct from the dev-tooling stop hook under `AGENTS.md` (the harness
-verification gate for contributors).
-
 ## In-app browser preview
 
 ### Discarded tab (memory saver)

@@ -298,6 +298,10 @@ function ChatMessageStage({ state, interactions, automaticSetup, onSubagentSelec
     onBranch: interactions.onBranch,
     onReply: interactions.onReply,
     onSelectedTextComment: interactions.onSelectedTextComment,
+    selectedTextCommentEditorScope: {
+      workspaceId: state.activeWorkspaceId ?? undefined,
+      providerId: thread.provider,
+    },
     onSubagentSelect,
     onOpenSubagents,
   };

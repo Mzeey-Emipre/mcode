@@ -138,7 +138,7 @@ navigation behavior.
   return, pull request restoration, and separation from Preview history.
 - Visual verification covers wide and narrow windows in both themes, with no
   clipped controls or console errors.
-- The final regression floor is `bun run verify`.
+- The final regression floor includes focused tests, typecheck, and lint.
 
 ## Out of Scope
 

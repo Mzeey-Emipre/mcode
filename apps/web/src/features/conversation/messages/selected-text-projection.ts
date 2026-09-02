@@ -238,3 +238,30 @@ export function reconstructCanonicalMessageRange(
   range.setEnd(rangeEnd.node, rangeEnd.offset);
   return range.toString() === quote ? range : null;
 }
+
+/** Finds the rendered content element for one canonical selected-text source. */
+export function findSelectedTextCommentContent(
+  source: SelectedTextCommentSource,
+  viewport: Element,
+  renderedThreadId: string | null | undefined,
+): HTMLElement | null {
+  if (source.threadId !== renderedThreadId) return null;
+  return [...viewport.querySelectorAll<HTMLElement>("[data-selected-text-content]")].find((content) => {
+    const message = content.closest<HTMLElement>("[data-message-id][data-message-role][data-thread-id]");
+    return content.dataset.selectedTextEligible === "true"
+      && message?.dataset.messageId === source.messageId
+      && message.dataset.messageRole === source.sourceRole
+      && message.dataset.threadId === source.threadId;
+  }) ?? null;
+}
+
+/** Returns the last selected range rectangle that intersects the message viewport. */
+export function lastVisibleRangeRect(range: Range, viewport: Element): DOMRect | null {
+  const viewportRect = viewport.getBoundingClientRect();
+  return [...range.getClientRects()].reverse().find((rect) => (
+    rect.right > viewportRect.left
+    && rect.left < viewportRect.right
+    && rect.bottom > viewportRect.top
+    && rect.top < viewportRect.bottom
+  )) ?? null;
+}

@@ -202,6 +202,34 @@ export interface UseSlashCommandReturn {
   onRetry: () => void;
 }
 
+/** Routes a Lexical navigation key to an open slash-command picker. */
+export function handleSlashCommandPopupKey(
+  key: string,
+  items: readonly Command[],
+  selectedIndex: number,
+  onSelect: (command: Command) => void,
+  onDismiss: () => void,
+  onKeyDown: (event: React.KeyboardEvent) => void,
+): boolean {
+  if (key === "Enter" || key === "Tab") {
+    const command = items[selectedIndex];
+    if (command) {
+      onSelect(command);
+      return true;
+    }
+  }
+  if (key === "Escape") {
+    onDismiss();
+    return true;
+  }
+  onKeyDown({
+    key,
+    preventDefault: () => {},
+    stopPropagation: () => {},
+  } as unknown as React.KeyboardEvent);
+  return key === "ArrowDown" || key === "ArrowUp";
+}
+
 /** Manages slash command detection, provider catalog loading, and popup state. */
 export function useSlashCommand({
   anchorRef,

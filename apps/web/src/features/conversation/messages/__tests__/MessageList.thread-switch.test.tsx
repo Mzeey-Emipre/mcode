@@ -192,6 +192,14 @@ import {
   hasRememberedHistoryPosition,
 } from "@/components/chat/scrollPositionMemory";
 
+const rangeClientRectsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+
+function mockSelectedTextViewport(container: HTMLElement): HTMLDivElement {
+  const viewport = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1_000, 800));
+  return viewport;
+}
+
 beforeEach(() => {
   measureSpy.mockClear();
   scrollToIndexSpy.mockClear();
@@ -209,17 +217,23 @@ beforeEach(() => {
   handoffStatusByThread = {};
   recordOverridesByThread = {};
   clearScrollMemory();
+  Object.defineProperty(Range.prototype, "getClientRects", {
+    configurable: true,
+    value: () => [new DOMRect(120, 160, 96, 20)],
+  });
 });
 
 afterEach(() => {
   vi.useRealTimers();
   document.getSelection()?.removeAllRanges();
+  if (rangeClientRectsDescriptor) Object.defineProperty(Range.prototype, "getClientRects", rangeClientRectsDescriptor);
+  else Reflect.deleteProperty(Range.prototype, "getClientRects");
   if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
   else Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("MessageList thread switch", () => {
-  it("keeps selected-text actions open through the selection click sequence", () => {
+  it("keeps selected-text actions open through the selection click sequence", async () => {
     messagesValue = [{
       id: "assistant-1",
       sequence: 1,
@@ -228,9 +242,10 @@ describe("MessageList thread switch", () => {
       content: "Select this phrase",
     }];
     const onSelectedTextComment = vi.fn();
-    const { getByRole, getByText, queryByRole } = render(
+    const { container, getByRole, getByText, queryByRole } = render(
       <MessageList onSelectedTextComment={onSelectedTextComment} />,
     );
+    mockSelectedTextViewport(container);
     const content = getByText("Select this phrase");
     const contextMenuSpy = vi.fn();
     content.addEventListener("contextmenu", contextMenuSpy);
@@ -251,27 +266,218 @@ describe("MessageList thread switch", () => {
 
     fireEvent.click(addComment);
     expect(getByRole("dialog", { name: "Comment on selected text" })).toBeInTheDocument();
-    fireEvent.change(getByRole("textbox", { name: "Comment note" }), {
-      target: { value: "Explain this." },
-    });
-    fireEvent.click(getByRole("button", { name: "Add comment" }));
-
-    expect(onSelectedTextComment).toHaveBeenCalledWith({
-      id: expect.any(String),
-      displayNumber: 1,
-      source: {
-        threadId: "thread-A",
-        messageId: "assistant-1",
-        sourceRole: "assistant",
-        start: 0,
-        end: 6,
-        quote: "Select",
-      },
-      note: "Explain this.",
-      mentions: [],
-    });
+    const noteInput = getByRole("textbox", { name: "Comment note" });
+    await vi.waitFor(() => expect(noteInput).toHaveFocus());
+    expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
+    expect(getByRole("button", { name: "Close comment editor" })).toBeInTheDocument();
     selection.removeAllRanges();
     content.removeEventListener("contextmenu", contextMenuSpy);
+  });
+
+  it("anchors selected-text actions and the editor to the selected range after native selection clears", async () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    let selectedRangeRect = new DOMRect(120, 160, 96, 20);
+    const originalGetClientRects = Range.prototype.getClientRects;
+    const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+    const resizeObservers: ResizeObserverMock[] = [];
+    let rangeRectReads = 0;
+    class ResizeObserverMock {
+      readonly observed = new Set<Element>();
+
+      constructor(readonly callback: ResizeObserverCallback) {
+        resizeObservers.push(this);
+      }
+
+      observe(target: Element) {
+        this.observed.add(target);
+      }
+
+      unobserve(target: Element) {
+        this.observed.delete(target);
+      }
+
+      disconnect() {
+        this.observed.clear();
+      }
+    }
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => {
+        rangeRectReads += 1;
+        return [selectedRangeRect];
+      },
+    });
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: ResizeObserverMock,
+    });
+
+    try {
+      const { container, getByRole, getByText } = render(<MessageList />);
+      const viewport = mockSelectedTextViewport(container);
+      const content = getByText("Select this phrase");
+      const text = content.firstChild!;
+      const selection = document.getSelection()!;
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(text, 6);
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      fireEvent.mouseUp(content, { button: 0, clientX: 900, clientY: 700 });
+
+      const action = getByRole("button", { name: "Add comment" });
+      const actionPositioner = action.closest('[data-slot="popover-content"]')?.parentElement;
+      expect(
+        actionPositioner,
+        "the action must use the selected range Popover anchor at (120, 188), not the pointer release at (900, 700)",
+      ).toBeTruthy();
+      await vi.waitFor(() => {
+        expect(actionPositioner).toHaveStyle({
+          "--anchor-width": "96px",
+          "--anchor-height": "20px",
+        });
+      });
+      expect(document.querySelector('[data-slot="popover-trigger"]')).toBeNull();
+      await vi.waitFor(() => {
+        expect(resizeObservers.some((observer) => observer.observed.has(viewport))).toBe(true);
+      });
+      const viewportObserver = resizeObservers.find((observer) => observer.observed.has(viewport))!;
+      await vi.waitFor(() => {
+        expect([...viewportObserver.observed]).toContain(content);
+      });
+
+      selectedRangeRect = new DOMRect(120, 100, 96, 20);
+      const readsBeforeScroll = rangeRectReads;
+      fireEvent.scroll(viewport);
+      await vi.waitFor(() => {
+        expect(rangeRectReads).toBeGreaterThan(readsBeforeScroll);
+      });
+
+      selectedRangeRect = new DOMRect(120, 80, 128, 20);
+      const readsBeforeViewportResize = rangeRectReads;
+      act(() => {
+        viewportObserver.callback([], viewportObserver as unknown as ResizeObserver);
+      });
+      await vi.waitFor(() => {
+        expect(rangeRectReads).toBeGreaterThan(readsBeforeViewportResize);
+        expect(actionPositioner).toHaveStyle({ "--anchor-width": "128px" });
+      });
+
+      fireEvent.click(action);
+      selection.removeAllRanges();
+      const editor = getByRole("dialog", { name: "Comment on selected text" });
+      const editorPositioner = editor.closest('[data-slot="popover-content"]')?.parentElement;
+      await vi.waitFor(() => {
+        expect(editorPositioner).toHaveStyle({
+          "--anchor-width": "128px",
+          "--anchor-height": "20px",
+        });
+      });
+    } finally {
+      Object.defineProperty(Range.prototype, "getClientRects", {
+        configurable: true,
+        value: originalGetClientRects,
+      });
+      if (originalResizeObserver) Object.defineProperty(globalThis, "ResizeObserver", originalResizeObserver);
+      else Reflect.deleteProperty(globalThis, "ResizeObserver");
+    }
+  });
+
+  it("closes a selected-text action when the rendered thread changes", async () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { container, getByRole, getByText, queryByRole, rerender } = render(
+      <MessageList displayThreadId="thread-A" />,
+    );
+    mockSelectedTextViewport(container);
+    const content = getByText("Select this phrase");
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.mouseUp(content, { button: 0, clientX: 900, clientY: 700 });
+    expect(getByRole("button", { name: "Add comment" })).toBeInTheDocument();
+
+    rerender(<MessageList displayThreadId="thread-B" />);
+
+    await vi.waitFor(() => {
+      expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("closes a selected-text action on a later outside press", async () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    mockSelectedTextViewport(container);
+    const content = getByText("Select this phrase");
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.mouseUp(content, { button: 0, clientX: 900, clientY: 700 });
+    expect(getByRole("button", { name: "Add comment" })).toBeInTheDocument();
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    act(() => {
+      fireEvent.pointerDown(document.body);
+    });
+
+    await vi.waitFor(() => {
+      expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("closes a selected-text action on Escape", async () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    mockSelectedTextViewport(container);
+    const content = getByText("Select this phrase");
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.mouseUp(content, { button: 0, clientX: 900, clientY: 700 });
+    expect(getByRole("button", { name: "Add comment" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await vi.waitFor(() => {
+      expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
+    });
   });
 
   it("does not open selected-text actions for a collapsed pointer selection", () => {
@@ -326,7 +532,8 @@ describe("MessageList thread switch", () => {
       role: "assistant",
       content: "Select this phrase",
     }];
-    const { getByRole, getByText, queryByRole } = render(<MessageList />);
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    mockSelectedTextViewport(container);
     const content = getByText("Select this phrase");
     const range = document.createRange();
     range.setStart(content.firstChild!, 0);

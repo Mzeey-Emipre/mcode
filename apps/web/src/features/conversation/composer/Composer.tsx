@@ -18,18 +18,17 @@ import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { useFileAutocomplete, type MentionSuggestion } from "@/components/chat/useFileAutocomplete";
 import { useFileTagPopup } from "@/components/chat/FileTagPopup";
 import {
-  createMentionId,
+  createMentionNodeData,
   insertMentionNode,
   insertSelectedPluginMention,
   insertSlashCommandNode,
   removeSlashCommandTrigger,
-  type MentionNodeData,
 } from "@/components/chat/lexical";
 import { useTaskStore, type TaskItem } from "@/stores/taskStore";
 import { usePlanStore } from "@/stores/planStore";
 import { useDiffStore } from "@/stores/diffStore";
 
-import { useSlashCommand } from "@/components/chat/useSlashCommand";
+import { handleSlashCommandPopupKey, useSlashCommand } from "@/components/chat/useSlashCommand";
 import type { Command } from "@/components/chat/useSlashCommand";
 import { SlashCommandPopup } from "@/components/chat/SlashCommandPopup";
 import { useReplyStore } from "@/stores/replyStore";
@@ -59,66 +58,13 @@ const EMPTY_TASK_BUBBLE_TASKS: readonly TaskItem[] = [];
 /** `accept` list for the composer's hidden file input. */
 const ATTACHMENT_INPUT_ACCEPT = attachmentAcceptAttribute();
 
-/** Maps a file-autocomplete result to the matching Lexical mention payload. */
-function createMentionNodeData(item: MentionSuggestion): MentionNodeData {
-  if (item.kind === "agent") {
-    return {
-      id: createMentionId(),
-      kind: "agent",
-      label: item.label,
-      name: item.name,
-      path: item.path,
-      provider: item.provider,
-    };
-  }
-  if (item.kind === "plugin") {
-    return {
-      id: createMentionId(),
-      kind: "plugin",
-      label: item.label,
-      name: item.name,
-      path: item.path,
-    };
-  }
-  return {
-    id: createMentionId(),
-    kind: "file",
-    label: item.label,
-    path: item.path,
-  };
-}
-
-/** Creates the minimal keyboard event accepted by popup navigation handlers. */
+/** Creates the minimal keyboard event accepted by the file picker. */
 function createPopupKeyboardEvent(key: string): React.KeyboardEvent {
   return {
     key,
     preventDefault: () => {},
     stopPropagation: () => {},
   } as unknown as React.KeyboardEvent;
-}
-
-/** Handles slash-popup navigation that stays outside the Lexical editor. */
-function handleSlashPopupKey(
-  key: string,
-  items: readonly Command[],
-  selectedIndex: number,
-  onSelect: (command: Command) => void,
-  onDismiss: () => void,
-  onKeyDown: (event: React.KeyboardEvent) => void,
-): boolean {
-  if (key === "Enter" || key === "Tab") {
-    const command = items[selectedIndex];
-    if (command) {
-      onSelect(command);
-      return true;
-    }
-  }
-  if (key === "Escape") {
-    onDismiss();
-    return true;
-  }
-  onKeyDown(createPopupKeyboardEvent(key));
-  return key === "ArrowDown" || key === "ArrowUp";
 }
 
 function showComposerOptionsInline(composerWidth: number): boolean {
@@ -573,7 +519,7 @@ export function Composer({
       return filePopup.handleKeyDown(createPopupKeyboardEvent(key));
     }
     if (slashCommand.isOpen) {
-      return handleSlashPopupKey(
+      return handleSlashCommandPopupKey(
         key,
         slashCommand.items,
         slashCommand.selectedIndex,
@@ -694,6 +640,7 @@ export function Composer({
             onDetachGoal: agentControls.detachGoal,
             onDetachOrchestration: agentControls.detachOrchestration,
             onStop: handleStop,
+            onClearSelectedTextComments: () => setSelectedTextComments([]),
           }}
         />
         <ComposerStatusStrip

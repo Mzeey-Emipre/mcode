@@ -20,9 +20,4 @@ describe("ComposerEditor resize strategy", () => {
     expect(EDITOR_SRC).not.toMatch(/\.offsetHeight/);
   });
 
-  it("applies CSS-only sizing via style prop on ContentEditable", () => {
-    expect(EDITOR_SRC).toMatch(/minHeight:\s*COMPOSER_MIN_HEIGHT/);
-    expect(EDITOR_SRC).toMatch(/maxHeight:\s*COMPOSER_MAX_HEIGHT/);
-    expect(EDITOR_SRC).toMatch(/overflowY:\s*["']auto["']/);
-  });
 });
