@@ -431,10 +431,10 @@ ORDER BY page.sequence ASC`,
   });
 
   describe("create with selected-text comments", () => {
-    it("round-trips one comment with its exact source range and typed mentions", () => {
+    it("round-trips several comments with exact source ranges and typed mentions", () => {
       const selectedTextComments = [{
         id: "76da3c6e-6b42-4c01-aaf2-3ad0b29a4756",
-        displayNumber: 1 as const,
+        displayNumber: 1,
         source: {
           threadId: "thread-1",
           messageId: "source-message",
@@ -451,6 +451,19 @@ ORDER BY page.sequence ASC`,
           path: "src/index.ts",
           range: { start: 0, end: 12 },
         }],
+      }, {
+        id: "b102c9ae-598d-4f7d-a9aa-58e2d28ee952",
+        displayNumber: 2,
+        source: {
+          threadId: "thread-1",
+          messageId: "source-message-2",
+          sourceRole: "assistant" as const,
+          start: 0,
+          end: 4,
+          quote: "next",
+        },
+        note: "Explain this follow-up branch.",
+        mentions: [],
       }];
 
       const created = repo.create(

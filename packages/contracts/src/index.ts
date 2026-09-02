@@ -313,6 +313,7 @@ export type { MessageMention } from "./models/mention.js";
 export {
   MAX_SELECTED_TEXT_COMMENTS,
   MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS,
+  MAX_SELECTED_TEXT_COMMENT_TOTAL_CHARS,
   SelectedTextCommentSourceSchema,
   SelectedTextCommentSchema,
   SelectedTextCommentsSchema,
