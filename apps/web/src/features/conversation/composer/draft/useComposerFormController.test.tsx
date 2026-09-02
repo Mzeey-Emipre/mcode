@@ -68,7 +68,7 @@ describe("useComposerFormController selected-text drafts", () => {
     act(() => {
       secondAttempt = result.current.requestSelectedTextCommentEditorDismissal();
     });
-    expect(secondAttempt).toBe("Comment editor closed.");
+    expect(secondAttempt).toBeNull();
     expect(result.current.state.selectedTextCommentEditor).toBeUndefined();
   });
 });

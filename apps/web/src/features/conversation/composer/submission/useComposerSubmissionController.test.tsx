@@ -138,11 +138,11 @@ describe("useComposerSubmissionController selected-text comments", () => {
     expect(result.current.form.state.selectedTextComments).toEqual([comment]);
   });
 
-  it("blocks dispatch until a dirty editor completes its dismissal warning flow", async () => {
+  it("dispatches saved cards after a dirty editor completes its dismissal warning flow", async () => {
     const { result } = renderHook(useHarness);
 
     act(() => {
-      result.current.form.setSelectedTextCommentEditor({
+      result.current.form.setSelectedTextComments([comment], {
         source: comment.source,
         note: "Unsaved note",
         mentions: [],
@@ -152,12 +152,26 @@ describe("useComposerSubmissionController selected-text comments", () => {
       });
     });
     await waitFor(() => expect(result.current.form.state.selectedTextCommentEditor).toBeDefined());
-    expect(result.current.form.state.selectedTextComments).toEqual([]);
+    expect(result.current.form.state.selectedTextComments).toEqual([comment]);
     act(() => {
       void result.current.controller.submit();
     });
 
     await waitFor(() => expect(result.current.form.state.selectedTextCommentEditor?.outsideWarned).toBe(true));
     expect(routeMocks.dispatchComposerTarget).not.toHaveBeenCalled();
+
+    act(() => {
+      void result.current.controller.submit();
+    });
+
+    await waitFor(() => expect(routeMocks.dispatchComposerTarget).toHaveBeenCalledWith(expect.objectContaining({
+      submission: expect.objectContaining({
+        snapshot: expect.objectContaining({
+          selectedTextComments: [comment],
+          selectedTextCommentEditor: undefined,
+        }),
+      }),
+    })));
+    expect(result.current.form.state.selectedTextCommentEditor).toBeUndefined();
   });
 });

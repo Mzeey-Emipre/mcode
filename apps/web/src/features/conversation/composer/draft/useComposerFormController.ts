@@ -283,7 +283,7 @@ export function useComposerFormController({
       return "Repeat this action to discard this comment.";
     }
     setSelectedTextCommentEditorDraft(undefined);
-    return "Comment editor closed.";
+    return null;
   }, [selectedTextCommentEditor, selectedTextComments, setSelectedTextCommentEditorDraft]);
 
   const setGoalPendingValue = useCallback((value: boolean) => {
@@ -298,12 +298,13 @@ export function useComposerFormController({
     const message = editorRef.current
       ? extractComposerMessage(editorRef.current)
       : { text: input, mentions };
+    const draft = draftRef.current;
     return {
       revision: submissionRevisionRef.current,
       rawInput: message.text,
       mentions: message.mentions,
-      selectedTextComments,
-      selectedTextCommentEditor,
+      selectedTextComments: draft.selectedTextComments,
+      selectedTextCommentEditor: draft.selectedTextCommentEditor,
       attachments: attachments.attachments,
       selection: { ...selection },
       goalPending,
@@ -313,8 +314,6 @@ export function useComposerFormController({
     goalPending,
     input,
     mentions,
-    selectedTextComments,
-    selectedTextCommentEditor,
     selection,
   ]);
 
