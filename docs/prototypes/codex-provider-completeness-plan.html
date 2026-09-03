@@ -1,0 +1,1293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex provider completeness plan</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --paper: #f6f8f8;
+      --paper-raised: #ffffff;
+      --ink: #172329;
+      --muted: #5d6b70;
+      --rule: #c9d4d7;
+      --rule-strong: #9eafb4;
+      --cyan: #087f8c;
+      --cyan-soft: #d8f1f3;
+      --amber: #9b5b00;
+      --amber-soft: #fff0d6;
+      --green: #176a4b;
+      --green-soft: #def2e8;
+      --red: #9f2d38;
+      --red-soft: #fae3e5;
+      --shadow: 0 10px 30px rgb(20 48 52 / 8%);
+      --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #10191d;
+        --paper-raised: #172328;
+        --ink: #e5eff0;
+        --muted: #a7b8bc;
+        --rule: #304248;
+        --rule-strong: #50656c;
+        --cyan: #59d8e4;
+        --cyan-soft: #123d45;
+        --amber: #ffc367;
+        --amber-soft: #483213;
+        --green: #6ed9a6;
+        --green-soft: #153b2d;
+        --red: #ff9ba4;
+        --red-soft: #4b2028;
+        --shadow: 0 10px 30px rgb(0 0 0 / 22%);
+      }
+    }
+
+    :root[data-theme="light"] {
+      --paper: #f6f8f8;
+      --paper-raised: #ffffff;
+      --ink: #172329;
+      --muted: #5d6b70;
+      --rule: #c9d4d7;
+      --rule-strong: #9eafb4;
+      --cyan: #087f8c;
+      --cyan-soft: #d8f1f3;
+      --amber: #9b5b00;
+      --amber-soft: #fff0d6;
+      --green: #176a4b;
+      --green-soft: #def2e8;
+      --red: #9f2d38;
+      --red-soft: #fae3e5;
+      --shadow: 0 10px 30px rgb(20 48 52 / 8%);
+    }
+
+    :root[data-theme="dark"] {
+      --paper: #10191d;
+      --paper-raised: #172328;
+      --ink: #e5eff0;
+      --muted: #a7b8bc;
+      --rule: #304248;
+      --rule-strong: #50656c;
+      --cyan: #59d8e4;
+      --cyan-soft: #123d45;
+      --amber: #ffc367;
+      --amber-soft: #483213;
+      --green: #6ed9a6;
+      --green-soft: #153b2d;
+      --red: #ff9ba4;
+      --red-soft: #4b2028;
+      --shadow: 0 10px 30px rgb(0 0 0 / 22%);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    a { color: inherit; text-decoration-color: var(--cyan); text-underline-offset: 0.18em; }
+    a:hover { color: var(--cyan); }
+    button { font: inherit; }
+    button:focus-visible, a:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+
+    .wrap { width: min(1360px, calc(100% - 48px)); margin-inline: auto; }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 18px 0;
+      border-bottom: 1px solid var(--rule);
+      color: var(--muted);
+      font: 700 0.72rem/1 var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .topline > *, .hero > *, .content-grid > * { min-width: 0; }
+
+    .theme-toggle, .filter-button {
+      border: 1px solid var(--rule-strong);
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .theme-toggle { padding: 8px 10px; font: 700 0.72rem/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+    .theme-toggle:hover, .filter-button:hover, .filter-button[aria-pressed="true"] { border-color: var(--cyan); background: var(--cyan-soft); color: var(--ink); }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.6fr);
+      gap: 64px;
+      padding: 74px 0 56px;
+      border-bottom: 1px solid var(--rule-strong);
+    }
+
+    .kicker, .label {
+      display: block;
+      color: var(--cyan);
+      font: 800 0.72rem/1.2 var(--mono);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { max-width: 15ch; margin: 14px 0 20px; font-size: clamp(2.4rem, 6vw, 5.9rem); line-height: 0.93; letter-spacing: -0.065em; overflow-wrap: anywhere; text-wrap: balance; }
+    h2 { margin-bottom: 24px; font-size: clamp(1.65rem, 3vw, 2.75rem); line-height: 1; letter-spacing: -0.045em; overflow-wrap: anywhere; text-wrap: balance; }
+    h3 { margin-bottom: 8px; font-size: 1rem; line-height: 1.25; }
+    .lede { max-width: 61ch; margin-bottom: 0; color: var(--muted); font-size: 1.1rem; overflow-wrap: anywhere; }
+
+    .hero-aside {
+      align-self: end;
+      padding: 18px 0 0 20px;
+      border-left: 3px solid var(--cyan);
+    }
+
+    .hero-aside p { margin-bottom: 0; color: var(--muted); }
+    .hero-aside strong { color: var(--ink); }
+
+    .content-grid { display: grid; grid-template-columns: 218px minmax(0, 1fr); gap: 46px; padding: 40px 0 88px; }
+
+    .rail {
+      align-self: start;
+      position: sticky;
+      top: 24px;
+      font-size: 0.84rem;
+    }
+
+    .rail p { margin-bottom: 9px; color: var(--muted); font: 700 0.7rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    .rail a { display: block; padding: 7px 0 7px 12px; border-left: 1px solid var(--rule); overflow-wrap: anywhere; text-decoration: none; }
+    .rail a:hover { border-left-color: var(--cyan); }
+
+    main { min-width: 0; }
+    section { scroll-margin-top: 24px; padding: 35px 0 42px; border-bottom: 1px solid var(--rule); }
+    section:first-child { padding-top: 0; }
+    section:last-child { border-bottom: 0; }
+    .section-intro { max-width: 74ch; color: var(--muted); }
+
+    .statement-list { display: grid; gap: 0; border-top: 1px solid var(--rule-strong); }
+    .statement { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 20px; padding: 20px 0; border-bottom: 1px solid var(--rule); }
+    .statement p { max-width: 78ch; margin: 0; }
+    .decision { color: var(--green); }
+    .proposed { color: var(--cyan); }
+    .open { color: var(--amber); }
+
+    .workbench { overflow-x: auto; border: 1px solid var(--rule-strong); background: var(--paper-raised); box-shadow: var(--shadow); }
+    table { width: 100%; min-width: 760px; border-collapse: collapse; text-align: left; }
+    th, td { padding: 14px 16px; vertical-align: top; border-bottom: 1px solid var(--rule); }
+    tbody tr:last-child td { border-bottom: 0; }
+    th { background: color-mix(in srgb, var(--paper-raised) 84%, var(--cyan-soft)); font: 800 0.7rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    td { font-size: 0.91rem; }
+    td:first-child { width: 21%; font-family: var(--mono); font-size: 0.8rem; }
+
+    .tone { display: inline-block; padding: 2px 6px; border: 1px solid currentColor; font: 800 0.68rem/1.2 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; }
+    .tone.map { color: var(--cyan); }
+    .tone.state { color: var(--green); }
+    .tone.diagnostic { color: var(--amber); }
+    .tone.ignore { color: var(--muted); }
+    .tone.security { color: var(--red); }
+
+    .note-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .note { padding: 18px 20px; border-left: 3px solid var(--rule-strong); background: color-mix(in srgb, var(--paper-raised) 86%, var(--paper)); }
+    .note p { margin-bottom: 0; }
+    .note.cyan { border-color: var(--cyan); }
+    .note.amber { border-color: var(--amber); }
+    .note.green { border-color: var(--green); }
+    .note.red { border-color: var(--red); }
+
+    .route-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule-strong); }
+    .route-list li { display: grid; grid-template-columns: minmax(150px, 0.85fr) minmax(0, 1.3fr) minmax(180px, 0.85fr); gap: 18px; padding: 17px 0; border-bottom: 1px solid var(--rule); }
+    .route-list p { margin: 0; }
+    .route-list code, code { font-family: var(--mono); font-size: 0.82em; }
+
+    .compare { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--rule-strong); }
+    .compare > div { padding: 21px; border-right: 1px solid var(--rule); }
+    .compare > div:last-child { border-right: 0; }
+    .compare h3 { margin-top: 8px; }
+    .compare p:last-child { margin-bottom: 0; }
+
+    .lifecycle { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 1px; padding: 1px; background: var(--rule-strong); }
+    .lifecycle div { min-height: 94px; padding: 12px; background: var(--paper-raised); }
+    .lifecycle .current { background: var(--cyan-soft); }
+    .lifecycle .strict { background: var(--amber-soft); }
+    .lifecycle b { display: block; margin-bottom: 7px; color: var(--cyan); font: 800 0.68rem/1.2 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+    .lifecycle .strict b { color: var(--amber); }
+    .lifecycle span { display: block; font-size: 0.82rem; line-height: 1.25; }
+
+    .concept-code { overflow-x: auto; margin: 0; padding: 17px; border: 1px solid var(--rule-strong); background: var(--paper-raised); font: 0.8rem/1.55 var(--mono); }
+    .turn-architecture { display: grid; grid-template-columns: minmax(0, 0.82fr) 42px minmax(0, 1.15fr) 42px minmax(0, 0.9fr); align-items: stretch; margin-top: 20px; }
+    .turn-node { min-width: 0; padding: 17px; border: 1px solid var(--rule-strong); background: var(--paper-raised); }
+    .turn-node h3 { margin-top: 7px; }
+    .turn-node p:last-child { margin-bottom: 0; }
+    .turn-arrow { display: grid; place-items: center; color: var(--cyan); font: 800 1.2rem/1 var(--mono); }
+    .priority-list { margin: 20px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--rule-strong); counter-reset: priority; }
+    .priority-list li { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+    .priority-list li::before { content: counter(priority, decimal-leading-zero); counter-increment: priority; color: var(--cyan); font: 800 0.75rem/1.6 var(--mono); }
+
+    .radius-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--rule-strong); }
+    .radius-group { min-width: 0; padding: 17px 18px 17px 0; border-bottom: 1px solid var(--rule); }
+    .radius-group:nth-child(odd) { padding-right: 24px; border-right: 1px solid var(--rule); }
+    .radius-group:nth-child(even) { padding-left: 24px; }
+    .radius-group h3 { margin-bottom: 8px; }
+    .radius-group ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+    .radius-group code { overflow-wrap: anywhere; }
+
+    .journey-list { display: grid; gap: 0; border-top: 1px solid var(--rule-strong); }
+    .journey { padding: 20px 0; border-bottom: 1px solid var(--rule); }
+    .journey h3 { margin: 7px 0 14px; font-size: 1.1rem; }
+    .journey-detail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; }
+    .journey-detail div { min-width: 0; }
+    .journey-detail dt { margin-bottom: 4px; color: var(--muted); font: 800 0.68rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    .journey-detail dd { margin: 0; font-size: 0.9rem; }
+
+    .decision-packet { display: grid; grid-template-columns: minmax(145px, 0.38fr) minmax(0, 1.62fr); gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--rule); }
+    .decision-packet:first-child { border-top: 1px solid var(--rule-strong); }
+    .decision-packet p { margin: 0; }
+    .decision-packet h3 { margin: 4px 0 8px; }
+
+    .diagram-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: -6px 0 20px; }
+    .diagram-tab { border: 1px solid var(--rule-strong); background: transparent; color: var(--ink); cursor: pointer; padding: 8px 10px; font: 800 0.7rem/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+    .diagram-tab:hover, .diagram-tab[aria-selected="true"] { border-color: var(--cyan); background: var(--cyan-soft); }
+    .diagram-panel { margin-top: 16px; }
+    .diagram-tabs-ready .diagram-panel[hidden] { display: none; }
+    .diagram-description { max-width: 75ch; color: var(--muted); }
+    .diagram-scroll { overflow-x: auto; border: 1px solid var(--rule-strong); background: var(--paper-raised); box-shadow: var(--shadow); }
+    .uml-board { min-width: 920px; padding: 20px; font-size: 0.82rem; }
+    .uml-node { min-width: 0; padding: 12px; border: 1px solid var(--rule-strong); background: var(--paper-raised); }
+    .uml-node strong { display: block; margin-bottom: 5px; font: 800 0.76rem/1.3 var(--mono); }
+    .uml-node small { display: block; color: var(--muted); font-size: 0.76rem; line-height: 1.35; }
+    .uml-node.extension { border-style: dashed; border-color: var(--cyan); }
+    .uml-node.policy { border-left: 3px solid var(--amber); }
+    .uml-node.service { border-left: 3px solid var(--green); }
+    .uml-edge { display: grid; place-items: center; color: var(--cyan); font: 800 1.05rem/1 var(--mono); }
+    .uml-edge span { padding: 3px 5px; background: var(--paper-raised); font-size: 0.65rem; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
+    .component-board { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(72px, 0.36fr) minmax(180px, 1.2fr) minmax(110px, 0.48fr) minmax(185px, 1.2fr) minmax(88px, 0.4fr) minmax(160px, 1fr); min-width: 1240px; align-items: stretch; gap: 8px; }
+    .component-stack { display: grid; gap: 10px; }
+    .component-middle { display: grid; gap: 10px; }
+    .sequence-board { display: grid; gap: 8px; }
+    .sequence-row { display: grid; grid-template-columns: 110px repeat(6, minmax(126px, 1fr)); min-width: 0; border-top: 1px solid var(--rule-strong); border-left: 1px solid var(--rule-strong); }
+    .sequence-row > div { min-height: 53px; padding: 9px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+    .sequence-head { background: color-mix(in srgb, var(--paper-raised) 84%, var(--cyan-soft)); font: 800 0.67rem/1.25 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+    .sequence-step { color: var(--muted); font: 700 0.72rem/1.3 var(--mono); }
+    .sequence-message { border-left: 3px solid var(--cyan) !important; }
+    .sequence-message.full { grid-column: 2 / -1; }
+    .sequence-message.composer-to-policy { grid-column: 2 / 4; }
+    .sequence-message.policy-to-adapter { grid-column: 3 / 5; }
+    .sequence-message.adapter-to-ingress { grid-column: 4 / 6; }
+    .sequence-message.ingress-to-ui { grid-column: 5 / -1; }
+    .sequence-message.permission-flow { grid-column: 4 / -1; }
+    .sequence-message.diff-source-to-service { grid-column: 2 / 4; }
+    .sequence-message.diff-service { grid-column: 3 / 5; }
+    .sequence-message.diff-settle { grid-column: 4 / 6; }
+    .sequence-message.diff-ui { grid-column: 5 / -1; }
+    .sequence-alt { grid-column: 2 / -1; border-left: 3px solid var(--amber) !important; background: var(--amber-soft); }
+    .state-board { display: grid; gap: 10px; }
+    .state-row { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(122px, 0.56fr) minmax(160px, 1fr) minmax(122px, 0.56fr) minmax(160px, 1fr); min-width: 900px; align-items: center; gap: 8px; }
+    .state-board .uml-node { min-height: 92px; }
+    .state-board .terminal { border-left: 3px solid var(--green); }
+    .state-board .blocked { border-left: 3px solid var(--red); }
+    .topology-board { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(115px, 0.55fr) minmax(265px, 1.2fr) minmax(115px, 0.55fr) minmax(180px, 1fr); min-width: 1100px; align-items: center; gap: 8px; }
+    .topology-board .component-stack { min-height: 236px; }
+    .component-board .uml-edge, .state-row .uml-edge, .topology-board .uml-edge { min-width: 0; }
+    .component-board .uml-edge span, .state-row .uml-edge span, .topology-board .uml-edge span { max-width: 100%; overflow-wrap: anywhere; text-align: center; white-space: normal; }
+
+    .filters { display: flex; flex-wrap: wrap; gap: 8px; margin: -6px 0 20px; }
+    .filter-button { padding: 7px 10px; font: 700 0.72rem/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+    .slice[hidden] { display: none; }
+
+    .slice-list { display: grid; gap: 16px; }
+    .slice { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 22px; padding: 21px 0; border-top: 1px solid var(--rule-strong); }
+    .slice:last-child { border-bottom: 1px solid var(--rule-strong); }
+    .slice-number { color: var(--cyan); font: 800 1.55rem/1 var(--mono); letter-spacing: -0.08em; }
+    .slice h3 { margin: 4px 0 16px; font-size: 1.3rem; }
+    .slice-detail { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 8px 24px; }
+    .slice-detail div { padding-bottom: 10px; }
+    .slice-detail dt { margin-bottom: 4px; color: var(--muted); font: 800 0.68rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+    .slice-detail dd { margin: 0; font-size: 0.9rem; }
+
+    .command-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+    .command-list li { padding: 12px 14px; border-left: 3px solid var(--cyan); background: var(--paper-raised); font: 0.82rem/1.45 var(--mono); overflow-wrap: anywhere; }
+
+    .open-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule-strong); }
+    .open-list li { display: grid; grid-template-columns: minmax(210px, 0.58fr) minmax(0, 1.42fr); gap: 20px; padding: 17px 0; border-bottom: 1px solid var(--rule); }
+    .open-list p { margin: 0; }
+
+    .source-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule-strong); }
+    .source-list li { min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+    .source-list a { display: inline; font-family: var(--mono); font-size: 0.78rem; overflow-wrap: anywhere; }
+    .line { color: var(--cyan); white-space: nowrap; }
+
+    .footnote { margin: 18px 0 0; color: var(--muted); font-size: 0.86rem; }
+
+    @media (max-width: 880px) {
+      .hero, .content-grid { grid-template-columns: 1fr; gap: 28px; }
+      .hero { padding-top: 48px; }
+      .hero-aside { max-width: 56ch; }
+      .rail { position: static; display: flex; flex-wrap: wrap; gap: 0 14px; }
+      .rail p { width: 100%; }
+      .rail a { padding: 6px 0; border-left: 0; }
+      .compare { grid-template-columns: 1fr; }
+      .compare > div { border-right: 0; border-bottom: 1px solid var(--rule); }
+      .compare > div:last-child { border-bottom: 0; }
+      .lifecycle { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .source-list { grid-template-columns: 1fr; }
+      .turn-architecture { grid-template-columns: 1fr; gap: 8px; }
+      .turn-arrow { min-height: 26px; transform: rotate(90deg); }
+    }
+
+    @media (max-width: 560px) {
+      .wrap { width: calc(100% - 28px); }
+      .topline { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+      .topline > span { max-width: 16ch; line-height: 1.3; overflow-wrap: anywhere; }
+      .theme-toggle { flex: 0 0 auto; }
+      .hero { padding: 40px 0; }
+      h1 { max-width: none; font-size: clamp(2.75rem, 14vw, 4rem); }
+      section { padding: 29px 0 34px; }
+      .statement, .slice { grid-template-columns: 1fr; gap: 10px; }
+      .route-list li, .open-list li { grid-template-columns: 1fr; gap: 8px; }
+      .note-grid, .slice-detail { grid-template-columns: 1fr; }
+      .journey-detail, .radius-grid { grid-template-columns: 1fr; }
+      .radius-group:nth-child(odd), .radius-group:nth-child(even) { padding-inline: 0; border-right: 0; }
+      .decision-packet { grid-template-columns: 1fr; gap: 8px; }
+      .lifecycle { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .lifecycle div { min-height: 76px; }
+    }
+
+    @media print {
+      :root, :root[data-theme="dark"] { color-scheme: light; --paper: #fff; --paper-raised: #fff; --ink: #000; --muted: #333; --rule: #aaa; --rule-strong: #666; --cyan: #006b78; --cyan-soft: #edf9fa; --amber: #765000; --amber-soft: #fff8e6; --green: #075b3a; --green-soft: #edf9f3; --red: #89232e; --red-soft: #fff0f1; --shadow: none; }
+      body { font-size: 10pt; }
+      .topline { padding-block: 8px; }
+      .theme-toggle, .filters, .rail { display: none; }
+      .diagram-tabs { display: none; }
+      .diagram-panel[hidden] { display: block !important; }
+      .hero { padding: 28px 0; }
+      .content-grid { display: block; padding-top: 22px; }
+      section { break-inside: avoid; padding-block: 22px; }
+      .workbench { box-shadow: none; }
+      a { color: inherit; text-decoration: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <div class="topline">
+      <span>Protocol ledger / implementation plan</span>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">Theme: system</button>
+    </div>
+    <div class="hero">
+      <div>
+        <span class="kicker">Codex provider completeness</span>
+        <h1>Typed ingress. Clear ownership. Small slices.</h1>
+        <p class="lede">A plan for Codex protocol coverage that keeps provider data bounded, keeps Mcode state authoritative, and adds only the capabilities that Mcode can own.</p>
+      </div>
+      <aside class="hero-aside" aria-label="Plan rule">
+        <span class="label">Decision</span>
+        <p><strong>Provider input ends at typed ingress.</strong> The UI receives canonical Mcode data only. Provider-native turn diffs improve Last turn attribution, while Git snapshots remain the final filesystem record.</p>
+      </aside>
+    </div>
+  </header>
+
+  <div class="wrap content-grid">
+    <nav class="rail" aria-label="Plan sections">
+      <p>Read order</p>
+      <a href="#decisions">Decisions</a>
+      <a href="#ledger">Protocol ledger</a>
+      <a href="#decision-packets">Decision packets</a>
+      <a href="#architecture-diagrams">Architecture diagrams</a>
+      <a href="#turn-diff-layer">Turn diff layer</a>
+      <a href="#blast-radius">Blast radius</a>
+      <a href="#rendering">Rendering map</a>
+      <a href="#review">Auto-review</a>
+      <a href="#slices">Five slices</a>
+      <a href="#journeys">Verification journeys</a>
+      <a href="#verifier-map">Verifier map</a>
+      <a href="#checks">Checks</a>
+      <a href="#open">Open decisions</a>
+      <a href="#sources">Source index</a>
+    </nav>
+
+    <main>
+      <section id="decisions" aria-labelledby="decisions-heading">
+        <span class="kicker">Boundary rules</span>
+        <h2 id="decisions-heading">Decisions that limit the surface area</h2>
+        <div class="statement-list">
+          <article class="statement">
+            <span class="label decision">Decision</span>
+            <p><strong>Allow schema-valid notifications by default at typed provider ingress.</strong> Classify each notification exhaustively as <code>map</code>, <code>state-only</code>, <code>diagnostic</code>, or <code>ignored-with-reason</code>. An unknown event becomes a bounded diagnostic. It never reaches the UI as a raw provider payload.</p>
+          </article>
+          <article class="statement">
+            <span class="label decision">Decision</span>
+            <p><strong>Mcode owns local file watching and local reads.</strong> Direct local <code>readFile</code>, <code>readDirectory</code>, and <code>getMetadata</code> stay simple. Mcode does not expose provider <code>fs/writeFile</code>, <code>remove</code>, or <code>copy</code>, because those calls split permission and audit ownership.</p>
+          </article>
+          <article class="statement">
+            <span class="label decision">Decision</span>
+            <p><strong>A valid provider-native turn diff is preferred for the agent-attributed Last turn view.</strong> Git snapshots remain the safety and fallback source, the cumulative and worktree source, and the final filesystem-state record. Current snapshot RPCs filter to agent-attributed paths, but compare the full <code>ref_before</code>/<code>ref_after</code> tree for those paths. An unrelated edit to the same file during the turn can enter that displayed diff.</p>
+          </article>
+          <article class="statement">
+            <span class="label decision">Decision</span>
+            <p><strong>Auto-review is a separate policy from full access.</strong> It uses capability detection and visible lifecycle events. It falls back to the existing manual approval route when strict review is required.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="decision-packets" aria-labelledby="decision-packets-heading">
+        <span class="kicker">Architecture decision packets</span>
+        <h2 id="decision-packets-heading">Decide the seams before expanding a provider.</h2>
+        <div class="decision-packet">
+          <div><span class="label decision">Decision</span><h3>Static capability, live support</h3></div>
+          <p>Keep <code>IAgentProvider</code> small. Put finite static names such as <code>approval-review</code> and <code>turn-diff</code> on the provider descriptor. Static support means the adapter implements a feature. It does not mean that feature is usable for a specific turn. Add optional <code>IApprovalReviewCapable</code> for side-effect-free inspection that returns <code>available</code>, <code>required</code>, or <code>unavailable</code>, allowed modes, stable reason codes, and exact live-change scope. Do not add <code>supportsAutoReview</code>.</p>
+        </div>
+        <h3 style="margin-top:28px">Conceptual TypeScript, not final code</h3>
+        <pre class="concept-code" aria-label="Conceptual approval review capability interface"><code>type ApprovalReviewMode = "manual" | "automatic";
+type ApprovalReviewContext = {
+  providerId: string;
+  modelId: string;
+  requestedMode: ApprovalReviewMode;
+  permissionMode: "full" | "supervised";
+};
+
+type ApprovalReviewSupport =
+  | { state: "available"; allowedModes: readonly ApprovalReviewMode[]; reasonCode: "supported"; liveChangeScope: "none" | "future-captures-only" }
+  | { state: "required"; requiredMode: "automatic"; reasonCode: "managed-policy"; effectivePermissionMode: "supervised"; liveChangeScope: "none" }
+  | { state: "unavailable"; reasonCode: "provider-unsupported" | "provider-version-unsupported" | "model-unsupported" | "provider-policy-disabled" | "permission-mode-bypasses-review"; fallbackMode: "manual"; liveChangeScope: "none" };
+
+interface IApprovalReviewCapable extends IAgentProvider {
+  getApprovalReviewSupport(context: ApprovalReviewContext): Promise&lt;ApprovalReviewSupport&gt;;
+}
+
+interface TurnRequest {
+  // Existing fields omitted to show resolved dispatch fields.
+  permissionMode: "full" | "supervised";
+  approvalReviewMode: ApprovalReviewMode;
+}</code></pre>
+        <div class="decision-packet">
+          <div><span class="label decision">Decision</span><h3>Resolve one request</h3></div>
+          <p>Put resolved <code>approvalReviewMode: "manual" | "automatic"</code> and the resolved permission mode at the top level of <code>TurnRequest</code>. Do not put either in Codex-only <code>providerOptions</code> or send unresolved <code>"default"</code>. Admission computes the effective permission mode near <code>turn-admission-dispatch-coordinator.ts:689</code>, but the current request uses the command or default near <code>:898</code>.</p>
+        </div>
+        <div class="decision-packet">
+          <div><span class="label decision">Decision</span><h3>Policy routes. Adapter maps.</h3></div>
+          <p>A server-owned <code>ApprovalReviewPolicy</code> combines user intent, Mcode permission rules, and provider support. It does not parse provider config such as <code>requirements.toml</code>. The adapter maps the generic mode to native turn config and native lifecycle to bounded canonical events. The policy never resolves permissions. <code>strictReviewRequired</code> only routes to manual review. A real provider-initiated request still uses the existing <code>PermissionRequest</code> flow.</p>
+        </div>
+        <div class="decision-packet">
+          <div><span class="label decision">Decision</span><h3>Freeze at dispatch</h3></div>
+          <p>Initial selection travels atomically with <code>sendTurn</code>. Do not add a pre-send configure method. A future live reviewer update is a separate command and stays out of the first slice. Codex live changes affect future captures only, not pending approvals or child sessions. Automatic review and Full Access are separate axes. Full Access skips Guardian and is never reviewed. Incompatible automatic review uses visible manual fallback. Managed automatic review that cannot run blocks the turn.</p>
+        </div>
+        <div class="decision-packet">
+          <div><span class="label recommended">Recommended</span><h3>Extend providers at the boundary</h3></div>
+          <p>A future provider advertises a capability, implements support inspection, maps generic mode to native turn config, maps native lifecycle to canonical events, routes real manual requests through <code>PermissionRequest</code>, and passes shared conformance tests. Core and UI do not change. Inspection stays side-effect-free. One decision freezes per dispatch attempt. Persistence, request, sandbox, and UI use the same effective permission mode. A provider-native reviewer or validated user response alone resolves review. Review identity stays stable, only one terminal outcome exists, and manual-required is inactive until a real permission request arrives. Do not persist unstable raw provider risk payloads.</p>
+        </div>
+        <div class="decision-packet">
+          <div><span class="label decision">Decision</span><h3>Turn diff evidence boundary</h3></div>
+          <p>Keep optional push <code>ITurnDiffSource</code>, keyed by Mcode <code>turnId</code>, <code>turnExecutionId</code>, <code>deliveryAttempt</code>, and monotonic <code>revision</code>. The provider supplies only native evidence and native fidelity. Its states are <code>snapshot</code>, explicit <code>invalidated</code>, and <code>indeterminate-empty</code> for providers such as Codex that cannot distinguish valid empty aggregate from tracker invalidation. <code>TurnDiffService</code> owns reconciliation, fallback choice, final persistence, and stale retry rejection.</p>
+        </div>
+        <div class="decision-packet">
+          <div><span class="label decision">Decision</span><h3>Persist settled evidence</h3></div>
+          <p>Use a separate provider-neutral settled record keyed one-to-one by assistant message, independent of Git <code>TurnSnapshot</code>. Keep live revisions in memory. Store source, fidelity, and validated unified diff. Reject an oversized or malformed native patch as evidence and choose fallback. Do not truncate a patch. Set the exact byte threshold during implementation unless repository evidence defines it. Last turn shows Live evidence, then the settled record after completion or reconnect. Cumulative, branch, staged, unstaged, and commit views stay Git-backed.</p>
+        </div>
+        <div class="decision-packet">
+          <div><span class="label decision">Decision</span><h3>Delay watchers and raw ingress</h3></div>
+          <p>Use a server-owned local <code>WorkspaceInvalidationSource</code> only after at least two named consumers need it. Add remote <code>IWorkspaceChangeSource</code> only when a real remote workspace adapter exists. Validate canonical root containment, debounce and bound paths, and invalidate the whole workspace on overflow. Do not add local watch or mutation methods to <code>IAgentProvider</code>. Raw protocol notifications stay in each adapter. Typed mappers classify them before generic ingress accepts only canonical <code>ProviderRuntimeEvent</code>. Do not create a raw event bridge. The generic-shaped post-ingress <code>ProviderEventAdapter</code> currently receives a Codex-specific token. Generalize that registry only when a second post-ingress adapter exists.</p>
+        </div>
+      </section>
+
+      <section id="architecture-diagrams" aria-labelledby="architecture-diagrams-heading">
+        <span class="kicker">Architecture diagrams</span>
+        <h2 id="architecture-diagrams-heading">Five UML-style views for the seams that must stay provider-neutral.</h2>
+        <div class="diagram-tabs" role="tablist" aria-label="Architecture diagram views">
+          <button class="diagram-tab" id="diagram-tab-components" type="button" role="tab" aria-controls="diagram-components" aria-selected="true" tabindex="0">Components</button>
+          <button class="diagram-tab" id="diagram-tab-review-sequence" type="button" role="tab" aria-controls="diagram-review-sequence" aria-selected="false" tabindex="-1">Review sequence</button>
+          <button class="diagram-tab" id="diagram-tab-review-state" type="button" role="tab" aria-controls="diagram-review-state" aria-selected="false" tabindex="-1">Review states</button>
+          <button class="diagram-tab" id="diagram-tab-diff-sequence" type="button" role="tab" aria-controls="diagram-diff-sequence" aria-selected="false" tabindex="-1">Diff lifecycle</button>
+          <button class="diagram-tab" id="diagram-tab-filesystem" type="button" role="tab" aria-controls="diagram-filesystem" aria-selected="false" tabindex="-1">Filesystem</button>
+        </div>
+
+        <figure class="diagram-panel" id="diagram-components" role="tabpanel" aria-labelledby="diagram-tab-components">
+          <figcaption>
+            <h3>Component and extension diagram</h3>
+            <p class="diagram-description">New providers add a descriptor, an optional capability, native mapping, and conformance evidence. Generic core and Review UI stay unchanged.</p>
+          </figcaption>
+          <div class="diagram-scroll" role="region" aria-label="Provider component and extension diagram" tabindex="0">
+            <div class="uml-board component-board">
+              <div class="component-stack">
+                <div class="uml-node"><strong>Codex adapter</strong><small>native review and diff evidence</small></div>
+                <div class="uml-node"><strong>Cursor adapter</strong><small>native blocks and lifecycle mapping</small></div>
+                <div class="uml-node extension"><strong>Future adapter</strong><small>same conformance path</small></div>
+              </div>
+              <div class="uml-edge">→<span>advertise</span></div>
+              <div class="component-stack">
+                <div class="uml-node"><strong>IAgentProvider</strong><small>small send and stop contract</small></div>
+                <div class="uml-node"><strong>Provider descriptor</strong><small>finite static capability names</small></div>
+                <div class="uml-node extension"><strong>IApprovalReviewCapable</strong><small>support inspection</small></div>
+                <div class="uml-node extension"><strong>ITurnDiffSource</strong><small>native push evidence</small></div>
+              </div>
+              <div class="uml-edge">→<span>canonical input</span></div>
+              <div class="component-stack">
+                <div class="uml-node policy"><strong>ApprovalReviewPolicy</strong><small>intent plus rules plus support</small></div>
+                <div class="uml-node service"><strong>TurnDiffService</strong><small>reconcile, settle, persist</small></div>
+                <div class="uml-node"><strong>ProviderEventIngress</strong><small>ProviderRuntimeEvent only</small></div>
+              </div>
+              <div class="uml-edge">→<span>normalized</span></div>
+              <div class="uml-node"><strong>Review UI</strong><small>one ReviewComparison, source label, and PermissionRequest surface</small></div>
+            </div>
+          </div>
+        </figure>
+
+        <figure class="diagram-panel" id="diagram-review-sequence" role="tabpanel" aria-labelledby="diagram-tab-review-sequence">
+          <figcaption>
+            <h3>Auto-review sequence with routing alternatives</h3>
+            <p class="diagram-description">Support inspection has no side effects. The policy freezes one decision, and <code>sendTurn</code> carries it atomically. The policy never answers a permission request.</p>
+          </figcaption>
+          <div class="diagram-scroll" role="region" aria-label="Auto-review sequence diagram" tabindex="0">
+            <div class="uml-board sequence-board">
+              <div class="sequence-row">
+                <div class="sequence-head">Step</div><div class="sequence-head">Composer</div><div class="sequence-head">Policy</div><div class="sequence-head">Provider adapter</div><div class="sequence-head">ProviderEventIngress</div><div class="sequence-head">Persistence</div><div class="sequence-head">UI and PermissionRequest</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">1</div><div class="sequence-message composer-to-policy">Composer → Policy: generic intent and resolved permission mode.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">2</div><div class="sequence-message policy-to-adapter">Policy → Adapter: inspect support without side effects. Freeze one decision.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">3</div><div class="sequence-message adapter-to-ingress">Policy → Adapter: atomic <code>sendTurn</code> config. Adapter maps native lifecycle.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">4</div><div class="sequence-message adapter-to-ingress">Adapter → ProviderEventIngress: bounded canonical lifecycle.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">5</div><div class="sequence-message ingress-to-ui">Ingress → Persistence and UI: stable identity, one terminal outcome, and visible status.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">Automatic</div><div class="sequence-alt">Available automatic review emits started, then approved or denied. The canonical lifecycle reaches ProviderEventIngress, persistence, and UI.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">Unavailable</div><div class="sequence-alt">An incompatible automatic request shows visible manual fallback. Managed-required automatic review blocks before <code>sendTurn</code>.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">Full Access</div><div class="sequence-alt">Full Access skips Guardian. UI must not label the turn as reviewed.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">Strict notice</div><div class="sequence-alt"><code>strictReviewRequired</code> routes to manual-required. It waits for a real provider permission request.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">Real request</div><div class="sequence-message permission-flow">Provider adapter → PermissionRequest → UI: only a validated user response resolves. Policy never answers it.</div>
+              </div>
+            </div>
+          </div>
+        </figure>
+
+        <figure class="diagram-panel" id="diagram-review-state" role="tabpanel" aria-labelledby="diagram-tab-review-state">
+          <figcaption>
+            <h3>Auto-review state machine</h3>
+            <p class="diagram-description">Labels show the state and transition condition. Color only reinforces the labels. Stop cleanup ends active review without inventing a second outcome.</p>
+          </figcaption>
+          <div class="diagram-scroll" role="region" aria-label="Auto-review state machine" tabindex="0">
+            <div class="uml-board state-board">
+              <div class="state-row">
+                <div class="uml-node"><strong>Idle</strong><small>No review is active.</small></div>
+                <div class="uml-edge">→<span>automatic available</span></div>
+                <div class="uml-node policy"><strong>Reviewing</strong><small>Stable review identity. One frozen dispatch decision.</small></div>
+                <div class="uml-edge">→<span>provider result</span></div>
+                <div class="uml-node terminal"><strong>Approved or denied</strong><small>One terminal outcome only.</small></div>
+              </div>
+              <div class="state-row">
+                <div class="uml-node"><strong>Unavailable</strong><small>Support inspection cannot run automatic review for this turn.</small></div>
+                <div class="uml-edge">→<span>requested automatic</span></div>
+                <div class="uml-node"><strong>Manual-required</strong><small>Visible fallback or strict route. It is not actionable yet.</small></div>
+                <div class="uml-edge">→<span>real provider request only</span></div>
+                <div class="uml-node"><strong>Pending-permission</strong><small>Existing PermissionRequest flow owns the user response.</small></div>
+              </div>
+              <div class="state-row">
+                <div class="uml-node"><strong>Pending-permission</strong><small>A real request arrived.</small></div>
+                <div class="uml-edge">→<span>validated user response</span></div>
+                <div class="uml-node terminal"><strong>Approved or denied</strong><small>User response resolves the request.</small></div>
+              </div>
+              <div class="state-row">
+                <div class="uml-node blocked"><strong>Managed-required unavailable</strong><small>Automatic review is required but cannot run.</small></div>
+                <div class="uml-edge">→<span>before sendTurn</span></div>
+                <div class="uml-node blocked"><strong>Blocked</strong><small>Do not weaken managed policy.</small></div>
+              </div>
+              <div class="state-row">
+                <div class="uml-node policy"><strong>Reviewing</strong><small>Active review or pending provider outcome.</small></div>
+                <div class="uml-edge">→<span>stop, abort, timeout, or failure</span></div>
+                <div class="uml-node blocked"><strong>Aborted, timeout, or failed</strong><small>Terminal cleanup. Do not create a later outcome.</small></div>
+              </div>
+            </div>
+          </div>
+        </figure>
+
+        <figure class="diagram-panel" id="diagram-diff-sequence" role="tabpanel" aria-labelledby="diagram-tab-diff-sequence">
+          <figcaption>
+            <h3>Turn-diff lifecycle sequence</h3>
+            <p class="diagram-description">Native evidence remains provider-local until the service validates a monotonic revision. The service alone reconciles empty evidence and selects fallback.</p>
+          </figcaption>
+          <div class="diagram-scroll" role="region" aria-label="Turn diff lifecycle sequence diagram" tabindex="0">
+            <div class="uml-board sequence-board">
+              <div class="sequence-row">
+                <div class="sequence-head">Step</div><div class="sequence-head">Provider source</div><div class="sequence-head">Revision guard</div><div class="sequence-head">Reconciliation</div><div class="sequence-head">Fallback</div><div class="sequence-head">Settled record</div><div class="sequence-head">Review UI</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">1</div><div class="sequence-message diff-source-to-service">Provider source → service: native aggregate with turn, execution, attempt, revision, and fidelity.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">2</div><div class="sequence-message diff-service">Revision guard: reject stale retry. Accept only a monotonic revision for this dispatch attempt.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">3</div><div class="sequence-message diff-service">Reconciliation: <code>indeterminate-empty</code> reads file effects. <code>invalidated</code> stays explicit.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">4</div><div class="sequence-alt">Malformed or oversized patch: reject evidence without truncation. Select reconstruction or Git fallback.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">5</div><div class="sequence-message diff-settle">Service → settled record: persist validated diff one-to-one with assistant message.</div>
+              </div>
+              <div class="sequence-row">
+                <div class="sequence-step">Reconnect</div><div class="sequence-message diff-ui">Settled record → Review UI: read Last turn. Do not resurrect stale Live revision.</div>
+              </div>
+            </div>
+          </div>
+        </figure>
+
+        <figure class="diagram-panel" id="diagram-filesystem" role="tabpanel" aria-labelledby="diagram-tab-filesystem">
+          <figcaption>
+            <h3>Filesystem invalidation component topology</h3>
+            <p class="diagram-description">The local source remains the default. A remote adapter appears only for a real remote workspace. Mutation methods remain outside this topology.</p>
+          </figcaption>
+          <div class="diagram-scroll" role="region" aria-label="Filesystem invalidation component topology" tabindex="0">
+            <div class="uml-board topology-board">
+              <div class="component-stack">
+                <div class="uml-node service"><strong>WorkspaceInvalidationSource</strong><small>local server-owned source after two named consumers</small></div>
+                <div class="uml-node extension"><strong>IWorkspaceChangeSource</strong><small>optional remote adapter only for a real remote workspace</small></div>
+                <div class="uml-node blocked"><strong>Excluded</strong><small>No provider local watch, write, remove, or copy methods.</small></div>
+              </div>
+              <div class="uml-edge">→<span>bounded paths</span></div>
+              <div class="uml-node policy"><strong>WorkspaceInvalidationService</strong><small>canonical root containment, debounce, path bounds, whole-workspace invalidation on overflow, and disconnect cleanup.</small></div>
+              <div class="uml-edge">→<span>invalidate</span></div>
+              <div class="component-stack">
+                <div class="uml-node"><strong>Files</strong><small>refresh tree</small></div>
+                <div class="uml-node"><strong>Autocomplete</strong><small>refresh candidates</small></div>
+                <div class="uml-node"><strong>Preview</strong><small>refresh rendering</small></div>
+                <div class="uml-node"><strong>Review</strong><small>refresh comparison state</small></div>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </section>
+
+      <section id="ledger" aria-labelledby="ledger-heading">
+        <span class="kicker">Typed ingress workbench</span>
+        <h2 id="ledger-heading">One ledger for every accepted notification</h2>
+        <p class="section-intro">The registry is the review point for new Codex notifications. It checks the schema, selects one disposition, bounds diagnostic data, and only then emits a canonical event or state change.</p>
+        <div class="workbench" role="region" aria-label="Ingress classification ledger" tabindex="0">
+          <table>
+            <thead>
+              <tr>
+                <th>Disposition</th>
+                <th>Use</th>
+                <th>Boundary rule</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="tone map">Map</span></td>
+                <td>Emit a typed, canonical Mcode contract event.</td>
+                <td>Map named fields only. Redact and bound content before it crosses the provider layer.</td>
+              </tr>
+              <tr>
+                <td><span class="tone state">State-only</span></td>
+                <td>Update provider session state with no user-facing event.</td>
+                <td>Keep the state local to the adapter or server session unless another layer needs a contract.</td>
+              </tr>
+              <tr>
+                <td><span class="tone diagnostic">Diagnostic</span></td>
+                <td>Record a bounded, typed diagnostic for an unsupported or operational event.</td>
+                <td>Keep an event name, category, and redacted summary. Do not retain raw payloads.</td>
+              </tr>
+              <tr>
+                <td><span class="tone ignore">Ignored with reason</span></td>
+                <td>Do not emit or persist an event that Mcode cannot use.</td>
+                <td>Name the reason in the registry so a future change has an audit trail.</td>
+              </tr>
+              <tr>
+                <td><span class="tone diagnostic">Unknown</span></td>
+                <td>Accept only after the schema validates, then write a bounded diagnostic.</td>
+                <td>Unknown does not mean unsafe. It must not create UI data or bypass typed handling.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note-grid" style="margin-top:18px">
+          <aside class="note cyan">
+            <span class="label proposed">Proposed</span>
+            <h3>Registry output</h3>
+            <p>Use a finite classification map next to the Codex event mapper. The map documents every accepted notification type and makes the default path visible in review.</p>
+          </aside>
+          <aside class="note red">
+            <span class="label decision">Decision</span>
+            <h3>No raw payload bridge</h3>
+            <p>Do not store or render raw Codex notification objects. The provider adapter owns validation, field selection, redaction, and size limits.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section id="filesystem" aria-labelledby="filesystem-heading">
+        <span class="kicker">Filesystem ownership</span>
+        <h2 id="filesystem-heading">Watch locally first. Use provider watch only for a remote host.</h2>
+        <div class="note-grid">
+          <article class="note cyan">
+            <span class="label decision">Decision</span>
+            <h3>Provider contract</h3>
+            <p><code>fs/watch</code> uses an absolute path and is scoped to one connection. It emits <code>fs/changed</code> with <code>watchId</code> and <code>changedPaths</code>. The provider debounces changes and cleans watches on disconnect. Mcode does not call it today.</p>
+          </article>
+          <article class="note green">
+            <span class="label proposed">Proposed</span>
+            <h3>Shared Mcode watcher</h3>
+            <p>Use one server-owned local watcher for the file tree, autocomplete, preview, and Review invalidation. Add this only when named consumers need the same invalidation stream.</p>
+          </article>
+          <article class="note amber">
+            <span class="label decision">Decision</span>
+            <h3>Remote fallback</h3>
+            <p>Use provider <code>fs/watch</code> only when a remote workspace makes the Mcode server watcher impossible. Keep direct local reads for normal local workspaces.</p>
+          </article>
+          <article class="note red">
+            <span class="label decision">Decision</span>
+            <h3>Mutation stays out</h3>
+            <p>Do not expose <code>fs/writeFile</code>, <code>remove</code>, or <code>copy</code> through the Mcode provider surface. A second mutation route would divide permission and audit ownership.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="diff" aria-labelledby="diff-heading">
+        <span class="kicker">Volatile diff channel</span>
+        <h2 id="diff-heading">Use the latest full turn aggregate for live and settled Last turn evidence.</h2>
+        <div class="statement-list">
+          <article class="statement">
+            <span class="label decision">Decision</span>
+            <p><code>turn/diff/updated</code> has the shape <code>{threadId, turnId, diff}</code>. It is the latest full aggregate for a turn, not an incremental patch stream. It can emit after tool results and at completion. It tracks exact patch changes and can invalidate to an empty diff.</p>
+          </article>
+          <article class="statement">
+            <span class="label decision">Decision</span>
+            <p>A non-empty Codex update has stronger agent attribution than an attributed Git snapshot because it represents Codex-tracked patch changes. It is the preferred source for Last turn when it is valid and available.</p>
+          </article>
+          <article class="statement">
+            <span class="label decision">Decision</span>
+            <p>Clear the Live preview on interrupt, rollback, replacement, and reconnect. An empty update can mean a net-zero edit or tracker invalidation. Reconcile it with Mcode file effects before final persistence, then use fallback evidence when effects remain.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="turn-diff-layer" aria-labelledby="turn-diff-layer-heading">
+        <span class="kicker">Provider-neutral turn diff layer</span>
+        <h2 id="turn-diff-layer-heading">Push evidence into one server-owned comparison record.</h2>
+        <div class="note-grid">
+          <article class="note cyan">
+            <span class="label decision">Decision</span>
+            <h3>Do not add a provider pull method.</h3>
+            <p>Do not add <code>getTurnDiff()</code> to <code>IAgentProvider</code>. Review can open after the provider session is gone, so a provider pull method has the wrong lifecycle.</p>
+          </article>
+          <article class="note green">
+            <span class="label decision">Decision</span>
+            <h3>Keep the seam small.</h3>
+            <p>Add an optional <code>ITurnDiffSource</code> capability with a push subscription. Codex and Cursor supply real adapters. Claude uses the server fallback until it has native evidence.</p>
+          </article>
+        </div>
+        <h3 style="margin-top:28px">Conceptual TypeScript, not final code</h3>
+        <pre class="concept-code" aria-label="Conceptual turn diff source interface"><code>type NativeTurnDiffEvidence = {
+  turnId: string;
+  turnExecutionId: string;
+  deliveryAttempt: number;
+  revision: number;
+  state: "snapshot" | "invalidated" | "indeterminate-empty";
+  nativeEvidence: string;
+  nativeFidelity: string;
+};
+
+interface ITurnDiffSource {
+  subscribe(handler: (evidence: NativeTurnDiffEvidence) =&gt; void): () =&gt; void;
+}</code></pre>
+        <div class="turn-architecture" aria-label="Turn diff ownership diagram">
+          <article class="turn-node">
+            <span class="label decision">Adapters</span>
+            <h3>Codex and Cursor</h3>
+            <p>Codex supplies tracked patch updates. Cursor can supply native before and after blocks. Claude uses fallback evidence.</p>
+          </article>
+          <div class="turn-arrow" aria-hidden="true">→</div>
+          <article class="turn-node">
+            <span class="label decision">Server ownership</span>
+            <h3>TurnDiffService</h3>
+            <p>Consumes native evidence and <code>TurnFileEffectSummary</code>, rejects stale revisions, binds the Mcode turn to its assistant message at finalization, and persists a settled <code>TurnDiffRecord</code>.</p>
+          </article>
+          <div class="turn-arrow" aria-hidden="true">→</div>
+          <article class="turn-node">
+            <span class="label decision">Client contract</span>
+            <h3>ReviewComparison</h3>
+            <p>Generic <code>turnDiff.list</code>, <code>getComparison</code>, and <code>getFileDiff</code> RPCs serve one normalized comparison and a source or fidelity label.</p>
+          </article>
+        </div>
+        <p class="footnote">The UI never branches on Codex, Cursor, or Claude. In the first slice, cumulative, branch, staged, unstaged, and commit views remain on their current Git paths. Only Last turn moves.</p>
+        <h3 style="margin-top:28px">Source priority</h3>
+        <ol class="priority-list">
+          <li>Usable provider-native diff.</li>
+          <li>Provider-native full before and after blocks, such as Cursor ACP.</li>
+          <li>Mcode tracked-file reconstruction.</li>
+          <li>Attributed Git snapshot fallback.</li>
+        </ol>
+      </section>
+
+      <section id="blast-radius" aria-labelledby="blast-radius-heading">
+        <span class="kicker">Blast radius</span>
+        <h2 id="blast-radius-heading">The right Review panel is the main visible surface, not the whole code surface.</h2>
+        <p class="section-intro">The deterministic blast-radius index did not resolve <code>@mcode</code> and <code>@</code> aliases. Repository-wide manual search checked these alias, event, and RPC consumers. This result does not mean that the code has no blast radius.</p>
+        <div class="radius-grid">
+          <article class="radius-group">
+            <h3>Contracts and transport</h3>
+            <ul><li><code>packages/contracts/src/models/turn-snapshot.ts</code></li><li><code>packages/contracts/src/ws/methods.ts</code></li><li><code>apps/web/src/transport/types.ts</code></li><li><code>apps/web/src/transport/ws-transport.ts</code></li></ul>
+          </article>
+          <article class="radius-group">
+            <h3>Server</h3>
+            <ul><li><code>turn-file-tracker.ts</code></li><li><code>turn-file-effects.ts</code></li><li><code>turn-finalizer.ts</code></li><li><code>turn-snapshot-repo.ts</code></li><li><code>snapshot-rpc.ts</code></li><li><code>snapshot-attribution.ts</code></li></ul>
+          </article>
+          <article class="radius-group">
+            <h3>Right Review panel</h3>
+            <ul><li><code>diffStore.ts</code></li><li><code>DiffPanel.tsx</code></li><li><code>LastTurnView.tsx</code></li><li><code>FileList/load-file-diff.ts</code></li></ul>
+          </article>
+          <article class="radius-group">
+            <h3>Secondary consumers</h3>
+            <ul><li><code>TurnChangeSummary</code></li><li><code>ThreadOverview</code></li><li>Hydration snapshot builder</li><li>Handoff builder</li><li>Diff summaries</li><li>Cumulative Review</li></ul>
+          </article>
+          <article class="radius-group">
+            <h3>Provider adapters</h3>
+            <ul><li>Codex <code>turn/diff/updated</code></li><li>Cursor ACP <code>oldText</code>/<code>newText</code></li><li>Claude fallback</li></ul>
+          </article>
+          <article class="radius-group">
+            <span class="label proposed">Recommendation</span>
+            <h3>Add beside, then migrate.</h3>
+            <p>Use an additive <code>TurnDiffService</code> and migrate Last turn first. Do not rename or replace <code>TurnSnapshot</code> across the repository in the first change.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="rendering" aria-labelledby="rendering-heading">
+        <span class="kicker">Rendering map</span>
+        <h2 id="rendering-heading">Render typed outcomes, not provider-shaped data.</h2>
+        <ol class="route-list">
+          <li>
+            <p><code>model/rerouted</code></p>
+            <p>Map to the current <code>ModelFallback</code> only when its semantics are accepted. Otherwise add a <code>ModelRerouted</code> contract.</p>
+            <p><span class="tone map">UI</span> One active-thread toast and thread metadata.</p>
+          </li>
+          <li>
+            <p><code>warning</code><br><code>guardianWarning</code></p>
+            <p>Create bounded thread notices. Treat guardian text as security-sensitive before persistence or rendering.</p>
+            <p><span class="tone security">Security</span> The current <code>ThreadWarningBanner</code> is worktree-specific. Adapt it or add a companion surface.</p>
+          </li>
+          <li>
+            <p><code>configWarning</code><br><code>deprecationNotice</code></p>
+            <p>Use startup or session diagnostics. A config warning keeps its path and range after bounded normalization.</p>
+            <p><span class="tone diagnostic">Diagnostic</span> Do not turn these into unbounded transcript content.</p>
+          </li>
+          <li>
+            <p><code>windows/worldWritableWarning</code></p>
+            <p>Route as a security-sensitive warning. It is not debug-only.</p>
+            <p><span class="tone security">Security</span> Persist and display under the chosen warning policy.</p>
+          </li>
+          <li>
+            <p><code>authRecoveryCompleted</code></p>
+            <p>Show a scoped recovery notice for the affected connection, session, or thread.</p>
+            <p><span class="tone state">Scoped</span> Do not make a global success banner.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section id="review" aria-labelledby="review-heading">
+        <span class="kicker">Approval and review</span>
+        <h2 id="review-heading">Keep supervision, full access, and auto-review distinct.</h2>
+        <div class="compare" aria-label="Approval policy comparison">
+          <div>
+            <span class="label decision">Decision</span>
+            <h3>Supervised</h3>
+            <p><code>approvalPolicy: on-request</code>, <code>approvalsReviewer: user</code>, and manual Mcode approval. The user remains the reviewer.</p>
+          </div>
+          <div>
+            <span class="label decision">Decision</span>
+            <h3>Full access</h3>
+            <p><code>approvalPolicy: never</code> with bypass. This is not review. It does not imply that any reviewer checked an action.</p>
+          </div>
+          <div>
+            <span class="label decision">Decision</span>
+            <h3>Auto-review</h3>
+            <p><code>approvalsReviewer: auto_review</code> or <code>guardian_subagent</code>, after capability detection. Its lifecycle remains visible and strict-review rules can divert it to manual approval.</p>
+          </div>
+        </div>
+        <h3 style="margin-top:28px">Visible auto-review lifecycle</h3>
+        <div class="lifecycle" aria-label="Auto-review lifecycle">
+          <div><b>Unavailable</b><span>Capability or version gate fails.</span></div>
+          <div><b>Disabled</b><span>Policy does not select auto-review.</span></div>
+          <div class="current"><b>Started</b><span>Reviewer starts for the scoped action.</span></div>
+          <div class="current"><b>Completed</b><span>Reviewer returns a bounded outcome.</span></div>
+          <div><b>Approved</b><span>Mcode records the approved outcome.</span></div>
+          <div><b>Denied</b><span>Mcode records denial and stops the action.</span></div>
+          <div><b>Timeout / failed</b><span>Report the bounded failure state.</span></div>
+          <div class="strict"><b>Strict detour</b><span><code>strictReviewRequired</code> uses existing manual approval.</span></div>
+        </div>
+        <p class="footnote">The upstream auto-review payload is explicitly unstable. Bound and redact action text and rationale before persistence or UI output.</p>
+      </section>
+
+      <section id="slices" aria-labelledby="slices-heading">
+        <span class="kicker">Ordered delivery</span>
+        <h2 id="slices-heading">Five slices, in dependency order</h2>
+        <div class="filters" aria-label="Filter implementation slices">
+          <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All slices</button>
+          <button class="filter-button" type="button" data-filter="provider" aria-pressed="false">Provider</button>
+          <button class="filter-button" type="button" data-filter="server" aria-pressed="false">Server</button>
+          <button class="filter-button" type="button" data-filter="web" aria-pressed="false">Web</button>
+        </div>
+        <div class="slice-list">
+          <article class="slice" data-layer="provider server">
+            <div class="slice-number">01</div>
+            <div>
+              <span class="label proposed">Proposed</span>
+              <h3>Ingress registry</h3>
+              <dl class="slice-detail">
+                <div><dt>Scope</dt><dd>Add exhaustive classifications for schema-valid Codex notifications. Map only named, typed data. Bound unknown events as diagnostics.</dd></div>
+                <div><dt>Non-goal</dt><dd>Do not expose raw notification payloads or add UI surfaces for every protocol event.</dd></div>
+                <div><dt>Layers</dt><dd>Provider protocol types, Codex app-server ingress, event mapper, canonical event contract.</dd></div>
+                <div><dt>Acceptance</dt><dd>Every accepted notification has one visible disposition. Unknown schema-valid events remain bounded diagnostics. Update the applicable verification journey and feature map with the user-visible contract.</dd></div>
+                <div><dt>Planned targeted checks</dt><dd>Codex protocol coverage and canonical agent-event tests.</dd></div>
+              </dl>
+            </div>
+          </article>
+          <article class="slice" data-layer="provider server web">
+            <div class="slice-number">02</div>
+            <div>
+              <span class="label proposed">Proposed</span>
+              <h3>Warnings, reroutes, config, and auth</h3>
+              <dl class="slice-detail">
+                <div><dt>Scope</dt><dd>Route reroutes, bounded warnings, security warnings, startup diagnostics, and scoped auth recovery notices through typed contracts.</dd></div>
+                <div><dt>Non-goal</dt><dd>Do not reuse the worktree-only warning banner without checking its scope.</dd></div>
+                <div><dt>Layers</dt><dd>Provider mapper, contracts, server persistence choice, thread store, chat notices.</dd></div>
+                <div><dt>Acceptance</dt><dd>Only one reroute toast shows for the active thread. Security-sensitive warnings remain distinct from debug output. Add the warning and Review relationship to the verification journey and feature map.</dd></div>
+                <div><dt>Planned targeted checks</dt><dd>Codex protocol coverage, agent-event tests, and WebSocket event tests.</dd></div>
+              </dl>
+            </div>
+          </article>
+          <article class="slice" data-layer="provider server web">
+            <div class="slice-number">03</div>
+            <div>
+              <span class="label decision">Decision</span>
+              <h3>Provider-neutral turn diff</h3>
+              <dl class="slice-detail">
+                <div><dt>Scope</dt><dd>Add <code>TurnDiffSource</code> and <code>TurnDiffService</code>, Codex and Cursor adapters, Last turn Review migration, and persistence. Keep the Git snapshot fallback.</dd></div>
+                <div><dt>Non-goal</dt><dd>Do not migrate cumulative, branch, staged, unstaged, or commit Review views. Do not replace <code>TurnSnapshot</code>.</dd></div>
+                <div><dt>Layers</dt><dd>Provider capabilities and adapters, event contract, server service and persistence, generic RPCs, diff store, and Last turn panel.</dd></div>
+                <div><dt>Acceptance</dt><dd>Live evidence settles into a persisted Last turn comparison. Empty or invalidated evidence reconciles with file effects. Add the cross-provider journey and feature map maintenance.</dd></div>
+                <div><dt>Planned targeted checks</dt><dd>Diff store, WebSocket event, source-precedence, and forced-invalidation tests. Use the right-panel journey for the user-visible proof.</dd></div>
+              </dl>
+            </div>
+          </article>
+          <article class="slice" data-layer="server web">
+            <div class="slice-number">04</div>
+            <div>
+              <span class="label decision">Decision</span>
+              <h3>Shared filesystem invalidation</h3>
+              <dl class="slice-detail">
+                <div><dt>Scope</dt><dd>Add a server-owned shared local watcher only if named consumers need common invalidation for file tree, autocomplete, preview, and Review.</dd></div>
+                <div><dt>Non-goal</dt><dd>Do not add provider mutation RPCs or start provider <code>fs/watch</code> for local workspaces.</dd></div>
+                <div><dt>Layers</dt><dd>Server watcher, invalidation contract, named consumer stores or services.</dd></div>
+                <div><dt>Acceptance</dt><dd>One watcher produces debounced, scoped invalidation for approved consumers. Disconnect cleans any provider fallback watch. Add the filesystem journey and feature map work when this slice starts.</dd></div>
+                <div><dt>Planned targeted checks</dt><dd>Focused watcher and named-consumer tests, selected after the consumer decision.</dd></div>
+              </dl>
+            </div>
+          </article>
+          <article class="slice" data-layer="provider server web">
+            <div class="slice-number">05</div>
+            <div>
+              <span class="label decision">Decision</span>
+              <h3>Guardian auto-review</h3>
+              <dl class="slice-detail">
+                <div><dt>Scope</dt><dd>Add a version and capability gate, then emit the bounded lifecycle for supported auto-review modes.</dd></div>
+                <div><dt>Non-goal</dt><dd>Do not label full access as review or trust the unstable upstream payload as a durable contract.</dd></div>
+                <div><dt>Layers</dt><dd>Provider capability detection, approval state, contracts, server persistence, user-visible lifecycle.</dd></div>
+                <div><dt>Acceptance</dt><dd>Unavailable, disabled, started, completed, approved, denied, timeout, and failed states are visible. <code>strictReviewRequired</code> routes to manual approval. Add the approval and diff journey to verifier maintenance.</dd></div>
+                <div><dt>Planned targeted checks</dt><dd>Codex app-server approval tests and canonical agent-event tests.</dd></div>
+              </dl>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="journeys" aria-labelledby="journeys-heading">
+        <span class="kicker">Verification journeys</span>
+        <h2 id="journeys-heading">Future proof follows the user path across provider, server, persistence, and Review.</h2>
+        <p class="section-intro"><span class="label proposed">Proposed</span> Use the existing <code>verify-mcode</code> runtime workflow for provider evidence and the existing Electron live-testing interface for the right-panel proof. This is a plan for verifier maintenance, not a claim that a verifier ran.</p>
+        <div class="journey-list">
+          <article class="journey">
+            <span class="label proposed">Journey A</span>
+            <h3>Agent-only Codex diff isolation</h3>
+            <dl class="journey-detail">
+              <div><dt>Trigger</dt><dd>In a verifier-owned repository, one file has agent and user markers. A Codex turn changes the agent marker. After the first live turn-diff update, the verifier changes the other marker in that same file.</dd></div>
+              <div><dt>Stable result</dt><dd>Review shows only the agent patch, while disk content has both changes. After completion, Last turn keeps only the agent patch.</dd></div>
+              <div><dt>Evidence</dt><dd>Capture the live update, settled Last turn comparison, and the final file content from the owned fixture.</dd></div>
+              <div><dt>Cleanup and matrix</dt><dd>Remove only the owned thread and fixture state. Codex is required. Missing provider access is a coverage gap, not a pass.</dd></div>
+            </dl>
+          </article>
+          <article class="journey">
+            <span class="label proposed">Journey B</span>
+            <h3>Live-to-settled Review lifecycle</h3>
+            <dl class="journey-detail">
+              <div><dt>Trigger</dt><dd>Open Review before the turn. Let the live diff appear and update. Complete the turn, then close and reopen the panel and reload or reconnect.</dd></div>
+              <div><dt>Stable result</dt><dd>Completion changes Live to settled Last turn. The persisted turn diff returns after reopen and reconnect with no duplicate rows or stale spinner.</dd></div>
+              <div><dt>Evidence</dt><dd>Capture panel state before, during, and after completion, plus the post-reconnect comparison.</dd></div>
+              <div><dt>Cleanup and matrix</dt><dd>Clean only owned runtime and fixture state. Run for each provider that can supply the selected path.</dd></div>
+            </dl>
+          </article>
+          <article class="journey">
+            <span class="label proposed">Journey C</span>
+            <h3>Cross-provider source and fallback</h3>
+            <dl class="journey-detail">
+              <div><dt>Trigger</dt><dd>Run Codex and Cursor native evidence paths, then the Claude fallback path.</dd></div>
+              <div><dt>Stable result</dt><dd>The UI contract stays the same. Only the source or fidelity label changes.</dd></div>
+              <div><dt>Evidence</dt><dd>Capture one normalized <code>ReviewComparison</code> per provider and its selected source label.</dd></div>
+              <div><dt>Cleanup and matrix</dt><dd>Clean each owned path. Codex, Cursor, and Claude are all required for complete coverage. Missing access remains a coverage gap.</dd></div>
+            </dl>
+          </article>
+          <article class="journey">
+            <span class="label proposed">Journey D</span>
+            <h3>Empty, invalidation, and interruption</h3>
+            <dl class="journey-detail">
+              <div><dt>Trigger</dt><dd>Send a no-change or reverted update, then an empty update after non-empty evidence while file effects remain. Also stop an active turn.</dd></div>
+              <div><dt>Stable result</dt><dd>Live clears for no-change or reverted evidence. The empty-after-non-empty case selects fallback instead of saving false empty. Stop clears volatile state and leaves the last settled turn intact.</dd></div>
+              <div><dt>Evidence</dt><dd>Use the live user path where possible. Use focused integration tests for forced invalidation and source precedence.</dd></div>
+              <div><dt>Cleanup and matrix</dt><dd>Clean the owned stopped turn and fixture. Provider-native invalidation coverage applies where that provider exposes it.</dd></div>
+            </dl>
+          </article>
+          <article class="journey">
+            <span class="label proposed">Journey E</span>
+            <h3>Review with warnings and auto-review</h3>
+            <dl class="journey-detail">
+              <div><dt>Trigger</dt><dd>Exercise a reroute or warning during a diffing turn, then auto-review approved and denied actions, including <code>strictReviewRequired</code>.</dd></div>
+              <div><dt>Stable result</dt><dd>Warnings do not erase or duplicate diff state. An approved action produces its diff. A denied action produces none. Strict review waits for manual approval before the diff settles.</dd></div>
+              <div><dt>Evidence</dt><dd>Capture the warning or lifecycle notice beside the Review state and the resulting settled comparison.</dd></div>
+              <div><dt>Cleanup and matrix</dt><dd>Clean only owned approval and thread state. Record unavailable auto-review capability as a coverage gap.</dd></div>
+            </dl>
+          </article>
+        </div>
+        <aside class="note amber" style="margin-top:20px">
+          <span class="label proposed">Later slice 4 journey</span>
+          <p>An external file change must refresh Files, autocomplete, preview, and Review. Disconnect cleanup must remove owned watches. Add this only when the filesystem invalidation slice is built.</p>
+        </aside>
+      </section>
+
+      <section id="architecture-proof" aria-labelledby="architecture-proof-heading">
+        <span class="kicker">Architecture conformance proof</span>
+        <h2 id="architecture-proof-heading">Keep the existing user journeys. Add focused proof for the frozen decision and generic seams.</h2>
+        <p class="section-intro"><span class="label proposed">Proposed</span> These checks attach the approval and diff invariants to the five existing user journeys. They do not replace those journeys.</p>
+        <div class="statement-list">
+          <article class="statement">
+            <span class="label proposed">Review</span>
+            <p>Prove automatic review when available, including approved and denied outcomes. Prove that unavailable automatic review shows a visible manual fallback.</p>
+          </article>
+          <article class="statement">
+            <span class="label proposed">Managed policy</span>
+            <p>Prove that managed-required automatic review blocks before dispatch when the provider cannot run it. Prove that Full Access never displays a review that did not occur.</p>
+          </article>
+          <article class="statement">
+            <span class="label proposed">Permission flow</span>
+            <p>Prove that <code>strictReviewRequired</code> alone creates or resolves no permission. The real provider request enters the existing <code>PermissionRequest</code> flow and only a validated user response resolves it.</p>
+          </article>
+          <article class="statement">
+            <span class="label proposed">Retry guard</span>
+            <p>Prove that a retry keeps its frozen dispatch decision and rejects stale review and diff events from an earlier execution or delivery attempt.</p>
+          </article>
+          <article class="statement">
+            <span class="label proposed">Second adapter</span>
+            <p>Add a fake second provider conformance adapter. It proves generic core behavior without Codex branches and checks the future-provider extension path.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="verifier-map" aria-labelledby="verifier-map-heading">
+        <span class="kicker">Verifier map changes</span>
+        <h2 id="verifier-map-heading">Ship verifier maintenance with the product behavior.</h2>
+        <div class="statement-list">
+          <article class="statement">
+            <span class="label proposed">Proposed</span>
+            <p>Create <code>.codex/skills/verify-mcode/references/features/turn-diffs-and-review.md</code> when product implementation starts. Update <code>references/features/README.md</code> and <code>multi-surface-journeys.md</code> in the same change.</p>
+          </article>
+          <article class="statement">
+            <span class="label proposed">Proposed</span>
+            <p>Extend the runtime harness with a turn-diff scenario. Use the existing Electron live-testing interface for the right-panel proof. Keep focused tests for forced invalidation and source precedence because a real provider run does not make those states deterministic.</p>
+          </article>
+          <article class="statement">
+            <span class="label decision">Decision</span>
+            <p>Do not edit the verifier now. Verification-system maintenance ships in the same change as product behavior.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="checks" aria-labelledby="checks-heading">
+        <span class="kicker">Proof plan</span>
+        <h2 id="checks-heading">Planned targeted checks</h2>
+        <p class="section-intro">These commands are planned checks. This page does not claim that any command ran.</p>
+        <ul class="command-list">
+          <li>bun test packages/providers/src/__tests__/codex/codex-protocol-coverage.test.ts</li>
+          <li>bun test packages/providers/src/__tests__/codex/codex-app-server-approval.test.ts</li>
+          <li>bun test packages/contracts/src/__tests__/agent-event.test.ts</li>
+          <li>bun test apps/web/src/__tests__/diffStore.test.ts</li>
+          <li>bun test apps/web/src/transport/ws-events.test.ts</li>
+        </ul>
+      </section>
+
+      <section id="open" aria-labelledby="open-heading">
+        <span class="kicker">Questions that change scope</span>
+        <h2 id="open-heading">Open decisions with recommendations</h2>
+        <ul class="open-list">
+          <li>
+            <p><span class="label open">Open</span><strong>Codex capability and version predicate</strong></p>
+            <p><strong>Recommendation:</strong> define the exact supported capability and version predicate from protocol evidence. Do not infer it from an unstable payload shape.</p>
+          </li>
+          <li>
+            <p><span class="label open">Open</span><strong>Diff byte limit</strong></p>
+            <p><strong>Recommendation:</strong> set the exact native patch limit during implementation after repository evidence identifies safe transport and persistence bounds. Reject over-limit evidence. Do not truncate it.</p>
+          </li>
+          <li>
+            <p><span class="label open">Open</span><strong>Real remote workspace</strong></p>
+            <p><strong>Recommendation:</strong> keep remote <code>IWorkspaceChangeSource</code> out until a real remote workspace adapter needs it. The local invalidation source remains YAGNI.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section id="sources" aria-labelledby="sources-heading">
+        <span class="kicker">Source index</span>
+        <h2 id="sources-heading">Read the implementation seams</h2>
+        <ul class="source-list">
+          <li><a href="../../packages/providers/src/private/codex/codex-app-server.ts#L293">packages/providers/src/private/codex/codex-app-server.ts <span class="line">L293</span></a></li>
+          <li><a href="../../packages/providers/src/private/codex/codex-app-server.ts#L348">packages/providers/src/private/codex/codex-app-server.ts <span class="line">L348</span></a></li>
+          <li><a href="../../packages/providers/src/private/codex/codex-app-server.ts#L1019">packages/providers/src/private/codex/codex-app-server.ts <span class="line">L1019</span></a></li>
+          <li><a href="../../packages/providers/src/private/codex/codex-event-mapper.ts#L37">packages/providers/src/private/codex/codex-event-mapper.ts <span class="line">L37</span></a></li>
+          <li><a href="../../packages/providers/src/private/codex/codex-event-mapper.ts#L1489">packages/providers/src/private/codex/codex-event-mapper.ts <span class="line">L1489</span></a></li>
+          <li><a href="../../packages/providers/src/private/codex/codex-event-mapper.ts#L1552">packages/providers/src/private/codex/codex-event-mapper.ts <span class="line">L1552</span></a></li>
+          <li><a href="../../packages/providers/src/private/codex/codex-types.ts#L527">packages/providers/src/private/codex/codex-types.ts <span class="line">L527</span></a></li>
+          <li><a href="../../apps/server/src/features/agents/turns/turn-finalizer.ts#L515">apps/server/src/features/agents/turns/turn-finalizer.ts <span class="line">L515</span></a></li>
+          <li><a href="../../apps/server/src/features/projects/diffs/snapshots/snapshot-service.ts#L172">apps/server/src/features/projects/diffs/snapshots/snapshot-service.ts <span class="line">L172</span></a></li>
+          <li><a href="../../packages/contracts/src/events/agent-event.ts#L160">packages/contracts/src/events/agent-event.ts <span class="line">L160</span></a></li>
+          <li><a href="../../apps/web/src/stores/threadStore.ts#L2022">apps/web/src/stores/threadStore.ts <span class="line">L2022</span></a></li>
+          <li><a href="../../apps/web/src/components/chat/ThreadWarningBanner.tsx#L1">apps/web/src/components/chat/ThreadWarningBanner.tsx <span class="line">L1</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server-protocol/src/protocol/v2/fs.rs#L160">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server-protocol/src/protocol/v2/fs.rs <span class="line">L160</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server-protocol/src/protocol/v2/turn.rs#L517">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server-protocol/src/protocol/v2/turn.rs <span class="line">L517</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server-protocol/src/protocol/v2/notification.rs#L18">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server-protocol/src/protocol/v2/notification.rs <span class="line">L18</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server-protocol/src/protocol/v2/item.rs#L1330">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server-protocol/src/protocol/v2/item.rs <span class="line">L1330</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/src/bespoke_event_handling.rs#L285">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/src/bespoke_event_handling.rs <span class="line">L285</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/src/bespoke_event_handling.rs#L1347">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/src/bespoke_event_handling.rs <span class="line">L1347</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/core/src/turn_diff_tracker.rs#L47">.opensrc/repos/github.com/openai/codex/main/codex-rs/core/src/turn_diff_tracker.rs <span class="line">L47</span></a></li>
+          <li><a href="../../packages/contracts/src/providers/interfaces.ts#L105">packages/contracts/src/providers/interfaces.ts <span class="line">L105, IAgentProvider and capabilities</span></a></li>
+          <li><a href="../../apps/server/src/features/agents/turns/turn-file-tracker.ts">apps/server/src/features/agents/turns/turn-file-tracker.ts <span class="line">tracked files</span></a></li>
+          <li><a href="../../apps/server/src/features/agents/turns/turn-file-effects.ts">apps/server/src/features/agents/turns/turn-file-effects.ts <span class="line">file effects</span></a></li>
+          <li><a href="../../apps/server/src/features/projects/diffs/transport/snapshot-rpc.ts">apps/server/src/features/projects/diffs/transport/snapshot-rpc.ts <span class="line">snapshot RPCs</span></a></li>
+          <li><a href="../../apps/server/src/features/projects/diffs/snapshots/snapshot-attribution.ts">apps/server/src/features/projects/diffs/snapshots/snapshot-attribution.ts <span class="line">attribution</span></a></li>
+          <li><a href="../../apps/web/src/components/diff/DiffPanel.tsx">apps/web/src/components/diff/DiffPanel.tsx <span class="line">Review panel</span></a></li>
+          <li><a href="../../apps/web/src/components/diff/LastTurnView.tsx">apps/web/src/components/diff/LastTurnView.tsx <span class="line">Last turn</span></a></li>
+          <li><a href="../../apps/web/src/lib/load-file-diff.ts">apps/web/src/lib/load-file-diff.ts <span class="line">file diff loader</span></a></li>
+          <li><a href="../../packages/providers/src/private/cursor/acp/cursor-acp-tool-input-enrichment.ts">packages/providers/src/private/cursor/acp/cursor-acp-tool-input-enrichment.ts <span class="line">Cursor ACP evidence</span></a></li>
+          <li><a href="../../.codex/skills/verify-mcode/references/features/README.md">.codex/skills/verify-mcode/references/features/README.md <span class="line">feature map</span></a></li>
+          <li><a href="../../.codex/skills/verify-mcode/references/features/provider-events-and-durability.md">.codex/skills/verify-mcode/references/features/provider-events-and-durability.md <span class="line">provider durability</span></a></li>
+          <li><a href="../../.codex/skills/verify-mcode/references/features/thread-overview-right-panel.md">.codex/skills/verify-mcode/references/features/thread-overview-right-panel.md <span class="line">right-panel proof</span></a></li>
+          <li><a href="../../.codex/skills/verify-mcode/references/features/multi-surface-journeys.md">.codex/skills/verify-mcode/references/features/multi-surface-journeys.md <span class="line">multi-surface journeys</span></a></li>
+          <li><a href="../../packages/agent-model/src/capabilities.ts">packages/agent-model/src/capabilities.ts <span class="line">provider capabilities</span></a></li>
+          <li><a href="../../packages/providers/src/private/codex/codex-provider.ts">packages/providers/src/private/codex/codex-provider.ts <span class="line">Codex descriptor and mapping</span></a></li>
+          <li><a href="../../apps/server/src/features/providers/composition/provider-event-ingress.ts">apps/server/src/features/providers/composition/provider-event-ingress.ts <span class="line">canonical ingress</span></a></li>
+          <li><a href="../../apps/server/src/features/agents/permissions/agent-permission-service.ts">apps/server/src/features/agents/permissions/agent-permission-service.ts <span class="line">PermissionRequest flow</span></a></li>
+          <li><a href="../../apps/server/src/features/agents/turns/turn-admission-dispatch-coordinator.ts#L689">apps/server/src/features/agents/turns/turn-admission-dispatch-coordinator.ts <span class="line">L689, effective permission mode</span></a></li>
+          <li><a href="../../apps/server/src/features/agents/turns/turn-admission-dispatch-coordinator.ts#L898">apps/server/src/features/agents/turns/turn-admission-dispatch-coordinator.ts <span class="line">L898, request permission mode</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md#L86">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md <span class="line">L86, atomic turn settings</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md#L229">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md <span class="line">L229, future-only live settings</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md#L1882">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md <span class="line">L1882, unstable review lifecycle</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md#L1958">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md <span class="line">L1958, Full Access and Guardian</span></a></li>
+          <li><a href="../../.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md#L1965">.opensrc/repos/github.com/openai/codex/main/codex-rs/app-server/README.md <span class="line">L1965, provider permission request</span></a></li>
+        </ul>
+        <p class="footnote">Cached Codex material is read-only protocol evidence. Mcode policy and canonical contracts remain local decisions.</p>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const toggle = document.querySelector('#theme-toggle');
+      const filters = [...document.querySelectorAll('[data-filter]')];
+      const slices = [...document.querySelectorAll('.slice')];
+      const diagramTabs = [...document.querySelectorAll('.diagram-tab')];
+      const diagramPanels = diagramTabs.map((tab) => document.querySelector(`#${tab.getAttribute('aria-controls')}`));
+      let theme = localStorage.getItem('codex-plan-theme') || 'system';
+
+      const applyTheme = () => {
+        if (theme === 'system') root.removeAttribute('data-theme');
+        else root.dataset.theme = theme;
+        toggle.textContent = `Theme: ${theme}`;
+        toggle.setAttribute('aria-pressed', String(theme !== 'system'));
+      };
+
+      toggle.addEventListener('click', () => {
+        theme = theme === 'system' ? 'dark' : theme === 'dark' ? 'light' : 'system';
+        localStorage.setItem('codex-plan-theme', theme);
+        applyTheme();
+      });
+
+      filters.forEach((button) => {
+        button.addEventListener('click', () => {
+          const filter = button.dataset.filter;
+          filters.forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+          slices.forEach((slice) => {
+            slice.hidden = filter !== 'all' && !slice.dataset.layer.includes(filter);
+          });
+        });
+      });
+
+      const selectDiagram = (selectedIndex, focus = false) => {
+        diagramTabs.forEach((tab, index) => {
+          const selected = index === selectedIndex;
+          tab.setAttribute('aria-selected', String(selected));
+          tab.tabIndex = selected ? 0 : -1;
+          diagramPanels[index].hidden = !selected;
+        });
+        if (focus) diagramTabs[selectedIndex].focus();
+      };
+
+      if (diagramTabs.length) {
+        root.classList.add('diagram-tabs-ready');
+        selectDiagram(0);
+        diagramTabs.forEach((tab, index) => {
+          tab.addEventListener('click', () => selectDiagram(index));
+          tab.addEventListener('keydown', (event) => {
+            const lastIndex = diagramTabs.length - 1;
+            let nextIndex = index;
+            if (event.key === 'ArrowRight') nextIndex = index === lastIndex ? 0 : index + 1;
+            else if (event.key === 'ArrowLeft') nextIndex = index === 0 ? lastIndex : index - 1;
+            else if (event.key === 'Home') nextIndex = 0;
+            else if (event.key === 'End') nextIndex = lastIndex;
+            else return;
+            event.preventDefault();
+            selectDiagram(nextIndex, true);
+          });
+        });
+      }
+
+      applyTheme();
+    })();
+  </script>
+</body>
+</html>
