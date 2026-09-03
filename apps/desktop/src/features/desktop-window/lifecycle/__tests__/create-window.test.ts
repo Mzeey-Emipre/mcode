@@ -96,7 +96,7 @@ describe("Desktop Window creation", () => {
       titleBarOverlay: {
         color: "#00000000",
         symbolColor: "#8a8a92",
-        height: 40,
+        height: 48,
       },
       webPreferences: {
         contextIsolation: true,

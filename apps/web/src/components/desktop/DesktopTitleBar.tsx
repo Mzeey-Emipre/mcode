@@ -199,8 +199,10 @@ export function DesktopTitleBar({
       data-testid="desktop-title-bar"
       style={{ zIndex: "var(--z-desktop-title-bar)" }}
       className={cn(
-        "relative flex h-10 shrink-0 select-none items-center gap-2 border-b border-border/40 bg-page px-2 [app-region:drag]",
-        platform === "darwin" ? "pl-20" : "pr-36",
+        "relative flex h-12 shrink-0 select-none items-center gap-2 border-b border-border/40 bg-page px-2 [app-region:drag]",
+        // Reserve room for the native caption-button overlay (minimize,
+        // maximize, close) so it sits fully inside the bar on Windows/Linux.
+        platform === "darwin" ? "pl-20" : "pr-[138px]",
       )}
     >
       <div
