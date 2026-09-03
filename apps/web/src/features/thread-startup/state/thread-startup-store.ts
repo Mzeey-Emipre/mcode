@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 import type { ThreadStartup } from "@mcode/contracts";
 import { getTransport } from "@/transport";
@@ -50,8 +50,8 @@ export const useThreadStartupStore = create<ThreadStartupState>((set) => ({
   },
 }));
 
-/** Reads one startup by its client identity or its bound durable thread. */
-export function useThreadStartup({
+/** Reads one startup and whether its current authoritative lookup is still resolving. */
+export function useThreadStartupLookup({
   startupId,
   threadId,
   workspaceId,
@@ -61,7 +61,7 @@ export function useThreadStartup({
   readonly threadId?: string;
   readonly workspaceId?: string;
   readonly enabled?: boolean;
-}): ThreadStartup | undefined {
+}): { readonly startup: ThreadStartup | undefined; readonly resolving: boolean } {
   const startup = useThreadStartupStore((state) => startupForThread(
     state.recordsByStartupId,
     state.startupIdByThreadId,
@@ -69,11 +69,37 @@ export function useThreadStartup({
     threadId,
   ));
   const connectionStatus = useConnectionStore((state) => state.status);
+  const canRecover = enabled && connectionStatus === "connected";
+  const recoveryKey = `${startupId ?? ""}\u0000${threadId ?? ""}\u0000${workspaceId ?? ""}\u0000${canRecover}`;
+  const [recovery, setRecovery] = useState(() => ({
+    key: recoveryKey,
+    resolved: !canRecover,
+  }));
+  const resolving = canRecover && (recovery.key !== recoveryKey || !recovery.resolved);
 
   useEffect(() => {
-    if (!enabled || connectionStatus !== "connected") return;
-    void useThreadStartupStore.getState().recover({ startupId, workspaceId }).catch(() => undefined);
-  }, [connectionStatus, enabled, startupId, workspaceId]);
+    if (!canRecover) return;
+    let active = true;
+    void useThreadStartupStore.getState().recover({ startupId, workspaceId })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setRecovery({ key: recoveryKey, resolved: true });
+      });
+    return () => {
+      active = false;
+    };
 
-  return startup;
+  }, [canRecover, recoveryKey, startupId, threadId, workspaceId]);
+
+  return { startup, resolving };
+}
+
+/** Reads one startup by its client identity or its bound durable thread. */
+export function useThreadStartup(input: {
+  readonly startupId?: string;
+  readonly threadId?: string;
+  readonly workspaceId?: string;
+  readonly enabled?: boolean;
+}): ThreadStartup | undefined {
+  return useThreadStartupLookup(input).startup;
 }

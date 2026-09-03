@@ -636,22 +636,26 @@
   animation: text-pulse 1.8s ease-in-out infinite;
 }
 
-@keyframes startup-shimmer {
-  from { background-position: 120% 0; }
-  to { background-position: -20% 0; }
+@keyframes startup-activity-shimmer {
+  from { mask-position: 0 0; }
+  to { mask-position: 100% 0; }
 }
 
-.startup-shimmer-text {
-  background: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%);
-  background-size: 220% 100%;
-  background-clip: text;
-  color: transparent;
-  animation: startup-shimmer 1.8s linear infinite;
+.startup-activity-shimmer {
+  animation: startup-activity-shimmer 1600ms cubic-bezier(0.25, 1, 0.5, 1) infinite;
+  mask-image: linear-gradient(100deg, transparent 47%, currentColor 49%, currentColor 51%, transparent 53%);
+  mask-repeat: no-repeat;
+  mask-size: 250% 100%;
+}
+
+.startup-activity-shimmer-text::before {
+  content: attr(data-startup-activity-shimmer-text);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .startup-shimmer-text {
+  .startup-activity-shimmer {
     animation: none;
+    display: none;
   }
 }
 

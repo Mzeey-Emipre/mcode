@@ -21,6 +21,7 @@ import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { ProjectAutomaticSetupCard, useProjectAutomaticSetup } from "@/features/projects/environment";
 import { ProjectCommandApprovalDialog } from "@/features/projects/environment/ProjectCommandApprovalDialog";
 import { StartupProgressCard, useThreadStartup, type StartupDisplayContext } from "@/features/thread-startup";
+import { useThreadStartupLookup } from "@/features/thread-startup/state/thread-startup-store";
 import { type WorkspaceThread } from "@/lib/workspace-thread";
 import type { SubagentRosterTarget } from "../../narrative";
 import { Composer } from "../../composer/Composer";
@@ -164,36 +165,69 @@ function startupContext(thread: WorkspaceThread, startupKind?: "direct" | "manag
   return "direct";
 }
 
+function showsAuthoritativeCancellation(thread: WorkspaceThread, startup: ReturnType<typeof useThreadStartup>): boolean {
+  return Boolean(thread.clientError) && startup?.state === "cancelled";
+}
+
+function PreparingStartupContent({
+  thread,
+  startup,
+  actions,
+}: {
+  thread: WorkspaceThread;
+  startup: ReturnType<typeof useThreadStartup>;
+  actions: ReactNode;
+}) {
+  if (thread.clientError && !showsAuthoritativeCancellation(thread, startup)) {
+    return <CollapsibleError error={thread.clientError} onRetry={() => { void useWorkspaceStore.getState().retryPreparingThread(thread.id); }} onDismiss={() => useWorkspaceStore.getState().dismissPreparingThread(thread.id)} />;
+  }
+  return <div className="mx-auto w-full max-w-xl"><StartupProgressCard startup={startup} startupId={thread.clientStartupId ?? startup?.startupId} context={startupContext(thread, startup?.kind)} actions={actions} /></div>;
+}
+
+function PreparingThreadHeader({ thread, state }: { thread: WorkspaceThread; state: ChatViewState }) {
+  return (
+    <div className="flex h-11 items-center justify-between border-b border-border pr-4 pl-2">
+      <div className="flex min-w-0 items-center gap-2">
+        {state.sidebarCollapsed && <SidebarRevealButton />}
+        <span data-testid="chat-header-title" className="truncate text-sm font-medium">
+          {thread.title}
+          {thread.clientPreparing && <span className="ml-2 inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary/60 align-middle" aria-hidden />}
+        </span>
+        {state.activeWorkspaceId && <Badge variant="secondary">{state.activeWorkspaceName}</Badge>}
+        {thread.parent_thread_id && state.parentThreadExists && (
+          <Tooltip>
+            <TooltipTrigger render={<button type="button" onClick={() => useWorkspaceStore.getState().setActiveThread(thread.parent_thread_id!)} className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"><GitFork size={10} /><span>Forked</span></button>} />
+            <TooltipContent side="bottom" className="text-xs">Go to parent thread</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Renders a selected row while the server creates the backing thread. */
-function ThreadPreparingShell({ thread, state }: { thread: WorkspaceThread; state: ChatViewState }) {
-  const startup = useThreadStartup({
-    startupId: thread.clientStartupId,
-    workspaceId: thread.workspace_id,
-    enabled: Boolean(thread.clientStartupId),
-  });
+function ThreadPreparingShell({
+  thread,
+  state,
+  startup,
+}: {
+  thread: WorkspaceThread;
+  state: ChatViewState;
+  startup: ReturnType<typeof useThreadStartup>;
+}) {
+  const needsSetupRecovery = startup?.state === "blocked"
+    || startup?.state === "failed"
+    || startup?.state === "interrupted";
+  const automaticSetup = useProjectAutomaticSetup(
+    thread.id,
+    needsSetupRecovery && thread.mode === "worktree" && thread.worktree_managed === true,
+  );
   return (
     <div className="flex h-full flex-col bg-background" data-testid="thread-preparing-shell">
-      <div className="flex h-11 items-center justify-between border-b border-border pr-4 pl-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {state.sidebarCollapsed && <SidebarRevealButton />}
-          <span data-testid="chat-header-title" className="truncate text-sm font-medium">
-            {thread.title}
-            {thread.clientPreparing && <span className="ml-2 inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary/60 align-middle" aria-hidden />}
-          </span>
-          {state.activeWorkspaceId && <Badge variant="secondary">{state.activeWorkspaceName}</Badge>}
-          {thread.parent_thread_id && state.parentThreadExists && (
-            <Tooltip>
-              <TooltipTrigger render={<button type="button" onClick={() => useWorkspaceStore.getState().setActiveThread(thread.parent_thread_id!)} className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"><GitFork size={10} /><span>Forked</span></button>} />
-              <TooltipContent side="bottom" className="text-xs">Go to parent thread</TooltipContent>
-            </Tooltip>
-          )}
-        </div>
-      </div>
+      <PreparingThreadHeader thread={thread} state={state} />
       <div className="flex flex-1 flex-col items-stretch justify-center gap-6 px-6 py-8">
         <div className="mx-auto w-full max-w-xl rounded-xl border border-border/50 bg-muted/15 px-4 py-3 text-sm text-foreground/90"><p className="whitespace-pre-wrap break-words">{thread.clientQueuedMessage ?? ""}</p></div>
-        {thread.clientError ? (
-          <CollapsibleError error={thread.clientError} onRetry={() => { void useWorkspaceStore.getState().retryPreparingThread(thread.id); }} onDismiss={() => useWorkspaceStore.getState().dismissPreparingThread(thread.id)} />
-        ) : <div className="mx-auto w-full max-w-xl"><StartupProgressCard startup={startup} startupId={thread.clientStartupId} context={startupContext(thread, startup?.kind)} /></div>}
+        <PreparingStartupContent thread={thread} startup={startup} actions={<StartupAutomaticSetupActions automaticSetup={automaticSetup} />} />
       </div>
       <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} />
     </div>
@@ -288,6 +322,7 @@ function ConversationStageContent({
   thread,
   leadingContent,
   afterFirstUserContent,
+  transitionContent,
   messageListProps,
 }: {
   stage: ConversationStage;
@@ -295,12 +330,13 @@ function ConversationStageContent({
   thread: WorkspaceThread;
   leadingContent: ReactNode;
   afterFirstUserContent?: ReactNode;
+  transitionContent?: ReactNode;
   messageListProps: Omit<ComponentProps<typeof MessageList>, "leadingContent" | "displayThreadId">;
 }) {
   if (stage === "hold") {
     return <div className="relative h-full" aria-busy="true"><div className="pointer-events-none h-full" inert><MessageList {...messageListProps} displayThreadId={state.displayHoldThreadId!} /></div><ConversationHoldOverlay targetTitle={thread.title || "Conversation"} /></div>;
   }
-  if (stage === "transition") return <ConversationTransitionState threadId={thread.id} threadTitle={thread.title || "Conversation"} />;
+  if (stage === "transition") return transitionContent ?? <ConversationTransitionState threadId={thread.id} threadTitle={thread.title || "Conversation"} />;
   if (stage === "error") return <ConversationErrorState error={state.sessionError ?? ""} />;
   return <MessageList {...messageListProps} leadingContent={leadingContent} afterFirstUserContent={afterFirstUserContent} />;
 }
@@ -350,8 +386,31 @@ function StartupAutomaticSetupAction({ automaticSetup }: { readonly automaticSet
   }
 }
 
+function shouldKeepPreparingShell(
+  thread: WorkspaceThread,
+  state: ChatViewState,
+  startup: ReturnType<typeof useThreadStartup>,
+  startupResolving: boolean,
+): boolean {
+  if (thread.clientPreparing || thread.clientError) return true;
+  if (hasConversationHold(state)) return false;
+  if (startupResolving && thread.clientStartupId !== undefined) return true;
+  return startup !== undefined && (!state.targetPaintable || startup.state !== "completed");
+}
+
+function getStartupTransitionContent(
+  thread: WorkspaceThread,
+  startup: ReturnType<typeof useThreadStartup>,
+  automaticSetup: ReturnType<typeof useProjectAutomaticSetup>,
+): ReactNode {
+  const hasStartup = Boolean(thread.clientStartupId) || startup !== undefined;
+  if (!hasStartup || startup?.state === "completed") return undefined;
+  return <StartupProgressCard startup={startup} startupId={thread.clientStartupId ?? startup?.startupId} context={startupContext(thread, startup?.kind)} actions={<StartupAutomaticSetupActions automaticSetup={automaticSetup} />} />;
+}
+
 function ChatMessageStage({ state, interactions, automaticSetup, startup, onSubagentSelect, onOpenSubagents }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "onSubagentSelect" | "onOpenSubagents"> & { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup>; readonly startup: ReturnType<typeof useThreadStartup> }) {
   const thread = state.activeThread!;
+  const startupTransitionBlock = getStartupTransitionContent(thread, startup, automaticSetup);
   const startupTranscriptBlock = startup
     ? <StartupProgressCard startup={startup} startupId={startup.startupId} context={startupContext(thread, startup.kind)} actions={<StartupAutomaticSetupActions automaticSetup={automaticSetup} />} />
     : thread.mode === "worktree" && thread.worktree_managed === true
@@ -370,7 +429,7 @@ function ChatMessageStage({ state, interactions, automaticSetup, startup, onSuba
   };
   return (
     <div data-testid="chat-message-stage" className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>
-      <ConversationStageContent stage={getConversationStage(state)} state={state} thread={thread} afterFirstUserContent={startup ? startupTranscriptBlock : undefined} leadingContent={startup ? undefined : startupTranscriptBlock} messageListProps={messageListProps} />
+      <ConversationStageContent stage={getConversationStage(state)} state={state} thread={thread} afterFirstUserContent={startup ? startupTranscriptBlock : undefined} leadingContent={startup ? undefined : startupTranscriptBlock} transitionContent={startupTransitionBlock} messageListProps={messageListProps} />
     </div>
   );
 }
@@ -397,19 +456,13 @@ function ConversationTransitionState({ threadId, threadTitle }: { threadId: stri
 }
 
 /** Renders the fully active conversation surface. */
-function ActiveThreadSurface(props: ChatViewSurfaceProps) {
-  const { state, interactions, recovery, editingThreadId, onEditingThreadIdChange, pendingSelectedTextComment, onSubagentSelect, onOpenSubagents, dismissedError } = props;
+function ActiveThreadSurface(props: ChatViewSurfaceProps & { readonly startup: ReturnType<typeof useThreadStartup> }) {
+  const { state, interactions, recovery, editingThreadId, onEditingThreadIdChange, pendingSelectedTextComment, onSubagentSelect, onOpenSubagents, dismissedError, startup } = props;
   const thread = state.activeThread!;
   const automaticSetup = useProjectAutomaticSetup(
     thread.id,
     thread.mode === "worktree" && thread.worktree_managed === true,
   );
-  const startup = useThreadStartup({
-    startupId: thread.clientStartupId,
-    threadId: thread.id,
-    workspaceId: thread.workspace_id,
-    enabled: Boolean(thread.clientStartupId) || (thread.mode === "worktree" && thread.worktree_managed === true),
-  });
   const showConversationError = isConversationError(state.sessionError);
   const showConversationErrorBanner = showConversationError && (state.messageCount > 0 || state.isAgentRunning);
   const showCliError = isVisibleCliError(state.sessionError, dismissedError);
@@ -430,8 +483,14 @@ function ActiveThreadSurface(props: ChatViewSurfaceProps) {
 /** Selects the visual chat shell for the current workspace selection. */
 export function ChatViewSurface(props: ChatViewSurfaceProps) {
   const { state } = props;
+  const startupLookup = useThreadStartupLookup({
+    startupId: state.activeThread?.clientStartupId,
+    threadId: state.activeThread?.id,
+    workspaceId: state.activeThread?.workspace_id,
+    enabled: Boolean(state.activeThread),
+  });
   if (!state.activeThreadId) return <NewThreadSurface state={state} onPromptSelect={props.interactions.onPromptSelect} />;
-  if (state.activeThread?.clientPreparing || state.activeThread?.clientError) return <ThreadPreparingShell thread={state.activeThread} state={state} />;
   if (!state.activeThread) return <MissingThreadSurface sidebarCollapsed={state.sidebarCollapsed} />;
-  return <ActiveThreadSurface {...props} />;
+  if (shouldKeepPreparingShell(state.activeThread, state, startupLookup.startup, startupLookup.resolving)) return <ThreadPreparingShell thread={state.activeThread} state={state} startup={startupLookup.startup} />;
+  return <ActiveThreadSurface {...props} startup={startupLookup.startup} />;
 }

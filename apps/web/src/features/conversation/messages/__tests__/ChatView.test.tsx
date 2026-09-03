@@ -580,7 +580,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(chatViewTransportMock.getAutomaticSetup).toHaveBeenCalledWith(thread.id);
   });
 
-  it("keeps the bound startup card after placeholder replacement while Setup is blocked", async () => {
+  it("keeps the preparing shell and setup recovery actions while Setup is blocked", async () => {
     const startupId = "00000000-0000-4000-8000-000000000001";
     const thread = {
       ...makeThread({ mode: "worktree", worktree_managed: true }),
@@ -650,9 +650,9 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
 
     render(<ChatView />);
 
-    const card = await screen.findByTestId("startup-progress");
-    const queuedMessage = screen.getByTestId("queued-first-user-message");
-    expect(queuedMessage.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(screen.getByTestId("thread-preparing-shell")).toBeInTheDocument();
+    expect(screen.getAllByTestId("startup-progress")).toHaveLength(1);
+    expect(screen.queryByTestId("chat-message-stage")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Environment setup")).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Retry setup" }));
     await user.click(screen.getByRole("button", { name: "Continue without setup" }));
@@ -757,6 +757,335 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
   });
 
+  it("keeps startup progress visible while the durable thread hydrates", () => {
+    const startupThread = {
+      ...makeThread({ id: "thread-2", title: "Thread 2" }),
+      clientStartupId: "00000000-0000-4000-8000-000000000001",
+    };
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: startupThread.id,
+      threads: [startupThread],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: "thread-1" });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("startup-progress")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-transition-shell")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
+  });
+
+  it("keeps the preparing shell through the optimistic-to-persisted startup handoff", async () => {
+    const startupId = "00000000-0000-4000-8000-000000000024";
+    const placeholder = {
+      ...makeThread({ id: "thread-placeholder", title: "Prepare checkout", mode: "worktree", worktree_managed: true }),
+      clientPreparing: true,
+      clientPreparingContext: "new-worktree" as const,
+      clientQueuedMessage: "Build the feature",
+      clientStartupId: startupId,
+    };
+    const persisted = { ...placeholder, id: "thread-persisted", clientPreparing: false };
+    act(() => useThreadStartupStore.getState().apply({
+      startupId,
+      workspaceId: persisted.workspace_id,
+      kind: "managed-worktree",
+      state: "running",
+      phase: "setup",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "setup", state: "running" },
+        { phase: "agent", state: "pending" },
+      ],
+      transcript: [],
+      cancellation: "none",
+      revision: 1,
+      threadId: persisted.id,
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:00.000Z",
+    }));
+    setupWorkspaceMock(defaultWorkspaceState({ activeThreadId: placeholder.id, threads: [placeholder] }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: placeholder.id });
+
+    const view = render(<ChatView />);
+    const preparingShell = screen.getByTestId("thread-preparing-shell");
+    expect(screen.getAllByTestId("startup-progress")).toHaveLength(1);
+    await waitFor(() => expect(chatViewTransportMock.getThreadStartup).toHaveBeenCalledWith(startupId));
+    const recoveryCallsBeforeAgentAdmission = {
+      get: chatViewTransportMock.getThreadStartup.mock.calls.length,
+      list: chatViewTransportMock.listThreadStartups.mock.calls.length,
+    };
+
+    setupWorkspaceMock(defaultWorkspaceState({ activeThreadId: persisted.id, threads: [persisted] }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: persisted.id });
+    view.rerender(<ChatView />);
+
+    expect(screen.getByTestId("thread-preparing-shell")).toBe(preparingShell);
+    expect(screen.getAllByTestId("startup-progress")).toHaveLength(1);
+    expect(screen.queryByTestId("chat-message-stage")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-transition-shell")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(chatViewTransportMock.listThreadStartups.mock.calls).toHaveLength(recoveryCallsBeforeAgentAdmission.list + 1);
+    });
+
+    act(() => useThreadStartupStore.getState().apply({
+      startupId,
+      workspaceId: persisted.workspace_id,
+      kind: "managed-worktree",
+      state: "completed",
+      phase: "agent",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "setup", state: "completed" },
+        { phase: "agent", state: "completed" },
+      ],
+      transcript: [],
+      cancellation: "none",
+      revision: 2,
+      threadId: persisted.id,
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:01.000Z",
+    }));
+    const persistedRecord = {
+      ...createEmptyThreadRecord(),
+      messages: [createMockMessage({ id: "persisted-message", thread_id: persisted.id })],
+    };
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: persisted.id,
+      activeRecord: persistedRecord,
+      records: new Map([[persisted.id, persistedRecord]]),
+    });
+    view.rerender(<ChatView />);
+
+    expect(screen.getByTestId("chat-message-stage")).toBeInTheDocument();
+    expect(screen.getByTestId("message-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("thread-preparing-shell")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-transition-shell")).not.toBeInTheDocument();
+    expect(chatViewTransportMock.getThreadStartup.mock.calls).toHaveLength(recoveryCallsBeforeAgentAdmission.get + 1);
+    expect(chatViewTransportMock.listThreadStartups.mock.calls).toHaveLength(recoveryCallsBeforeAgentAdmission.list + 1);
+  });
+
+  it("keeps a restored direct startup in the preparing shell", async () => {
+    const startupId = "00000000-0000-4000-8000-000000000025";
+    const restoredThread = makeThread({ id: "thread-restored", title: "Restored startup" });
+    const runningStartup = {
+      startupId,
+      workspaceId: restoredThread.workspace_id,
+      kind: "direct" as const,
+      state: "running" as const,
+      phase: "agent" as const,
+      steps: [
+        { phase: "thread" as const, state: "completed" as const },
+        { phase: "agent" as const, state: "running" as const },
+      ],
+      transcript: [],
+      cancellation: "none" as const,
+      revision: 1,
+      threadId: restoredThread.id,
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:00.000Z",
+    };
+    act(() => useThreadStartupStore.getState().apply(runningStartup));
+    chatViewTransportMock.cancelThreadStartup.mockResolvedValue({
+      ...runningStartup,
+      cancellation: "requested",
+      revision: 2,
+    });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: restoredThread.id,
+      threads: [restoredThread],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: restoredThread.id });
+    const user = userEvent.setup();
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("thread-preparing-shell")).toBeInTheDocument();
+    expect(screen.getAllByTestId("startup-progress")).toHaveLength(1);
+    expect(screen.queryByTestId("chat-message-stage")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-transition-shell")).not.toBeInTheDocument();
+    await waitFor(() => expect(chatViewTransportMock.listThreadStartups).toHaveBeenCalledWith(restoredThread.workspace_id));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(chatViewTransportMock.cancelThreadStartup).toHaveBeenCalledWith(startupId);
+  });
+
+  it("holds the preparing shell while a restored startup lookup is unresolved", async () => {
+    const startupId = "00000000-0000-4000-8000-000000000026";
+    const restoredThread = {
+      ...makeThread({ id: "thread-restoring", title: "Restoring startup", status: "active" }),
+      clientStartupId: startupId,
+    };
+    const restoredStartup = {
+      startupId,
+      workspaceId: restoredThread.workspace_id,
+      kind: "direct" as const,
+      state: "running" as const,
+      phase: "agent" as const,
+      steps: [
+        { phase: "thread" as const, state: "completed" as const },
+        { phase: "agent" as const, state: "running" as const },
+      ],
+      transcript: [],
+      cancellation: "none" as const,
+      revision: 1,
+      threadId: restoredThread.id,
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:00.000Z",
+    };
+    let resolveLookup!: (value: { records: Array<typeof restoredStartup> }) => void;
+    chatViewTransportMock.listThreadStartups.mockImplementation(() => new Promise((resolve) => {
+      resolveLookup = resolve;
+    }));
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: restoredThread.id,
+      threads: [restoredThread],
+    }));
+    const activeRecord = {
+      ...createEmptyThreadRecord(),
+      messages: [createMockMessage({ id: "restoring-message", thread_id: restoredThread.id })],
+    };
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: restoredThread.id,
+      activeRecord,
+      records: new Map([[restoredThread.id, activeRecord]]),
+    });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("thread-preparing-shell")).toBeInTheDocument();
+    expect(screen.getAllByTestId("startup-progress")).toHaveLength(1);
+    expect(screen.queryByTestId("chat-message-stage")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-transition-shell")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveLookup({ records: [restoredStartup] });
+    });
+
+    expect(screen.getByTestId("thread-preparing-shell")).toBeInTheDocument();
+    expect(screen.getAllByTestId("startup-progress")).toHaveLength(1);
+    expect(screen.queryByTestId("chat-message-stage")).not.toBeInTheDocument();
+  });
+
+  it("keeps the authoritative cancelled startup card when optimistic creation rejects", () => {
+    const startupThread = {
+      ...makeThread({ id: "thread-placeholder", title: "Cancelled setup" }),
+      clientPreparing: false,
+      clientError: "Error: Thread startup was cancelled",
+      clientPreparingContext: "new-worktree" as const,
+      clientQueuedMessage: "Build the feature",
+      clientStartupId: "00000000-0000-4000-8000-000000000021",
+    };
+    useThreadStartupStore.getState().apply({
+      startupId: startupThread.clientStartupId,
+      workspaceId: startupThread.workspace_id,
+      kind: "managed-worktree",
+      state: "cancelled",
+      phase: "setup",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "setup", state: "cancelled" },
+        { phase: "agent", state: "pending" },
+      ],
+      transcript: [],
+      cancellation: "requested",
+      revision: 1,
+      threadId: startupThread.id,
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:00.000Z",
+    });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: startupThread.id,
+      threads: [startupThread],
+    }));
+    const persistedRecord = {
+      ...createEmptyThreadRecord(),
+      messages: [createMockMessage({ id: "cancelled-message", thread_id: startupThread.id })],
+    };
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: startupThread.id,
+      activeRecord: persistedRecord,
+      records: new Map([[startupThread.id, persistedRecord]]),
+    });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("thread-preparing-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("startup-progress")).toHaveTextContent("Startup cancelled");
+    expect(screen.getByText("Run project setup").closest("li")).toHaveAttribute("data-state", "cancelled");
+    expect(screen.getByText("Start agent").closest("li")).toHaveAttribute("data-state", "pending");
+    expect(screen.queryByText("Error: Thread startup was cancelled")).toBeNull();
+    expect(screen.queryByTestId("chat-message-stage")).not.toBeInTheDocument();
+  });
+
+  it("keeps a recovered startup visible while the durable thread hydrates", () => {
+    const startupThread = makeThread({ id: "thread-2", title: "Thread 2" });
+    useThreadStartupStore.getState().apply({
+      startupId: "00000000-0000-4000-8000-000000000002",
+      workspaceId: startupThread.workspace_id,
+      kind: "direct",
+      state: "blocked",
+      phase: "agent",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "agent", state: "blocked" },
+      ],
+      transcript: [],
+      cancellation: "none",
+      revision: 1,
+      threadId: startupThread.id,
+      block: { code: "STARTUP_BLOCKED", message: "Startup blocked", actions: ["retry"] },
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:00.000Z",
+    });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: startupThread.id,
+      threads: [startupThread],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: "thread-1" });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("startup-progress")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-transition-shell")).not.toBeInTheDocument();
+  });
+
+  it("keeps the preparing shell until a completed startup conversation paints", () => {
+    const startupThread = {
+      ...makeThread({ id: "thread-2", title: "Thread 2" }),
+      clientStartupId: "00000000-0000-4000-8000-000000000003",
+    };
+    useThreadStartupStore.getState().apply({
+      startupId: startupThread.clientStartupId,
+      workspaceId: startupThread.workspace_id,
+      kind: "direct",
+      state: "completed",
+      phase: "agent",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "agent", state: "completed" },
+      ],
+      transcript: [],
+      cancellation: "none",
+      revision: 1,
+      threadId: startupThread.id,
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:00.000Z",
+    });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: startupThread.id,
+      threads: [startupThread],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: "thread-1" });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("thread-preparing-shell")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-transition-shell")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("startup-progress")).not.toBeInTheDocument();
+  });
+
   it("holds the outgoing transcript while a selected cold thread hydrates", () => {
     const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
     const thread2 = makeThread({ id: "thread-2", title: "Thread 2" });
@@ -814,6 +1143,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       ...createEmptyThreadRecord(),
       messages: [createMockMessage({ id: "thread-1-message", thread_id: thread1.id })],
     };
+    chatViewTransportMock.listThreadStartups.mockImplementation(() => new Promise(() => {}));
     setupWorkspaceMock(defaultWorkspaceState({
       activeThreadId: thread1.id,
       threads: [thread1, thread2],
@@ -840,6 +1170,8 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
 
     expect(screen.getByTestId("message-list")).toHaveAttribute("data-display-thread-id", thread1.id);
     expect(screen.getByTestId("conversation-hold-overlay")).toBeInTheDocument();
+    expect(screen.queryByTestId("thread-preparing-shell")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("startup-progress")).not.toBeInTheDocument();
   });
 
   it("drops a stale hold when rapid switching reaches another cold thread", () => {

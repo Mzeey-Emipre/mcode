@@ -1,5 +1,5 @@
 import type { ThreadStartup } from "@mcode/contracts";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -118,39 +118,107 @@ describe("StartupProgressCard", () => {
     expect(screen.getByRole("log")).toHaveTextContent("setup finished");
   });
 
-  it("shows Cancelling until the authoritative terminal snapshot arrives", async () => {
+  it("uses one animated activity line until cancellation is confirmed", async () => {
     const user = userEvent.setup();
     useThreadStartupStore.getState().apply(startup());
-    startupTransport.cancelThreadStartup.mockResolvedValue(startup({
-      cancellation: "requested",
-      revision: 2,
+    let resolveCancellation!: (record: ThreadStartup) => void;
+    startupTransport.cancelThreadStartup.mockImplementation(() => new Promise((resolve) => {
+      resolveCancellation = resolve;
     }));
     render(<StartupCardHarness />);
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.getAllByText("Cancelling…")).not.toHaveLength(0));
-    expect(screen.queryByText("Cancelled")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("startup-activity")).toHaveTextContent("Cancelling setup"));
+    expect(screen.getAllByText("Cancelling setup")).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByTestId("startup-activity-base")).toBeVisible();
+    expect(screen.getByTestId("startup-activity-shimmer")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("startup-activity-shimmer")).toHaveClass("startup-activity-shimmer", "motion-reduce:animate-none");
+    expect(screen.getAllByText("Cancelling setup")).toHaveLength(1);
+    expect(screen.queryByText("Cancelling…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.getByText("Run project setup").closest("li")).toHaveAttribute("data-state", "running");
 
-    useThreadStartupStore.getState().apply(startup({
+    await act(async () => {
+      resolveCancellation(startup({ cancellation: "requested", revision: 2 }));
+      useThreadStartupStore.getState().apply(startup({
+        state: "cancelled",
+        cancellation: "requested",
+        phase: "setup",
+        revision: 3,
+        steps: [
+          { phase: "thread", state: "completed" },
+          { phase: "worktree", state: "completed" },
+          { phase: "setup", state: "cancelled" },
+          { phase: "agent", state: "pending" },
+        ],
+      }));
+    });
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("Startup cancelled");
+    expect(screen.queryByTestId("startup-activity-shimmer")).toBeNull();
+    expect(screen.queryByText("Cancelled")).toBeNull();
+    expect(screen.getByText("Run project setup").closest("li")).toHaveAttribute("data-state", "cancelled");
+  });
+
+  it("uses one aria-hidden shimmer overlay for active activity", () => {
+    render(<StartupProgressCard startupId={startupId} context="managed-worktree" />);
+    const activity = screen.getByTestId("startup-activity");
+    const base = screen.getByTestId("startup-activity-base");
+    const overlay = screen.getByTestId("startup-activity-shimmer");
+    expect(activity).toHaveClass("text-sm", "text-muted-foreground");
+    expect(base).toBeVisible();
+    expect(screen.getByTestId("startup-activity-icon")).toHaveAttribute("data-slot", "worktree-mode-icon");
+    expect(screen.getByTestId("startup-activity-icon")).toHaveClass("text-current");
+    expect(base.querySelector("span")).toHaveClass("text-current");
+    expect(overlay).toHaveAttribute("aria-hidden", "true");
+    expect(overlay).toHaveClass("text-foreground", "startup-activity-shimmer", "motion-reduce:animate-none");
+    expect(screen.getByTestId("startup-activity-shimmer-icon")).toHaveClass("text-current");
+    expect(overlay.querySelector("[data-startup-activity-shimmer-text]")).toHaveClass("text-current");
+    expect(overlay.querySelector("[data-startup-activity-shimmer-text]")).toHaveAttribute("data-startup-activity-shimmer-text", "Preparing checkout");
+    expect(screen.getAllByText("Preparing checkout")).toHaveLength(1);
+    expect(screen.getByTestId("startup-progress").querySelector("[aria-busy]")).not.toHaveClass("shadow-sm");
+    expect(screen.getByLabelText("Running")).toHaveClass("text-xs");
+  });
+
+  it("allows cancellation to be retried until an authoritative terminal snapshot arrives", async () => {
+    const user = userEvent.setup();
+    useThreadStartupStore.getState().apply(startup());
+    startupTransport.cancelThreadStartup
+      .mockRejectedValueOnce(new Error("containment failed"))
+      .mockResolvedValueOnce(startup({ cancellation: "requested", revision: 2 }));
+    render(<StartupCardHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Could not stop project setup")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry cancel" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(startupTransport.cancelThreadStartup).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Could not stop project setup")).toBeNull();
+  });
+
+  it("clears a local stop error when the server confirms cancellation", async () => {
+    const user = userEvent.setup();
+    startupTransport.cancelThreadStartup.mockRejectedValueOnce(new Error("containment failed"));
+    const view = render(<StartupProgressCard startup={startup()} startupId={startupId} context="managed-worktree" />);
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Could not stop project setup")).toBeInTheDocument();
+
+    view.rerender(<StartupProgressCard startup={startup({
       state: "cancelled",
       cancellation: "requested",
-      phase: "setup",
-      revision: 3,
+      revision: 2,
       steps: [
         { phase: "thread", state: "completed" },
         { phase: "worktree", state: "completed" },
         { phase: "setup", state: "cancelled" },
         { phase: "agent", state: "pending" },
       ],
-    }));
+    })} startupId={startupId} context="managed-worktree" />);
 
-    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
-  });
-
-  it("disables shimmer animation when reduced motion is requested", () => {
-    render(<StartupProgressCard startupId={startupId} context="managed-worktree" />);
-    expect(screen.getByText("Preparing checkout")).toHaveClass("startup-shimmer-text", "motion-reduce:animate-none");
-    expect(screen.getByTestId("startup-activity-icon")).toHaveAttribute("data-slot", "worktree-mode-icon");
+    expect(screen.queryByText("Could not stop project setup")).toBeNull();
   });
 
   it("removes the startup display after successful completion", () => {

@@ -12,7 +12,7 @@ export type StartupDisplayContext = "direct" | "managed-worktree" | "attached-wo
 
 type StartupDisplay = Pick<
   ThreadStartup,
-  "kind" | "state" | "phase" | "steps" | "transcript" | "cancellation" | "error" | "block"
+  "kind" | "state" | "phase" | "steps" | "transcript" | "cancellation" | "error" | "block" | "revision"
 >;
 
 function fallbackStartup(context: StartupDisplayContext): StartupDisplay {
@@ -33,6 +33,7 @@ function fallbackStartup(context: StartupDisplayContext): StartupDisplay {
     steps: phases.map((phase, index) => ({ phase, state: index === 0 ? "running" : "pending" })),
     transcript: [],
     cancellation: "none",
+    revision: 0,
   };
 }
 
@@ -57,7 +58,6 @@ function cardTitle(context: StartupDisplayContext): string {
 }
 
 function startupStatus(startup: StartupDisplay): string {
-  if (startup.cancellation === "requested" && startup.state !== "cancelled") return "Cancelling…";
   switch (startup.state) {
     case "pending":
     case "running":
@@ -81,7 +81,8 @@ interface StartupActivity {
   readonly active: boolean;
 }
 
-const CANCELLING_ACTIVITY: StartupActivity = { lead: "Cancelling startup", changing: "", active: false };
+const CANCELLING_ACTIVITY: StartupActivity = { lead: "Cancelling startup", changing: "", active: true };
+const CANCELLING_SETUP_ACTIVITY: StartupActivity = { lead: "Cancelling setup", changing: "", active: true };
 const STABLE_ACTIVITIES: Partial<Record<ThreadStartup["state"], StartupActivity>> = {
   blocked: { lead: "Startup paused", changing: "", active: false },
   cancelled: { lead: "Startup cancelled", changing: "", active: false },
@@ -103,8 +104,14 @@ const REVIEW_ACTIVITIES: Record<ThreadStartup["phase"], StartupActivity> = {
 const ATTACHING_ACTIVITY: StartupActivity = { lead: "Attaching", changing: "checkout", active: true };
 const CREATING_WORKTREE_ACTIVITY: StartupActivity = { lead: "Creating a", changing: "worktree", active: true };
 
-function activityCopy(startup: StartupDisplay, context: StartupDisplayContext): StartupActivity {
-  if (startup.cancellation === "requested" && startup.state !== "cancelled") return CANCELLING_ACTIVITY;
+function activityCopy(
+  startup: StartupDisplay,
+  context: StartupDisplayContext,
+  cancellationPending: boolean,
+): StartupActivity {
+  if (startup.state !== "cancelled" && (startup.cancellation === "requested" || cancellationPending)) {
+    return startup.phase === "setup" ? CANCELLING_SETUP_ACTIVITY : CANCELLING_ACTIVITY;
+  }
   return STABLE_ACTIVITIES[startup.state] ?? activeActivity(startup.phase, context);
 }
 
@@ -172,7 +179,8 @@ export interface StartupProgressCardProps {
 }
 
 function isStartupBusy(startup: StartupDisplay): boolean {
-  return ["pending", "running"].includes(startup.state) || startup.cancellation === "requested";
+  return ["pending", "running"].includes(startup.state)
+    || startup.cancellation === "requested" && startup.state !== "cancelled";
 }
 
 function canCancelStartup(startupId: string | undefined, startup: StartupDisplay): boolean {
@@ -182,9 +190,17 @@ function canCancelStartup(startupId: string | undefined, startup: StartupDisplay
 function StartupActivityLine({ activity }: { activity: StartupActivity }) {
   const message = activity.changing ? `${activity.lead} ${activity.changing}` : activity.lead;
   return (
-    <div data-testid="startup-activity" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <WorktreeModeIcon data-testid="startup-activity-icon" aria-hidden size={12} className="text-primary" />
-      <span className={cn(activity.active && "startup-shimmer-text motion-reduce:animate-none")}>{message}</span>
+    <div role="status" aria-live="polite" data-testid="startup-activity" className="relative text-sm text-muted-foreground">
+      <span data-testid="startup-activity-base" className="flex items-center gap-1.5">
+        <WorktreeModeIcon data-testid="startup-activity-icon" aria-hidden size={12} className="text-current" />
+        <span className="text-current">{message}</span>
+      </span>
+      {activity.active ? (
+        <span aria-hidden data-testid="startup-activity-shimmer" className="pointer-events-none absolute inset-0 flex items-center gap-1.5 text-foreground startup-activity-shimmer motion-reduce:animate-none">
+          <WorktreeModeIcon data-testid="startup-activity-shimmer-icon" size={12} className="text-current" />
+          <span data-startup-activity-shimmer-text={message} className="text-current startup-activity-shimmer-text" />
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -195,7 +211,7 @@ function StartupSteps({ startup, context }: { startup: StartupDisplay; context: 
     <ol className="mt-4 grid gap-2.5">
       {steps.map((step, index) => (
         <li key={step.phase} data-state={step.state} className={cn("flex items-center gap-2.5 text-sm", stepTone(step.state))}>
-          <span aria-label={stateText(step.state)} className="grid size-5 shrink-0 place-items-center rounded-full border text-[11px] font-medium">
+          <span aria-label={stateText(step.state)} className="grid size-5 shrink-0 place-items-center rounded-full border text-xs font-medium">
             {step.state === "running" ? <Spinner size={11} className="motion-reduce:animate-none" /> : index + 1}
           </span>
           <span>{stepLabel(step.phase, context)}</span>
@@ -230,7 +246,8 @@ function StartupTranscript({ transcript }: { transcript: StartupDisplay["transcr
 
 function useStartupCancellation(startupId: string | undefined, startup: StartupDisplay) {
   const [cancelling, setCancelling] = useState(false);
-  const [cancelError, setCancelError] = useState<string | null>(null);
+  const scope = `${startupId ?? ""}:${startup.cancellation}:${startup.revision}:${startup.state}`;
+  const [cancelError, setCancelError] = useState<{ scope: string; message: string } | null>(null);
   const cancel = async () => {
     if (!startupId || cancelling || startup.cancellation === "requested") return;
     setCancelling(true);
@@ -238,12 +255,12 @@ function useStartupCancellation(startupId: string | undefined, startup: StartupD
     try {
       useThreadStartupStore.getState().apply(await getTransport().cancelThreadStartup(startupId));
     } catch {
-      setCancelError("Could not cancel startup");
+      setCancelError({ scope, message: "Could not stop project setup" });
     } finally {
       setCancelling(false);
     }
   };
-  return { cancelling, cancelError, cancel };
+  return { cancelling, cancelError: cancelError?.scope === scope ? cancelError.message : null, cancel };
 }
 
 function StartupControls({
@@ -259,13 +276,13 @@ function StartupControls({
   cancelling: boolean;
   onCancel: () => Promise<void>;
 }) {
-  const cancelRequested = cancelling || startup.cancellation === "requested";
+  const cancellationUnavailable = cancelling || startup.cancellation === "requested";
   return (
     <div className="flex flex-wrap justify-end gap-2 max-sm:justify-start">
       {actions}
-      {canCancelStartup(startupId, startup) ? (
-        <Button type="button" variant="destructive" size="sm" disabled={cancelRequested} onClick={() => { void onCancel(); }}>
-          {cancelRequested ? "Cancelling…" : "Cancel"}
+      {canCancelStartup(startupId, startup) && !cancellationUnavailable ? (
+        <Button type="button" variant="destructive" size="sm" onClick={() => { void onCancel(); }}>
+          Cancel
         </Button>
       ) : null}
     </div>
@@ -275,24 +292,37 @@ function StartupControls({
 /** Renders the small activity indicator and authoritative startup progress card. */
 export function StartupProgressCard({ startup, context, startupId, actions }: StartupProgressCardProps) {
   const display = startup ?? fallbackStartup(context);
-  const activity = activityCopy(display, context);
   const cancellation = useStartupCancellation(startupId, display);
+  const cancelError = ["completed", "failed", "cancelled", "interrupted"].includes(display.state)
+    ? null
+    : cancellation.cancelError;
+  const cancellationPending = display.state !== "cancelled"
+    && (cancellation.cancelling || display.cancellation === "requested" && !cancelError);
+  const activity = activityCopy(display, context, cancellationPending);
 
   if (display.state === "completed") return null;
 
   return (
     <section data-testid="startup-progress" aria-label="Thread startup" className="space-y-2">
       <StartupActivityLine activity={activity} />
-      <section aria-busy={isStartupBusy(display)} className="rounded-lg border border-border bg-card px-4 py-3 shadow-sm">
+      <section aria-busy={isStartupBusy(display)} className="rounded-lg border border-border bg-card px-4 py-3">
         <header className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">{cardTitle(context)}</h2>
-          <span aria-live="polite" className="shrink-0 text-xs text-primary">{startupStatus(display)}</span>
+          {!cancellationPending && display.cancellation !== "requested" && display.state !== "cancelled" ? (
+            <span className="shrink-0 text-xs text-primary">{startupStatus(display)}</span>
+          ) : null}
         </header>
         <StartupSteps startup={display} context={context} />
-        <StartupNotice startup={display} cancelError={cancellation.cancelError} />
+        <StartupNotice startup={display} cancelError={cancelError} />
         <div className="mt-3 grid grid-cols-[1fr_auto] items-start gap-x-3 gap-y-2 max-sm:grid-cols-1">
           <StartupTranscript transcript={display.transcript} />
-          <StartupControls startup={display} startupId={startupId} actions={actions} cancelling={cancellation.cancelling} onCancel={cancellation.cancel} />
+          <StartupControls
+            startup={display}
+            startupId={startupId}
+            actions={actions}
+            cancelling={cancellation.cancelling}
+            onCancel={cancellation.cancel}
+          />
         </div>
       </section>
     </section>

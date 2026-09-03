@@ -1005,6 +1005,21 @@ describe("Workspace Behavior", () => {
       expect(fin.threads[0]?.clientStartupId).toBe(mid.activeThreadId);
     });
 
+    it("keeps the startup identity after an early cancellation rejects optimistic creation", async () => {
+      const ws = createMockWorkspace({ id: "ws-cancelled-startup" });
+      useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id });
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error("Thread startup was cancelled"));
+
+      await expect(useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5")).rejects.toThrow("Thread startup was cancelled");
+
+      expect(useWorkspaceStore.getState().threads[0]).toMatchObject({
+        clientPreparing: false,
+        clientError: "Error: Thread startup was cancelled",
+        clientStartupId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      });
+    });
+
     it("transfers placeholder runtime identity and narrative state to the persisted first turn", async () => {
       const ws = createMockWorkspace({ id: "ws-runtime-transfer" });
       let resolveRpc!: (value: CreateAndSendResult) => void;
