@@ -28,6 +28,10 @@ Completion requires `turnComplete` or `ended`, then a durable assistant message 
 
 Serve-pool mechanics without a model call (spawn, health, session create, abort, idle close) are covered by the focused pool tests; use them when no provider account is logged in.
 
+## Browser proof
+
+Drive the real web UI with Playwright (see `.dev/verification/ui-proof.py`, disposable): pick the project, open the model picker, choose the OpenCode section and a live model, send a prompt, and assert the assistant bubble settles with the exact reply. Proven with `uitest` landing once, attributed to the model, through project pick, provider rail, dynamic model list, composer send, and settled timeline.
+
 ## Gotchas
 
 - Provider discovery does not check account login. Record a live authentication error as a blocked provider, then rerun after login. Missing OpenCode auth is a coverage gap, not a pass.
