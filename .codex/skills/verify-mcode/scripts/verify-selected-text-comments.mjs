@@ -7,6 +7,11 @@ const PLAYWRIGHT_PATH = NodePath.join(ROOT, ".dev/playwright-scratch/node_module
 const FIXTURE_STATE = NodePath.join(ROOT, ".dev/verification", "selected-text-comments-fixture.json");
 const PHRASE = "verification phrase";
 const MESSAGE_TEXT = "Select this verification phrase";
+const LIST_ITEM_TEXT = [
+  "Component, sequence, and state UML diagrams",
+  "Select this verification phrase",
+  "TTL, timing, and retry rules",
+];
 const FIXTURE_SKILL_NAME = "verification-comment";
 const COMMENT_TEXT = "Review the selected phrase.";
 const SECOND_COMMENT_TEXT = "Review the selected phrase again.";
@@ -102,8 +107,46 @@ async function dragSelectPhrase(content) {
   return coordinates;
 }
 
+async function dragSelectList(content) {
+  const coordinates = await content.evaluate((element, listItemText) => {
+    const listItems = [...element.querySelectorAll("li")].filter((item) => (
+      listItemText.includes(item.textContent?.trim() ?? "")
+    ));
+    if (listItems.length !== listItemText.length) throw new Error("Verification list items not found");
+    listItems[1].scrollIntoView({ block: "center", inline: "nearest" });
+    const startText = listItems[0].firstChild;
+    const endText = listItems.at(-1)?.firstChild;
+    if (!(startText instanceof Text) || !(endText instanceof Text)) throw new Error("Verification list item text nodes not found");
+    const startCharacter = document.createRange();
+    startCharacter.setStart(startText, 0);
+    startCharacter.setEnd(startText, 1);
+    const endCharacter = document.createRange();
+    endCharacter.setStart(endText, endText.textContent.length - 1);
+    endCharacter.setEnd(endText, endText.textContent.length);
+    const startRect = startCharacter.getBoundingClientRect();
+    const endRect = endCharacter.getBoundingClientRect();
+    const contentRect = element.getBoundingClientRect();
+    if (!startRect.width || !endRect.width) throw new Error("Verification list has no pointer targets");
+    const releaseX = Math.min(contentRect.right - 4, endRect.right + 48);
+    if (releaseX <= endRect.right + 4) throw new Error("Verification list has no whitespace release target");
+    return {
+      start: { x: startRect.left + 1, y: startRect.top + startRect.height / 2 },
+      end: { x: endRect.right - 1, y: endRect.top + endRect.height / 2 },
+      release: { x: releaseX, y: endRect.top + endRect.height / 2 },
+    };
+  }, LIST_ITEM_TEXT);
+  await page.mouse.move(coordinates.start.x, coordinates.start.y);
+  await page.mouse.down();
+  await page.mouse.move(coordinates.end.x, coordinates.end.y, { steps: 16 });
+  await page.mouse.move(coordinates.release.x, coordinates.release.y, { steps: 4 });
+  await page.mouse.up();
+  const selection = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  mark("pointer_drag_selects_list", LIST_ITEM_TEXT.every((item) => selection.includes(item)), selection);
+  return coordinates;
+}
+
 async function selectedRangeGeometry(content) {
-  return content.evaluate((element, phrase) => {
+  return content.evaluate((element) => {
     const selection = window.getSelection();
     const viewport = element.closest(".overflow-y-auto");
     if (!selection?.rangeCount || !viewport) throw new Error("Selected range geometry is unavailable");
@@ -114,7 +157,42 @@ async function selectedRangeGeometry(content) {
       && candidate.bottom > viewportRect.top
       && candidate.top < viewportRect.bottom
     ));
-    if (!rect || selection.toString() !== phrase) throw new Error("Selected range geometry does not match the verification phrase");
+    if (!rect) throw new Error("Selected range geometry is unavailable");
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    };
+  });
+}
+
+async function phraseRangeGeometry(content) {
+  return content.evaluate((element, phrase) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let textNode = null;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.textContent?.includes(phrase)) {
+        textNode = node;
+        break;
+      }
+    }
+    const viewport = element.closest(".overflow-y-auto");
+    if (!textNode || !viewport) throw new Error("Verification phrase range is unavailable");
+    const start = textNode.textContent.indexOf(phrase);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + phrase.length);
+    const viewportRect = viewport.getBoundingClientRect();
+    const rect = [...range.getClientRects()].reverse().find((candidate) => (
+      candidate.right > viewportRect.left
+      && candidate.left < viewportRect.right
+      && candidate.bottom > viewportRect.top
+      && candidate.top < viewportRect.bottom
+    ));
+    if (!rect) throw new Error("Verification phrase range has no visible geometry");
     return {
       left: rect.left,
       top: rect.top,
@@ -519,12 +597,15 @@ async function run() {
   const content = page.locator("[data-selected-text-content][data-selected-text-eligible=\"true\"]").filter({ hasText: MESSAGE_TEXT });
   await content.waitFor({ state: "visible" });
   mark("eligible_content_visible", true);
-  await dragSelectPhrase(content);
-  const sourceGeometry = await selectedRangeGeometry(content);
+  const listItems = content.getByRole("listitem");
+  await listItems.filter({ hasText: MESSAGE_TEXT }).waitFor({ state: "visible" });
+  mark("list_item_source_visible", await listItems.count() === LIST_ITEM_TEXT.length);
+  await dragSelectList(content);
+  const listSourceGeometry = await selectedRangeGeometry(content);
   const addComment = page.getByRole("button", { name: "Add comment", exact: true });
   await addComment.waitFor({ state: "visible" });
   mark("add_comment_visible", true);
-  await assertPopupAnchor("action", addComment, sourceGeometry);
+  await assertPopupAnchor("action", addComment, listSourceGeometry);
   const visibleCopyCount = await page.getByRole("button", { name: "Copy", exact: true }).evaluateAll((buttons) => buttons.filter((button) => {
     const style = getComputedStyle(button);
     return style.visibility !== "hidden" && style.display !== "none" && button.getBoundingClientRect().width > 0;
@@ -532,8 +613,15 @@ async function run() {
   mark("copy_button_absent", visibleCopyCount === 0, visibleCopyCount);
   await NodeFSPromises.mkdir(EVIDENCE_DIR, { recursive: true });
   await page.screenshot({ path: ACTION_SCREENSHOT, fullPage: true });
+  await page.keyboard.press("Escape");
+  await addComment.waitFor({ state: "hidden" });
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await dragSelectPhrase(content);
+  const sourceGeometry = await selectedRangeGeometry(content);
+  await addComment.waitFor({ state: "visible" });
+  await assertPopupAnchor("phrase_action", addComment, sourceGeometry);
   let dialog = await openEditorFromSelection();
-  const editor = await assertEditorShell(dialog, sourceGeometry);
+  const editor = await assertEditorShell(dialog, await phraseRangeGeometry(content));
   await assertSourceDockAndReturn(content);
   await editor.pressSequentially(`/${FIXTURE_SKILL_NAME}`);
   const slashSkill = page.getByRole("option", { name: new RegExp(FIXTURE_SKILL_NAME, "i") });
