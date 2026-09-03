@@ -130,7 +130,8 @@ Clients communicate over typed WebSockets (`packages/contracts`). `apps/server` 
 
 ## Verifying
 
-- Smallest proof that the change works. `bun test <path-to-test-file>` for the test you touched, targeted lint and typecheck for the scope you changed.
+- Targeted tests: `bun run --cwd <workspace> test -- <test-file> [<test-file> ...]`. For files in different workspaces, run one command per workspace. Do not use `bun test`: it invokes Bun's native test runner and bypasses the workspace Vitest configuration.
+- Run targeted lint and typecheck checks for the changed scope.
 - Lint and complexity check: `bun run lint`
 - Type checking: `bun run typecheck`
 - Do not run repo wide checks, CI owns the full test suite
