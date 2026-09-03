@@ -179,6 +179,30 @@ describe("TerminalCommandService", () => {
     });
   });
 
+  it("forwards stdout and stderr before command completion without exposing launch environment", async () => {
+    const output = vi.fn();
+    const { service: commands, spawned } = service();
+    const prepared = await commands.prepare({
+      scope: { kind: "thread", workspaceId, threadId },
+      script: "bun run setup",
+      timeoutMs: 1_000,
+      onOutput: output,
+    });
+    expect(prepared.kind).toBe("ready");
+    if (prepared.kind !== "ready") return;
+
+    const completion = prepared.command.start();
+    (spawned.stdout as NodeEvents.EventEmitter).emit("data", Buffer.from("before\\n"));
+    (spawned.stderr as NodeEvents.EventEmitter).emit("data", Buffer.from("warning\\n"));
+
+    expect(output).toHaveBeenNthCalledWith(1, Buffer.from("before\\n"));
+    expect(output).toHaveBeenNthCalledWith(2, Buffer.from("warning\\n"));
+    expect(JSON.stringify(prepared.command.snapshot)).not.toContain("hidden");
+
+    spawned.emit("close", 0);
+    await expect(completion).resolves.toMatchObject({ output: "before\\nwarning\\n" });
+  });
+
   it("uses the resolved worktree checkout for a worktree Thread", async () => {
     const resolveWorkingDir = vi.fn(() => "C:\\worktree");
     const { service: commands } = service({

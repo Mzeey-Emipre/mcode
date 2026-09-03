@@ -40,6 +40,7 @@ import { useOverviewStore } from "@/stores/overviewStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { StartupProgressCard, useThreadStartup } from "@/features/thread-startup";
 import {
   getPullRequestReviewTaskTransport,
   type PullRequestReviewTaskTransport,
@@ -88,6 +89,7 @@ function createReviewTaskRequest(
   identity: PullRequestIdentity,
   worktreeName: string,
   intent: string,
+  startupId: string,
 ) {
   if (prepared.status === "confirmation_required") {
     return {
@@ -96,6 +98,7 @@ function createReviewTaskRequest(
       identity,
       workspaceId: prepared.workspace.id,
       expectedHeadOid: prepared.source.expectedHeadOid,
+      startupId,
       worktreeName,
       intent,
     };
@@ -106,6 +109,7 @@ function createReviewTaskRequest(
     identity,
     workspaceId: prepared.workspace.id,
     expectedHeadOid: prepared.source.expectedHeadOid,
+    startupId,
     candidateId: prepared.worktree.candidateId,
     intent,
   };
@@ -276,11 +280,21 @@ interface ReviewTaskDialogBodyProps {
   onPrepare: (workspaceId?: string) => Promise<void>;
   onSubmit: () => Promise<void>;
   onClose: (open: boolean) => void;
+  startupId: string | null;
 }
 
 function ReviewTaskDialogBody(props: ReviewTaskDialogBodyProps) {
-  if (props.phase === "preparing" || props.phase === "navigating") {
-    return <ReviewTaskPreparing phase={props.phase} />;
+  if (
+    props.phase === "preparing" ||
+    props.phase === "navigating"
+  ) {
+    return (
+      <ReviewTaskPreparing
+        phase={props.phase}
+        startupId={props.startupId}
+        workspaceId={props.prepared?.workspace.id}
+      />
+    );
   }
   if (props.error && !props.prepared) {
     return <ReviewTaskPreparationError {...props} error={props.error} />;
@@ -288,7 +302,31 @@ function ReviewTaskDialogBody(props: ReviewTaskDialogBodyProps) {
   return props.prepared ? <ReviewTaskPreparedContent {...props} prepared={props.prepared} /> : null;
 }
 
-function ReviewTaskPreparing({ phase }: { phase: DialogPhase }) {
+function ReviewTaskPreparing({
+  phase,
+  startupId,
+  workspaceId,
+}: {
+  phase: DialogPhase;
+  startupId: string | null;
+  workspaceId?: string;
+}) {
+  const startup = useThreadStartup({
+    startupId: startupId ?? undefined,
+    workspaceId,
+    enabled: Boolean(startupId),
+  });
+  if (startupId) {
+    return (
+      <div className="px-5 py-5">
+        <StartupProgressCard
+          startup={startup}
+          startupId={startupId}
+          context="pull-request-review"
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-52 items-center justify-center gap-2 px-6 text-xs text-muted-foreground">
       <Spinner size="xs" aria-hidden />
@@ -373,12 +411,27 @@ function ReviewTaskPreparedContent({
   onPrepare,
   onSubmit,
   onClose,
+  startupId,
 }: ReviewTaskDialogBodyProps & { prepared: PreparedReviewTask }) {
+  const startup = useThreadStartup({
+    startupId: startupId ?? undefined,
+    workspaceId: prepared.workspace.id,
+    enabled: phase === "submitting" && Boolean(startupId),
+  });
   const confirmationRequired = prepared.status === "confirmation_required";
   const submitDisabled = busy || intentInvalid || worktreeNameInvalid;
   return (
     <>
       <SourceReadout source={prepared.source} />
+      {phase === "submitting" && startupId ? (
+        <div className="px-5 pt-4">
+          <StartupProgressCard
+            startup={startup}
+            startupId={startupId}
+            context="pull-request-review"
+          />
+        </div>
+      ) : null}
       <div className="space-y-4 px-5 py-4">
         {error ? <ReviewTaskErrorNotice error={error} onRefresh={() => void onPrepare(prepared.workspace.id)} /> : null}
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -465,7 +518,7 @@ function ReviewTaskNewWorktreeFields({
 
 function ReviewTaskSubmitLabel({ phase, confirmationRequired }: { phase: DialogPhase; confirmationRequired: boolean }) {
   if (phase === "submitting") {
-    return <><Spinner size="xs" aria-hidden />Creating task</>;
+    return "Creating task";
   }
   return confirmationRequired ? "Create Review task" : "Use existing worktree";
 }
@@ -498,6 +551,7 @@ export function PullRequestReviewTaskDialog({
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [worktreeName, setWorktreeName] = useState("");
   const [intent, setIntent] = useState("");
+  const [startupId, setStartupId] = useState<string | null>(null);
   const generationRef = useRef(0);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const intentInputRef = useRef<HTMLTextAreaElement>(null);
@@ -592,6 +646,7 @@ export function PullRequestReviewTaskDialog({
     setSelectedWorkspaceId(null);
     setWorktreeName("");
     setIntent("");
+    setStartupId(null);
     void prepare();
   }, [open, prepare]);
 
@@ -644,11 +699,13 @@ export function PullRequestReviewTaskDialog({
     }
 
     const generation = ++generationRef.current;
+    const nextStartupId = crypto.randomUUID();
+    setStartupId(nextStartupId);
     setPhase("submitting");
     setError(null);
     try {
       const result = await resolveTransport().createReviewTask(
-        createReviewTaskRequest(prepared, identity, worktreeName, trimmedIntent),
+        createReviewTaskRequest(prepared, identity, worktreeName, trimmedIntent, nextStartupId),
       );
       await handleCreationResult(result, generation);
     } catch (caught) {
@@ -708,6 +765,7 @@ export function PullRequestReviewTaskDialog({
           onPrepare={prepare}
           onSubmit={submit}
           onClose={close}
+          startupId={startupId}
         />
       </DialogContent>
     </Dialog>

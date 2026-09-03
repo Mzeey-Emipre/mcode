@@ -11,6 +11,7 @@ export type {
   PullRequestReviewGitCandidate,
   PullRequestReviewGitProvisionRequest,
   PullRequestReviewGitProvisionResult,
+  PullRequestReviewGitObserver,
   PullRequestReviewGitSource,
 } from "./pull-request-review-git-service.js";
 export type {

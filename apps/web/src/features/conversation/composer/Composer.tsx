@@ -3,6 +3,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord, getThreadRecord, getHandoffStatus } from "../state";
 import { useWorkspaceThread } from "@/features/projects/state/workspace-selectors";
 import type { Thread } from "@/transport";
+import type { WorkspaceThread } from "@/lib/workspace-thread";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -242,6 +243,10 @@ interface ComposerProps {
   onBranchModeExit?: () => void;
   /** Called after a new-thread submission has created its durable thread. */
   onThreadCreated?: (thread: Thread) => void;
+  /** Called after the optimistic startup row exists and before its server request settles. */
+  onThreadPreparing?: (thread: WorkspaceThread) => void;
+  /** Called when a new-thread request fails after its optimistic startup row exists. */
+  onThreadCreationFailed?: () => void;
   /** Selected-text comment created from the active transcript. */
   selectedTextComment?: SelectedTextComment;
   /** Clears the one-shot transcript handoff after this Composer stores it. */
@@ -278,6 +283,8 @@ export function Composer({
   branchFromMessageContent,
   onBranchModeExit,
   onThreadCreated,
+  onThreadPreparing,
+  onThreadCreationFailed,
   selectedTextComment,
   onSelectedTextCommentConsumed,
   selectedTextCommentDeletion,
@@ -594,6 +601,8 @@ export function Composer({
     replyContext,
     onBranchModeExit,
     onThreadCreated,
+    onThreadPreparing,
+    onThreadCreationFailed,
   });
 
 

@@ -20,7 +20,10 @@ import { SidebarRevealButton } from "@/components/sidebar/SidebarRevealButton";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import { ProjectAutomaticSetupCard, useProjectAutomaticSetup } from "@/features/projects/environment";
-import { preparingStatusLabel, type WorkspaceThread } from "@/lib/workspace-thread";
+import { ProjectCommandApprovalDialog } from "@/features/projects/environment/ProjectCommandApprovalDialog";
+import { StartupProgressCard, useThreadStartup, type StartupDisplayContext } from "@/features/thread-startup";
+import { useThreadStartupLookup } from "@/features/thread-startup/state/thread-startup-store";
+import { type WorkspaceThread } from "@/lib/workspace-thread";
 import type { SubagentRosterTarget } from "../../narrative";
 import { Composer } from "../../composer/Composer";
 import { SavingDelayedDialog } from "../../saving/SavingDelayedDialog";
@@ -183,31 +186,77 @@ function NewThreadSurface({ state, onPromptSelect }: { state: ChatViewState; onP
 }
 
 /** Renders a selected row while the server creates the backing thread. */
-function ThreadPreparingShell({ thread, state }: { thread: WorkspaceThread; state: ChatViewState }) {
-  const statusLabel = thread.clientPreparingContext ? preparingStatusLabel(thread.clientPreparingContext) : "Preparing…";
+function startupContext(thread: WorkspaceThread, startupKind?: "direct" | "managed-worktree" | "pull-request-review"): StartupDisplayContext {
+  if (startupKind === "pull-request-review") return "pull-request-review";
+  if (startupKind === "managed-worktree") return "managed-worktree";
+  if (thread.clientPreparingContext === "new-existing-worktree" || thread.clientPreparingContext === "branch-existing-worktree") return "attached-worktree";
+  if (thread.clientPreparingContext === "new-worktree" || thread.clientPreparingContext === "branch-worktree") return "managed-worktree";
+  return "direct";
+}
+
+function showsAuthoritativeCancellation(thread: WorkspaceThread, startup: ReturnType<typeof useThreadStartup>): boolean {
+  return Boolean(thread.clientError) && startup?.state === "cancelled";
+}
+
+function PreparingStartupContent({
+  thread,
+  startup,
+  actions,
+}: {
+  thread: WorkspaceThread;
+  startup: ReturnType<typeof useThreadStartup>;
+  actions: ReactNode;
+}) {
+  if (thread.clientError && !showsAuthoritativeCancellation(thread, startup)) {
+    return <CollapsibleError error={thread.clientError} onRetry={() => { void useWorkspaceStore.getState().retryPreparingThread(thread.id); }} onDismiss={() => useWorkspaceStore.getState().dismissPreparingThread(thread.id)} />;
+  }
+  return <div className="mx-auto w-full max-w-xl"><StartupProgressCard startup={startup} startupId={thread.clientStartupId ?? startup?.startupId} context={startupContext(thread, startup?.kind)} actions={actions} /></div>;
+}
+
+function PreparingThreadHeader({ thread, state }: { thread: WorkspaceThread; state: ChatViewState }) {
+  return (
+    <div className="flex h-11 items-center justify-between border-b border-border pr-4 pl-2">
+      <div className="flex min-w-0 items-center gap-2">
+        {state.sidebarCollapsed && <SidebarRevealButton />}
+        <span data-testid="chat-header-title" className="truncate text-sm font-medium">
+          {thread.title}
+          {thread.clientPreparing && <span className="ml-2 inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary/60 align-middle" aria-hidden />}
+        </span>
+        {state.activeWorkspaceId && <Badge variant="secondary">{state.activeWorkspaceName}</Badge>}
+        {thread.parent_thread_id && state.parentThreadExists && (
+          <Tooltip>
+            <TooltipTrigger render={<button type="button" onClick={() => useWorkspaceStore.getState().setActiveThread(thread.parent_thread_id!)} className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"><GitFork size={10} /><span>Forked</span></button>} />
+            <TooltipContent side="bottom" className="text-xs">Go to parent thread</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Renders a selected row while the server creates the backing thread. */
+function ThreadPreparingShell({
+  thread,
+  state,
+  startup,
+}: {
+  thread: WorkspaceThread;
+  state: ChatViewState;
+  startup: ReturnType<typeof useThreadStartup>;
+}) {
+  const needsSetupRecovery = startup?.state === "blocked"
+    || startup?.state === "failed"
+    || startup?.state === "interrupted";
+  const automaticSetup = useProjectAutomaticSetup(
+    thread.id,
+    needsSetupRecovery && thread.mode === "worktree" && thread.worktree_managed === true,
+  );
   return (
     <div className="flex h-full flex-col bg-background" data-testid="thread-preparing-shell">
-      <div className="flex h-11 items-center justify-between border-b border-border pr-4 pl-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {state.sidebarCollapsed && <SidebarRevealButton />}
-          <span data-testid="chat-header-title" className="truncate text-sm font-medium">
-            {thread.title}
-            {thread.clientPreparing && <span className="ml-2 inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary/60 align-middle" aria-hidden />}
-          </span>
-          {state.activeWorkspaceId && <Badge variant="secondary">{state.activeWorkspaceName}</Badge>}
-          {thread.parent_thread_id && state.parentThreadExists && (
-            <Tooltip>
-              <TooltipTrigger render={<button type="button" onClick={() => useWorkspaceStore.getState().setActiveThread(thread.parent_thread_id!)} className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"><GitFork size={10} /><span>Forked</span></button>} />
-              <TooltipContent side="bottom" className="text-xs">Go to parent thread</TooltipContent>
-            </Tooltip>
-          )}
-        </div>
-      </div>
+      <PreparingThreadHeader thread={thread} state={state} />
       <div className="flex flex-1 flex-col items-stretch justify-center gap-6 px-6 py-8">
         <div className="mx-auto w-full max-w-xl rounded-xl border border-border/50 bg-muted/15 px-4 py-3 text-sm text-foreground/90"><p className="whitespace-pre-wrap break-words">{thread.clientQueuedMessage ?? ""}</p></div>
-        {thread.clientError ? (
-          <CollapsibleError error={thread.clientError} onRetry={() => { void useWorkspaceStore.getState().retryPreparingThread(thread.id); }} onDismiss={() => useWorkspaceStore.getState().dismissPreparingThread(thread.id)} />
-        ) : <div className="text-muted-foreground flex items-center justify-center gap-2 text-sm"><Spinner size={16} /><span>{statusLabel}</span></div>}
+        <PreparingStartupContent thread={thread} startup={startup} actions={<StartupAutomaticSetupActions automaticSetup={automaticSetup} />} />
       </div>
       <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} />
     </div>
@@ -318,6 +367,62 @@ function ConversationStageContent({
 }
 
 /** Renders the conversation stage without taking over MessageList scrolling. */
+function SetupRecoveryActions({ automaticSetup }: { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
+  const retrying = automaticSetup.busy === "retry";
+  const continuing = automaticSetup.busy === "continue";
+  return (
+    <>
+      <Button type="button" variant="outline" size="sm" disabled={automaticSetup.busy !== null} onClick={() => { void automaticSetup.retrySetup(); }}>
+        {retrying ? <Spinner size={13} aria-hidden /> : null}
+        Retry setup
+      </Button>
+      <Button type="button" variant="outline" size="sm" disabled={automaticSetup.busy !== null} onClick={() => { void automaticSetup.continueWithoutSetup(); }}>
+        {continuing ? <Spinner size={13} aria-hidden /> : null}
+        Continue without setup
+      </Button>
+    </>
+  );
+}
+
+function StartupAutomaticSetupActions({ automaticSetup }: { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
+  return <StartupAutomaticSetupAction automaticSetup={automaticSetup} />;
+}
+
+function StartupAutomaticSetupAction({ automaticSetup }: { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
+  const attempt = automaticSetup.snapshot.attempt;
+  switch (attempt?.state) {
+    case "awaiting-approval":
+      return (
+        <ProjectCommandApprovalDialog
+          approval={attempt.snapshot?.approval ?? null}
+          script={attempt.snapshot?.script ?? null}
+          onApprove={async () => {
+            await automaticSetup.approveSetup();
+            return true;
+          }}
+          onCancel={() => undefined}
+        />
+      );
+    case "failed":
+    case "interrupted":
+      return <SetupRecoveryActions automaticSetup={automaticSetup} />;
+    default:
+      return null;
+  }
+}
+
+function shouldKeepPreparingShell(
+  thread: WorkspaceThread,
+  state: ChatViewState,
+  startup: ReturnType<typeof useThreadStartup>,
+  startupResolving: boolean,
+): boolean {
+  if (thread.clientPreparing || thread.clientError) return true;
+  if (hasConversationHold(state)) return false;
+  if (startupResolving && thread.clientStartupId !== undefined) return true;
+  return startup !== undefined && (!state.targetPaintable || startup.state !== "completed");
+}
+
 function ChatMessageStage({ state, interactions, automaticSetup, selectedTextCommentEditor, selectedTextCommentSourceNavigation, onSubagentSelect, onOpenSubagents }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "selectedTextCommentEditor" | "selectedTextCommentSourceNavigation" | "onSubagentSelect" | "onOpenSubagents"> & { readonly automaticSetup: ReturnType<typeof useProjectAutomaticSetup> }) {
   const thread = state.activeThread!;
   const automaticSetupTranscriptBlock = thread.mode === "worktree" && thread.worktree_managed === true
@@ -413,8 +518,14 @@ function ActiveThreadSurface(props: ChatViewSurfaceProps) {
 /** Selects the visual chat shell for the current workspace selection. */
 export function ChatViewSurface(props: ChatViewSurfaceProps) {
   const { state } = props;
+  const startupLookup = useThreadStartupLookup({
+    startupId: state.activeThread?.clientStartupId,
+    threadId: state.activeThread?.id,
+    workspaceId: state.activeThread?.workspace_id,
+    enabled: Boolean(state.activeThread),
+  });
   if (!state.activeThreadId) return <NewThreadSurface state={state} onPromptSelect={props.interactions.onPromptSelect} />;
-  if (state.activeThread?.clientPreparing || state.activeThread?.clientError) return <ThreadPreparingShell thread={state.activeThread} state={state} />;
   if (!state.activeThread) return <MissingThreadSurface sidebarCollapsed={state.sidebarCollapsed} />;
+  if (shouldKeepPreparingShell(state.activeThread, state, startupLookup.startup, startupLookup.resolving)) return <ThreadPreparingShell thread={state.activeThread} state={state} startup={startupLookup.startup} />;
   return <ActiveThreadSurface {...props} />;
 }

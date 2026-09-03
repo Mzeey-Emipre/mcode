@@ -163,6 +163,13 @@ import {
   PullRequestMergeResultSchema,
 } from "../pull-requests.js";
 import {
+  ThreadStartupCancelInputSchema,
+  ThreadStartupGetInputSchema,
+  ThreadStartupListInputSchema,
+  ThreadStartupListResultSchema,
+  ThreadStartupSchema,
+} from "../thread-startup.js";
+import {
   BrowserAutomationHostRegistrationSchema,
   BrowserAutomationHostDispatchTargetSchema,
   BrowserAutomationResponseSchema,
@@ -349,6 +356,8 @@ export type SendMessageInput = z.infer<ReturnType<typeof SendMessageSchema>>;
 export const CreateAndSendSchema = lazySchema(() =>
   z.object({
     workspaceId: z.string(),
+    /** Client-generated identity for a persisted startup lifecycle. */
+    startupId: z.string().uuid().optional(),
     content: z.string(),
     displayContent: z.string().optional(),
     model: z.string(),
@@ -1024,6 +1033,21 @@ export const WS_METHODS = lazySchema(() => ({
   "agent.createAndSend": {
     params: CreateAndSendSchema(),
     result: CreateAndSendResultSchema(),
+  },
+  /** Get the authoritative startup snapshot for one client-generated startup ID. */
+  "thread.startup.get": {
+    params: ThreadStartupGetInputSchema(),
+    result: ThreadStartupSchema().nullable(),
+  },
+  /** List authoritative startup snapshots for one workspace. */
+  "thread.startup.list": {
+    params: ThreadStartupListInputSchema(),
+    result: ThreadStartupListResultSchema(),
+  },
+  /** Cancel startup and stop bound managed Project Setup before terminalization. */
+  "thread.startup.cancel": {
+    params: ThreadStartupCancelInputSchema(),
+    result: ThreadStartupSchema(),
   },
   /** Create one external thread-control pairing and return its credential once. */
   "threadControl.pairing.create": {

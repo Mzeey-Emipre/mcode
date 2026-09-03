@@ -16,6 +16,7 @@ import { ProviderAvailabilityService } from "../../../providers/availability/pro
 import { SettingsService } from "../../../settings/settings-service.js";
 import { ThreadService } from "../../../thread-control/index.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { ThreadStartupService } from "../../../thread-startup/thread-startup-service.js";
 import { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
@@ -178,6 +179,7 @@ export function createAgentServiceForTest(
   taskPersistence?: TaskPersistenceService,
   threadBranching?: ThreadBranchingService,
   eventPublication?: AgentEventPublicationRegistry,
+  threadStartups?: ThreadStartupService,
 ): AgentService {
   if (!parentDurability) throw new Error("Parent turn durability is required by the test harness");
   const tracker = new TurnFileTracker(
@@ -274,6 +276,7 @@ export function createAgentServiceForTest(
     admissions,
     () => threadBranching,
     () => planTurns,
+    () => threadStartups,
   ));
   testContainer.registerInstance("IProviderRegistry", providerRegistry);
   testContainer.registerInstance(MemoryPressureService, memoryPressureService);

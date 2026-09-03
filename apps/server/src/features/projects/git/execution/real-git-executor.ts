@@ -88,6 +88,7 @@ export class RealGitExecutor implements GitExecutor {
     args: string[],
     opts: GitExecOptions,
   ): Promise<GitExecResult> {
+    if (opts.onStdout || opts.onStderr) return await this.runObservedGit(args, opts);
     const timeout = opts.timeout ?? RealGitExecutor.DEFAULT_TIMEOUT;
     const result = await execFile("git", args, {
       timeout,
@@ -100,6 +101,66 @@ export class RealGitExecutor implements GitExecutor {
       stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout),
       stderr: typeof result.stderr === "string" ? result.stderr : String(result.stderr),
     };
+  }
+
+  /** Run Git with streamed output while preserving the buffered result and error contract. */
+  private async runObservedGit(args: string[], opts: GitExecOptions): Promise<GitExecResult> {
+    const timeout = opts.timeout ?? RealGitExecutor.DEFAULT_TIMEOUT;
+    return await new Promise<GitExecResult>((resolve, reject) => {
+      const child = NodeChildProcess.spawn("git", args, {
+        windowsHide: true,
+        ...(opts.env ? { env: opts.env } : {}),
+        ...(opts.cwd ? { cwd: opts.cwd } : {}),
+      });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+      }, timeout);
+      const finish = (result: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        result();
+      };
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        const text = chunk.toString("utf8");
+        stdout += text;
+        opts.onStdout?.(text);
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        const text = chunk.toString("utf8");
+        stderr += text;
+        opts.onStderr?.(text);
+      });
+      child.once("error", (error) => finish(() => reject(error)));
+      child.once("close", (code, signal) => finish(() => {
+        if (timedOut) {
+          reject(Object.assign(new Error(`Git command timed out after ${timeout} ms`), {
+            code: null,
+            signal,
+            stdout,
+            stderr,
+            killed: true,
+          }));
+          return;
+        }
+        if (code !== 0) {
+          reject(Object.assign(new Error(`Git exited with code ${code ?? "unknown"}`), {
+            code,
+            signal,
+            stdout,
+            stderr,
+          }));
+          return;
+        }
+        resolve({ stdout, stderr });
+      }));
+    });
   }
 
   /**

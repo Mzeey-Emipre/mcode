@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentEvent } from "@mcode/contracts";
+import type { AgentEvent, ThreadStartup } from "@mcode/contracts";
 import type { Thread } from "@/transport";
 
 vi.mock("@/transport", () => ({
@@ -16,6 +16,7 @@ import { useThreadControlStore } from "@/stores/threadControlStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { onPtyExit } from "@/features/terminal/adapters/pty-data-registry";
 import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
+import { useThreadStartupStore } from "@/features/thread-startup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -93,6 +94,51 @@ describe("ws-events thread.lifecycleChanged", () => {
     pushEmitter.emit("thread.deleted", { threadId: "thread-1" });
 
     expect(applyThreadDeleted).toHaveBeenCalledWith("thread-1");
+  });
+});
+
+describe("ws-events thread.startup.updated", () => {
+  afterEach(() => {
+    stopPushListeners();
+    useThreadStartupStore.setState({ recordsByStartupId: {}, startupIdByThreadId: {} });
+  });
+
+  it("ignores an out-of-order startup revision", () => {
+    const current: ThreadStartup = {
+      startupId: "00000000-0000-4000-8000-000000000001",
+      workspaceId: "ws-1",
+      kind: "direct",
+      state: "running",
+      phase: "agent",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "agent", state: "running" },
+      ],
+      transcript: [],
+      cancellation: "none",
+      revision: 2,
+      threadId: "00000000-0000-4000-8000-000000000002",
+      createdAt: "2026-09-02T12:00:00.000Z",
+      updatedAt: "2026-09-02T12:00:01.000Z",
+    };
+    startPushListeners();
+
+    pushEmitter.emit("thread.startup.updated", current);
+    pushEmitter.emit("thread.startup.updated", {
+      ...current,
+      revision: 1,
+      state: "failed",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "agent", state: "failed" },
+      ],
+      error: { code: "STALE", message: "stale", retryable: true },
+    });
+
+    expect(useThreadStartupStore.getState().recordsByStartupId[current.startupId]).toMatchObject({
+      revision: 2,
+      state: "running",
+    });
   });
 });
 

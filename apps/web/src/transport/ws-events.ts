@@ -22,6 +22,7 @@ import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
 import { emitPtyData, emitPtyExit } from "@/features/terminal/adapters/pty-data-registry";
 import { useThreadControlStore } from "@/stores/threadControlStore";
 import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
+import { useThreadStartupStore } from "@/features/thread-startup";
 
 /** Unsubscribe handles for all push listeners. */
 let unsubs: (() => void)[] = [];
@@ -138,6 +139,7 @@ function handleTerminalData(data: unknown): void {
  * - Reconnect-gap banners are emitted from ws-transport after `terminal.reattach` RPC
  *   (there is no `terminal.reconnectGap` push channel on the server)
  * - `thread.status` -- thread status changes reflected in threadStore
+ * - `thread.startup.updated` -- lifecycle snapshots reconciled by startup ID and revision
  * - `thread.lifecycleChanged` -- completion, reopen, or cleanup state persisted by the server
  * - `thread.deleted` -- successful automatic retention cleanup
  * - `workspace.environment.action.updated` -- retained Project Action lifecycle and output updates
@@ -251,6 +253,14 @@ export function startPushListeners(): void {
           records: patchThreadRecord(state.records, threadId, { toolCalls: next }),
         };
       });
+    }),
+  );
+
+  unsubs.push(
+    pushEmitter.on("thread.startup.updated", (data) => {
+      const parsed = WS_CHANNELS["thread.startup.updated"].safeParse(data);
+      if (!parsed.success) return;
+      useThreadStartupStore.getState().apply(parsed.data);
     }),
   );
 

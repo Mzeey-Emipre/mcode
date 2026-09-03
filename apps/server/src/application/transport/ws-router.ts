@@ -92,6 +92,11 @@ import {
   isThreadControlRpcMethod,
   routeThreadControlRpc,
 } from "../../features/thread-control/transport/thread-control-rpc.js";
+import type { ThreadStartupService } from "../../features/thread-startup/thread-startup-service.js";
+import {
+  isThreadStartupRpcMethod,
+  routeThreadStartupRpc,
+} from "../../features/thread-startup/transport/thread-startup-rpc.js";
 import type { FileService } from "../../features/projects/files/file-service.js";
 import { isFileRpcMethod, routeFileRpc } from "../../features/projects/files/transport/file-rpc.js";
 import { isAttachmentRpcMethod, routeAttachmentRpc } from "../../features/attachments/transport/attachment-rpc.js";
@@ -233,6 +238,8 @@ export interface RouterDeps {
   turnRecoveryService: TurnRecoveryService;
   /** Owns durable approvals for protected delegated-thread mutations. */
   threadControlService: ThreadControlService;
+  /** Owns server-authoritative thread startup lifecycle state. */
+  threadStartupService: ThreadStartupService;
   gitComparison: GitComparisonService;
   gitRepository: GitRepositoryService;
   gitWorktrees: GitWorktreeService;
@@ -559,6 +566,8 @@ const ROUTE_FAMILIES = [
     )),
   createRouteFamily(isThreadControlRpcMethod, (method, params, deps) =>
     routeThreadControlRpc(method, params, deps)),
+  createRouteFamily(isThreadStartupRpcMethod, (method, params, deps) =>
+    routeThreadStartupRpc(method, params, deps)),
   createRouteFamily(isPushSubscriptionRpcMethod, (method, params, deps, context) =>
     routePushSubscriptionRpc(method, params, deps, context.client)),
   createRouteFamily(isHandoffRpcMethod, (method, params, deps) => routeHandoffRpc(method, params, deps)),

@@ -679,6 +679,53 @@ describe("Composer checkout confirmation", () => {
     );
   });
 
+  it("reports the optimistic startup row before the durable thread resolves", async () => {
+    seedComposerState("worktree");
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    const onThreadPreparing = vi.fn();
+    render(
+      <Composer
+        isNewThread
+        workspaceId="ws-1"
+        onThreadPreparing={onThreadPreparing}
+      />,
+    );
+
+    await typeAndSend();
+
+    await waitFor(() => expect(onThreadPreparing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspace_id: "ws-1",
+        clientPreparing: true,
+        clientStartupId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      }),
+    ));
+  });
+
+  it("reports a failed new-thread request after exposing its optimistic startup row", async () => {
+    seedComposerState("worktree");
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("thread creation failed"),
+    );
+    const onThreadPreparing = vi.fn();
+    const onThreadCreationFailed = vi.fn();
+    render(
+      <Composer
+        isNewThread
+        workspaceId="ws-1"
+        onThreadPreparing={onThreadPreparing}
+        onThreadCreationFailed={onThreadCreationFailed}
+      />,
+    );
+
+    await typeAndSend();
+
+    await waitFor(() => expect(onThreadPreparing).toHaveBeenCalledOnce());
+    expect(onThreadCreationFailed).toHaveBeenCalledOnce();
+  });
+
   it("clears annotations and comments after a successful feedback send", async () => {
     const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
     const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });

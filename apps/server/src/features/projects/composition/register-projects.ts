@@ -28,6 +28,7 @@ import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { TerminalCommandService } from "../../terminal/commands/terminal-command-service.js";
 import { TERMINAL_BACKEND_TOKEN, type TerminalBackend } from "../../terminal/backends/terminal-backend.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
+import { ThreadStartupService } from "../../thread-startup/thread-startup-service.js";
 
 /** Register the workspace repository and its string-keyed dependency alias. */
 export function registerWorkspaceRepository(container: DependencyContainer): void {
@@ -112,6 +113,9 @@ export function registerProjectServices(container: DependencyContainer): void {
             ? c.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKEN)
             : undefined,
           attachmentStorage: c.resolve(AttachmentService),
+          threadStartups: c.isRegistered(ThreadStartupService)
+            ? c.resolve(ThreadStartupService)
+            : undefined,
           database: c.isRegistered("Database") ? c.resolve("Database") : undefined,
         });
         return workspaceEnvironmentService;

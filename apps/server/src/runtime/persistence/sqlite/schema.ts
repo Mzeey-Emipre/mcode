@@ -144,6 +144,33 @@ export const threads = sqliteTable(
   ],
 );
 
+/** Server-owned startup lifecycle records that can exist before their thread. */
+export const threadStartups = sqliteTable(
+  "thread_startups",
+  {
+    startupId: text("startup_id").primaryKey().notNull(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    state: text("state").notNull(),
+    phase: text("phase").notNull(),
+    stepsJson: text("steps_json").notNull(),
+    transcriptJson: text("transcript_json").notNull(),
+    cancellation: text("cancellation").notNull().default("none"),
+    revision: integer("revision").notNull(),
+    threadId: text("thread_id").references(() => threads.id, { onDelete: "set null" }),
+    errorJson: text("error_json"),
+    blockJson: text("block_json"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    updatedAt: text("updated_at").notNull().default(timestampDefault),
+  },
+  (table) => [
+    index("idx_thread_startups_workspace_updated").on(table.workspaceId, desc(table.updatedAt)),
+    index("idx_thread_startups_state").on(table.state),
+  ],
+);
+
 /** Durable human approvals for protected delegated-thread creation mutations. */
 export const threadControlApprovals = sqliteTable(
   "thread_control_approvals",

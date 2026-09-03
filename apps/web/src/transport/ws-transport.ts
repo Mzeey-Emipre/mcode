@@ -30,6 +30,8 @@ import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
 import { TerminalErrorCodeSchema } from "@mcode/contracts";
 import type {
   CreateAndSendResult,
+  ThreadStartup,
+  ThreadStartupListResult,
   PullRequestCapabilitiesRequest,
   PullRequestCapabilitiesResult,
   PullRequestListRequest,
@@ -848,6 +850,12 @@ export function createWsTransport(
     getRecoveryIncident: () =>
       rpc<import("@mcode/contracts").RecoveryIncident | null>("agent.recoveryIncident", {}),
     retryTurn: (executionId) => rpc<void>("agent.retry", { executionId }),
+    getThreadStartup: (startupId) =>
+      rpc<ThreadStartup | null>("thread.startup.get", { startupId }),
+    listThreadStartups: (workspaceId) =>
+      rpc<ThreadStartupListResult>("thread.startup.list", { workspaceId }),
+    cancelThreadStartup: (startupId) =>
+      rpc<ThreadStartup>("thread.startup.cancel", { startupId }),
     createAndSendMessage: (input: CreateAndSendInput) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded

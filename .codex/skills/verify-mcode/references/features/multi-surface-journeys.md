@@ -24,10 +24,11 @@ Use `runtime live --scenario stop --confirm-provider-call` for the public server
 
 1. Create a New-worktree first turn through the public agent API.
 2. Wait for Git to finish the checkout before the thread is returned.
-3. Keep the first turn queued while automatic Setup reads every tracked fixture file and writes its proof marker.
-4. Remove the generated thread, worktree, workspace, and fixture repository.
+3. Keep the first turn queued while automatic Setup reads every tracked fixture file, records its PID, and writes its proof marker.
+4. Cancel startup through the public API. Confirm the terminal startup state, stopped Setup process, interrupted Setup attempt, queued first turn, and no agent runtime.
+5. Remove the generated thread, worktree, workspace, and fixture repository.
 
-Use `runtime worktree-setup --confirm-cleanup` for the public server proof. The Setup command remains running after the marker, so the queued turn cannot call a provider.
+Use `runtime worktree-setup --confirm-cleanup` for the public server proof. The command cancels the held Setup before it removes the owned fixture. The queued turn cannot call a provider.
 
 ## Completed managed-worktree thread
 
