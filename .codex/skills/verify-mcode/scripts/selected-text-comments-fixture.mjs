@@ -14,7 +14,13 @@ const FIXTURE_MESSAGE_ID = "mcode-verification-selected-text-message";
 const FIXTURE_TITLE = "Selected text comments verification";
 const FIXTURE_MESSAGE_CONTENT = [
   ...Array.from({ length: 24 }, (_, index) => `Verification context before the selected phrase ${index + 1}.`),
-  "Select this verification phrase",
+  [
+    "It includes:",
+    "",
+    "- Component, sequence, and state UML diagrams",
+    "- Select this verification phrase",
+    "- TTL, timing, and retry rules",
+  ].join("\n"),
   ...Array.from({ length: 24 }, (_, index) => `Verification context after the selected phrase ${index + 1}.`),
 ].join("\n\n");
 const FIXTURE_SKILL_DIRECTORY = NodePath.join(FIXTURE_WORKSPACE_PATH, ".claude", "skills", "verification-comment");
