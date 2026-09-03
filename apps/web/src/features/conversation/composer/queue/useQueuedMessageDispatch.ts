@@ -4,6 +4,24 @@ import { useQueueStore } from "@/stores/queueStore";
 import { useReplyStore } from "@/stores/replyStore";
 import { isThreadExecuting, useThreadStore } from "@/stores/threadStore";
 
+function waitForStopToSettleAndThreadToIdle(threadId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const ready = () => {
+      const state = useThreadStore.getState();
+      return (state.pendingStopCounts[threadId] ?? 0) === 0 && !isThreadExecuting(threadId);
+    };
+    if (ready()) {
+      resolve();
+      return;
+    }
+    const unsubscribe = useThreadStore.subscribe(() => {
+      if (!ready()) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
 /** Dispatches queued messages while preserving queue order and reply cleanup. */
 export function useQueuedMessageDispatch(threadId: string | undefined): {
   resumeNext(): Promise<void>;
@@ -49,6 +67,10 @@ export function useQueuedMessageDispatch(threadId: string | undefined): {
 
   const resumeNext = useCallback(async (): Promise<void> => {
     if (!threadId) return;
+    if (isThreadExecuting(threadId)) {
+      if ((useThreadStore.getState().pendingStopCounts[threadId] ?? 0) === 0) return;
+      await waitForStopToSettleAndThreadToIdle(threadId);
+    }
     if (isThreadExecuting(threadId)) return;
     const queueState = useQueueStore.getState();
     const next = queueState.claimNextQueuedMessage(threadId);
