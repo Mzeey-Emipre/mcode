@@ -248,6 +248,12 @@ describe("ThreadRepo canonical child retention", () => {
         id, thread_id, turn_id, kind, provider_identities_json, payload_json, created_at, updated_at
       ) VALUES ('active-child-item', ?, 'active-child-turn', 'message', '[]', '{"projection":"message"}', ?, ?)
     `).run(canonicalChild.id, now, now);
+    db.prepare(`
+      INSERT INTO canonical_collaboration_actions (
+        id, kind, source_thread_id, source_turn_id, source_item_id, target_thread_id,
+        status, delivery_unknown, provider_identities_json, created_at, updated_at
+      ) VALUES ('active-child-action', 'delegate', ?, 'parent-turn', 'parent-item', ?, 'Dispatched', 0, '[]', ?, ?)
+    `).run(parent.id, canonicalChild.id, now, now);
 
     expect(threadRepo.hardDelete(parent.id, { preserveActiveDescendants: true })).toBe(true);
     expect(threadRepo.findById(userVisibleChild.id)).toMatchObject({
