@@ -4,7 +4,6 @@ import { AttachmentPreview } from "@/components/chat/AttachmentPreview";
 import { ComposerAddMenu } from "@/components/chat/ComposerAddMenu";
 import { ComposerBranchBar } from "@/components/chat/ComposerBranchBar";
 import { ComposerQueueList } from "@/components/chat/ComposerQueueList";
-import { ComposerReplyBar } from "@/components/chat/ComposerReplyBar";
 import { CompactingBanner } from "@/components/chat/CompactingBanner";
 import { ContextTracker } from "@/components/chat/ContextTracker";
 import { FileTagPopup, type useFileTagPopup } from "@/components/chat/FileTagPopup";
@@ -65,10 +64,6 @@ interface ComposerContentSurfaceProps {
     } | null;
     readonly composerMode: ComponentProps<typeof ComposerNewThreadContext>["mode"];
     readonly isDragOver: boolean;
-    readonly replyContext?: {
-      readonly sourceRole: ComponentProps<typeof ComposerReplyBar>["sourceRole"];
-      readonly previewText: ComponentProps<typeof ComposerReplyBar>["previewText"];
-    };
     readonly detectedPullRequest: Omit<
       ComponentProps<typeof PrDetectedCard>,
       "onReview" | "onDismiss" | "loading"
@@ -129,7 +124,6 @@ interface ComposerContentSurfaceProps {
     readonly onDragLeave: DragEventHandler<HTMLDivElement>;
     readonly onDragOver: DragEventHandler<HTMLDivElement>;
     readonly onDrop: DragEventHandler<HTMLDivElement>;
-    readonly onClearReply: (threadId: string) => void;
     readonly onReviewDetectedPullRequest: () => void;
     readonly onDismissDetectedPullRequest: () => void;
     readonly onCancelEdit: () => void;
@@ -234,21 +228,6 @@ function ComposerNewThreadSurface({
   );
 }
 
-function ComposerReplySurface({
-  model,
-  actions,
-}: Pick<ComposerContentSurfaceProps, "model" | "actions">) {
-  if (!model.replyContext || !model.threadId || model.branchFromMessageId) return null;
-
-  return (
-    <ComposerReplyBar
-      sourceRole={model.replyContext.sourceRole}
-      previewText={model.replyContext.previewText}
-      onDismiss={() => actions.onClearReply(model.threadId!)}
-    />
-  );
-}
-
 function ComposerDetectedPullRequest({
   model,
   actions,
@@ -324,7 +303,6 @@ function getEditorPlaceholder(model: ComposerContentSurfaceProps["model"]) {
   if (model.goalPending) return "Describe the goal...";
   if (model.branchFromMessageId) return "What should the branch work on?";
   if (model.editingFromQueue) return "Edit the queued message - send to save.";
-  if (model.replyContext) return "Type your reply...";
   if (model.isAgentRunning) return "Queue a follow-up...";
   return model.isNewThread ? "Do anything" : "Message Mcode...";
 }
@@ -672,7 +650,6 @@ function ComposerInputSurface({
         branchFromMessageContent={model.branchFromMessageContent}
         onBranchModeExit={actions.onBranchModeExit}
       />
-      <ComposerReplySurface model={model} actions={actions} />
       <SelectedTextCommentsComposerAttachment
         comments={model.selectedTextComments}
         editor={model.selectedTextCommentEditor}
