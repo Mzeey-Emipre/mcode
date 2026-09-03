@@ -67,12 +67,12 @@ export function useQueuedMessageDispatch(threadId: string | undefined): {
 
   const resumeNext = useCallback(async (): Promise<void> => {
     if (!threadId) return;
+    const queueState = useQueueStore.getState();
     if (isThreadExecuting(threadId)) {
-      if ((useThreadStore.getState().pendingStopCounts[threadId] ?? 0) === 0) return;
+      if (!queueState.autoDrainSuppressedThreadIds.has(threadId)) return;
       await waitForStopToSettleAndThreadToIdle(threadId);
     }
     if (isThreadExecuting(threadId)) return;
-    const queueState = useQueueStore.getState();
     const next = queueState.claimNextQueuedMessage(threadId);
     if (!next) return;
     queueState.resumeAutoDrain(threadId);

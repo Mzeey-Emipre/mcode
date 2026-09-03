@@ -282,6 +282,64 @@ describe("useQueuedMessageDispatch", () => {
     ]);
   });
 
+  it("keeps a Continue request through a Stop-suppressed running window after Stop counts settle", async () => {
+    queueMessage("first queued follow-up");
+    queueMessage("second queued follow-up");
+    useQueueStore.getState().suppressAutoDrain(THREAD_ID);
+    useThreadStore.setState({
+      records: new Map<string, ThreadRecord>([[THREAD_ID, {
+        ...createEmptyThreadRecord(),
+        runtimePhase: "running",
+        turnExecutionId: "execution-1",
+      }]]),
+      runningThreadIds: new Set([THREAD_ID]),
+      pendingStopCounts: {},
+    });
+    const { result } = renderHook(() => useQueuedMessageDispatch(THREAD_ID));
+
+    const continuing = result.current.resumeNext();
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+    useThreadStore.getState().applyThreadRuntimeSnapshot({
+      threadId: THREAD_ID,
+      turnExecutionId: "execution-1",
+      phase: "cancelled",
+    });
+    await act(async () => {
+      await continuing;
+    });
+
+    expect(mockTransport.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockTransport.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: THREAD_ID, content: "first queued follow-up" }),
+    );
+    expect(useQueueStore.getState().queues[THREAD_ID]?.map((message) => message.content)).toEqual([
+      "second queued follow-up",
+    ]);
+  });
+
+  it("does not retain Continue from an ordinary active thread", async () => {
+    queueMessage("first queued follow-up");
+    useThreadStore.setState({
+      records: new Map<string, ThreadRecord>([[THREAD_ID, {
+        ...createEmptyThreadRecord(),
+        runtimePhase: "running",
+        turnExecutionId: "execution-1",
+      }]]),
+      runningThreadIds: new Set([THREAD_ID]),
+    });
+    const { result } = renderHook(() => useQueuedMessageDispatch(THREAD_ID));
+
+    await result.current.resumeNext();
+    useThreadStore.getState().applyThreadRuntimeSnapshot({
+      threadId: THREAD_ID,
+      turnExecutionId: "execution-1",
+      phase: "completed",
+    });
+    await Promise.resolve();
+
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("keeps Continue blocked until concurrent Stop calls both settle", async () => {
     queueMessage("first queued follow-up");
     let resolveFirst!: (result: AgentStopResult) => void;
