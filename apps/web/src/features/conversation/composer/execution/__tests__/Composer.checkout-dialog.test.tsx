@@ -352,7 +352,14 @@ describe("Composer checkout confirmation", () => {
     lastFileAutocompleteOptions = undefined;
     lastSlashCommandOptions = undefined;
     resetThreadStoreForTests({ runningThreadIds: new Set() });
-    useQueueStore.setState({ queues: {}, toast: null, editingThreadId: null });
+    useQueueStore.setState({
+      queues: {},
+      inFlightQueuedMessages: {},
+      disposedQueuedMessages: {},
+      queueGenerations: {},
+      toast: null,
+      editingThreadId: null,
+    });
     usePreviewAnnotationStore.setState({ byThread: {}, diffByThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     useToastStore.setState({ toasts: [] });

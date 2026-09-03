@@ -20,6 +20,16 @@ Use `runtime live --scenario completion --confirm-provider-call` for server and 
 
 Use `runtime live --scenario stop --confirm-provider-call` for the public server proof. The harness requests retained event replay after it creates the thread.
 
+## Composer queue matrix
+
+1. Start a direct Electron thread with the selected Codex or Cursor model.
+2. While the root turn runs, queue A and B and verify their visible FIFO rows.
+3. Wait for one completed root terminal, then verify that A starts once while B remains queued.
+4. Queue C while A runs, Stop, and verify that B and C remain queued through a bounded stable interval with Continue visible.
+5. Continue, verify that B starts once while C remains queued, then stop and remove only the owned thread and Electron process.
+
+Use `composer-queue proof --cursor-model <id> --allow-enable-cursor --confirm-provider-calls --confirm-cleanup` when Cursor starts disabled. The command uses `gpt-5.6-luna` unless `--codex-model <id>` overrides it. The flag temporarily enables Cursor through the owned Electron-local settings RPC. The verifier records its original state and Electron runtime directory before the change, then restores that Electron-local state during each terminal path. It retains recovery metadata if that restoration fails. A successful provider proof records one redacted receipt and three composer-only screenshots. A blocked provider records its receipt only. It uses one Electron-local socket for settings, UI thread RPCs, and replayed events. It uses 5-second root waits and 10-second queued waits. Both providers require exact durable prompt identities, exact queue rows, and a running composer for A and B admission. Provider events remain redacted diagnostics. Deterministic tests cover native Codex and Cursor terminal order.
+
 ## Managed-worktree Setup readiness
 
 1. Create a New-worktree first turn through the public agent API.
@@ -54,3 +64,4 @@ Use the selected-text-comments Electron proof for real transcript pointer input,
 - The public subscription begins after thread creation. It cannot show lossless events before creation.
 - The completed-thread proof does not wait one day. Its focused integration checks use a controlled clock for the retention path.
 - The selected-text comment proof cannot inspect the hidden `MessageMention[]` payload without sending a provider turn. The focused editor test covers that payload.
+- The Composer queue matrix needs exact listed models and logged-in provider CLIs. `--allow-enable-cursor` temporarily changes only the owned Electron session's Cursor setting. In the 09:42 matrix, Codex showed root and A with B as the only queued row, while runtime logs showed root, A, and B sends in FIFO order. Its event-gated receipt was inconclusive. Cursor enabled and restored successfully, but its root did not complete in 120 seconds while A and B remained queued. Cursor is a live application or provider failure, not a disabled-provider blocker. Retain this gap until Codex passes with the visible admission oracle and Cursor completes its root turn.

@@ -14,7 +14,7 @@ import {
   type PreviewAnnotationBundle,
 } from "@mcode/contracts";
 import { getTransport } from "@/transport";
-import { useThreadStore } from "@/stores/threadStore";
+import { scheduleDrainAfterEdit, useThreadStore } from "@/stores/threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "@/stores/thread-record";
 import { getConversationResidency } from "@/features/conversation/residency/conversation-residency";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
@@ -756,6 +756,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     useProjectActionStore.getState().clearThread(threadId);
   };
 
+  const suppressQueueDrainForTeardown = (threadIds: readonly string[]) => {
+    const queueStore = useQueueStore.getState();
+    const previouslyEnabled = threadIds.filter(
+      (threadId) => !queueStore.autoDrainSuppressedThreadIds.has(threadId),
+    );
+    for (const threadId of previouslyEnabled) queueStore.suppressAutoDrain(threadId);
+    return previouslyEnabled;
+  };
+
+  const restoreQueueDrainAfterFailedTeardown = (threadIds: readonly string[]) => {
+    const activeThreadIds = new Set(get().threads.map((thread) => thread.id));
+    const queueStore = useQueueStore.getState();
+    for (const threadId of threadIds) {
+      if (!activeThreadIds.has(threadId)) continue;
+      queueStore.resumeAutoDrain(threadId);
+      scheduleDrainAfterEdit(threadId);
+    }
+  };
+
   const clearClientOnlyThread = async (workspaceId: string | undefined, threadId: string) => {
     if (!workspaceId) return;
     releaseBrowserAutomationThreadScope(workspaceId, threadId);
@@ -872,29 +891,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
   deleteWorkspace: async (id) => {
     set({ error: null });
+    const deletedThreadIds = get()
+      .threads.filter((t) => t.workspace_id === id)
+      .map((t) => t.id);
+    const previouslyEnabledQueueDrains = suppressQueueDrainForTeardown(deletedThreadIds);
     try {
-      const deletedThreadIds = get()
-        .threads.filter((t) => t.workspace_id === id)
-        .map((t) => t.id);
       await Promise.all(deletedThreadIds.map((tid) => clearPreviewResources(id, tid)));
       await getTransport().deleteWorkspace(id);
       releaseBrowserAutomationWorkspaceScopes(id);
       bumpThreadListMutationEpoch(id);
-      const draftStore = useComposerDraftStore.getState();
-      const taskStore = useTaskStore.getState();
-      const terminalStore = useTerminalStore.getState();
       const diffStore = useDiffStore.getState();
       for (const tid of deletedThreadIds) {
-        draftStore.clearDraft(tid);
-        taskStore.clearTasks(tid);
-        terminalStore.clearThread(tid);
-        diffStore.clearThread(tid);
+        clearThreadResources(tid);
       }
       // The right panel is workspace-global, so its state is dropped once per
       // workspace rather than per thread.
       diffStore.clearWorkspace(id);
-      // Remove threads from store FIRST (same ordering as deleteThread) so
-      // any in-flight timer callbacks see threads as gone before timers are cancelled.
+      // ClearQueue has invalidated leases. Remove thread rows before
+      // clearThreadState cancels timers so an in-flight callback also sees deletion.
       const deletedIdSet = new Set(deletedThreadIds);
       const didClearActiveThread = deletedIdSet.has(get().activeThreadId ?? "");
       set((state) => ({
@@ -915,6 +929,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       // One batched Zustand set() for all threads instead of N sequential calls.
       useThreadStore.getState().clearThreadStateMany(deletedThreadIds);
     } catch (e) {
+      restoreQueueDrainAfterFailedTeardown(previouslyEnabledQueueDrains);
       set({ error: String(e) });
       throw e;
     }
@@ -1260,6 +1275,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       get().threads.find((thread) => thread.id === placeholderId)?.workspace_id;
     if (workspaceId) releaseBrowserAutomationThreadScope(workspaceId, placeholderId);
     pendingThreadCreationByPlaceholderId.delete(placeholderId);
+    clearThreadResources(placeholderId);
     useThreadStore.getState().clearThreadState(placeholderId);
     const didClearActiveThread = get().activeThreadId === placeholderId;
     set((state) => ({
@@ -1277,6 +1293,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
   deleteThread: async (threadId, cleanupWorktree) => {
     set({ error: null });
+    const previouslyEnabledQueueDrains = suppressQueueDrainForTeardown([threadId]);
     try {
       pendingThreadCreationByPlaceholderId.delete(threadId);
       const row = get().threads.find((t) => t.id === threadId);
@@ -1295,6 +1312,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       removeThreadFromWorkspace(threadId);
       useThreadStore.getState().clearThreadState(threadId);
     } catch (e) {
+      restoreQueueDrainAfterFailedTeardown(previouslyEnabledQueueDrains);
       set({ error: String(e) });
       throw e;
     }

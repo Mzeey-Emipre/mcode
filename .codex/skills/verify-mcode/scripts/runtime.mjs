@@ -326,6 +326,11 @@ async function health(repoRoot) {
   };
 }
 
+/** Opens the authenticated worktree runtime socket for another verifier area. */
+export async function openRuntimeVerificationSocket(repoRoot, onPush = () => {}) {
+  return await openSocket(repoRoot, readRuntime(repoRoot), onPush);
+}
+
 async function inspect(repoRoot) {
   const healthResult = await health(repoRoot);
   const ports = readRuntime(repoRoot);
@@ -1597,9 +1602,11 @@ function printJson(value) {
   console.log(JSON.stringify(value, null, 2));
 }
 
-try {
-  process.exitCode = await main();
-} catch (error) {
-  printJson({ ok: false, error: safeError(error) });
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    process.exitCode = await main();
+  } catch (error) {
+    printJson({ ok: false, error: safeError(error) });
+    process.exitCode = 1;
+  }
 }

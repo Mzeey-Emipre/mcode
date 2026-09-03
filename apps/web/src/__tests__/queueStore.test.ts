@@ -22,7 +22,13 @@ function seed(contents: string[]): QueuedMessage[] {
 
 describe("queueStore", () => {
   beforeEach(() => {
-    useQueueStore.setState({ queues: {}, toast: null });
+    useQueueStore.setState({
+      queues: {},
+      inFlightQueuedMessages: {},
+      disposedQueuedMessages: {},
+      queueGenerations: {},
+      toast: null,
+    });
   });
 
   describe("editMessage", () => {

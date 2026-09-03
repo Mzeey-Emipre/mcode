@@ -2,8 +2,7 @@ import { useCallback } from "react";
 import type { QueuedMessage } from "@/stores/queueStore";
 import { useQueueStore } from "@/stores/queueStore";
 import { useReplyStore } from "@/stores/replyStore";
-import { useThreadStore } from "@/stores/threadStore";
-import { releaseBrowserCaptureSpills } from "@/features/preview/capture/browser-capture-spill";
+import { isThreadExecuting, useThreadStore } from "@/stores/threadStore";
 
 /** Dispatches queued messages while preserving queue order and reply cleanup. */
 export function useQueuedMessageDispatch(threadId: string | undefined): {
@@ -14,7 +13,7 @@ export function useQueuedMessageDispatch(threadId: string | undefined): {
     async (message: QueuedMessage): Promise<void> => {
       if (!threadId) return;
       try {
-        await useThreadStore.getState().sendMessage(
+        const sent = await useThreadStore.getState().sendMessage(
           threadId,
           message.content,
           message.model,
@@ -35,12 +34,14 @@ export function useQueuedMessageDispatch(threadId: string | undefined): {
           message.goalObjective,
           message.orchestrationMode,
         );
+        useQueueStore.getState().settleQueuedDispatch(threadId, message.id, sent);
+        if (!sent) return;
         const activeReply = useReplyStore.getState().getReply(threadId);
         if (message.replyToMessageId && activeReply?.messageId === message.replyToMessageId) {
           useReplyStore.getState().clearReply(threadId);
         }
       } catch {
-        void releaseBrowserCaptureSpills(message.browserCaptureSpillPaths ?? []);
+        useQueueStore.getState().settleQueuedDispatch(threadId, message.id, false);
       }
     },
     [threadId],
@@ -48,18 +49,22 @@ export function useQueuedMessageDispatch(threadId: string | undefined): {
 
   const resumeNext = useCallback(async (): Promise<void> => {
     if (!threadId) return;
-    const next = useQueueStore.getState().dequeueNext(threadId);
-    if (next) await dispatch(next);
+    if (isThreadExecuting(threadId)) return;
+    const queueState = useQueueStore.getState();
+    const next = queueState.claimNextQueuedMessage(threadId);
+    if (!next) return;
+    queueState.resumeAutoDrain(threadId);
+    await dispatch(next);
   }, [dispatch, threadId]);
 
   const sendNow = useCallback(
     async (message: QueuedMessage): Promise<void> => {
       if (!threadId) return;
-      if (useThreadStore.getState().runningThreadIds.has(threadId)) {
+      if (isThreadExecuting(threadId)) {
         useQueueStore.getState().moveMessage(threadId, message.id, 0);
         return;
       }
-      const queued = useQueueStore.getState().popMessage(threadId, message.id);
+      const queued = useQueueStore.getState().claimQueuedMessage(threadId, message.id);
       if (queued) await dispatch(queued);
     },
     [dispatch, threadId],

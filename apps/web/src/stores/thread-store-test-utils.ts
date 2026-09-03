@@ -18,6 +18,7 @@ export function createEmptyThreadStoreState() {
     records: new Map<string, ThreadRecord>(),
     currentThreadId: null as string | null,
     runningThreadIds: new Set<string>(),
+    pendingStopCounts: {},
     recapByThread: {},
     toolCallRecordCache: new LruCache<string, import("@/transport").ToolCallRecord[]>(TOOL_CALL_CACHE_SIZE),
     recentlyAnsweredPlanMessageIds: new Set<string>(),

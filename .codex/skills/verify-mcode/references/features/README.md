@@ -27,6 +27,7 @@
 | Pointer-selected assistant text opens a compact comment editor and retains native copy actions | [Selected text comments](selected-text-comments.md) | Electron public UI proof |
 | A New worktree completes checkout before automatic Setup starts | [Managed-worktree Setup readiness](managed-worktree-setup.md) | `runtime worktree-setup --confirm-cleanup` and `runtime check` |
 | A user completes a worktree thread and the app schedules its cleanup | [Completed-thread cleanup](completed-thread-cleanup.md) | `thread-lifecycle proof --confirm-cleanup` and `thread-lifecycle check` |
+| Queued composer messages continue in FIFO order after completion and stay paused after Stop | [Composer queue](composer-queue.md) | `composer-queue proof --cursor-model <id> --allow-enable-cursor --confirm-provider-calls --confirm-cleanup` |
 
 Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that crosses the server, web or Electron UI, provider adapters, persistence, or managed worktrees.
 
@@ -49,3 +50,4 @@ Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that cro
 - Thread retention has a minimum of one day. The live proof shows the scheduled deletion, while focused integration checks show later worktree cleanup.
 - If `agent.createAndSend` creates a thread but its response is lost before the ID arrives, the public RPC has no safe cleanup identifier. Record this as a coverage gap. Do not delete threads by heuristic.
 - If `thread.create` creates a managed-worktree thread but its response is lost before the ID arrives, the lifecycle verifier has no safe cleanup identifier. Record this as a coverage gap. Do not delete threads by heuristic.
+- The Composer queue matrix needs exact listed models and logged-in provider CLIs. `--allow-enable-cursor` temporarily changes only the owned Electron session's Cursor setting. In the 09:42 matrix, Codex showed exact root and A prompts with B as the only queued row, but its event-gated receipt was inconclusive. Cursor enabled and restored successfully, but its root did not complete in 120 seconds while A and B remained queued. Cursor is a live application or provider failure, not a disabled-provider blocker.
