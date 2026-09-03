@@ -30,7 +30,19 @@ Serve-pool mechanics without a model call (spawn, health, session create, abort,
 
 ## Browser proof
 
-Drive the real web UI with Playwright (see `.dev/verification/ui-proof.py`, disposable): pick the project, open the model picker, choose the OpenCode section and a live model, send a prompt, and assert the assistant bubble settles with the exact reply. Proven with `uitest` landing once, attributed to the model, through project pick, provider rail, dynamic model list, composer send, and settled timeline.
+Drive the real web UI (Playwright, Chromium headless):
+
+```sh
+python .agents/skills/verify-mcode/scripts/browser-opencode-proof.py --help
+python .agents/skills/verify-mcode/scripts/browser-opencode-proof.py
+```
+
+It picks the fixture-repo project, opens the model picker, chooses the OpenCode section and a live
+model, sends a prompt, and asserts the assistant bubble settles with the exact reply. Evidence lands in
+`.dev/verification/agent-runtime/browser-opencode-proof.png`. The script enables OpenCode in the
+Electron profile over the desktop socket, then deletes its thread unless `--keep-thread` is given.
+Requires a running agent runtime and the Playwright scratch install
+(`electorn-live-testing` ensure-playwright).
 
 ## Gotchas
 
