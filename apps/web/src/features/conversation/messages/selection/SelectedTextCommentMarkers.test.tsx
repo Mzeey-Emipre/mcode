@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useLayoutEffect, useRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,7 @@ import {
 } from "@/stores/composerDraftStore";
 import { ComposerEditor } from "@/components/chat/lexical";
 import { removeSelectedTextComment } from "@/features/conversation/composer/draft/composer-selected-text-comments";
+import { SelectedTextCommentsComposerAttachment } from "@/features/conversation/composer/SelectedTextCommentsComposerAttachment";
 import { SelectedTextCommentMarkers } from "./SelectedTextCommentMarkers";
 import { SelectedTextCommentControls } from "./SelectedTextCommentControls";
 
@@ -91,10 +92,20 @@ function MarkerHarness({ onOpenComment }: { readonly onOpenComment: (comment: Se
   );
 }
 
-function SourceEditorHarness({ withComposerInput = false }: { readonly withComposerInput?: boolean }) {
+function SourceEditorHarness({
+  withComposerInput = false,
+  sourceMounted = true,
+  initialEditor,
+  withAttachment = false,
+}: {
+  readonly withComposerInput?: boolean;
+  readonly sourceMounted?: boolean;
+  readonly initialEditor?: SelectedTextCommentEditorDraft;
+  readonly withAttachment?: boolean;
+}) {
   const rootRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [editor, setEditor] = useState<SelectedTextCommentEditorDraft>();
+  const [editor, setEditor] = useState<SelectedTextCommentEditorDraft | undefined>(initialEditor);
   const savedComments = useComposerDraftStore((state) => (
     state.drafts["thread-1"]?.selectedTextComments ?? EMPTY_COMMENTS
   ));
@@ -122,9 +133,11 @@ function SourceEditorHarness({ withComposerInput = false }: { readonly withCompo
         />
       )}
       <div ref={viewportRef} className="overflow-y-auto">
-        <article data-message-id="message-1" data-message-role="assistant" data-thread-id="thread-1">
-          <p data-selected-text-content="" data-selected-text-eligible="true">First Second</p>
-        </article>
+        {sourceMounted && (
+          <article data-message-id="message-1" data-message-role="assistant" data-thread-id="thread-1">
+            <p data-selected-text-content="" data-selected-text-eligible="true">First Second</p>
+          </article>
+        )}
       </div>
       <SelectedTextCommentMarkers
         viewportRef={viewportRef}
@@ -162,6 +175,20 @@ function SourceEditorHarness({ withComposerInput = false }: { readonly withCompo
         renderedThreadId="thread-1"
         messageIds={["message-1"]}
       />
+      {withAttachment && (
+        <SelectedTextCommentsComposerAttachment
+          comments={savedComments}
+          editor={editor}
+          onRemove={vi.fn()}
+          onOpenSource={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onFocusComposer={vi.fn()}
+          onSave={vi.fn()}
+          onEditorChange={setEditor}
+        />
+      )}
+      <output data-testid="selected-text-comment-editor-anchor">{editor?.anchor ?? "closed"}</output>
     </div>
   );
 }
@@ -279,6 +306,55 @@ describe("SelectedTextCommentMarkers", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Comment on selected text" })).toBeNull());
     expect(screen.getByRole("button", { name: "Open comment 1" })).toHaveFocus();
+  });
+
+  it("keeps a virtualized source comment, card, and editor, then restores its source visuals", async () => {
+    const editor: SelectedTextCommentEditorDraft = {
+      source: comments[0]!.source,
+      commentId: comments[0]!.id,
+      note: comments[0]!.note,
+      mentions: [],
+      escapeWarned: false,
+      outsideWarned: false,
+      anchor: "source",
+    };
+    setDraft([comments[0]!], editor);
+    const props = { initialEditor: editor, withAttachment: true };
+    const { container, rerender, unmount } = render(<SourceEditorHarness {...props} />);
+    const viewport = container.querySelector(".overflow-y-auto")!;
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open comment 1" })).toBeVisible());
+    expect(screen.getByRole("dialog", { name: "Comment on selected text" })).toBeVisible();
+    await user.hover(screen.getByRole("button", { name: "1 annotation. Preview available." }));
+    expect(screen.getByTestId("selected-text-comment-preview-item-1")).toHaveTextContent("First note");
+
+    await act(async () => {
+      rerender(<SourceEditorHarness {...props} sourceMounted={false} />);
+      fireEvent.scroll(viewport);
+    });
+
+    await waitFor(() => expect(screen.queryByTestId("selected-text-comment-marker")).toBeNull());
+    expect(screen.queryByTestId("selected-text-comment-highlight")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Comment on selected text" })).toBeVisible();
+    expect(screen.getByTestId("selected-text-comment-editor-anchor")).toHaveTextContent("source");
+    expect(useComposerDraftStore.getState().drafts["thread-1"]?.selectedTextComments).toEqual([comments[0]]);
+    expect(screen.getByTestId("selected-text-comment-preview-item-1")).toHaveTextContent("First");
+
+    await act(async () => {
+      rerender(<SourceEditorHarness {...props} sourceMounted />);
+      fireEvent.scroll(viewport);
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open comment 1" })).toBeVisible());
+    expect(screen.getByTestId("selected-text-comment-highlight")).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Comment on selected text" })).toBeVisible();
+    expect(screen.getByTestId("selected-text-comment-editor-anchor")).toHaveTextContent("source");
+
+    await act(async () => {
+      unmount();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
   });
 
   it("returns focus to the marker after saving a marker-initiated edit", async () => {
