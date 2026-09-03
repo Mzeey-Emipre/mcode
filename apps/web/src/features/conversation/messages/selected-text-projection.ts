@@ -236,7 +236,7 @@ export function reconstructCanonicalMessageRange(
   const range = root.ownerDocument.createRange();
   range.setStart(rangeStart.node, rangeStart.offset);
   range.setEnd(rangeEnd.node, rangeEnd.offset);
-  return range.toString() === quote ? range : null;
+  return range;
 }
 
 /** Finds the rendered content element for one canonical selected-text source. */

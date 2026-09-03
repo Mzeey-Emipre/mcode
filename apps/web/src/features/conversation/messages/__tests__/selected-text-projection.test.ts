@@ -123,6 +123,36 @@ describe("selected-text message projection", () => {
     host.remove();
   });
 
+  it("reconstructs a selection across assistant list items from its canonical line breaks", () => {
+    const host = document.createElement("div");
+    host.innerHTML = [
+      '<article data-message-id="message-1" data-message-role="assistant" data-thread-id="thread-1">',
+      '<div data-selected-text-content data-selected-text-eligible="true"><ul><li>First</li><li>Second</li><li>Third</li></ul></div>',
+      "</article>",
+    ].join("");
+    document.body.append(host);
+    const content = host.querySelector<HTMLElement>("[data-selected-text-content]")!;
+    const listItems = content.querySelectorAll("li");
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.setStart(listItems[0].firstChild!, 0);
+    range.setEnd(listItems[2].firstChild!, listItems[2].textContent!.length);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const source = createSelectedTextCommentSource(selection, listItems[2]);
+
+    expect(source).toMatchObject({
+      start: 0,
+      end: 18,
+      quote: "First\nSecond\nThird",
+    });
+    expect(reconstructCanonicalMessageRange(content, source!.start, source!.end, source!.quote)?.toString()).toBe("FirstSecondThird");
+
+    selection.removeAllRanges();
+    host.remove();
+  });
+
   it("rejects selections that cross excluded content but accepts text beside it", () => {
     const host = document.createElement("div");
     host.innerHTML = [
