@@ -27,6 +27,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
+function canResumeQueuedMessage(
+  isAgentRunning: boolean,
+  hasInFlightQueuedMessage: boolean,
+  isEditing: boolean,
+  isPaused: boolean,
+): boolean {
+  return !isAgentRunning && !hasInFlightQueuedMessage && !isEditing && !isPaused;
+}
+
 interface ComposerQueueListProps {
   threadId: string;
   isAgentRunning: boolean;
@@ -84,6 +93,7 @@ export function ComposerQueueList({
   isPaused = false,
 }: ComposerQueueListProps) {
   const queue = useQueueStore((s) => s.queues[threadId] ?? EMPTY_QUEUE);
+  const hasInFlightQueuedMessage = useQueueStore((s) => s.inFlightQueuedMessages[threadId] !== undefined);
   const removeFromQueue = useQueueStore((s) => s.removeFromQueue);
   const clearQueue = useQueueStore((s) => s.clearQueue);
   const moveMessage = useQueueStore((s) => s.moveMessage);
@@ -118,7 +128,7 @@ export function ComposerQueueList({
           Queued
         </span>
         <div className="flex items-center gap-1.5">
-          {!isAgentRunning && !isEditing && !isPaused && (
+          {canResumeQueuedMessage(isAgentRunning, hasInFlightQueuedMessage, isEditing, isPaused) && (
             <button
               type="button"
               onClick={onResume}

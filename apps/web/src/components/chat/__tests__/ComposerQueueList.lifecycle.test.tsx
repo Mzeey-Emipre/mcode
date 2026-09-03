@@ -115,6 +115,28 @@ describe("ComposerQueueList lifecycle", () => {
     expect(screen.getByRole("button", { name: "Send next queued message" })).toBeInTheDocument();
   });
 
+  it("reveals Continue after the prior queued dispatch lease settles", async () => {
+    queueMessage("first queued follow-up");
+    queueMessage("second queued follow-up");
+    queueMessage("third queued follow-up");
+    const first = useQueueStore.getState().claimNextQueuedMessage(THREAD_ID)!;
+    render(<QueueControls />);
+
+    expect(screen.getByText("second queued follow-up")).toBeInTheDocument();
+    expect(screen.getByText("third queued follow-up")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send next queued message" })).not.toBeInTheDocument();
+
+    act(() => {
+      useQueueStore.getState().settleQueuedDispatch(THREAD_ID, first.id, true);
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Send next queued message" }));
+
+    expect(mockTransport.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: THREAD_ID, content: "second queued follow-up" }),
+    );
+    expect(screen.getByText("third queued follow-up")).toBeInTheDocument();
+  });
+
   it("sends one item when the user selects Continue", async () => {
     queueMessage("first queued follow-up");
     queueMessage("second queued follow-up");
