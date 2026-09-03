@@ -59,7 +59,13 @@ export function createWindow(
           titleBarOverlay: {
             color: "#00000000",
             symbolColor: "#8a8a92",
-            height: 40,
+            // 48 CSS px: Electron computes the usable overlay height as
+            // ceil(height * scaleFactor) / scaleFactor, so at 125%/150%
+            // display scaling a 40px overlay renders taller than the 40px
+            // title bar and the caption buttons get clipped. Keep this in
+            // sync with the title bar height in DesktopTitleBar and
+            // --desktop-title-bar-height in the renderer stylesheet.
+            height: 48,
           },
         }),
     webPreferences: {
