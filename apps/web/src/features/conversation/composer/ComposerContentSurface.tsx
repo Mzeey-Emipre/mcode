@@ -351,6 +351,7 @@ function ComposerEditorSurface({
         isPopupOpen={model.fileAutocomplete.isOpen || model.slashCommand.isOpen}
         onPopupKeyDown={actions.onPopupKeyDown}
         placeholder={getEditorPlaceholder(model)}
+        ariaLabel="Message Mcode"
       />
       <FileTagPopup
         items={model.fileAutocomplete.suggestions}

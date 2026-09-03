@@ -21,7 +21,10 @@ describe("ComposerEditor", () => {
       />,
     );
 
-    expect(screen.getByRole("textbox", { name: "Comment note" })).toHaveStyle({ minHeight: "2.25rem" });
+    const editor = screen.getByRole("textbox", { name: "Comment note" });
+    expect(editor).toHaveStyle({ minHeight: "2.25rem" });
+    expect(editor).toHaveClass("pt-2.5", "pb-1.5");
+    expect(screen.getByText("Ask for follow-up changes or attach images")).toHaveClass("top-2.5");
   });
 
   it("uses regular composer sizing", () => {

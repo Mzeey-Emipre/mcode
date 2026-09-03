@@ -77,6 +77,64 @@ function QuotePreview({ quote }: { readonly quote: string }) {
   );
 }
 
+function CommentPreviewActions({
+  comment,
+  sourceUnavailable,
+  multipleComments,
+  onEdit,
+  onDelete,
+}: {
+  readonly comment: SelectedTextComment;
+  readonly sourceUnavailable: boolean;
+  readonly multipleComments: boolean;
+  readonly onEdit: (comment: SelectedTextComment) => void;
+  readonly onDelete: (comment: SelectedTextComment) => void;
+}) {
+  if (!sourceUnavailable && !multipleComments) return null;
+  return (
+    <div className="absolute top-2 right-0 z-20 flex items-center gap-0.5">
+      {sourceUnavailable && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Edit comment ${comment.displayNumber}`}
+                onClick={() => onEdit(comment)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Pencil size={14} aria-hidden />
+              </Button>
+            }
+          />
+          <TooltipContent side="top" sideOffset={4}>Edit comment {comment.displayNumber}</TooltipContent>
+        </Tooltip>
+      )}
+      {multipleComments && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Delete comment ${comment.displayNumber}`}
+                onClick={() => onDelete(comment)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X size={14} aria-hidden />
+              </Button>
+            }
+          />
+          <TooltipContent side="top" sideOffset={4}>Delete comment {comment.displayNumber}</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
 function CommentPreviewItem({
   comment,
   editor,
@@ -89,6 +147,7 @@ function CommentPreviewItem({
   onEditorChange,
   onAnnouncement,
   openSourceButtonRef,
+  onCloseEditor,
 }: {
   readonly comment: SelectedTextComment;
   readonly editor?: SelectedTextCommentEditorDraft;
@@ -101,6 +160,7 @@ function CommentPreviewItem({
   readonly onEditorChange: (editor: SelectedTextCommentEditorDraft | undefined) => void;
   readonly onAnnouncement: (message: string) => void;
   readonly openSourceButtonRef: (element: HTMLElement | null) => void;
+  readonly onCloseEditor: (comment: SelectedTextComment, restoreFocus: boolean) => void;
 }) {
   const cardEditor = editor?.anchor === "card" && editor.commentId === comment.id ? editor : undefined;
   const itemRef = useRef<HTMLLIElement>(null);
@@ -158,7 +218,7 @@ function CommentPreviewItem({
               onSave={onSave}
               onDelete={onDelete}
               onDraftChange={onEditorChange}
-              onClose={() => onEditorChange(undefined)}
+              onClose={({ restoreFocus = true } = {}) => onCloseEditor(comment, restoreFocus)}
               onAnnouncement={onAnnouncement}
             />
           </div>
@@ -178,44 +238,13 @@ function CommentPreviewItem({
             />
           )}
           {areActionsVisible && (
-            <div className="absolute top-2 right-0 z-20 flex items-center gap-0.5">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={`Edit comment ${comment.displayNumber}`}
-                      onClick={() => onEdit(comment)}
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <Pencil size={14} aria-hidden />
-                    </Button>
-                  }
-                />
-                <TooltipContent side="top" sideOffset={4}>Edit comment {comment.displayNumber}</TooltipContent>
-              </Tooltip>
-              {multipleComments && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Delete comment ${comment.displayNumber}`}
-                        onClick={() => onDelete(comment)}
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        <X size={14} aria-hidden />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent side="top" sideOffset={4}>Delete comment {comment.displayNumber}</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
+            <CommentPreviewActions
+              comment={comment}
+              sourceUnavailable={sourceUnavailable}
+              multipleComments={multipleComments}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
           )}
         </>
       )}
@@ -264,6 +293,11 @@ export function SelectedTextCommentsComposerAttachment({
     setAnnouncement("Comment deleted.");
     if (!nextFocusTarget) onFocusComposer();
     onDelete(comment);
+  };
+  const handleCardEditorClose = (comment: SelectedTextComment, restoreFocus: boolean) => {
+    onEditorChange(undefined);
+    if (!restoreFocus) return;
+    requestAnimationFrame(() => openSourceButtonsRef.current.get(comment.id)?.focus());
   };
   const openPreview = () => {
     if (previewCloseTimerRef.current !== undefined) window.clearTimeout(previewCloseTimerRef.current);
@@ -340,6 +374,7 @@ export function SelectedTextCommentsComposerAttachment({
                       onSave={onSave}
                       onEditorChange={onEditorChange}
                       onAnnouncement={setAnnouncement}
+                      onCloseEditor={handleCardEditorClose}
                       openSourceButtonRef={(element) => {
                         if (element) openSourceButtonsRef.current.set(comment.id, element);
                         else openSourceButtonsRef.current.delete(comment.id);

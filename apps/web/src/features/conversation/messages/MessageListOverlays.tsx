@@ -9,6 +9,7 @@ import type { Message } from "@/transport/types";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { SelectedTextCommentControls } from "./selection/SelectedTextCommentControls";
 import type { SelectedTextCommentEditorScope } from "./selection/SelectedTextCommentControls";
+import { SelectedTextCommentMarkers } from "./selection/SelectedTextCommentMarkers";
 
 /** Props for transcript controls that float above the virtual rows. */
 interface MessageListOverlaysProps {
@@ -17,11 +18,13 @@ interface MessageListOverlaysProps {
   readonly isLoadingMore: boolean;
   readonly isLoadingNewer: boolean;
   readonly onSelectedTextComment: ((comment: SelectedTextComment) => void) | undefined;
+  readonly onDeleteSelectedTextComment: ((comment: SelectedTextComment) => void) | undefined;
   readonly onSelectedTextCommentEditorChange:
     | ((editor: SelectedTextCommentEditorDraft | undefined) => void)
     | undefined;
   readonly selectedTextCommentEditor: SelectedTextCommentEditorDraft | undefined;
   readonly selectedTextCommentEditorScope: SelectedTextCommentEditorScope | undefined;
+  readonly onOpenSelectedTextCommentEditor: ((comment: SelectedTextComment) => void) | undefined;
   /** Scroll viewport that bounds selected-text controls. */
   readonly viewportRef: RefObject<HTMLElement | null>;
   /** Thread whose transcript is currently rendered in the viewport. */
@@ -46,9 +49,11 @@ export function MessageListOverlays({
   isLoadingMore,
   isLoadingNewer,
   onSelectedTextComment,
+  onDeleteSelectedTextComment,
   onSelectedTextCommentEditorChange,
   selectedTextCommentEditor,
   selectedTextCommentEditorScope,
+  onOpenSelectedTextCommentEditor,
   viewportRef,
   renderedThreadId,
   stickyPreview,
@@ -77,6 +82,7 @@ export function MessageListOverlays({
       <SelectedTextCommentControls
         key={renderedThreadId ?? "no-rendered-thread"}
         onSelectedTextComment={onSelectedTextComment}
+        onDeleteSelectedTextComment={onDeleteSelectedTextComment}
         editor={selectedTextCommentEditor}
         onSelectedTextCommentEditorChange={onSelectedTextCommentEditorChange}
         selectedTextCommentEditorScope={selectedTextCommentEditorScope}
@@ -84,6 +90,13 @@ export function MessageListOverlays({
         renderedThreadId={renderedThreadId}
         messageIds={messageIds}
       />
+      {onOpenSelectedTextCommentEditor && (
+        <SelectedTextCommentMarkers
+          viewportRef={viewportRef}
+          renderedThreadId={renderedThreadId}
+          onOpenComment={onOpenSelectedTextCommentEditor}
+        />
+      )}
       {stickyPreview && (
         <StickyUserMessage
           preview={stickyPreview}

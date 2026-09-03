@@ -29,6 +29,8 @@ export interface SelectedTextCommentEditorScope {
 export interface SelectedTextCommentControlsProps {
   /** Adds the captured selected-text comment to the active composer draft. */
   onSelectedTextComment?: (comment: SelectedTextComment) => void;
+  /** Removes one saved selected-text comment from the active composer draft. */
+  onDeleteSelectedTextComment?: (comment: SelectedTextComment) => void;
   /** Saved comments that let this control restore and update an editor target. */
   comments?: readonly SelectedTextComment[];
   /** Per-thread open-editor state restored from the ComposerDraft. */
@@ -70,6 +72,16 @@ type SourcePositionHistory = {
 
 // Matches the empty compact editor shell before its first layout measurement.
 const INITIAL_EDITOR_HEIGHT = 46;
+
+function markerInvoker(commentId: string | undefined): HTMLButtonElement | null {
+  if (!commentId) return null;
+  return [...document.querySelectorAll<HTMLButtonElement>("[data-selected-text-comment-marker-id]")]
+    .find((marker) => marker.dataset.selectedTextCommentMarkerId === commentId) ?? null;
+}
+
+function composerInput(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[aria-label="Message Mcode"]');
+}
 
 function sourceEdgeFromRange(range: Range, viewport: DOMRect): "top" | "bottom" | null {
   const rects = [...range.getClientRects()];
@@ -130,6 +142,7 @@ function currentSourcePosition(
 /** Renders transcript selection actions and the selected-text comment editor. */
 export function SelectedTextCommentControls({
   onSelectedTextComment,
+  onDeleteSelectedTextComment,
   comments,
   editor,
   onSelectedTextCommentEditorChange,
@@ -314,15 +327,25 @@ export function SelectedTextCommentControls({
       closeOverlay(true);
       return;
     }
+    const commentId = activeOverlay?.stage === "editor" ? activeOverlay.editor?.commentId : undefined;
     setOverlay((current) => current?.stage === "editor" ? { ...current, stage: "action" } : current);
     onSelectedTextCommentEditorChange?.(undefined);
-    requestAnimationFrame(() => actionButtonRef.current?.focus());
-  }, [closeOverlay, onSelectedTextCommentEditorChange]);
+    requestAnimationFrame(() => (markerInvoker(commentId) ?? actionButtonRef.current)?.focus());
+  }, [activeOverlay, closeOverlay, onSelectedTextCommentEditorChange]);
 
   const saveSelectedTextComment = useCallback((comment: SelectedTextComment) => {
     onSelectedTextComment?.(comment);
     onSelectedTextCommentEditorChange?.(undefined);
   }, [onSelectedTextComment, onSelectedTextCommentEditorChange]);
+  const deleteSelectedTextComment = useCallback((comment: SelectedTextComment) => {
+    const index = activeComments.findIndex((candidate) => candidate.id === comment.id);
+    const nextCommentId = activeComments[index + 1]?.id ?? activeComments[index - 1]?.id;
+    onDeleteSelectedTextComment?.(comment);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const focusTarget = markerInvoker(nextCommentId) ?? actionButtonRef.current ?? composerInput();
+      focusTarget?.focus();
+    }));
+  }, [activeComments, onDeleteSelectedTextComment]);
 
   const virtualAnchor: VirtualAnchor | null = activeOverlay ? {
     getBoundingClientRect: () => currentPlacement(activeOverlay)?.anchor ?? new DOMRect(),
@@ -348,6 +371,7 @@ export function SelectedTextCommentControls({
         onOpenEditor={openSelectedTextCommentEditor}
         onClose={() => closeOverlay(activeOverlay?.stage === "editor")}
         onSave={saveSelectedTextComment}
+        onDelete={deleteSelectedTextComment}
         onEditorChange={onSelectedTextCommentEditorChange}
         onAnnouncement={setAnnouncement}
       />
@@ -372,6 +396,7 @@ function SelectedTextCommentPopover({
   onClose,
   onCloseEditor,
   onSave,
+  onDelete,
   onEditorChange,
   onAnnouncement,
 }: {
@@ -388,6 +413,7 @@ function SelectedTextCommentPopover({
   readonly onClose: () => void;
   readonly onCloseEditor: (options?: { readonly restoreFocus?: boolean }) => void;
   readonly onSave: (comment: SelectedTextComment) => void;
+  readonly onDelete: (comment: SelectedTextComment) => void;
   readonly onEditorChange?: (editor: SelectedTextCommentEditorDraft | undefined) => void;
   readonly onAnnouncement: (message: string) => void;
 }) {
@@ -434,6 +460,7 @@ function SelectedTextCommentPopover({
       onEditorElementChange={onEditorElementChange}
       comments={comments}
       onSave={onSave}
+      onDelete={onDelete}
       onEditorChange={onEditorChange}
       onClose={onCloseEditor}
       onAnnouncement={onAnnouncement}
@@ -455,6 +482,7 @@ function SelectedTextCommentEditorPopoverContent({
   onEditorElementChange,
   comments,
   onSave,
+  onDelete,
   onEditorChange,
   onClose,
   onAnnouncement,
@@ -467,6 +495,7 @@ function SelectedTextCommentEditorPopoverContent({
   readonly onEditorElementChange: (element: HTMLElement | null) => void;
   readonly comments: readonly SelectedTextComment[];
   readonly onSave: (comment: SelectedTextComment) => void;
+  readonly onDelete: (comment: SelectedTextComment) => void;
   readonly onEditorChange?: (editor: SelectedTextCommentEditorDraft | undefined) => void;
   readonly onClose: (options?: { readonly restoreFocus?: boolean }) => void;
   readonly onAnnouncement: (message: string) => void;
@@ -503,6 +532,7 @@ function SelectedTextCommentEditorPopoverContent({
         maxHeight={maxHeight}
         onElementChange={onEditorElementChange}
         onSave={onSave}
+        onDelete={onDelete}
         onDraftChange={onEditorChange}
         onClose={onClose}
         onAnnouncement={onAnnouncement}

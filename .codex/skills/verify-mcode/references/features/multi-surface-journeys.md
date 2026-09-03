@@ -44,11 +44,11 @@ Use `thread-lifecycle proof --confirm-cleanup` for the desktop action and receip
 2. Load the selected thread's Claude skill catalog and select the owned project skill.
 3. Load workspace files and select `README.md` as a typed mention.
 4. Save two multiline comments into the active composer draft.
-5. Open one source card, edit one card, and delete one card.
+5. Select one source card to navigate, use its numbered marker to edit and delete, then delete another card directly.
 6. Switch away from the thread and back. Confirm that saved cards and an open unsaved editor restore.
 7. Drag across the text again and right-click it.
 
-Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, aggregate cards, and direct card actions. Use focused composer-session tests for thread-switch editor restoration. The proof does not send a provider turn.
+Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, aggregate cards, source markers, marker deletion, and direct card actions. Use focused composer-session tests for thread-switch editor restoration. The proof does not send a provider turn.
 
 ## Coverage gaps
 
