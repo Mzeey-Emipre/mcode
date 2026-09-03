@@ -145,6 +145,27 @@ describe("ThreadStartupService", () => {
     db.close();
   });
 
+  it("finds a terminal cancellation bound to a thread after its Setup owner settles", () => {
+    const { db, service } = createHarness();
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, mode, worktree_managed, provider) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(threadId, "workspace-1", "Started", "main", "worktree", 1, "claude");
+    service.start(input(firstStartupId, "workspace-1", "managed-worktree"));
+    service.advance(firstStartupId, "thread");
+    service.bindThread(firstStartupId, threadId);
+    service.advance(firstStartupId, "worktree");
+    service.advance(firstStartupId, "setup");
+    service.cancel(firstStartupId);
+    service.markCancelled(firstStartupId);
+
+    expect(service.findByThreadId(threadId)).toMatchObject({
+      startupId: firstStartupId,
+      state: "cancelled",
+      cancellation: "requested",
+    });
+    db.close();
+  });
+
   it("scopes list results to one workspace", () => {
     const { db, service } = createHarness();
     service.start(input(firstStartupId, "workspace-1"));

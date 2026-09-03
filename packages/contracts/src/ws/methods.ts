@@ -1042,7 +1042,7 @@ export const WS_METHODS = lazySchema(() => ({
     params: ThreadStartupListInputSchema(),
     result: ThreadStartupListResultSchema(),
   },
-  /** Record startup cancellation intent. This does not stop a process. */
+  /** Cancel startup and stop bound managed Project Setup before terminalization. */
   "thread.startup.cancel": {
     params: ThreadStartupCancelInputSchema(),
     result: ThreadStartupSchema(),

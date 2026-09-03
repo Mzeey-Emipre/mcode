@@ -1200,8 +1200,8 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
   /**
    * Admit a complete turn command, then retain only runtime-owned provider dispatch.
    */
-  async sendMessage(command: SendMessageCommand): Promise<void> {
-    const admitted = await this.turnAdmissions.admit(command, this.runtimeAdmissionAuthority());
+  async sendMessage(command: SendMessageCommand, canReserve?: () => boolean): Promise<void> {
+    const admitted = await this.turnAdmissions.admit(command, this.runtimeAdmissionAuthority(), canReserve);
     if (admitted.kind !== "dispatch") return;
     await this.dispatchPreparedTurn(admitted);
   }
@@ -1243,6 +1243,7 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
     submission: WorkspaceEnvironmentQueuedTurnSubmission,
   ): Promise<WorkspaceEnvironmentAutomaticSetupDispatch> {
     const startupId = this.threadCreation.startQueuedAgent(submission.threadId);
+    if (startupId === null) return { completion: Promise.resolve() };
     let resolveStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       resolveStarted = resolve;
@@ -1251,6 +1252,7 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
     const completion = new Promise<void>((resolve) => {
       resolveCompletion = resolve;
     });
+    let cancellationWon = false;
     const send = this.sendMessage({
       ...this.turnAdmissions.queuedCommand(submission),
       onTurnStarted: (runtime) => {
@@ -1258,11 +1260,16 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
         this.threadCreation.completeInitialAgent(startupId);
         resolveStarted();
       },
+    }, () => {
+      const canReserve = this.threadCreation.canAdmitQueuedAgent(submission.threadId, startupId);
+      cancellationWon ||= !canReserve;
+      return canReserve;
     });
     try {
       await Promise.race([
         started,
         send.then(() => {
+          if (cancellationWon) return;
           throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
         }),
       ]);
@@ -1270,6 +1277,7 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
       this.threadCreation.failInitialAgent(startupId);
       throw error;
     }
+    if (cancellationWon) return { completion: Promise.resolve() };
     return { completion };
   }
 

@@ -21,6 +21,8 @@ import {
   TurnAdmissionDispatchCoordinator,
 } from "./turn-admission-dispatch-coordinator.js";
 
+const nonterminalStartupStates = new Set(["pending", "running", "blocked"]);
+
 /** Command that provisions a thread and starts its first runtime turn. */
 export type CreateAndSendCommand = Omit<
   CreateAndSendInput,
@@ -131,13 +133,34 @@ export class ThreadCreationCoordinator {
   }
 
   /** Advance a released automatic Setup Turn into agent startup. */
-  startQueuedAgent(threadId: string): string | undefined {
+  startQueuedAgent(threadId: string): string | null | undefined {
     const startup = this.startups()?.findByThreadId(threadId);
     if (!startup) return undefined;
-    if (startup.state === "running" && startup.phase === "setup") {
+    if (startup.cancellation === "requested") {
+      if (nonterminalStartupStates.has(startup.state)) {
+        this.startups()?.markCancelled(startup.startupId);
+      }
+      return null;
+    }
+    if (startup.state !== "running") return undefined;
+    if (startup.phase === "setup") {
       this.startups()?.advance(startup.startupId, "agent");
     }
     return startup.startupId;
+  }
+
+  /** Confirm that cancellation has not won before the queued provider turn reserves runtime ownership. */
+  canAdmitQueuedAgent(threadId: string, startupId: string | undefined): boolean {
+    const startup = this.startups()?.findByThreadId(threadId);
+    if (!startup) return startupId === undefined;
+    if (startup.startupId !== startupId) return false;
+    if (startup.cancellation === "requested") {
+      if (nonterminalStartupStates.has(startup.state)) {
+        this.startups()?.markCancelled(startup.startupId);
+      }
+      return false;
+    }
+    return startup.state === "running" && startup.phase === "agent";
   }
 
   private initialTurnParams(command: CreateAndSendCommand): BranchedInitialTurnParams {

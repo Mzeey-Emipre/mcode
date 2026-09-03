@@ -9,6 +9,7 @@ import { PtyPidRegistry } from "../../../terminal/host/pty-pid-registry.js";
 import { WorkspaceEnvironmentService, type WorkspaceEnvironmentServiceOptions } from "../workspace-environment-service.js";
 import { WorkspaceEnvironmentAutomaticRepository } from "../workspace-environment-automatic-repository.js";
 import type { TerminalCommandCompletion, TerminalCommandPreparation } from "../../../terminal/commands/terminal-command-service.js";
+import type { ThreadStartup } from "@mcode/contracts";
 
 const roots: string[] = [];
 
@@ -113,6 +114,50 @@ function queuedInput(index = 1) {
 }
 
 describe("automatic Project Setup", () => {
+  it("does not launch or dispatch when a terminal startup cancellation precedes automatic Setup admission", async () => {
+    const cancelledStartup: ThreadStartup = {
+      startupId: "00000000-0000-4000-8000-000000000001",
+      workspaceId: "workspace-1",
+      kind: "managed-worktree",
+      state: "cancelled",
+      phase: "setup",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "setup", state: "cancelled" },
+        { phase: "agent", state: "pending" },
+      ],
+      transcript: [],
+      cancellation: "requested",
+      revision: 1,
+      threadId: "thread-1",
+      createdAt: "2026-09-02T10:00:00.000Z",
+      updatedAt: "2026-09-02T10:00:00.000Z",
+    };
+    const threadStartups = {
+      appendOutput: vi.fn(() => cancelledStartup),
+      block: vi.fn(() => cancelledStartup),
+      findByThreadId: vi.fn(() => cancelledStartup),
+      resume: vi.fn(() => cancelledStartup),
+      skip: vi.fn(() => cancelledStartup),
+    } satisfies NonNullable<WorkspaceEnvironmentServiceOptions["threadStartups"]>;
+    const { service, prepare, start } = await automaticHarness({ threadStartups });
+    const dispatch = vi.fn().mockResolvedValue({ completion: Promise.resolve() });
+    service.setAutomaticSetupDispatcher({ dispatch });
+
+    service.queueAutomaticFirstTurn(queuedInput());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(service.getAutomaticSetup({ threadId: "thread-1" })).toMatchObject({
+      gate: "blocked",
+      attempt: { state: "interrupted" },
+      queuedTurns: [{ state: "queued" }],
+    });
+  });
+
   it("persists the visible first Turn before Setup, then commits pass and release before dispatch", async () => {
     const { db, service, completion, start } = await automaticHarness();
     const dispatch = vi.fn(async () => {

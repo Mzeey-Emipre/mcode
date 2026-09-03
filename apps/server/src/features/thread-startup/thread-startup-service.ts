@@ -76,9 +76,9 @@ export class ThreadStartupService {
     return this.startupRepo.listByWorkspace(workspaceId);
   }
 
-  /** Find the active startup record currently associated with one Thread. */
+  /** Find an active startup or the newest terminal record associated with one Thread. */
   findByThreadId(threadId: string): ThreadStartup | null {
-    return this.startupRepo.findNonterminalByThreadId(threadId);
+    return this.startupRepo.findByThreadId(threadId);
   }
 
   /** Mark the current phase active or move from it to the next phase. */

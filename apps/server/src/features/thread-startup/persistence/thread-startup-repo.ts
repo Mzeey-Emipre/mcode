@@ -88,14 +88,16 @@ export class ThreadStartupRepo {
     return rows.map(rowToStartup);
   }
 
-  /** Return the newest nonterminal startup currently bound to one Thread. */
-  findNonterminalByThreadId(threadId: string): ThreadStartup | null {
+  /** Return an active startup or the newest terminal startup bound to one Thread. */
+  findByThreadId(threadId: string): ThreadStartup | null {
     const row = this.db.prepare(
       `SELECT startup_id, workspace_id, kind, state, phase, steps_json, transcript_json,
               cancellation, revision, thread_id, error_json, block_json, created_at, updated_at
        FROM thread_startups
-       WHERE thread_id = ? AND state IN ('pending', 'running', 'blocked')
-       ORDER BY updated_at DESC, startup_id DESC
+       WHERE thread_id = ?
+       ORDER BY CASE WHEN state IN ('pending', 'running', 'blocked') THEN 0 ELSE 1 END,
+                updated_at DESC,
+                startup_id DESC
        LIMIT 1`,
     ).get(threadId) as ThreadStartupRow | undefined;
     return row ? rowToStartup(row) : null;

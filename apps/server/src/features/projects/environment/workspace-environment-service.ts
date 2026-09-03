@@ -363,9 +363,10 @@ export class WorkspaceEnvironmentService {
     readonly submission: WorkspaceEnvironmentQueuedTurnSubmission;
   }): WorkspaceEnvironmentQueueAdmission {
     const thread = this.requireAutomaticSetupThread(input.threadId);
+    const repository = this.requireAutomaticRepository();
     let admission: WorkspaceEnvironmentQueueAdmission;
     try {
-      admission = this.requireAutomaticRepository().queueFirstTurn(input);
+      admission = repository.queueFirstTurn(input);
     } catch (error) {
       if (error instanceof WorkspaceEnvironmentAutomaticQueueCapacityError) {
         throw new WorkspaceEnvironmentServiceError(
@@ -375,7 +376,13 @@ export class WorkspaceEnvironmentService {
       }
       throw error;
     }
-    if (admission.queued && admission.snapshot.attempt?.state === "queued") void this.startAutomaticSetup(thread);
+    if (admission.queued && admission.snapshot.attempt?.state === "queued") {
+      if (this.isAutomaticSetupCancelled(thread.id)) {
+        repository.interruptCurrentAttempt(thread.id);
+        return { ...admission, snapshot: repository.snapshot(thread.id) };
+      }
+      void this.startAutomaticSetup(thread);
+    }
     return admission;
   }
 
@@ -1150,6 +1157,10 @@ export class WorkspaceEnvironmentService {
   private startAutomaticSetup(thread: WorkspaceEnvironmentSetupThread): Promise<void> {
     const existing = this.startingAutomaticSetupPromises.get(thread.id);
     if (existing) return existing;
+    if (this.isAutomaticSetupCancelled(thread.id)) {
+      this.requireAutomaticRepository().interruptCurrentAttempt(thread.id);
+      return Promise.resolve();
+    }
     const starting = this.startAutomaticSetupAttempt(thread);
     this.startingAutomaticSetupPromises.set(thread.id, starting);
     void starting.then(
@@ -1506,6 +1517,7 @@ export class WorkspaceEnvironmentService {
   }
 
   private isAutomaticSetupAdmissionAllowed(threadId: string): boolean {
+    if (this.isAutomaticSetupCancelled(threadId)) return false;
     try {
       this.requireAutomaticSetupThread(threadId);
       return true;
@@ -1513,6 +1525,11 @@ export class WorkspaceEnvironmentService {
       if (error instanceof WorkspaceEnvironmentServiceError) return false;
       throw error;
     }
+  }
+
+  private isAutomaticSetupCancelled(threadId: string): boolean {
+    const startup = this.options.threadStartups?.findByThreadId(threadId);
+    return startup?.cancellation === "requested" || startup?.state === "cancelled";
   }
 
   private hasAutomaticSetupForThread(threadId: string): boolean {

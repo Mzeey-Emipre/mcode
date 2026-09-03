@@ -4,6 +4,7 @@ import type {
   ThreadStartupListInput,
   WsMethodName,
 } from "@mcode/contracts";
+import type { WorkspaceEnvironmentService } from "../../projects/environment/workspace-environment-service.js";
 import type { ThreadStartupService } from "../thread-startup-service.js";
 
 type ThreadStartupRpcMethod =
@@ -19,7 +20,8 @@ type ThreadStartupParamsByMethod = {
 
 /** Dependencies required to route thread startup lifecycle RPC calls. */
 export interface ThreadStartupRouterDeps {
-  threadStartupService: Pick<ThreadStartupService, "get" | "list" | "cancel">;
+  threadStartupService: Pick<ThreadStartupService, "get" | "list" | "cancel" | "markCancelled">;
+  workspaceEnvironmentService: Pick<WorkspaceEnvironmentService, "stopAutomaticSetup">;
 }
 
 type ThreadStartupHandlerMap = {
@@ -32,7 +34,18 @@ type ThreadStartupHandlerMap = {
 const threadStartupHandlers: ThreadStartupHandlerMap = {
   "thread.startup.get": (deps, params) => deps.threadStartupService.get(params.startupId),
   "thread.startup.list": (deps, params) => ({ records: deps.threadStartupService.list(params.workspaceId) }),
-  "thread.startup.cancel": (deps, params) => deps.threadStartupService.cancel(params.startupId),
+  "thread.startup.cancel": async (deps, params) => {
+    const startup = deps.threadStartupService.cancel(params.startupId);
+    if (
+      startup.kind !== "managed-worktree"
+      || !startup.threadId
+      || startup.phase === "agent"
+      || ["completed", "failed", "cancelled", "interrupted"].includes(startup.state)
+    ) return startup;
+
+    await deps.workspaceEnvironmentService.stopAutomaticSetup({ threadId: startup.threadId });
+    return deps.threadStartupService.markCancelled(startup.startupId);
+  },
 };
 
 /** Checks whether a method belongs to the thread startup lifecycle RPC family. */

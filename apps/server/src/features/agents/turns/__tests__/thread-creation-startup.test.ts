@@ -110,6 +110,59 @@ describe("ThreadCreationCoordinator startup lifecycle", () => {
     db.close();
   });
 
+  it("does not admit a queued agent after startup cancellation wins", () => {
+    const { db, workspace, threads, startups, coordinator } = harness();
+    const thread = threads.create(workspace.id, "Managed", "worktree", "feature/managed", true, "claude");
+    startups.start({
+      startupId: managedStartupId,
+      workspaceId: workspace.id,
+      kind: "managed-worktree",
+    });
+    startups.advance(managedStartupId, "thread");
+    startups.bindThread(managedStartupId, thread.id);
+    startups.advance(managedStartupId, "worktree");
+    startups.advance(managedStartupId, "setup");
+    startups.cancel(managedStartupId);
+
+    expect(coordinator.startQueuedAgent(thread.id)).toBeNull();
+    expect(startups.get(managedStartupId)).toMatchObject({
+      state: "cancelled",
+      phase: "setup",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "setup", state: "cancelled" },
+        { phase: "agent", state: "pending" },
+      ],
+    });
+    expect(coordinator.startQueuedAgent(thread.id)).toBeNull();
+    db.close();
+  });
+
+  it("does not admit a queued agent when cancellation wins after Setup advances to agent", () => {
+    const { db, workspace, threads, startups, coordinator } = harness();
+    const thread = threads.create(workspace.id, "Managed", "worktree", "feature/managed", true, "claude");
+    startups.start({
+      startupId: managedStartupId,
+      workspaceId: workspace.id,
+      kind: "managed-worktree",
+    });
+    startups.advance(managedStartupId, "thread");
+    startups.bindThread(managedStartupId, thread.id);
+    startups.advance(managedStartupId, "worktree");
+    startups.advance(managedStartupId, "setup");
+    startups.advance(managedStartupId, "agent");
+    startups.cancel(managedStartupId);
+
+    expect(coordinator.startQueuedAgent(thread.id)).toBeNull();
+    expect(startups.get(managedStartupId)).toMatchObject({
+      state: "cancelled",
+      phase: "agent",
+      steps: expect.arrayContaining([{ phase: "agent", state: "cancelled" }]),
+    });
+    db.close();
+  });
+
   it("honors cancellation before Git mutation and cleans up after checkout returns", async () => {
     const { db, workspace, threads, startups, threadService, coordinator } = harness();
     const beforeCheckout = threads.create(workspace.id, "Cancelled", "worktree", "feature/cancelled", true, "claude");

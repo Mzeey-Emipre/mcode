@@ -190,9 +190,14 @@ export class TurnAdmissionDispatchCoordinator {
   async admit(
     command: SendMessageCommand,
     runtime: TurnRuntimeAdmissionAuthority,
+    canReserve?: () => boolean,
   ): Promise<TurnAdmissionResult> {
     const prepared = await this.prepare(command);
     if (prepared.kind !== "ready") return prepared;
+    if (canReserve && !canReserve()) {
+      this.completeCommandEffect(prepared.value.commandEffect);
+      return { kind: "handled" };
+    }
     let lease: TurnRuntimeLease | undefined;
     try {
       lease = runtime.reserve(command);
