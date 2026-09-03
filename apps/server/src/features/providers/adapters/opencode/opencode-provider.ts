@@ -39,6 +39,8 @@ interface OpenCodeTurnState {
   chain: Promise<void>;
   /** Upstream message id to role, so user parts never become assistant deltas. */
   messageRoles: Map<string, string>;
+  /** Text already forwarded per message, for exactly-once streaming. */
+  forwardedText: Map<string, string>;
 }
 
 function nestedSessionId(holder: unknown): string | undefined {
@@ -238,6 +240,7 @@ export class OpenCodeProvider extends NodeEvents.EventEmitter implements IAgentP
       aborted: false,
       chain: Promise.resolve(),
       messageRoles: new Map<string, string>(),
+      forwardedText: new Map<string, string>(),
     };
     this.turns.set(sessionId, created);
     return created;
@@ -283,6 +286,8 @@ export class OpenCodeProvider extends NodeEvents.EventEmitter implements IAgentP
     const emit = (event: AgentEvent): void => this.publishTurnEvent(routing, req.sessionId, event);
     state.aborted = false;
     state.abortController = new AbortController();
+    state.messageRoles.clear();
+    state.forwardedText.clear();
     emit({ type: AgentEventType.TurnStarted, threadId } satisfies AgentEvent);
     const entry = await this.acquireTurnEntry(req, routing, state, emit);
     if (!entry) return;
@@ -404,6 +409,7 @@ export class OpenCodeProvider extends NodeEvents.EventEmitter implements IAgentP
       threadId,
       turnExecutionId: req.turnExecutionId,
       partRole: normalized ? partRoleOf(state.messageRoles, normalized) : undefined,
+      forwardedText: state.forwardedText,
     });
     this.forwardTurnEvents(mapped.events, req, threadId, settler);
     if (mapped.events.some((e) => e.type === AgentEventType.Error)) settler.settle("errored");

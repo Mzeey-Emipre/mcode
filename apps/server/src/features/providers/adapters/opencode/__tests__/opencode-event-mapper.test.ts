@@ -90,4 +90,55 @@ describe("mapOpenCodeEnvelope", () => {
     expect(added.disposition).toBe("ignored");
     expect(added.reason).toBe("noise:plugin.added");
   });
+
+  it("ignores catalog, reference, and integration lifecycle noise", () => {
+    for (const type of ["catalog.updated", "reference.updated", "integration.updated"]) {
+      const out = mapOpenCodeEnvelope({ type, properties: {} }, CTX);
+      expect(out.disposition).toBe("ignored");
+      expect(out.reason).toBe(`noise:${type}`);
+    }
+  });
+
+  it("forwards each text slice exactly once across deltas and snapshots", () => {
+    const forwarded = new Map<string, string>();
+    const ctx = { ...CTX, forwardedText: forwarded };
+    const delta = mapOpenCodeEnvelope({
+      type: "message.part.delta",
+      properties: { sessionID: "ses_1", messageID: "msg_1", partID: "prt_1", field: "text", delta: "abcdef" },
+    }, ctx);
+    expect(delta.events[0]).toMatchObject({ type: "textDelta", delta: "abcdef" });
+    const snapshot = mapOpenCodeEnvelope({
+      type: "message.part.updated",
+      properties: { sessionID: "ses_1", part: { type: "text", id: "prt_1", messageID: "msg_1", text: "abcdef" } },
+    }, ctx);
+    expect(snapshot.disposition).toBe("state-only");
+    expect(snapshot.events).toHaveLength(0);
+  });
+
+  it("maps the session.next streaming family", () => {
+    const text = mapOpenCodeEnvelope({
+      type: "session.next.text.delta",
+      properties: { sessionID: "ses_1", assistantMessageID: "msg_1", textID: "txt_1", delta: "hi" },
+    }, CTX);
+    expect(text.events[0]).toMatchObject({ type: "textDelta", delta: "hi" });
+
+    const called = mapOpenCodeEnvelope({
+      type: "session.next.tool.called",
+      properties: { sessionID: "ses_1", assistantMessageID: "msg_1", callID: "c1", tool: "read", input: { path: "a" } },
+    }, CTX);
+    expect(called.events[0]).toMatchObject({ type: "toolUse", toolCallId: "c1" });
+
+    const ended = mapOpenCodeEnvelope({
+      type: "session.next.step.ended",
+      properties: { sessionID: "ses_1", assistantMessageID: "msg_1", finish: "end_turn", cost: 0.01, tokens: { input: 10, output: 5 } },
+    }, CTX);
+    expect(ended.events[0]).toMatchObject({ type: "turnComplete", tokensIn: 10, tokensOut: 5 });
+
+    const asked = mapOpenCodeEnvelope({
+      type: "permission.asked",
+      properties: { id: "per_1", sessionID: "ses_1", permission: "edit" },
+    }, CTX);
+    expect(asked.disposition).toBe("diagnostic");
+    expect(asked.reason).toBe("permission-asked");
+  });
 });
