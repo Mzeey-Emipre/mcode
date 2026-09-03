@@ -60,8 +60,6 @@ bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue navigatio
 
 ## Coverage gap
 
-The live matrix remains incomplete in this worktree. In the 09:42 matrix, Codex retained exact root and A prompts with B as the only queued row. Runtime logs showed provider sends for root, A, and B in FIFO order. Its receipt remained inconclusive because its event gate required unavailable queued-turn start events. Cursor enabled temporarily, retained root with A and B queued, and produced no terminal event within 120 seconds. It restored Cursor before cleanup. Cursor is a live application or provider failure, not a disabled-provider blocker. Do not remove this gap until Codex passes with the visible admission oracle and Cursor completes a root turn.
-
 If `workspace.create` succeeds but its response is lost before the verifier receives a workspace ID, the active record marks workspace ownership as uncertain. Cleanup retains that record and refuses heuristic deletion. Inspect it and resolve the workspace manually before retrying.
 
 Queue editing has a separate capture-spill ownership gap when an edit is abandoned or teardown races it. It is outside queued send and Stop dispatch behavior.
