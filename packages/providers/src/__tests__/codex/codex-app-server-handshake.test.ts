@@ -678,35 +678,51 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
         const threadId = (req.params as { threadId?: string } | undefined)?.threadId;
         return {
           result: {
-            thread: { id: threadId, name: "read_docs_worker", agentNickname: "Ada", agentRole: "worker" },
+            thread: {
+              id: threadId,
+              name: "read_docs_worker",
+              agentNickname: "Ada",
+              agentRole: "worker",
+            },
             model: "gpt-5.6-sol",
             reasoningEffort: "high",
           },
         };
       }
-      if (req.method === "thread/items/list") {
+      if (req.method === "thread/read") {
         childRequests.push(req as Record<string, unknown>);
+        const threadId = (req.params as { threadId?: string } | undefined)?.threadId;
         return {
           result: {
-            data: [
-              {
-                turnId: "child-turn",
-                item: {
+            thread: {
+              id: threadId,
+              preview: threadId === "child-preview"
+                ? "Message Type: NEW_TASK\nSender: /root\nPayload:\nInspect the preview fallback."
+                : undefined,
+              turns: threadId === "child-thread" ? [{
+                items: [{
                   type: "userMessage",
                   content: [{ type: "text", text: "read_docs_worker" }],
-                },
-              },
-              {
-                turnId: "child-turn",
-                item: {
+                }],
+              }, {
+                items: [{
                   type: "userMessage",
                   content: [{
                     type: "text",
                     text: "Message Type: NEW_TASK\nTask name: read_docs_worker\nSender: /root\nPayload:\nInspect the child metadata.",
                   }],
-                },
-              },
-            ],
+                }],
+              }] : [],
+            },
+          },
+        };
+      }
+      if (req.method === "thread/items/list") {
+        childRequests.push(req as Record<string, unknown>);
+        const threadId = (req.params as { threadId?: string } | undefined)?.threadId;
+        return {
+          result: {
+            data: [],
           },
         };
       }
@@ -721,11 +737,15 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
       reasoningEffort: "high",
       parentMessage: "Inspect the child metadata.",
     });
+    await expect(server.getChildThreadMetadata("child-preview")).resolves.toMatchObject({
+      parentMessage: "Inspect the preview fallback.",
+    });
     await expect(server.getChildThreadMetadata("../invalid")).resolves.toBeNull();
 
     expect(server.threadId).toBe("parent-thread");
     expect(childRequests).toEqual(expect.arrayContaining([
       expect.objectContaining({ method: "thread/resume", params: { threadId: "child-thread", excludeTurns: true } }),
+      expect.objectContaining({ method: "thread/read", params: { threadId: "child-thread", includeTurns: true } }),
       expect.objectContaining({ method: "thread/items/list", params: {
         threadId: "child-thread", limit: 100, sortDirection: "asc",
       } }),

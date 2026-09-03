@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Issue #1607 forensic memo</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#f4f6f8;--ink:#18222d;--muted:#536171;--panel:#fff;--line:#c8d0d9;--amber:#a15c00;--amber-bg:#fff3d6;--red:#a42626;--red-bg:#ffe1e1;--blue:#1c5b89;--blue-bg:#e3f1fb;--focus:#1769aa}
+    @media(prefers-color-scheme:dark){:root{--bg:#11171d;--ink:#edf2f7;--muted:#b2bfcc;--panel:#1a232d;--line:#3d4b59;--amber:#ffc266;--amber-bg:#3b2b16;--red:#ff9b9b;--red-bg:#3b1e22;--blue:#8ac7ff;--blue-bg:#182f43}}
+    :root[data-theme="dark"]{--bg:#11171d;--ink:#edf2f7;--muted:#b2bfcc;--panel:#1a232d;--line:#3d4b59;--amber:#ffc266;--amber-bg:#3b2b16;--red:#ff9b9b;--red-bg:#3b1e22;--blue:#8ac7ff;--blue-bg:#182f43}:root[data-theme="light"]{--bg:#f4f6f8;--ink:#18222d;--muted:#536171;--panel:#fff;--line:#c8d0d9;--amber:#a15c00;--amber-bg:#fff3d6;--red:#a42626;--red-bg:#ffe1e1;--blue:#1c5b89;--blue-bg:#e3f1fb}
+    *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;overflow-x:hidden}main{width:100%;max-width:1080px;min-width:0;margin:auto;padding:28px 20px 60px}header,section,.panel{min-width:0}header{border-bottom:3px solid var(--line);padding-bottom:18px}h1,h2{font-family:Georgia,Cambria,"Times New Roman",serif}h1{font-size:clamp(1.8rem,4vw,3rem);line-height:1.08;margin:.2rem 0;overflow-wrap:anywhere}h2{font-size:1.35rem;margin:2rem 0 .6rem}h3{font-size:1rem;margin:1.2rem 0 .3rem}.kicker{color:var(--muted);letter-spacing:.08em;text-transform:uppercase;font-size:.78rem}.verdict{border-left:6px solid var(--red);background:var(--red-bg);padding:14px 16px;margin:18px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:14px}.panel{background:var(--panel);border:1px solid var(--line);padding:15px}.panel.amber{border-top:4px solid var(--amber)}.panel.red{border-top:4px solid var(--red)}.panel.blue{border-top:4px solid var(--blue)}code{font:.9em ui-monospace,SFMono-Regular,Consolas,monospace;background:color-mix(in srgb,var(--line) 28%,transparent);padding:.12em .3em;border-radius:3px;overflow-wrap:anywhere}a{color:var(--blue);overflow-wrap:anywhere}button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);padding:8px 12px;border-radius:4px;cursor:pointer}button:focus-visible,a:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.controls{display:flex;gap:10px;flex-wrap:wrap;margin:.8rem 0}.diagram{min-width:0;overflow:auto;border:1px solid var(--line);background:var(--panel);padding:8px}.diagram svg{display:block;width:100%;min-width:620px;height:auto}.caption{color:var(--muted);font-size:.9rem}.timeline{border-left:3px solid var(--line);padding-left:18px}.timeline p{margin:.8rem 0}.tag{display:inline-block;padding:2px 7px;border-radius:99px;border:1px solid var(--line);font-size:.82rem}.tag.red{color:var(--red);border-color:var(--red)}.tag.amber{color:var(--amber);border-color:var(--amber)}.tag.blue{color:var(--blue);border-color:var(--blue)}.facts{margin:.4rem 0 0;padding-left:1.15rem}.facts li+li{margin-top:.35rem}footer{margin-top:32px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:.9rem}@media print{button{display:none}.panel,.diagram{break-inside:avoid;background:white;color:black}body{font-size:11pt}a{color:black;text-decoration:underline}}
+    @media(prefers-reduced-motion:no-preference){button{transition:background .15s ease}button:hover{background:var(--amber-bg)}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="kicker">Mcode / forensic memo · 3 September 2026</div>
+    <h1>Issue #1607: deletion, identity, and the Subagents panel</h1>
+    <p>This memo records the deletion leak in #1607 and the later chat-to-panel navigation defect. It describes the provider-neutral view contract used for both.</p>
+    <button id="theme" type="button" aria-pressed="false">Use dark theme</button>
+  </header>
+
+  <section class="verdict">
+    <strong>Correct mental model:</strong> provider-native subagents belong in the <strong>Subagents panel</strong>. They are not Project tree nodes. An internal compatibility <code>threads</code> row remains a persistence detail and stays hidden while attached. The roster can show all children, but a selected detail view mounts only that child thread’s conversation.
+  </section>
+
+  <section>
+    <h2>Two defects at one boundary</h2>
+    <div class="grid">
+      <div class="panel red">
+        <h3>#1607: deletion leak</h3>
+        <p>Active-descendant retention detached provider-native children before recursive deletion. The delete queue then could not reach them, and the hidden compatibility row became a visible root.</p>
+      </div>
+      <div class="panel amber">
+        <h3>Follow-up: wrong chat target</h3>
+        <p>A chat subagent link needs the durable Mcode child ID. A provider operation ID or hierarchy label can name the activity, but it cannot select the child transcript.</p>
+      </div>
+      <div class="panel blue">
+        <h3>Shared correction</h3>
+        <p>Each provider supplies one trusted <code>SubagentPresentation</code>. The shared UI reads the provider-neutral detail target and never parses a provider prefix.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Evidence from Codex App Server</h2>
+    <div class="grid">
+      <div class="panel amber">
+        <h3>Spawn has three identities</h3>
+        <p>A spawn end carries <code>call_id</code> for the operation, <code>sender_thread_id</code> for the parent, and <code>new_thread_id</code> for the durable native child <code>Thread.id</code>. <code>AgentPath</code> shows display hierarchy. It is not a durable child identity.</p>
+        <a href="https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs">Codex protocol: collaboration events and AgentPath</a>
+      </div>
+      <div class="panel blue">
+        <h3>Items and reads are thread-scoped</h3>
+        <p>Generic item notifications carry <code>thread_id</code>, <code>turn_id</code>, and <code>item_id</code>. Child details are read by the child <code>thread_id</code>. A Thread also exposes parent, status, nickname or role, provider, model, and turns when requested.</p>
+        <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/item.rs">App Server v2 item notifications</a> ·
+        <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs">App Server v2 Thread data</a> ·
+        <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/thread.rs">App Server v2 Thread requests</a>
+      </div>
+      <div class="panel red">
+        <h3>Child control stays with the owner</h3>
+        <p>A parent-owned V2 child cannot accept direct App Server input. Follow-up and resume go through its owner or parent. The App Server has no UI-open request, so Mcode maps the native child identity to its canonical child thread ID and opens the panel locally.</p>
+        <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors/thread_input.rs">App Server direct-input guard</a> ·
+        <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors.rs">App Server request processor registry</a> ·
+        <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors/thread_processor.rs">App Server parent-owned child handling</a>
+      </div>
+    </div>
+    <p class="caption"><span class="tag blue">Fact</span> The linked Codex types define event and thread identities. <span class="tag amber">Design conclusion</span> Mcode owns local panel navigation because the provider does not expose a UI-open primitive.</p>
+  </section>
+
+  <section>
+    <h2>Provider-neutral subagent view contract</h2>
+    <div class="diagram">
+      <svg viewBox="0 0 1040 590" role="img" aria-labelledby="contract-title contract-desc">
+        <title id="contract-title">Provider-neutral subagent view contract</title>
+        <desc id="contract-desc">A UML-style component diagram. Codex App Server sends a spawn result to the Codex adapter. The adapter creates a trusted SubagentPresentation with a canonical child target, a provider alias, or no transcript target. Generic preparation and narrative persistence provide that presentation to the chat row and Subagents panel. The Project tree is explicitly excluded.</desc>
+        <defs><marker id="arrow-contract" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="none" stroke="currentColor"/></marker></defs>
+        <g fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="32" y="70" width="210" height="155" rx="3"/>
+          <rect x="300" y="70" width="210" height="155" rx="3"/>
+          <rect x="570" y="45" width="270" height="205" rx="3"/>
+          <rect x="300" y="350" width="250" height="145" rx="3"/>
+          <rect x="625" y="350" width="185" height="145" rx="3"/>
+          <rect x="870" y="350" width="140" height="145" rx="3" stroke-dasharray="7 6"/>
+          <path d="M242 145h58" marker-end="url(#arrow-contract)"/>
+          <path d="M510 145h60" marker-end="url(#arrow-contract)"/>
+          <path d="M705 250v55H425v45" marker-end="url(#arrow-contract)"/>
+          <path d="M705 305v45" marker-end="url(#arrow-contract)"/>
+        </g>
+        <g font-family="system-ui" fill="currentColor" font-size="15">
+          <text x="137" y="102" text-anchor="middle" font-weight="700">Codex App Server</text>
+          <text x="52" y="135">spawn end</text><text x="52" y="160">call_id: operation</text><text x="52" y="185">sender_thread_id: parent</text><text x="52" y="210">new_thread_id: native child</text>
+          <text x="405" y="102" text-anchor="middle" font-weight="700">Codex adapter</text>
+          <text x="320" y="135">reads childThread.id</text><text x="320" y="160">creates durable delegation</text><text x="320" y="185">emits trusted target</text>
+          <text x="705" y="78" text-anchor="middle" font-weight="700">«interface» SubagentPresentation</text>
+          <text x="590" y="110">displayName + parent task</text><text x="590" y="135">identityKey</text><text x="590" y="163">canonical-child { threadId }</text><text x="590" y="188">canonical-alias { identityKey }</text><text x="590" y="213">transcript-unavailable { providerName? }</text><text x="590" y="240" fill="var(--red)">Provider ingress strips untrusted presentation</text>
+          <text x="425" y="378" text-anchor="middle" font-weight="700">Generic event preparation</text>
+          <text x="425" y="400" text-anchor="middle" font-weight="700">and narrative persistence</text>
+          <text x="320" y="430">tag child and alias values</text><text x="320" y="454">preserve narrative evidence</text><text x="320" y="478">treat old raw values as aliases</text>
+          <text x="717" y="382" text-anchor="middle" font-weight="700">Shared consumers</text>
+          <text x="645" y="416">Chat SubagentRow</text><text x="645" y="442">Subagents panel</text><text x="645" y="468">open child or resolve alias</text>
+          <text x="940" y="382" text-anchor="middle" font-weight="700">Project tree</text>
+          <text x="940" y="422" text-anchor="middle" fill="var(--red)">excluded</text><text x="940" y="448" text-anchor="middle">no native child</text><text x="940" y="470" text-anchor="middle">nodes</text>
+          <text x="270" y="132" text-anchor="middle" font-size="13" fill="var(--muted)">native event</text>
+          <text x="540" y="132" text-anchor="middle" font-size="13" fill="var(--muted)">trusted map</text>
+          <text x="700" y="288" text-anchor="middle" font-size="13" fill="var(--muted)">provider-neutral data</text>
+        </g>
+      </svg>
+    </div>
+    <p><code>CodexCollaborationEventAdapter</code> uses <code>childThread.id</code> returned by durable delegation creation. Provider ingress removes any provider-supplied presentation before that server adapter runs. Claude, Cursor, or another adapter can emit the same contract. A server-authoritative Mcode target uses <code>canonical-child</code>. A provider-native identity uses <code>canonical-alias</code> and resolves only when one roster row matches. An ambiguous alias does not open a transcript. A provider without either target uses <code>transcript-unavailable</code>.</p>
+    <p>Persistence tags child and alias values with different versioned markers. Untagged historical values load as aliases. This prevents a provider identity from becoming a false Mcode thread ID after reload.</p>
+  </section>
+
+  <section>
+    <h2>Follow-up fix: click one chat child, mount one conversation</h2>
+    <div class="diagram">
+      <svg viewBox="0 0 1040 360" role="img" aria-labelledby="navigation-title navigation-desc">
+        <title id="navigation-title">Sequence for opening a chat subagent detail</title>
+        <desc id="navigation-desc">A chat subagent row sends its canonical child thread ID to the selection store. The Subagents panel resolves the matching canonical roster row and mounts a MessageList for that row ID only. Other roster children remain unmounted.</desc>
+        <defs><marker id="arrow-navigation" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="none" stroke="currentColor"/></marker></defs>
+        <g fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M90 48v260M290 48v260M500 48v260M720 48v260M930 48v260" stroke-dasharray="5 5"/>
+          <path d="M90 93h200" marker-end="url(#arrow-navigation)"/>
+          <path d="M290 143h210" marker-end="url(#arrow-navigation)"/>
+          <path d="M500 193h220" marker-end="url(#arrow-navigation)"/>
+          <path d="M720 243h210" marker-end="url(#arrow-navigation)"/>
+        </g>
+        <g font-family="system-ui" fill="currentColor" font-size="15" text-anchor="middle">
+          <text x="90" y="28">Chat SubagentRow</text><text x="290" y="28">Selection store</text><text x="500" y="28">Subagents panel</text><text x="720" y="28">Canonical roster</text><text x="930" y="28">MessageList</text>
+          <text x="190" y="84">click child</text>
+          <text x="395" y="134">detail.threadId</text>
+          <text x="610" y="184">resolve canonical row</text>
+          <text x="825" y="234">mount row.id only</text>
+          <text x="720" y="286" fill="var(--blue)">Roster may contain C1, C2, C3</text>
+          <text x="930" y="320" fill="var(--red)">Selected C2 only</text>
+        </g>
+      </svg>
+    </div>
+    <p class="caption">The selection store receives <code>detail.threadId</code>. The panel resolves that canonical roster row, then passes only <code>row.id</code> to <code>MessageList</code>. It does not mount a parent transcript or a combined child transcript.</p>
+  </section>
+
+  <section>
+    <h2>Deletion boundary: retain user work, delete provider children</h2>
+    <p>Active-descendant retention now excludes rows whose <code>canonical_agent_threads.parent_thread_id</code> is non-null. A user-visible descendant can detach and survive. A provider-native child stays attached, so recursive hard delete removes it with its parent.</p>
+    <div class="controls">
+      <button id="legacy" type="button" aria-pressed="false">Legacy leak</button>
+      <button id="implemented" type="button" aria-pressed="true">Implemented rule</button>
+    </div>
+    <div id="deletion-state" class="panel amber" aria-live="polite"><strong id="deletion-heading">Implemented rule.</strong> <span id="deletion-copy">Provider-native child C remains attached. The recursive delete queue reaches and removes it with parent P.</span></div>
+    <div class="diagram">
+      <svg viewBox="0 0 820 170" role="img" aria-labelledby="delete-title delete-desc">
+        <title id="delete-title">Provider child deletion state</title>
+        <desc id="delete-desc">An interactive diagram that compares the old detached child leak with the implemented rule that retains the relationship while a recursive delete removes the provider-native child.</desc>
+        <defs><marker id="arrow-delete" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="none" stroke="currentColor"/></marker></defs>
+        <g font-family="system-ui" font-size="18" text-anchor="middle">
+          <g id="delete-parent"><rect x="100" y="48" width="210" height="56" fill="var(--amber-bg)" stroke="var(--amber)" stroke-width="3"/><text id="delete-parent-label" x="205" y="82" fill="currentColor">Parent P</text></g>
+          <path id="delete-link" d="M310 76h190" stroke="var(--red)" stroke-width="3" marker-end="url(#arrow-delete)"/>
+          <g id="delete-child"><rect x="500" y="48" width="210" height="56" fill="var(--amber-bg)" stroke="var(--amber)" stroke-width="3"/><text id="delete-child-label" x="605" y="82" fill="currentColor">Native child C</text></g>
+          <text id="delete-note" x="410" y="145" fill="var(--red)">attached: recursive queue reaches C</text>
+        </g>
+      </svg>
+    </div>
+    <div class="grid">
+      <div class="panel red">
+        <h3>Historical evidence</h3>
+        <p>The real-code memory-database probe reproduced the leak: the parent was absent, the child survived, parent and owner links were null, canonical root equaled self, and <code>listByWorkspace()</code> returned the child.</p>
+      </div>
+      <div class="panel blue">
+        <h3>Migration 0053 repair</h3>
+        <p>The repair identifies old orphans by the generated <code>thread:codex-child:%</code> namespace, a matching canonical row, Codex provider, null canonical parent and owner, and self root. Title <code>Sub-agent</code> is only a supplementary guard. It removes nested descendants and canonical history.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Why this was allowed</h2>
+    <div class="grid">
+      <div class="panel amber">
+        <h3><span class="tag amber">Facts</span></h3>
+        <ul class="facts">
+          <li>One parent field mixed lifecycle ownership and UI visibility.</li>
+          <li>Operation IDs, native child IDs, and canonical Mcode child IDs were conflated.</li>
+          <li>Tests proved components in isolation, but did not cover mixed ownership or the real chat-to-panel identity handoff.</li>
+        </ul>
+      </div>
+      <div class="panel blue">
+        <h3><span class="tag blue">Inference</span></h3>
+        <p>The shared field and ambiguous identity roles let a value remain valid in one layer while it was wrong in another. The missing mixed-path coverage left both the deletion and navigation boundaries unproven. This describes a system boundary, not individual fault.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What the implemented design now proves</h2>
+    <div class="timeline">
+      <p><span class="tag red">Deletion</span> A provider-native child remains attached and recursive hard delete removes it. A user-visible delegated descendant can still detach and survive.</p>
+      <p><span class="tag blue">Navigation</span> A chat click targets the canonical child thread ID. The panel finds that row and mounts its conversation only.</p>
+      <p><span class="tag amber">Extensibility</span> A provider adapter can expose a durable mapped child. If it cannot, the UI reports that its transcript is unavailable instead of guessing.</p>
+    </div>
+  </section>
+
+  <footer>Sources: <a href="https://github.com/Mzeey-Empire/mcode/issues/1607">Mcode issue #1607</a> · <a href="https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs">Codex protocol</a> · <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/item.rs">Codex v2 items</a> · <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs">Codex v2 thread data</a> · <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/thread.rs">Codex v2 thread requests</a> · <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors/thread_input.rs">Codex input guard</a> · <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors.rs">Codex request processors</a> · <a href="https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors/thread_processor.rs">Codex thread processor</a></footer>
+</main>
+<script>
+  const root = document.documentElement;
+  const theme = document.querySelector('#theme');
+  const legacy = document.querySelector('#legacy');
+  const implemented = document.querySelector('#implemented');
+  const deletionState = document.querySelector('#deletion-state');
+  const deletionHeading = document.querySelector('#deletion-heading');
+  const deletionCopy = document.querySelector('#deletion-copy');
+  const deleteLink = document.querySelector('#delete-link');
+  const deleteParent = document.querySelector('#delete-parent');
+  const deleteChild = document.querySelector('#delete-child');
+  const deleteParentLabel = document.querySelector('#delete-parent-label');
+  const deleteChildLabel = document.querySelector('#delete-child-label');
+  const deleteNote = document.querySelector('#delete-note');
+
+  function setTheme(mode) {
+    root.dataset.theme = mode;
+    root.style.colorScheme = mode;
+    theme.setAttribute('aria-pressed', String(mode === 'dark'));
+    theme.textContent = mode === 'dark' ? 'Use light theme' : 'Use dark theme';
+  }
+
+  function setDeletionMode(isLegacy) {
+    legacy.setAttribute('aria-pressed', String(isLegacy));
+    implemented.setAttribute('aria-pressed', String(!isLegacy));
+    deletionState.className = `panel ${isLegacy ? 'red' : 'amber'}`;
+    deleteLink.setAttribute('stroke-dasharray', isLegacy ? '7 6' : 'none');
+    deleteParent.style.opacity = isLegacy ? '0.35' : '1';
+    deleteChild.style.opacity = isLegacy ? '1' : '0.55';
+    deleteParentLabel.textContent = isLegacy ? 'Deleted P' : 'Parent P';
+    deleteChildLabel.textContent = isLegacy ? 'False root C' : 'Native child C';
+    deleteNote.textContent = isLegacy ? 'links cleared: queue misses C' : 'attached: recursive queue reaches C';
+    deletionHeading.textContent = isLegacy ? 'Legacy leak.' : 'Implemented rule.';
+    deletionCopy.textContent = isLegacy
+      ? 'Active retention clears the provider child links. Child C survives and appears as a false root.'
+      : 'Provider-native child C remains attached. The recursive delete queue reaches and removes it with parent P.';
+  }
+
+  const initialTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  setTheme(initialTheme);
+  theme.addEventListener('click', () => setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark'));
+  legacy.addEventListener('click', () => setDeletionMode(true));
+  implemented.addEventListener('click', () => setDeletionMode(false));
+</script>
+</body>
+</html>

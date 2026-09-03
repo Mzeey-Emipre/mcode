@@ -127,6 +127,12 @@ export interface ThreadReadResult {
     name?: string | null;
     agentNickname?: string | null;
     agentRole?: string | null;
+    turns?: Array<{
+      items?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+    }>;
     [key: string]: unknown;
   };
 }

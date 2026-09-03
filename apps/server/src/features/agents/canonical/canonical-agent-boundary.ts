@@ -1379,6 +1379,7 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
     const latestTurn = lookup.latestTurns.get(thread.id) ?? null;
     const source = this.subagentRosterSource(thread.id, lookup);
     const timestamps = this.subagentRosterTimestamps(thread, turns, source.action, lookup.itemRows);
+    const sourceFields = this.subagentRosterSourceFields(source.action, source.sourceItem?.payload ?? {});
     return {
       ...this.subagentRosterRowBase(
         request,
@@ -1388,7 +1389,7 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
         timestamps.updatedAt,
         lookup.threads,
       ),
-      ...this.subagentRosterSourceFields(source.action, source.sourceItem?.payload ?? {}),
+      ...sourceFields,
       ...this.subagentRosterIdentities(thread, source),
       ...this.subagentRosterActivityFields(thread.id, lookup),
     };
@@ -1507,12 +1508,34 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
   }
 
   private subagentRosterMetadata(payload: Record<string, unknown>): SubagentRosterMetadata {
+    const record = this.subagentRosterToolRecord(payload);
     const metadata: SubagentRosterMetadata = {};
-    this.setSubagentRosterText(metadata, "task", payload.description);
-    this.setSubagentRosterText(metadata, "identity", payload.identity);
-    this.setSubagentRosterText(metadata, "model", payload.model);
-    this.setSubagentRosterText(metadata, "reasoning", payload.reasoningEffort);
+    this.setSubagentRosterText(
+      metadata,
+      "task",
+      this.firstSubagentRosterValue(payload.description, record?.subagent_prompt, record?.input_summary),
+    );
+    this.setSubagentRosterText(metadata, "identity", this.firstSubagentRosterValue(payload.identity, record?.display_name));
+    this.setSubagentRosterText(metadata, "model", this.firstSubagentRosterValue(payload.model, record?.model));
+    this.setSubagentRosterText(
+      metadata,
+      "reasoning",
+      this.firstSubagentRosterValue(payload.reasoningEffort, record?.reasoning_effort),
+    );
     return metadata;
+  }
+
+  private firstSubagentRosterValue(...values: unknown[]): unknown {
+    return values.find((value) => typeof value === "string" && value.trim().length > 0);
+  }
+
+  private subagentRosterToolRecord(payload: Record<string, unknown>): Record<string, unknown> | undefined {
+    return payload.projection === "toolCall"
+      && payload.record !== null
+      && typeof payload.record === "object"
+      && !Array.isArray(payload.record)
+      ? payload.record as Record<string, unknown>
+      : undefined;
   }
 
   private setSubagentRosterText(
@@ -1855,7 +1878,6 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
   ): Record<string, string> {
     if (item.kind !== "toolCall") return {};
     const metadata: Record<string, string> = {};
-    this.copyRecoveryMetadata(metadata, "description", existingPayload.description);
     this.copyRecoveryMetadata(metadata, "identity", existingPayload.identity);
     this.copyRecoveryMetadata(metadata, "model", existingPayload.model);
     this.copyRecoveryMetadata(metadata, "reasoningEffort", existingPayload.reasoningEffort);
@@ -3120,13 +3142,14 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
     this.db.prepare(`
       INSERT INTO canonical_collaboration_actions (
         id, kind, source_thread_id, source_turn_id, source_item_id, target_thread_id,
-        target_turn_id, status, delivery_unknown, provider_identities_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        target_turn_id, status, delivery_unknown, message, provider_identities_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         target_thread_id = excluded.target_thread_id,
         target_turn_id = excluded.target_turn_id,
         status = excluded.status,
         delivery_unknown = excluded.delivery_unknown,
+        message = COALESCE(excluded.message, canonical_collaboration_actions.message),
         provider_identities_json = excluded.provider_identities_json,
         updated_at = excluded.updated_at
     `).run(
@@ -3139,6 +3162,7 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       parsed.target.turnId ?? null,
       parsed.status,
       parsed.deliveryUnknown ? 1 : 0,
+      parsed.message ?? null,
       JSON.stringify(parsed.providerIdentities),
       parsed.createdAt,
       parsed.updatedAt,
@@ -3248,6 +3272,7 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       },
       status: row.status,
       deliveryUnknown: Number(row.delivery_unknown) === 1,
+      ...(typeof row.message === "string" ? { message: row.message } : {}),
       providerIdentities: JSON.parse(String(row.provider_identities_json)),
       createdAt: row.created_at,
       updatedAt: row.updated_at,

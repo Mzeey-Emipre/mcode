@@ -178,7 +178,7 @@ function addPersistedAgentPresentationMetadata(
   addPersistedProviderAgentInput(input, record.provider_agent_key);
   addPersistedTextField(input, "nativeThreadId", record.subagent_identity_key);
   addPersistedTextField(input, "subagentProviderName", record.subagent_provider_name);
-  addPersistedTextField(input, "prompt", record.subagent_prompt);
+  addPersistedTextField(input, "prompt", record.subagent_prompt ?? record.input_summary);
   addPersistedTextField(input, "subagentType", record.subagent_type);
   addPersistedTextField(input, "agentId", record.subagent_agent_id);
   addPersistedNumberField(input, "durationMs", record.subagent_duration_ms);

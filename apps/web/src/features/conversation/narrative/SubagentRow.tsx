@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { formatSubagentDisplayName } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
 import type { HookExecution, ToolCall } from "@/transport/types";
@@ -32,8 +33,10 @@ interface VisibleSubagentParticipant {
 
 interface SubagentParticipantView {
   identity: string;
-  identityKey: string;
-  hasCanonicalChild: boolean;
+  title: string;
+  paletteSeed: string;
+  detailTarget: string | undefined;
+  hasDetailTarget: boolean;
   hasExplicitIdentity: boolean;
   status: string;
   unavailableMessage: string;
@@ -123,8 +126,19 @@ function participantIdentityKey(participant: ToolCall): string {
   return participant.subagentPresentation?.identityKey ?? participant.id;
 }
 
-function participantHasCanonicalChild(participant: ToolCall): boolean {
-  return participant.subagentPresentation?.detail?.kind === "canonical-child";
+function participantTitle(participant: ToolCall): string {
+  const task = participant.subagentPresentation?.task;
+  return task ? formatSubagentDisplayName(task) : participantIdentity(participant);
+}
+
+function participantHasDetailTarget(participant: ToolCall): boolean {
+  return participantDetailTarget(participant) !== undefined;
+}
+
+function participantDetailTarget(participant: ToolCall): string | undefined {
+  const detail = participant.subagentPresentation?.detail;
+  if (detail?.kind === "canonical-child") return detail.threadId;
+  return detail?.kind === "canonical-alias" ? detail.identityKey : undefined;
 }
 
 function participantStatus(participant: ToolCall, lifecycle: SubagentLifecycle): string {
@@ -137,8 +151,10 @@ function projectSubagentParticipant(
 ): SubagentParticipantView {
   return {
     identity: participantIdentity(participant),
-    identityKey: participantIdentityKey(participant),
-    hasCanonicalChild: participantHasCanonicalChild(participant),
+    title: participantTitle(participant),
+    paletteSeed: participantDetailTarget(participant) ?? participantIdentityKey(participant),
+    detailTarget: participantDetailTarget(participant),
+    hasDetailTarget: participantHasDetailTarget(participant),
     hasExplicitIdentity: participant.subagentPresentation?.hasExplicitIdentity ?? false,
     status: participantStatus(participant, lifecycle),
     unavailableMessage: participantTranscriptUnavailableMessage(participant),
@@ -148,17 +164,16 @@ function projectSubagentParticipant(
 function handleSubagentSelection(
   participant: ToolCall,
   lifecycle: SubagentLifecycle,
-  hasCanonicalChild: boolean,
-  identityKey: string,
+  detailTarget: string | undefined,
   onSubagentSelect: SubagentRowProps["onSubagentSelect"],
   onUnavailableDetail: (id: string) => void,
 ): void {
-  if (!hasCanonicalChild) {
+  if (!detailTarget) {
     onUnavailableDetail(participant.id);
     return;
   }
   onSubagentSelect?.(
-    identityKey,
+    detailTarget,
     lifecycle === "finished" ? "finished" : "active",
   );
 }
@@ -199,24 +214,23 @@ function SubagentParticipant({
         onClick={() => handleSubagentSelection(
           participant,
           lifecycle,
-          view.hasCanonicalChild,
-          view.identityKey,
+          view.detailTarget,
           onSubagentSelect,
           onUnavailableDetail,
         )}
         className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
-        aria-label={`${view.hasCanonicalChild ? "Open" : "Show"} ${view.identity} subagent details`}
+        aria-label={`${view.hasDetailTarget ? "Open" : "Show"} ${view.title} subagent details`}
         aria-describedby={`subagent-status-${participant.id}`}
       >
         <SubagentIdentityGlyph
           identity={view.identity}
           hasExplicitIdentity={view.hasExplicitIdentity}
-          paletteSeed={view.identityKey}
+          paletteSeed={view.paletteSeed}
           className="size-4"
           size={12}
         />
         <span className="min-w-0 truncate text-xs font-medium text-foreground/85">
-          {view.identity}
+          {view.title}
         </span>
       </Button>
       <span id={`subagent-status-${participant.id}`} role="status" className="sr-only">

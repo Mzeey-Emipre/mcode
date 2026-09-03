@@ -5,6 +5,10 @@ import {
   recordToToolCall,
 } from "../build-persisted-narrative";
 import { collapseSubagentRecords } from "../subagent-lifecycle";
+import {
+  encodeCanonicalSubagentDetailTarget,
+  encodeSubagentAliasDetailTarget,
+} from "@mcode/contracts";
 import type {
   ToolCallRecord,
   ThoughtSegmentRecord,
@@ -91,6 +95,7 @@ describe("buildPersistedNarrativeItems", () => {
     });
     expect(call.subagentPresentation).toEqual({
       displayName: "Explorer",
+      task: "Inspect the private task",
       hasExplicitIdentity: true,
       identityKey: "/root/explorer",
       detail: { kind: "transcript-unavailable" },
@@ -120,6 +125,45 @@ describe("buildPersistedNarrativeItems", () => {
       subagentType: "explore",
       agentId: "cursor-agent-1",
       durationMs: 1_200,
+    });
+  });
+
+  it("retains the canonical child detail target after reload", () => {
+    const call = recordToToolCall(makeTool({
+      tool_name: "Agent",
+      display_name: "Worker",
+      provider_agent_key: "/root/worker",
+      subagent_identity_key: encodeCanonicalSubagentDetailTarget("thread:codex-child:worker"),
+    }));
+
+    expect(call.subagentPresentation?.detail).toEqual({
+      kind: "canonical-child",
+      threadId: "thread:codex-child:worker",
+    });
+  });
+
+  it("keeps legacy native identities as roster aliases, not child thread targets", () => {
+    const call = recordToToolCall(makeTool({
+      tool_name: "Agent",
+      subagent_identity_key: "native-worker",
+    }));
+
+    expect(call.subagentPresentation?.detail).toEqual({
+      kind: "canonical-alias",
+      identityKey: "native-worker",
+    });
+  });
+
+  it("keeps an encoded native identity that starts with the canonical marker as an alias", () => {
+    const nativeIdentity = "mcode:subagent:v1:provider-native";
+    const call = recordToToolCall(makeTool({
+      tool_name: "Agent",
+      subagent_identity_key: encodeSubagentAliasDetailTarget(nativeIdentity),
+    }));
+
+    expect(call.subagentPresentation?.detail).toEqual({
+      kind: "canonical-alias",
+      identityKey: nativeIdentity,
     });
   });
 

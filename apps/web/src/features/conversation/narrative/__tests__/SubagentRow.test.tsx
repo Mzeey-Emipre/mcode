@@ -43,14 +43,29 @@ describe("SubagentRow", () => {
     openSubagentDetail.mockReset();
   });
 
-  it("shows explicit identity and exact lowercase lifecycle copy without delegated task text", () => {
+  it("uses the parent task as the row title and keeps identity on the glyph", () => {
     renderRow(agent());
 
-    expect(screen.getByRole("button", { name: "Show Explorer subagent details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Read detection module subagent details" })).toBeInTheDocument();
     expect(screen.getByText("started working")).toBeInTheDocument();
     expect(screen.queryByTestId("subagent-lifecycle-dot")).not.toBeInTheDocument();
-    expect(screen.queryByText("Read detection module")).not.toBeInTheDocument();
+    expect(screen.getByText("Read detection module")).toBeInTheDocument();
     expect(document.querySelector('[data-subagent-identity-glyph="Explorer"]')).toBeInTheDocument();
+  });
+
+  it("formats an underscored parent task as a sentence title", () => {
+    renderRow(agent({
+      subagentPresentation: {
+        displayName: "Franklin",
+        task: "verify_ui_child",
+        hasExplicitIdentity: true,
+        identityKey: "child-franklin",
+        detail: { kind: "canonical-child", threadId: "canonical-child-franklin" },
+      },
+    }));
+
+    expect(screen.getByRole("button", { name: "Open Verify ui child subagent details" })).toBeInTheDocument();
+    expect(screen.queryByText("verify_ui_child")).not.toBeInTheDocument();
   });
 
   it("formats a provider identity as a sentence title", () => {
@@ -67,7 +82,7 @@ describe("SubagentRow", () => {
         displayName: "Correct identity",
         hasExplicitIdentity: true,
         identityKey: "child-correct",
-        detail: { kind: "canonical-child" },
+        detail: { kind: "canonical-child", threadId: "canonical-child-correct" },
       },
     }));
 
@@ -127,19 +142,32 @@ describe("SubagentRow", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Completed");
   });
 
-  it("falls back to Subagent and never uses prompt or description as identity", () => {
+  it("uses the parent task without treating it as the agent identity", () => {
     const anonymousAgent = agent({ toolInput: { prompt: "Private prompt", description: "Private task" }, isComplete: true });
     render(<SubagentRow toolCall={anonymousAgent} participants={[anonymousAgent]} lifecycle="finished" children={[]} hooks={[]} onSubagentSelect={openSubagentDetail} />);
 
-    expect(screen.getByRole("button", { name: "Show Subagent subagent details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Private task subagent details" })).toBeInTheDocument();
     expect(screen.queryByText("Private prompt")).not.toBeInTheDocument();
-    expect(screen.queryByText("Private task")).not.toBeInTheDocument();
+    expect(screen.getByText("Private task")).toBeInTheDocument();
     const glyph = document.querySelector('[data-subagent-identity-glyph="Subagent"]');
     expect(glyph).toHaveAttribute(
       "data-subagent-palette",
       String(getSubagentIdentityPaletteIndex("agent-1")),
     );
     expect(glyph?.getAttribute("style")).toContain("--subagent-identity-color");
+  });
+
+  it("shows unavailable detail when the presentation is absent", async () => {
+    const missingPresentation = {
+      ...agent(),
+      subagentPresentation: undefined,
+    };
+    renderRow(missingPresentation);
+
+    await userEvent.click(screen.getByRole("button", { name: "Show Subagent subagent details" }));
+
+    expect(openSubagentDetail).not.toHaveBeenCalled();
+    expect(screen.getByTestId("subagent-transcript-unavailable")).toBeInTheDocument();
   });
 
   it("gives anonymous agents stable per-agent colors", () => {
@@ -160,14 +188,26 @@ describe("SubagentRow", () => {
     expect(palettes).toEqual(["0", "4"]);
   });
 
-  it("reserves one color and detail target for repeated turns on the same native subagent", async () => {
+  it("uses the canonical child ID for navigation and color", async () => {
     const firstTurn = agent({
       id: "spawn-worker",
       toolInput: { receiverThreadIds: ["child-worker"] },
+      subagentPresentation: {
+        displayName: "Subagent",
+        hasExplicitIdentity: false,
+        identityKey: "child-worker",
+        detail: { kind: "canonical-child", threadId: "thread:codex-child:worker" },
+      },
     });
     const secondTurn = agent({
       id: "follow-up-worker",
       toolInput: { receiverThreadIds: ["child-worker"] },
+      subagentPresentation: {
+        displayName: "Subagent",
+        hasExplicitIdentity: false,
+        identityKey: "child-worker",
+        detail: { kind: "canonical-child", threadId: "thread:codex-child:worker" },
+      },
     });
     render(
       <SubagentRow
@@ -183,12 +223,12 @@ describe("SubagentRow", () => {
     const palettes = [...document.querySelectorAll('[data-subagent-identity-glyph="Subagent"]')]
       .map((glyph) => glyph.getAttribute("data-subagent-palette"));
     expect(palettes).toEqual([
-      String(getSubagentIdentityPaletteIndex("child-worker")),
-      String(getSubagentIdentityPaletteIndex("child-worker")),
+      String(getSubagentIdentityPaletteIndex("thread:codex-child:worker")),
+      String(getSubagentIdentityPaletteIndex("thread:codex-child:worker")),
     ]);
 
     await userEvent.click(screen.getAllByRole("button", { name: "Open Subagent subagent details" })[1]!);
-    expect(openSubagentDetail).toHaveBeenLastCalledWith("child-worker", "finished");
+    expect(openSubagentDetail).toHaveBeenLastCalledWith("thread:codex-child:worker", "finished");
   });
 
   it("explains unavailable Cursor detail without selecting a canonical child", async () => {
@@ -201,7 +241,7 @@ describe("SubagentRow", () => {
     });
     renderRow(cursorAgent);
 
-    await userEvent.click(screen.getByRole("button", { name: "Show Subagent subagent details" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show Read the current module subagent details" }));
 
     expect(screen.getByTestId("subagent-transcript-unavailable"))
       .toHaveTextContent("Cursor did not provide this subagent’s transcript.");
@@ -243,11 +283,23 @@ describe("SubagentRow", () => {
         agentName: "Explorer with a deliberately long identity",
         nativeThreadId: "child-source",
       },
+      subagentPresentation: {
+        displayName: "Explorer with a deliberately long identity",
+        hasExplicitIdentity: true,
+        identityKey: "child-source",
+        detail: { kind: "canonical-child", threadId: "canonical-child-source" },
+      },
       isComplete: true,
     });
     const target = agent({
       id: "agent-target",
       toolInput: { agentName: "Implementer", nativeThreadId: "child-target" },
+      subagentPresentation: {
+        displayName: "Implementer",
+        hasExplicitIdentity: true,
+        identityKey: "child-target",
+        detail: { kind: "canonical-child", threadId: "canonical-child-target" },
+      },
       isComplete: true,
     });
 
@@ -284,8 +336,8 @@ describe("SubagentRow", () => {
 
     await userEvent.click(sourceButton);
     await userEvent.click(targetButton);
-    expect(openSubagentDetail).toHaveBeenNthCalledWith(1, "child-source", "finished");
-    expect(openSubagentDetail).toHaveBeenNthCalledWith(2, "child-target", "finished");
+    expect(openSubagentDetail).toHaveBeenNthCalledWith(1, "canonical-child-source", "finished");
+    expect(openSubagentDetail).toHaveBeenNthCalledWith(2, "canonical-child-target", "finished");
   });
 
   it("caps sibling names at two and aggregates remaining lifecycle counts", async () => {

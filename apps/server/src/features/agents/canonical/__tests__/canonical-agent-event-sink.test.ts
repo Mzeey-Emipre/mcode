@@ -1510,6 +1510,48 @@ describe("CanonicalAgentEventSink", () => {
     });
   });
 
+  it("loads roster metadata after the parent source becomes a generic tool-call projection", () => {
+    startCanonicalParent(sink, db);
+    const delegation = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-generic-roster-source",
+      receiverThreadIds: ["native-generic-roster-source"],
+      providerIdentities: [],
+    });
+    db.prepare(`
+      UPDATE canonical_agent_items
+      SET payload_json = ?
+      WHERE id = ?
+    `).run(JSON.stringify({
+      projection: "toolCall",
+      record: {
+        tool_name: "Agent",
+        display_name: "Franklin",
+        subagent_prompt: null,
+        input_summary: "verify_ui_child",
+        model: "gpt-5.6-luna",
+        reasoning_effort: "low",
+      },
+    }), "toolCall:spawn-generic-roster-source");
+
+    const restoredSink = new CanonicalAgentEventSink(db, vi.fn());
+    const row = restoredSink.loadSubagentRoster({
+      owningParentThreadId: THREAD_ID,
+      limit: CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+    }).active[0];
+
+    expect(row).toMatchObject({
+      id: delegation.childThread.id,
+      sourceItemId: "toolCall:spawn-generic-roster-source",
+      task: "verify_ui_child",
+      identity: "Franklin",
+      model: "gpt-5.6-luna",
+      reasoning: "low",
+    });
+  });
+
   it("enriches an existing delegation when authoritative child metadata arrives later", () => {
     startCanonicalParent(sink, db);
     const input = {
@@ -1542,6 +1584,7 @@ describe("CanonicalAgentEventSink", () => {
     });
 
     expect(enriched.childThread.id).toBe(delegation.childThread.id);
+    expect(enriched.collaborationAction.message).toBe("Inspect the v2 child metadata.");
     expect(roster.active).toHaveLength(1);
     expect(roster.active[0]).toMatchObject({
       id: delegation.childThread.id,
@@ -2429,6 +2472,7 @@ describe("CanonicalAgentEventSink", () => {
       },
       collaborationAction: {
         status: "Acknowledged",
+        message: "secret-child-prompt",
         target: { threadId: provisional.childThread.id, turnId: childTurn.id },
       },
     });
