@@ -58,6 +58,10 @@ export interface ChatViewInteractions {
   onReply: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Starts a selected-text comment in the composer. */
   onSelectedTextComment: (comment: SelectedTextComment) => void;
+  /** Removes one saved selected-text comment from the active Composer draft. */
+  onDeleteSelectedTextComment: (comment: SelectedTextComment) => void;
+  /** Clears a consumed selected-text comment deletion. */
+  onSelectedTextCommentDeletionConsumed: () => void;
   /** Clears the composer selected-text comment after it is consumed. */
   onSelectedTextCommentConsumed: () => void;
   /** Stores transcript editor changes in the active ComposerDraft. */
@@ -66,6 +70,8 @@ export interface ChatViewInteractions {
   onSelectedTextCommentEditorChangeConsumed: () => void;
   /** Starts transcript-owned navigation for one aggregate card source. */
   onOpenSelectedTextCommentSource: (comment: SelectedTextComment) => void;
+  /** Starts transcript-owned navigation that opens one source marker's editor. */
+  onOpenSelectedTextCommentEditor: (comment: SelectedTextComment) => void;
   /** Installs a source-anchored editor after its active request reconstructs canonically. */
   onSelectedTextCommentSourceOpened: (request: SelectedTextCommentSourceNavigationRequest) => void;
   /** Installs a card-anchored fallback when its active aggregate-card request fails. */
@@ -112,6 +118,8 @@ export interface ChatViewSurfaceProps {
   onEditingThreadIdChange: (threadId: string | null) => void;
   /** Pending composer comment from selected transcript text. */
   pendingSelectedTextComment: SelectedTextComment | null;
+  /** Pending deletion for one saved transcript comment. */
+  pendingSelectedTextCommentDeletion: SelectedTextComment | null;
   /** Pending transcript editor mutation for the active ComposerDraft. */
   pendingSelectedTextCommentEditor?: { editor: SelectedTextCommentEditorDraft | undefined };
   /** Restored open-editor state for the active ComposerDraft. */
@@ -319,10 +327,12 @@ function ChatMessageStage({ state, interactions, automaticSetup, selectedTextCom
     onBranch: interactions.onBranch,
     onReply: interactions.onReply,
     onSelectedTextComment: interactions.onSelectedTextComment,
+    onDeleteSelectedTextComment: interactions.onDeleteSelectedTextComment,
     onSelectedTextCommentEditorChange: interactions.onSelectedTextCommentEditorChange,
     selectedTextCommentEditor,
     selectedTextCommentSourceNavigation,
     onSelectedTextCommentSourceOpened: interactions.onSelectedTextCommentSourceOpened,
+    onOpenSelectedTextCommentEditor: interactions.onOpenSelectedTextCommentEditor,
     onSelectedTextCommentSourceUnavailable: interactions.onSelectedTextCommentSourceUnavailable,
     onSelectedTextCommentEditorSourceUnavailable: interactions.onSelectedTextCommentEditorSourceUnavailable,
     selectedTextCommentEditorScope: {
@@ -340,12 +350,12 @@ function ChatMessageStage({ state, interactions, automaticSetup, selectedTextCom
 }
 
 /** Renders the composer and plan question wizard for an active thread. */
-function ActiveThreadComposer({ state, interactions, pendingSelectedTextComment, pendingSelectedTextCommentEditor, unavailableSelectedTextCommentIds, setupBlocked }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "pendingSelectedTextComment" | "pendingSelectedTextCommentEditor" | "unavailableSelectedTextCommentIds"> & { readonly setupBlocked: boolean }) {
+function ActiveThreadComposer({ state, interactions, pendingSelectedTextComment, pendingSelectedTextCommentDeletion, pendingSelectedTextCommentEditor, unavailableSelectedTextCommentIds, setupBlocked }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "pendingSelectedTextComment" | "pendingSelectedTextCommentDeletion" | "pendingSelectedTextCommentEditor" | "unavailableSelectedTextCommentIds"> & { readonly setupBlocked: boolean }) {
   const thread = state.activeThread!;
   return (
     <div data-testid="chat-composer-stage" className="relative flex-shrink-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>
       <PlanQuestionWizard threadId={thread.id} />
-      <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} branchFromMessageId={state.branchFromMessageId} branchFromMessageContent={state.branchFromMessageContent} selectedTextComment={pendingSelectedTextComment ?? undefined} onSelectedTextCommentConsumed={interactions.onSelectedTextCommentConsumed} selectedTextCommentEditorUpdate={pendingSelectedTextCommentEditor} onSelectedTextCommentEditorUpdateConsumed={interactions.onSelectedTextCommentEditorChangeConsumed} onOpenSelectedTextCommentSource={interactions.onOpenSelectedTextCommentSource} unavailableSelectedTextCommentIds={unavailableSelectedTextCommentIds} onBranchModeExit={interactions.onExitForkMode} setupBlocked={setupBlocked} />
+      <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} branchFromMessageId={state.branchFromMessageId} branchFromMessageContent={state.branchFromMessageContent} selectedTextComment={pendingSelectedTextComment ?? undefined} onSelectedTextCommentConsumed={interactions.onSelectedTextCommentConsumed} selectedTextCommentDeletion={pendingSelectedTextCommentDeletion ?? undefined} onSelectedTextCommentDeletionConsumed={interactions.onSelectedTextCommentDeletionConsumed} selectedTextCommentEditorUpdate={pendingSelectedTextCommentEditor} onSelectedTextCommentEditorUpdateConsumed={interactions.onSelectedTextCommentEditorChangeConsumed} onOpenSelectedTextCommentSource={interactions.onOpenSelectedTextCommentSource} unavailableSelectedTextCommentIds={unavailableSelectedTextCommentIds} onBranchModeExit={interactions.onExitForkMode} setupBlocked={setupBlocked} />
     </div>
   );
 }
@@ -369,6 +379,7 @@ function ActiveThreadSurface(props: ChatViewSurfaceProps) {
     editingThreadId,
     onEditingThreadIdChange,
     pendingSelectedTextComment,
+    pendingSelectedTextCommentDeletion,
     pendingSelectedTextCommentEditor,
     selectedTextCommentEditor,
     selectedTextCommentSourceNavigation,
@@ -394,7 +405,7 @@ function ActiveThreadSurface(props: ChatViewSurfaceProps) {
       <SavingDelayedDialog open={state.savingStatus?.mode === "saving-delayed"} onStopSafely={interactions.onStopSafely} onContinueWithoutSaving={interactions.onContinueWithoutSaving} />
       <ChatMessageStage state={state} interactions={interactions} automaticSetup={automaticSetup} selectedTextCommentEditor={selectedTextCommentEditor} selectedTextCommentSourceNavigation={selectedTextCommentSourceNavigation} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} />
       {showCliError && <CliErrorBanner error={state.sessionError!} onDismiss={interactions.onDismissCliError} onOpenSettings={interactions.onOpenSettings} />}
-      <ActiveThreadComposer state={state} interactions={interactions} pendingSelectedTextComment={pendingSelectedTextComment} pendingSelectedTextCommentEditor={pendingSelectedTextCommentEditor} unavailableSelectedTextCommentIds={unavailableSelectedTextCommentIds} setupBlocked={automaticSetup.snapshot.gate === "blocked"} />
+      <ActiveThreadComposer state={state} interactions={interactions} pendingSelectedTextComment={pendingSelectedTextComment} pendingSelectedTextCommentDeletion={pendingSelectedTextCommentDeletion} pendingSelectedTextCommentEditor={pendingSelectedTextCommentEditor} unavailableSelectedTextCommentIds={unavailableSelectedTextCommentIds} setupBlocked={automaticSetup.snapshot.gate === "blocked"} />
     </div>
   );
 }

@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 describe("SelectedTextCommentsComposerAttachment", () => {
-  it("shows an annotation preview on hover with direct removal and quiet card actions", async () => {
+  it("shows an annotation preview with navigation-only source cards and direct removal", async () => {
     const user = userEvent.setup();
     const { onDelete, onEdit, onOpenSource, onRemove } = renderAttachment({
       unavailableSourceCommentIds: [comments[1]!.id],
@@ -87,7 +87,7 @@ describe("SelectedTextCommentsComposerAttachment", () => {
 
     await user.hover(firstItem);
 
-    expect(screen.getByRole("button", { name: "Edit comment 1" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Edit comment 1" })).toBeNull();
     expect(screen.getByRole("button", { name: "Delete comment 1" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Delete comment 2" })).toBeNull();
 
@@ -107,13 +107,11 @@ describe("SelectedTextCommentsComposerAttachment", () => {
     const reopenedPreview = screen.getByTestId("selected-text-comment-preview");
     await user.hover(within(reopenedPreview).getByTestId("selected-text-comment-preview-item-1"));
     await user.click(screen.getByRole("button", { name: "Open source for comment 1" }));
-    await user.hover(within(reopenedPreview).getByTestId("selected-text-comment-preview-item-1"));
-    await user.click(screen.getByRole("button", { name: "Edit comment 1" }));
     await user.hover(within(reopenedPreview).getByTestId("selected-text-comment-preview-item-2"));
     await user.click(screen.getByRole("button", { name: "Delete comment 2" }));
 
     expect(onOpenSource).toHaveBeenCalledWith(comments[0]);
-    expect(onEdit).toHaveBeenCalledWith(comments[0]);
+    expect(onEdit).not.toHaveBeenCalled();
     expect(onDelete).toHaveBeenCalledWith(comments[1]);
   });
 
@@ -132,7 +130,7 @@ describe("SelectedTextCommentsComposerAttachment", () => {
     await user.tab();
 
     expect(screen.getByRole("button", { name: "Open source for comment 1" })).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Edit comment 1" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit comment 1" })).toBeNull();
   });
 
   it("shows quote controls only after rendered overflow, then collapses an expanded quote", async () => {
@@ -174,6 +172,42 @@ describe("SelectedTextCommentsComposerAttachment", () => {
 
     expect(await screen.findByRole("textbox", { name: "Comment note" })).toHaveTextContent(/First note\s*keeps its spacing\./);
     expect(screen.queryByRole("button", { name: "Edit comment 1" })).toBeNull();
+  });
+
+  it("returns focus to an unavailable source card after its editor closes", async () => {
+    const editor = {
+      source: comments[0]!.source,
+      commentId: comments[0]!.id,
+      note: comments[0]!.note,
+      mentions: [],
+      escapeWarned: false,
+      outsideWarned: false,
+      anchor: "card" as const,
+    };
+    function StatefulAttachment() {
+      const [currentEditor, setCurrentEditor] = useState<SelectedTextCommentEditorDraft | undefined>(editor);
+      return (
+        <SelectedTextCommentsComposerAttachment
+          comments={comments.slice(0, 1)}
+          editor={currentEditor}
+          unavailableSourceCommentIds={[comments[0]!.id]}
+          onRemove={vi.fn()}
+          onOpenSource={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onFocusComposer={vi.fn()}
+          onSave={vi.fn()}
+          onEditorChange={setCurrentEditor}
+        />
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<StatefulAttachment />);
+    await user.hover(screen.getByRole("button", { name: "1 annotation. Preview available." }));
+    await user.click(await screen.findByRole("button", { name: "Close comment editor" }));
+
+    await waitFor(() => expect(screen.getByTestId("selected-text-comment-preview-item-1")).toHaveFocus());
   });
 
   it("deletes one preview item, renumbers its survivor, announces the deletion, and returns focus", async () => {

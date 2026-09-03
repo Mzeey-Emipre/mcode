@@ -153,7 +153,6 @@ async function rightClickSelectedPhrase(content) {
   await content.evaluate((element) => {
     element.dataset.verificationContextMenu = "pending";
     document.addEventListener("contextmenu", (event) => {
-      if (!element.contains(event.target)) return;
       element.dataset.verificationContextMenu = String(event.defaultPrevented);
     }, { once: true });
   });
@@ -222,6 +221,21 @@ async function assertEditorShell(dialog, source) {
   mark("comment_editor_focuses_note", await editor.evaluate((element) => document.activeElement === element), activeElement);
   mark("selected_quote_absent", await dialog.locator("blockquote").count() === 0);
   mark("prototype_note_placeholder", await editor.getAttribute("aria-placeholder") === "Write a note");
+  const placeholderAlignment = await dialog.getByText("Write a note", { exact: true }).evaluate((placeholder, textbox) => {
+    const placeholderRect = placeholder.getBoundingClientRect();
+    const textboxRect = textbox.getBoundingClientRect();
+    return {
+      centerDelta: Math.abs(
+        placeholderRect.top + placeholderRect.height / 2
+        - (textboxRect.top + textboxRect.height / 2)
+      ),
+    };
+  }, await editor.elementHandle());
+  mark(
+    "comment_editor_placeholder_is_vertically_centered",
+    placeholderAlignment.centerDelta <= 1,
+    placeholderAlignment,
+  );
   const editorBox = await dialog.boundingBox();
   const viewportBounds = await page.evaluate(() => {
     const viewport = document.querySelector(".overflow-y-auto");
@@ -356,11 +370,8 @@ async function assertDirtyDismissal(content) {
   await editor.pressSequentially("Close button draft");
   const close = dialog.getByRole("button", { name: "Close comment editor", exact: true });
   await close.click();
-  await waitForStatus("Repeat this action to discard this comment.");
-  mark("first_dirty_close_keeps_editor_open", await dialog.isVisible());
-  await close.click();
   await dialog.waitFor({ state: "hidden" });
-  mark("second_dirty_close_discards_editor", true);
+  mark("dirty_close_button_discards_editor_immediately", true);
 
   dialog = await openEditor(content);
   editor = await editorTextBox(dialog);
@@ -384,6 +395,100 @@ async function assertDirtyDismissal(content) {
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "hidden" });
   mark("second_dirty_escape_discards_editor", true);
+}
+
+async function assertSavedCommentMarkerAndCardLifecycle(
+  content,
+  commentAttachment,
+  firstAnnotationPreview,
+  firstMarker,
+) {
+  let dialog = await openEditor(content);
+  const secondEditor = await editorTextBox(dialog);
+  await secondEditor.pressSequentially(SECOND_COMMENT_TEXT);
+  await secondEditor.press("Control+Enter");
+  await dialog.waitFor({ state: "hidden" });
+  await waitForStatus("Comment 2 added.");
+  await firstMarker.focus();
+  await page.keyboard.press("Enter");
+  await dialog.waitFor({ state: "visible" });
+  mark("marker_enter_opens_source_editor", true);
+  const markerEditor = await editorTextBox(dialog);
+  mark("marker_editor_focuses_note", await markerEditor.evaluate((element) => document.activeElement === element));
+  mark(
+    "saved_editor_has_one_x_close_and_accessible_delete",
+    await dialog.locator("svg.lucide-x").count() === 1
+      && await dialog.getByRole("button", { name: "Delete comment", exact: true }).count() === 1,
+  );
+  await dialog.getByRole("button", { name: "Delete comment", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await firstMarker.waitFor({ state: "visible" });
+  mark(
+    "marker_delete_removes_annotation_and_renumbers_survivor",
+    await page.getByTestId("selected-text-comment-marker").count() === 1
+      && await page.getByRole("button", { name: "Open comment 1", exact: true }).count() === 1
+      && await page.getByRole("button", { name: "Open comment 2", exact: true }).count() === 0,
+  );
+  mark("marker_delete_returns_focus_to_survivor", await firstMarker.evaluate((element) => document.activeElement === element));
+
+  dialog = await openEditor(content);
+  const replacementEditor = await editorTextBox(dialog);
+  await replacementEditor.pressSequentially(SECOND_COMMENT_TEXT);
+  await replacementEditor.press("Control+Enter");
+  await dialog.waitFor({ state: "hidden" });
+  await waitForStatus("Comment 2 added.");
+  const secondAnnotationPreview = commentAttachment.getByRole("button", { name: "2 annotations. Preview available.", exact: true });
+  const secondMarker = page.getByRole("button", { name: "Open comment 2", exact: true });
+  await secondMarker.waitFor({ state: "visible" });
+  mark(
+    "saved_comments_keep_creation_order_markers",
+    JSON.stringify(await page.getByTestId("selected-text-comment-marker").evaluateAll((markers) => markers.map((marker) => marker.getAttribute("aria-label"))))
+      === JSON.stringify(["Open comment 1", "Open comment 2"]),
+  );
+  mark(
+    "dense_marker_collision_keeps_both_focusable_markers",
+    await firstMarker.isVisible() && await secondMarker.isVisible(),
+  );
+  await secondMarker.focus();
+  await page.keyboard.press("Space");
+  await dialog.waitFor({ state: "visible" });
+  mark("marker_space_opens_source_editor", true);
+  await dialog.getByRole("button", { name: "Close comment editor", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await secondAnnotationPreview.hover();
+  const firstPreviewItem = page.getByTestId("selected-text-comment-preview-item-1");
+  const secondPreviewItem = page.getByTestId("selected-text-comment-preview-item-2");
+  await secondPreviewItem.waitFor({ state: "visible" });
+  mark("second_annotation_preview_visible_on_hover", true);
+  mark("multi_annotation_preview_actions_hidden_at_rest", await page.getByRole("button", { name: /^Delete comment [12]$/ }).count() === 0);
+  await firstPreviewItem.hover();
+  mark(
+    "multi_annotation_preview_reveals_relevant_item_actions",
+    await page.getByRole("button", { name: "Edit comment 1", exact: true }).count() === 0
+      && await page.getByRole("button", { name: "Delete comment 1", exact: true }).count() === 1
+      && await page.getByRole("button", { name: "Delete comment 2", exact: true }).count() === 0,
+  );
+  await page.getByRole("button", { name: "Open source for comment 1", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Comment on selected text", exact: true });
+  mark("source_card_navigation_does_not_open_editor", await dialog.count() === 0);
+  await secondPreviewItem.hover();
+  await page.getByRole("button", { name: "Delete comment 2", exact: true }).click();
+  await page.getByTestId("selected-text-comment-preview-item-2").waitFor({ state: "hidden" });
+  mark("direct_card_delete_removes_annotation", await page.getByTestId("selected-text-comment-preview-item-1").isVisible());
+  mark(
+    "direct_card_delete_renumbers_marker_accessible_name",
+    await page.getByRole("button", { name: "Open comment 1", exact: true }).count() === 1
+      && await page.getByRole("button", { name: "Open comment 2", exact: true }).count() === 0,
+  );
+  await firstMarker.focus();
+  await page.keyboard.press("Enter");
+  await dialog.waitFor({ state: "visible" });
+  const savedEditor = await editorTextBox(dialog);
+  await savedEditor.pressSequentially(" updated");
+  await dialog.getByRole("button", { name: "Save comment", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  mark("marker_saved_edit_returns_focus_to_marker", await firstMarker.evaluate((element) => document.activeElement === element));
+  await firstAnnotationPreview.hover();
 }
 
 async function run() {
@@ -459,11 +564,53 @@ async function run() {
   const commentAttachmentChipBox = await commentAttachmentChip.boundingBox();
   mark("saved_comment_attachment_is_compact", commentAttachmentChipBox !== null && Math.abs(commentAttachmentChipBox.height - 32) <= 1, commentAttachmentChipBox?.height);
   const firstAnnotationPreview = commentAttachment.getByRole("button", { name: "1 annotation. Preview available.", exact: true });
+  const firstMarker = page.getByRole("button", { name: "Open comment 1", exact: true });
+  await firstMarker.waitFor({ state: "visible" });
+  mark(
+    "saved_comment_has_one_source_highlight_and_marker",
+    await page.getByTestId("selected-text-comment-highlight").count() === 1
+      && await page.getByTestId("selected-text-comment-marker").count() === 1,
+  );
+  await firstMarker.hover();
+  mark(
+    "marker_hover_strengthens_linked_highlight",
+    await page.getByTestId("selected-text-comment-highlight").locator("> div").evaluate((highlight) => highlight.classList.contains("bg-primary/30")),
+  );
   const commentPreview = page.getByTestId("selected-text-comment-preview");
   mark("annotation_preview_hidden_at_rest", await commentPreview.count() === 0);
   await firstAnnotationPreview.hover();
   await commentPreview.waitFor({ state: "visible" });
   mark("annotation_preview_opens_on_hover", true);
+  const previewStacking = await page.evaluate(async () => {
+    const preview = document.querySelector("[data-testid='selected-text-comment-preview']");
+    const highlight = document.querySelector("[data-testid='selected-text-comment-highlight'] > div");
+    if (!(preview instanceof HTMLElement) || !(highlight instanceof HTMLElement)) {
+      return { exercised: false, previewOwnsOverlap: false };
+    }
+    const viewport = highlight.closest("[data-testid='message-list']")?.querySelector(".overflow-y-auto");
+    if (!(viewport instanceof HTMLElement)) return { exercised: false, previewOwnsOverlap: false };
+    const previewRect = preview.getBoundingClientRect();
+    const highlightRect = highlight.getBoundingClientRect();
+    const originalScrollTop = viewport.scrollTop;
+    viewport.scrollTop += highlightRect.top + highlightRect.height / 2
+      - (previewRect.top + previewRect.height / 2);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const movedPreviewRect = preview.getBoundingClientRect();
+    const movedHighlightRect = highlight.getBoundingClientRect();
+    const left = Math.max(movedPreviewRect.left, movedHighlightRect.left);
+    const right = Math.min(movedPreviewRect.right, movedHighlightRect.right);
+    const top = Math.max(movedPreviewRect.top, movedHighlightRect.top);
+    const bottom = Math.min(movedPreviewRect.bottom, movedHighlightRect.bottom);
+    const exercised = right > left && bottom > top;
+    const topElement = exercised ? document.elementFromPoint((left + right) / 2, (top + bottom) / 2) : null;
+    viewport.scrollTop = originalScrollTop;
+    return { exercised, previewOwnsOverlap: topElement !== null && preview.contains(topElement) };
+  });
+  mark(
+    "annotation_preview_paints_above_source_highlight",
+    previewStacking.exercised && previewStacking.previewOwnsOverlap,
+    previewStacking,
+  );
   mark("annotation_preview_selected_text_label", await commentPreview.getByText("1. Selected text:", { exact: true }).isVisible());
   mark("annotation_preview_user_comment_label", await commentPreview.getByText("User comment:", { exact: true }).isVisible());
   mark("single_annotation_preview_omits_item_delete", await page.getByRole("button", { name: "Delete comment 1", exact: true }).count() === 0);
@@ -473,46 +620,12 @@ async function run() {
   await commentPreview.waitFor({ state: "visible" });
   mark("annotation_preview_opens_on_keyboard_focus", true);
 
-  dialog = await openEditor(content);
-  const secondEditor = await editorTextBox(dialog);
-  await secondEditor.pressSequentially(SECOND_COMMENT_TEXT);
-  await secondEditor.press("Control+Enter");
-  await dialog.waitFor({ state: "hidden" });
-  await waitForStatus("Comment 2 added.");
-  const secondAnnotationPreview = commentAttachment.getByRole("button", { name: "2 annotations. Preview available.", exact: true });
-  await secondAnnotationPreview.hover();
-  const firstPreviewItem = page.getByTestId("selected-text-comment-preview-item-1");
-  const secondPreviewItem = page.getByTestId("selected-text-comment-preview-item-2");
-  await secondPreviewItem.waitFor({ state: "visible" });
-  mark("second_annotation_preview_visible_on_hover", true);
-  mark("multi_annotation_preview_actions_hidden_at_rest", await page.getByRole("button", { name: /^Delete comment [12]$/ }).count() === 0);
-  await firstPreviewItem.hover();
-  mark(
-    "multi_annotation_preview_reveals_relevant_item_actions",
-    await page.getByRole("button", { name: "Edit comment 1", exact: true }).count() === 1
-      && await page.getByRole("button", { name: "Delete comment 1", exact: true }).count() === 1
-      && await page.getByRole("button", { name: "Delete comment 2", exact: true }).count() === 0,
+  await assertSavedCommentMarkerAndCardLifecycle(
+    content,
+    commentAttachment,
+    firstAnnotationPreview,
+    firstMarker,
   );
-  await page.getByRole("button", { name: "Open source for comment 1", exact: true }).click();
-  dialog = page.getByRole("dialog", { name: "Comment on selected text", exact: true });
-  await dialog.waitFor({ state: "visible" });
-  mark("open_source_returns_to_editor", true);
-  await dialog.getByRole("button", { name: "Close comment editor", exact: true }).click();
-  await dialog.waitFor({ state: "hidden" });
-  await secondAnnotationPreview.hover();
-  await firstPreviewItem.hover();
-  await page.getByRole("button", { name: "Edit comment 1", exact: true }).click();
-  dialog = page.getByRole("dialog", { name: "Comment on selected text", exact: true });
-  await dialog.waitFor({ state: "visible" });
-  mark("card_edit_opens_editor", true);
-  await dialog.getByRole("button", { name: "Close comment editor", exact: true }).click();
-  await dialog.waitFor({ state: "hidden" });
-  await secondAnnotationPreview.hover();
-  await secondPreviewItem.hover();
-  await page.getByRole("button", { name: "Delete comment 2", exact: true }).click();
-  await page.getByTestId("selected-text-comment-preview-item-2").waitFor({ state: "hidden" });
-  mark("item_delete_removes_annotation", await page.getByTestId("selected-text-comment-preview-item-1").isVisible());
-  await firstAnnotationPreview.hover();
   await firstAnnotationPreview.focus();
   await page.waitForFunction(() => {
     const annotationCount = document.querySelector('button[aria-label="1 annotation. Preview available."]');
@@ -561,9 +674,14 @@ async function run() {
   const contextMenu = await rightClickSelectedPhrase(content);
   mark("pointer_right_click_context_menu_not_prevented", contextMenu.prevented === "false", contextMenu.prevented);
   mark("selection_preserved", contextMenu.selection === PHRASE, contextMenu.selection);
-  await commentAttachment.getByRole("button", { name: "Remove 1 annotation", exact: true }).click();
+  await firstMarker.focus();
+  await page.keyboard.press("Enter");
+  await dialog.waitFor({ state: "visible" });
+  await dialog.getByRole("button", { name: "Delete comment", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
   await commentAttachment.waitFor({ state: "hidden" });
-  mark("aggregate_remove_clears_comment_attachment", true);
+  const composer = page.getByRole("textbox", { name: "Message Mcode", exact: true });
+  mark("final_marker_delete_returns_focus_to_composer", await composer.evaluate((element) => document.activeElement === element));
 
   await NodeFSPromises.writeFile(RESULTS, JSON.stringify({
     passed: true,

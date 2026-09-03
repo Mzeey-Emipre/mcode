@@ -89,6 +89,8 @@ const SOURCE_NAVIGATION_MAX_FRAMES = 20;
 export interface SelectedTextCommentSourceNavigationRequest {
   readonly id: number;
   readonly comment: SelectedTextComment;
+  /** Opens an editor after navigation. Card selection omits this and only scrolls. */
+  readonly intent?: "edit";
 }
 
 interface SourceNavigationTarget {
@@ -290,6 +292,8 @@ export interface MessageListProps {
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Adds one selected-text comment to the active Composer draft. */
   onSelectedTextComment?: (comment: SelectedTextComment) => void;
+  /** Removes one saved selected-text comment from the active Composer draft. */
+  onDeleteSelectedTextComment?: (comment: SelectedTextComment) => void;
   /** Persists open selected-text editor changes in the active ComposerDraft. */
   onSelectedTextCommentEditorChange?: (editor: SelectedTextCommentEditorDraft | undefined) => void;
   /** Restored selected-text editor state for the rendered thread. */
@@ -298,6 +302,8 @@ export interface MessageListProps {
   selectedTextCommentSourceNavigation?: SelectedTextCommentSourceNavigationRequest;
   /** Opens the source editor after its active request reconstructs canonically. */
   onSelectedTextCommentSourceOpened?: (request: SelectedTextCommentSourceNavigationRequest) => void;
+  /** Navigates a saved source marker before opening its editor. */
+  onOpenSelectedTextCommentEditor?: (comment: SelectedTextComment) => void;
   /** Opens the affected card editor after its active request cannot load or reconstruct. */
   onSelectedTextCommentSourceUnavailable?: (request: SelectedTextCommentSourceNavigationRequest) => void;
   /** Moves a restored source editor to its card after source loading fails. */
@@ -319,10 +325,12 @@ export function MessageList({
   onBranch,
   onReply,
   onSelectedTextComment,
+  onDeleteSelectedTextComment,
   onSelectedTextCommentEditorChange,
   selectedTextCommentEditor,
   selectedTextCommentSourceNavigation,
   onSelectedTextCommentSourceOpened,
+  onOpenSelectedTextCommentEditor,
   onSelectedTextCommentSourceUnavailable,
   onSelectedTextCommentEditorSourceUnavailable,
   selectedTextCommentEditorScope,
@@ -1444,7 +1452,9 @@ export function MessageList({
         isLoadingMore={isLoadingMore}
         isLoadingNewer={isLoadingNewer}
         onSelectedTextComment={onSelectedTextComment}
+        onDeleteSelectedTextComment={onDeleteSelectedTextComment}
         onSelectedTextCommentEditorChange={onSelectedTextCommentEditorChange}
+        onOpenSelectedTextCommentEditor={onOpenSelectedTextCommentEditor}
         selectedTextCommentEditor={selectedTextCommentEditor}
         selectedTextCommentEditorScope={selectedTextCommentEditorScope}
         viewportRef={containerRef}

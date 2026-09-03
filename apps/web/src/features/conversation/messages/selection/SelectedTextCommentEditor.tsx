@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import type { LexicalEditor } from "lexical";
 import type { MessageMention, SelectedTextComment } from "@mcode/contracts";
-import { Check, X } from "lucide-react";
+import { Check, Trash2, X } from "lucide-react";
 import {
   ComposerEditor,
   createMentionNodeData,
@@ -342,7 +342,7 @@ function CommentEditorControls({
                 aria-label="Delete comment"
                 onClick={onDelete}
               >
-                <X size={14} aria-hidden />
+                <Trash2 size={14} aria-hidden />
               </Button>
             )}
           />
@@ -475,7 +475,8 @@ function useSelectedTextCommentEditorActions({
     resetWarnings();
     onSave(nextComment);
     onAnnouncement(`Comment ${nextComment.displayNumber} ${comment ? "updated" : "added"}.`);
-    onClose({ restoreFocus: false });
+    if (comment) onClose();
+    else onClose({ restoreFocus: false });
   }, [canSave, comment, mentions, nextDisplayNumber, note, onAnnouncement, onClose, onSave, resetWarnings, source]);
   const deleteComment = useCallback(() => {
     if (!comment || !onDelete) return;
@@ -516,7 +517,7 @@ export function SelectedTextCommentEditor({
   }, []);
   const isPopupOpenRef = useRef(false);
   const content = useSelectedTextCommentContent(comment, draft);
-  const { isShaking, requestDismissal, resetWarnings } = useCommentDismissal({
+  const { isShaking, resetWarnings } = useCommentDismissal({
     rootRef,
     isDirty: content.isDirty,
     isPopupOpenRef,
@@ -587,7 +588,7 @@ export function SelectedTextCommentEditor({
           canSave={content.canSave}
           onSave={save}
           onDelete={onDelete ? deleteComment : undefined}
-          onClose={() => requestDismissal("outside")}
+          onClose={onClose}
         />
       </div>
     </section>

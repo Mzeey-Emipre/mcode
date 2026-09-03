@@ -152,24 +152,31 @@ function useSelectedTextCommentComposerHandoffs({
   threadId,
   selectedTextComment,
   onSelectedTextCommentConsumed,
+  selectedTextCommentDeletion,
+  onSelectedTextCommentDeletionConsumed,
   selectedTextCommentEditorUpdate,
   onSelectedTextCommentEditorUpdateConsumed,
   selectedTextComments,
+  selectedTextCommentEditor,
   setSelectedTextComments,
   setSelectedTextCommentEditor,
 }: {
   readonly threadId: string | undefined;
   readonly selectedTextComment: SelectedTextComment | undefined;
   readonly onSelectedTextCommentConsumed: (() => void) | undefined;
+  readonly selectedTextCommentDeletion: SelectedTextComment | undefined;
+  readonly onSelectedTextCommentDeletionConsumed: (() => void) | undefined;
   readonly selectedTextCommentEditorUpdate: { editor: SelectedTextCommentEditorDraft | undefined } | undefined;
   readonly onSelectedTextCommentEditorUpdateConsumed: (() => void) | undefined;
   readonly selectedTextComments: readonly SelectedTextComment[];
+  readonly selectedTextCommentEditor: SelectedTextCommentEditorDraft | undefined;
   readonly setSelectedTextComments: (
     comments: readonly SelectedTextComment[],
     editor?: SelectedTextCommentEditorDraft,
   ) => void;
   readonly setSelectedTextCommentEditor: (editor: SelectedTextCommentEditorDraft | undefined) => void;
 }): void {
+  const handledDeletionRef = useRef<SelectedTextComment | undefined>(undefined);
   useEffect(() => {
     if (!threadId || !selectedTextComment || selectedTextComment.source.threadId !== threadId) return;
     setSelectedTextComments(saveSelectedTextComment(selectedTextComments, selectedTextComment));
@@ -177,6 +184,32 @@ function useSelectedTextCommentComposerHandoffs({
   }, [
     onSelectedTextCommentConsumed,
     selectedTextComment,
+    selectedTextComments,
+    setSelectedTextComments,
+    threadId,
+  ]);
+  useEffect(() => {
+    if (!selectedTextCommentDeletion) {
+      handledDeletionRef.current = undefined;
+      return;
+    }
+    if (
+      !threadId
+      || selectedTextCommentDeletion.source.threadId !== threadId
+      || handledDeletionRef.current === selectedTextCommentDeletion
+    ) return;
+    handledDeletionRef.current = selectedTextCommentDeletion;
+    setSelectedTextComments(
+      removeSelectedTextComment(selectedTextComments, selectedTextCommentDeletion.id),
+      selectedTextCommentEditor?.commentId === selectedTextCommentDeletion.id
+        ? undefined
+        : selectedTextCommentEditor,
+    );
+    onSelectedTextCommentDeletionConsumed?.();
+  }, [
+    onSelectedTextCommentDeletionConsumed,
+    selectedTextCommentDeletion,
+    selectedTextCommentEditor,
     selectedTextComments,
     setSelectedTextComments,
     threadId,
@@ -213,6 +246,10 @@ interface ComposerProps {
   selectedTextComment?: SelectedTextComment;
   /** Clears the one-shot transcript handoff after this Composer stores it. */
   onSelectedTextCommentConsumed?: () => void;
+  /** Saved transcript comment to remove from this Composer draft. */
+  selectedTextCommentDeletion?: SelectedTextComment;
+  /** Clears the one-shot transcript deletion after this Composer applies it. */
+  onSelectedTextCommentDeletionConsumed?: () => void;
   /** Pending editor update from the transcript for this ComposerDraft. */
   selectedTextCommentEditorUpdate?: { editor: SelectedTextCommentEditorDraft | undefined };
   /** Clears the consumed transcript editor update. */
@@ -243,6 +280,8 @@ export function Composer({
   onThreadCreated,
   selectedTextComment,
   onSelectedTextCommentConsumed,
+  selectedTextCommentDeletion,
+  onSelectedTextCommentDeletionConsumed,
   selectedTextCommentEditorUpdate,
   onSelectedTextCommentEditorUpdateConsumed,
   onOpenSelectedTextCommentSource,
@@ -335,9 +374,12 @@ export function Composer({
     threadId,
     selectedTextComment,
     onSelectedTextCommentConsumed,
+    selectedTextCommentDeletion,
+    onSelectedTextCommentDeletionConsumed,
     selectedTextCommentEditorUpdate,
     onSelectedTextCommentEditorUpdateConsumed,
     selectedTextComments: form.state.selectedTextComments,
+    selectedTextCommentEditor: form.state.selectedTextCommentEditor,
     setSelectedTextComments,
     setSelectedTextCommentEditor,
   });

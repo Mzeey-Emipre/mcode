@@ -80,7 +80,7 @@ describe("SelectedTextCommentEditor", () => {
 
     expect(onSave).toHaveBeenCalledWith(comment);
     expect(onAnnouncement).toHaveBeenCalledWith("Comment 1 updated.");
-    expect(onClose).toHaveBeenCalledWith({ restoreFocus: false });
+    expect(onClose).toHaveBeenCalledWith();
   });
 
   it("limits the note to the shell's available height so its own scrollbar remains usable", () => {
@@ -203,6 +203,20 @@ describe("SelectedTextCommentEditor", () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.pointerDown(document.body);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a dirty editor from its close button without arming discard confirmation", async () => {
+    const { editorRef, onAnnouncement, onClose } = renderNewEditor();
+    await vi.waitFor(() => expect(editorRef.current).not.toBeNull());
+    await act(async () => {
+      writeComposerContent(editorRef.current!, "Dirty note");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close comment editor" }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onAnnouncement).not.toHaveBeenCalledWith("Repeat this action to discard this comment.");
+    expect(screen.getByRole("dialog", { name: "Comment on selected text" })).not.toHaveClass("animate-preview-annotation-shake");
   });
 
   it("deletes a saved comment with its required announcement", () => {
