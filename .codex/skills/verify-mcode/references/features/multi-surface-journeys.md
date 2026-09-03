@@ -34,10 +34,11 @@ Use `composer-queue proof --cursor-model <id> --allow-enable-cursor --confirm-pr
 
 1. Create a New-worktree first turn through the public agent API.
 2. Wait for Git to finish the checkout before the thread is returned.
-3. Keep the first turn queued while automatic Setup reads every tracked fixture file and writes its proof marker.
-4. Remove the generated thread, worktree, workspace, and fixture repository.
+3. Keep the first turn queued while automatic Setup reads every tracked fixture file, records its PID, and writes its proof marker.
+4. Cancel startup through the public API. Confirm the terminal startup state, stopped Setup process, interrupted Setup attempt, queued first turn, and no agent runtime.
+5. Remove the generated thread, worktree, workspace, and fixture repository.
 
-Use `runtime worktree-setup --confirm-cleanup` for the public server proof. The Setup command remains running after the marker, so the queued turn cannot call a provider.
+Use `runtime worktree-setup --confirm-cleanup` for the public server proof. The command cancels the held Setup before it removes the owned fixture. The queued turn cannot call a provider.
 
 ## Completed managed-worktree thread
 
@@ -53,15 +54,17 @@ Use `thread-lifecycle proof --confirm-cleanup` for the desktop action and receip
 1. Drag across assistant text in the Electron transcript and open the compact comment editor.
 2. Load the selected thread's Claude skill catalog and select the owned project skill.
 3. Load workspace files and select `README.md` as a typed mention.
-4. Save the multiline comment into the active composer draft.
-5. Drag across the text again and right-click it.
+4. Save two multiline comments into the active composer draft.
+5. Select one source card to navigate, use its numbered marker to edit and delete, then delete another card directly.
+6. Switch away from the thread and back. Confirm that saved cards and an open unsaved editor restore.
+7. Drag across the text again and right-click it.
 
-Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, and composer-draft result. The proof does not send a provider turn.
+Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, aggregate cards, source markers, marker deletion, and direct card actions. Use focused composer-session tests for thread-switch editor restoration. The proof does not send a provider turn.
 
 ## Coverage gaps
 
 - The provider workflows need an available model and a logged-in provider CLI. Record missing access as a blocked provider path.
 - The public subscription begins after thread creation. It cannot show lossless events before creation.
 - The completed-thread proof does not wait one day. Its focused integration checks use a controlled clock for the retention path.
-- The selected-text comment proof cannot inspect the hidden `MessageMention[]` payload without sending a provider turn. The focused editor test covers that payload.
+- The selected-text comment proof cannot inspect the hidden `MessageMention[]` payload or restore an off-screen source without sending a provider turn. Focused tests cover the payload and unavailable-source card state.
 - The Composer queue matrix needs exact listed models and logged-in provider CLIs. `--allow-enable-cursor` temporarily changes only the owned Electron session's Cursor setting. In the 09:42 matrix, Codex showed root and A with B as the only queued row, while runtime logs showed root, A, and B sends in FIFO order. Its event-gated receipt was inconclusive. Cursor enabled and restored successfully, but its root did not complete in 120 seconds while A and B remained queued. Cursor is a live application or provider failure, not a disabled-provider blocker. Retain this gap until Codex passes with the visible admission oracle and Cursor completes its root turn.

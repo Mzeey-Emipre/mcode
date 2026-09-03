@@ -2,7 +2,7 @@ import React from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentEvent } from "@mcode/contracts";
+import type { AgentEvent, SelectedTextComment } from "@mcode/contracts";
 import { Composer } from "../../Composer";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
@@ -19,6 +19,7 @@ import {
 } from "@/stores/thread-store-test-utils";
 import { useThreadStore } from "@/stores/threadStore";
 import { useToastStore } from "@/stores/toastStore";
+import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { mockTransport, createMockThread, createMockWorkspace } from "@/__tests__/mocks/transport";
 import type { GitBranch } from "@/transport";
 
@@ -26,6 +27,37 @@ let lastComposerText = "";
 let lastFileAutocompleteOptions: Record<string, unknown> | undefined;
 let lastSlashCommandOptions: Record<string, unknown> | undefined;
 const EMPTY_QUEUE: [] = [];
+
+const transcriptComments: readonly SelectedTextComment[] = [
+  {
+    id: "11111111-1111-4111-8111-111111111111",
+    displayNumber: 1,
+    source: {
+      threadId: "thread-comment",
+      messageId: "message-1",
+      sourceRole: "assistant",
+      start: 0,
+      end: 5,
+      quote: "First",
+    },
+    note: "First note",
+    mentions: [],
+  },
+  {
+    id: "22222222-2222-4222-8222-222222222222",
+    displayNumber: 2,
+    source: {
+      threadId: "thread-comment",
+      messageId: "message-1",
+      sourceRole: "assistant",
+      start: 6,
+      end: 12,
+      quote: "Second",
+    },
+    note: "Second note",
+    mentions: [],
+  },
+];
 
 const branch = (name: string, isCurrent = false): GitBranch => ({
   name,
@@ -43,9 +75,11 @@ vi.mock("@/components/chat/lexical", () => ({
   ComposerEditor: ({
     onChange,
     editorRef,
+    ariaLabel,
   }: {
     onChange: (text: string, mentions: []) => void;
     editorRef: React.MutableRefObject<{ update: (fn: () => void) => void; focus: () => void } | null>;
+    ariaLabel?: string;
   }) => {
     React.useEffect(() => {
       editorRef.current = {
@@ -56,7 +90,7 @@ vi.mock("@/components/chat/lexical", () => ({
 
     return (
       <textarea
-        aria-label="Message Mcode"
+        aria-label={ariaLabel}
         onChange={(event) => {
           lastComposerText = event.target.value;
           onChange(event.target.value, []);
@@ -352,6 +386,7 @@ describe("Composer checkout confirmation", () => {
     lastFileAutocompleteOptions = undefined;
     lastSlashCommandOptions = undefined;
     resetThreadStoreForTests({ runningThreadIds: new Set() });
+    useComposerDraftStore.setState({ drafts: {}, pendingPrefill: null });
     useQueueStore.setState({
       queues: {},
       inFlightQueuedMessages: {},
@@ -402,6 +437,51 @@ describe("Composer checkout confirmation", () => {
     expect(within(strip).getByText(workspace.name)).toBeInTheDocument();
     expect(within(strip).getByTestId("mode-selector")).toHaveTextContent("direct");
     expect(within(strip).getByTestId("branch-picker")).toHaveTextContent("feature/base");
+  });
+
+  it("applies a transcript deletion to the matching ComposerDraft and consumes the handoff", async () => {
+    const workspace = seedComposerState("direct");
+    const thread = createMockThread({
+      id: "thread-comment",
+      workspace_id: workspace.id,
+      mode: "direct",
+      provider: "claude",
+    });
+    useWorkspaceStore.setState({ threads: [thread], activeThreadId: thread.id });
+    useComposerDraftStore.setState({
+      drafts: {
+        [thread.id]: {
+          input: "",
+          attachments: [],
+          modelId: "model",
+          reasoning: "low",
+          selectedTextComments: [...transcriptComments],
+        },
+      },
+    });
+    const onSelectedTextCommentDeletionConsumed = vi.fn();
+
+    const { rerender } = render(
+      <Composer
+        threadId={thread.id}
+        workspaceId={workspace.id}
+      />,
+    );
+    await screen.findByTestId("selected-text-comment-attachment");
+    expect(screen.getByLabelText("Message Mcode")).toBeVisible();
+    rerender(
+      <Composer
+        threadId={thread.id}
+        workspaceId={workspace.id}
+        selectedTextCommentDeletion={transcriptComments[0]}
+        onSelectedTextCommentDeletionConsumed={onSelectedTextCommentDeletionConsumed}
+      />,
+    );
+
+    await waitFor(() => expect(useComposerDraftStore.getState().drafts[thread.id]?.selectedTextComments).toEqual([
+      expect.objectContaining({ id: transcriptComments[1]!.id, displayNumber: 1 }),
+    ]));
+    expect(onSelectedTextCommentDeletionConsumed).toHaveBeenCalledOnce();
   });
 
   it("shows a non-git project as local without checkout controls", () => {
@@ -604,6 +684,53 @@ describe("Composer checkout confirmation", () => {
         expect.objectContaining({ id: "thread-created" }),
       ),
     );
+  });
+
+  it("reports the optimistic startup row before the durable thread resolves", async () => {
+    seedComposerState("worktree");
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    const onThreadPreparing = vi.fn();
+    render(
+      <Composer
+        isNewThread
+        workspaceId="ws-1"
+        onThreadPreparing={onThreadPreparing}
+      />,
+    );
+
+    await typeAndSend();
+
+    await waitFor(() => expect(onThreadPreparing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspace_id: "ws-1",
+        clientPreparing: true,
+        clientStartupId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      }),
+    ));
+  });
+
+  it("reports a failed new-thread request after exposing its optimistic startup row", async () => {
+    seedComposerState("worktree");
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("thread creation failed"),
+    );
+    const onThreadPreparing = vi.fn();
+    const onThreadCreationFailed = vi.fn();
+    render(
+      <Composer
+        isNewThread
+        workspaceId="ws-1"
+        onThreadPreparing={onThreadPreparing}
+        onThreadCreationFailed={onThreadCreationFailed}
+      />,
+    );
+
+    await typeAndSend();
+
+    await waitFor(() => expect(onThreadPreparing).toHaveBeenCalledOnce());
+    expect(onThreadCreationFailed).toHaveBeenCalledOnce();
   });
 
   it("clears annotations and comments after a successful feedback send", async () => {

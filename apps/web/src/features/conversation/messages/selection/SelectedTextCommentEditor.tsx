@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import type { LexicalEditor } from "lexical";
 import type { MessageMention, SelectedTextComment } from "@mcode/contracts";
-import { Check, X } from "lucide-react";
+import { Check, Trash2, X } from "lucide-react";
 import {
   ComposerEditor,
   createMentionNodeData,
@@ -16,6 +16,7 @@ import { useFileAutocomplete, type MentionSuggestion } from "@/components/chat/u
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import { writeComposerContent } from "@/features/conversation/composer/draft/composer-editor-content";
 import type { SelectedTextCommentSource } from "../selected-text-projection";
 import {
@@ -26,6 +27,7 @@ import {
 } from "./comment-editor-model";
 
 const EMPTY_MENTIONS: readonly MessageMention[] = [];
+const COMMENT_EDITOR_VERTICAL_CHROME = 10;
 
 /** Props for the compact editor that creates or updates one selected-text comment. */
 export interface SelectedTextCommentEditorProps {
@@ -33,18 +35,28 @@ export interface SelectedTextCommentEditorProps {
   readonly source: SelectedTextCommentSource;
   /** Saved comment to edit. Omit for a new comment. */
   readonly comment?: SelectedTextComment;
+  /** Persisted editor state to restore after a thread switch. */
+  readonly draft?: SelectedTextCommentEditorDraft;
+  /** Creation-order display number for a new saved comment. */
+  readonly nextDisplayNumber?: number;
   /** Workspace that scopes mention and slash suggestions. */
   readonly workspaceId?: string;
   /** Provider that scopes mention and slash suggestions. */
   readonly providerId?: string;
+  /** Maximum visible editor height derived from the transcript viewport. */
+  readonly maxHeight?: number;
   /** Receives the compact Lexical editor for owner-managed focus. */
   readonly editorRef?: MutableRefObject<LexicalEditor | null>;
+  /** Receives the rendered editor element for current-size positioning. */
+  readonly onElementChange?: (element: HTMLElement | null) => void;
   /** Stores the saved comment state. */
   readonly onSave: (comment: SelectedTextComment) => void;
   /** Removes the saved comment state. */
   readonly onDelete?: (comment: SelectedTextComment) => void;
-  /** Closes the editor. */
-  readonly onClose: () => void;
+  /** Persists note, mention, and dismissal-warning changes without saving the comment. */
+  readonly onDraftChange?: (draft: SelectedTextCommentEditorDraft) => void;
+  /** Closes the editor and optionally restores focus to its invoker. */
+  readonly onClose: (options?: { readonly restoreFocus?: boolean }) => void;
   /** Announces editor state changes to the persistent live region. */
   readonly onAnnouncement: (message: string) => void;
 }
@@ -70,22 +82,29 @@ function useCommentDismissal({
   isPopupOpenRef,
   onClose,
   onAnnouncement,
+  onWarningsChange,
+  initialEscapeWarned = false,
+  initialOutsideWarned = false,
 }: {
   readonly rootRef: RefObject<HTMLElement | null>;
   readonly isDirty: boolean;
   readonly isPopupOpenRef: RefObject<boolean>;
   readonly onClose: () => void;
   readonly onAnnouncement: (message: string) => void;
+  readonly onWarningsChange?: (escapeWarned: boolean, outsideWarned: boolean) => void;
+  readonly initialEscapeWarned?: boolean;
+  readonly initialOutsideWarned?: boolean;
 }) {
-  const [escapeWarned, setEscapeWarned] = useState(false);
-  const [outsideWarned, setOutsideWarned] = useState(false);
+  const [escapeWarned, setEscapeWarned] = useState(initialEscapeWarned);
+  const [outsideWarned, setOutsideWarned] = useState(initialOutsideWarned);
   const [isShaking, setIsShaking] = useState(false);
 
   const resetWarnings = useCallback(() => {
     setEscapeWarned(false);
     setOutsideWarned(false);
     setIsShaking(false);
-  }, []);
+    onWarningsChange?.(false, false);
+  }, [onWarningsChange]);
 
   const requestDismissal = useCallback((family: CommentDismissalFamily) => {
     const decision = decideCommentDismissal({
@@ -101,10 +120,15 @@ function useCommentDismissal({
     }
     setIsShaking(false);
     requestAnimationFrame(() => setIsShaking(true));
-    if (family === "escape") setEscapeWarned(true);
-    else setOutsideWarned(true);
+    if (family === "escape") {
+      setEscapeWarned(true);
+      onWarningsChange?.(true, outsideWarned);
+    } else {
+      setOutsideWarned(true);
+      onWarningsChange?.(escapeWarned, true);
+    }
     onAnnouncement(decision.announcement);
-  }, [escapeWarned, isDirty, onAnnouncement, onClose, outsideWarned, resetWarnings]);
+  }, [escapeWarned, isDirty, onAnnouncement, onClose, onWarningsChange, outsideWarned, resetWarnings]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -140,8 +164,10 @@ function CommentEditorComposer({
   savedNote,
   savedMentions,
   editorRef,
+  contentEditableRef,
   rootRef,
   isPopupOpenRef,
+  maxHeight,
   onChange,
   onSubmit,
 }: {
@@ -151,8 +177,10 @@ function CommentEditorComposer({
   readonly savedNote: string;
   readonly savedMentions: readonly MessageMention[];
   readonly editorRef: MutableRefObject<LexicalEditor | null>;
+  readonly contentEditableRef: React.Ref<HTMLDivElement>;
   readonly rootRef: RefObject<HTMLElement | null>;
   readonly isPopupOpenRef: RefObject<boolean>;
+  readonly maxHeight?: number;
   readonly onChange: (note: string, mentions: MessageMention[]) => void;
   readonly onSubmit: () => void;
 }) {
@@ -167,8 +195,7 @@ function CommentEditorComposer({
   isPopupOpenRef.current = fileAutocomplete.isOpen || slashCommand.isOpen;
 
   useEffect(() => {
-    const editor = editorRef.current;
-    const frame = requestAnimationFrame(() => editor?.focus());
+    const frame = requestAnimationFrame(() => editorRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [editorRef]);
 
@@ -238,11 +265,14 @@ function CommentEditorComposer({
         onSlashDismiss={slashCommand.onDismiss}
         isSlashPopupOpen={slashCommand.isOpen}
         editorRef={editorRef}
+        contentEditableRef={contentEditableRef}
+        autoFocus
         id="selected-text-comment-note"
         ariaLabel="Comment note"
         placeholder="Write a note"
         submitOnEnter={false}
         compact
+        compactMaxHeight={maxHeight}
         isPopupOpen={isPopupOpenRef.current}
         onPopupKeyDown={handlePopupKeyDown}
       />
@@ -282,23 +312,6 @@ function CommentEditorControls({
 }) {
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <Tooltip>
-        <TooltipTrigger
-          render={(
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              className="rounded-full"
-              aria-label="Close comment editor"
-              onClick={onClose}
-            >
-              <X size={14} aria-hidden />
-            </Button>
-          )}
-        />
-        <TooltipContent>Close comment editor</TooltipContent>
-      </Tooltip>
       {canSave && (
         <Tooltip>
           <TooltipTrigger
@@ -306,7 +319,7 @@ function CommentEditorControls({
               <Button
                 type="button"
                 size="icon-xs"
-                className="rounded-full"
+                className="order-2 rounded-full"
                 aria-label={comment ? "Save comment" : "Add comment"}
                 onClick={onSave}
               >
@@ -325,78 +338,229 @@ function CommentEditorControls({
                 type="button"
                 size="icon-xs"
                 variant="ghost"
-                className="rounded-full text-destructive hover:text-destructive"
+                className="order-3 rounded-full text-destructive hover:text-destructive"
                 aria-label="Delete comment"
                 onClick={onDelete}
               >
-                <X size={14} aria-hidden />
+                <Trash2 size={14} aria-hidden />
               </Button>
             )}
           />
           <TooltipContent>Delete comment</TooltipContent>
         </Tooltip>
       )}
+      <Tooltip>
+        <TooltipTrigger
+          render={(
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="order-1 rounded-full"
+              aria-label="Close comment editor"
+              onClick={onClose}
+            >
+              <X size={14} aria-hidden />
+            </Button>
+          )}
+        />
+        <TooltipContent>Close comment editor</TooltipContent>
+      </Tooltip>
     </div>
   );
+}
+
+function useSelectedTextCommentContent(
+  comment: SelectedTextComment | undefined,
+  draft: SelectedTextCommentEditorDraft | undefined,
+) {
+  const { note: savedNote, mentions: savedMentions } = savedCommentContent(comment);
+  const initialContentRef = useRef({
+    note: draft?.note ?? savedNote,
+    mentions: [...(draft?.mentions ?? savedMentions)],
+  });
+  const [note, setNote] = useState(initialContentRef.current.note);
+  const [mentions, setMentions] = useState<MessageMention[]>(initialContentRef.current.mentions);
+  return {
+    initialContent: initialContentRef.current,
+    note,
+    mentions,
+    setNote,
+    setMentions,
+    canSave: canSaveSelectedTextComment(note, mentions),
+    isDirty: note !== savedNote || !mentionsMatch(mentions, savedMentions),
+  };
+}
+
+function createEditorDraft(
+  source: SelectedTextCommentSource,
+  comment: SelectedTextComment | undefined,
+  draft: SelectedTextCommentEditorDraft | undefined,
+  note: string,
+  mentions: MessageMention[],
+  escapeWarned: boolean,
+  outsideWarned: boolean,
+): SelectedTextCommentEditorDraft {
+  return {
+    source,
+    commentId: comment?.id,
+    note,
+    mentions,
+    escapeWarned,
+    outsideWarned,
+    anchor: draft?.anchor ?? "source",
+  };
+}
+
+function useSelectedTextCommentEditorActions({
+  source,
+  comment,
+  draft,
+  nextDisplayNumber,
+  note,
+  mentions,
+  canSave,
+  setNote,
+  setMentions,
+  resetWarnings,
+  onDraftChange,
+  onSave,
+  onDelete,
+  onClose,
+  onAnnouncement,
+}: {
+  readonly source: SelectedTextCommentSource;
+  readonly comment: SelectedTextComment | undefined;
+  readonly draft: SelectedTextCommentEditorDraft | undefined;
+  readonly nextDisplayNumber: number;
+  readonly note: string;
+  readonly mentions: MessageMention[];
+  readonly canSave: boolean;
+  readonly setNote: (note: string) => void;
+  readonly setMentions: (mentions: MessageMention[]) => void;
+  readonly resetWarnings: () => void;
+  readonly onDraftChange: SelectedTextCommentEditorProps["onDraftChange"];
+  readonly onSave: (comment: SelectedTextComment) => void;
+  readonly onDelete: SelectedTextCommentEditorProps["onDelete"];
+  readonly onClose: SelectedTextCommentEditorProps["onClose"];
+  readonly onAnnouncement: (message: string) => void;
+}) {
+  const persist = useCallback((nextNote: string, nextMentions: MessageMention[]) => {
+    const nextDraft = createEditorDraft(
+      source,
+      comment,
+      draft,
+      nextNote,
+      nextMentions,
+      false,
+      false,
+    );
+    onDraftChange?.(nextDraft);
+  }, [comment, draft, onDraftChange, source]);
+  const handleChange = useCallback((nextNote: string, nextMentions: MessageMention[]) => {
+    setNote(nextNote);
+    setMentions(nextMentions);
+    resetWarnings();
+    persist(nextNote, nextMentions);
+  }, [persist, resetWarnings, setMentions, setNote]);
+  const save = useCallback(() => {
+    if (!canSave) return;
+    const nextComment = buildSelectedTextComment({
+      comment,
+      source,
+      note,
+      mentions,
+      displayNumber: nextDisplayNumber,
+    });
+    resetWarnings();
+    onSave(nextComment);
+    onAnnouncement(`Comment ${nextComment.displayNumber} ${comment ? "updated" : "added"}.`);
+    if (comment) onClose();
+    else onClose({ restoreFocus: false });
+  }, [canSave, comment, mentions, nextDisplayNumber, note, onAnnouncement, onClose, onSave, resetWarnings, source]);
+  const deleteComment = useCallback(() => {
+    if (!comment || !onDelete) return;
+    resetWarnings();
+    onDelete(comment);
+    onAnnouncement("Comment deleted.");
+    onClose({ restoreFocus: false });
+  }, [comment, onAnnouncement, onClose, onDelete, resetWarnings]);
+  return { handleChange, save, deleteComment };
 }
 
 /** Renders the prototype compact ComposerEditor and comment dismissal policy. */
 export function SelectedTextCommentEditor({
   source,
   comment,
+  draft,
+  nextDisplayNumber = 1,
   workspaceId,
   providerId,
+  maxHeight,
   editorRef: providedEditorRef,
   onSave,
   onDelete,
+  onDraftChange,
   onClose,
+  onElementChange,
   onAnnouncement,
 }: SelectedTextCommentEditorProps) {
   const rootRef = useRef<HTMLElement | null>(null);
   const ownedEditorRef = useRef<LexicalEditor | null>(null);
   const editorRef = providedEditorRef ?? ownedEditorRef;
+  const setRootElement = useCallback((element: HTMLElement | null) => {
+    rootRef.current = element;
+    onElementChange?.(element);
+  }, [onElementChange]);
+  const focusNoteOnMount = useCallback((element: HTMLDivElement | null) => {
+    element?.focus();
+  }, []);
   const isPopupOpenRef = useRef(false);
-  const { note: savedNote, mentions: savedMentions } = savedCommentContent(comment);
-  const [note, setNote] = useState(savedNote);
-  const [mentions, setMentions] = useState<MessageMention[]>(() => [...savedMentions]);
-  const canSave = canSaveSelectedTextComment(note, mentions);
-  const isDirty = note !== savedNote || !mentionsMatch(mentions, savedMentions);
-  const { isShaking, requestDismissal, resetWarnings } = useCommentDismissal({
+  const content = useSelectedTextCommentContent(comment, draft);
+  const { isShaking, resetWarnings } = useCommentDismissal({
     rootRef,
-    isDirty,
+    isDirty: content.isDirty,
     isPopupOpenRef,
+    onClose,
+    onAnnouncement,
+    onWarningsChange: (escapeWarned, outsideWarned) => {
+      onDraftChange?.(createEditorDraft(
+        source,
+        comment,
+        draft,
+        content.note,
+        content.mentions,
+        escapeWarned,
+        outsideWarned,
+      ));
+    },
+    initialEscapeWarned: draft?.escapeWarned,
+    initialOutsideWarned: draft?.outsideWarned,
+  });
+  const { handleChange, save, deleteComment } = useSelectedTextCommentEditorActions({
+    source,
+    comment,
+    draft,
+    nextDisplayNumber,
+    note: content.note,
+    mentions: content.mentions,
+    canSave: content.canSave,
+    setNote: content.setNote,
+    setMentions: content.setMentions,
+    resetWarnings,
+    onDraftChange,
+    onSave,
+    onDelete,
     onClose,
     onAnnouncement,
   });
 
-  const handleChange = useCallback((nextNote: string, nextMentions: MessageMention[]) => {
-    setNote(nextNote);
-    setMentions(nextMentions);
-    resetWarnings();
-  }, [resetWarnings]);
-
-  const save = useCallback(() => {
-    if (!canSave) return;
-    const nextComment = buildSelectedTextComment({ comment, source, note, mentions });
-    resetWarnings();
-    onSave(nextComment);
-    onAnnouncement(`Comment ${nextComment.displayNumber} ${comment ? "updated" : "added"}.`);
-    onClose();
-  }, [canSave, comment, mentions, note, onAnnouncement, onClose, onSave, resetWarnings, source]);
-
-  const deleteComment = useCallback(() => {
-    if (!comment || !onDelete) return;
-    resetWarnings();
-    onDelete(comment);
-    onAnnouncement("Comment deleted.");
-    onClose();
-  }, [comment, onAnnouncement, onClose, onDelete, resetWarnings]);
-
   return (
     <section
-      ref={rootRef}
+      ref={setRootElement}
       role="dialog"
       aria-label="Comment on selected text"
+      style={{ maxHeight }}
       className={cn(
         "relative overflow-hidden rounded-2xl border border-border/70 bg-popover text-popover-foreground shadow-lg",
         isShaking && "animate-preview-annotation-shake",
@@ -408,21 +572,23 @@ export function SelectedTextCommentEditor({
             source={source}
             workspaceId={workspaceId}
             providerId={providerId}
-            savedNote={savedNote}
-            savedMentions={savedMentions}
+            savedNote={content.initialContent.note}
+            savedMentions={content.initialContent.mentions}
             editorRef={editorRef}
+            contentEditableRef={focusNoteOnMount}
             rootRef={rootRef}
             isPopupOpenRef={isPopupOpenRef}
+            maxHeight={maxHeight === undefined ? undefined : Math.max(0, maxHeight - COMMENT_EDITOR_VERTICAL_CHROME)}
             onChange={handleChange}
             onSubmit={save}
           />
         </div>
         <CommentEditorControls
           comment={comment}
-          canSave={canSave}
+          canSave={content.canSave}
           onSave={save}
           onDelete={onDelete ? deleteComment : undefined}
-          onClose={() => requestDismissal("outside")}
+          onClose={onClose}
         />
       </div>
     </section>

@@ -313,6 +313,7 @@ export type { MessageMention } from "./models/mention.js";
 export {
   MAX_SELECTED_TEXT_COMMENTS,
   MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS,
+  MAX_SELECTED_TEXT_COMMENT_TOTAL_CHARS,
   SelectedTextCommentSourceSchema,
   SelectedTextCommentSchema,
   SelectedTextCommentsSchema,
@@ -968,6 +969,45 @@ export {
   PullRequestMergeRequestSchema,
   PullRequestMergeResultSchema,
 } from "./pull-requests.js";
+
+// Thread startup
+export {
+  THREAD_STARTUP_TRANSCRIPT_MAX_ENTRIES,
+  THREAD_STARTUP_TRANSCRIPT_ENTRY_MAX_CHARS,
+  THREAD_STARTUP_TRANSCRIPT_MAX_CHARS,
+  ThreadStartupKindSchema,
+  ThreadStartupPhaseSchema,
+  ThreadStartupStateSchema,
+  ThreadStartupStepStateSchema,
+  ThreadStartupCancellationSchema,
+  ThreadStartupStepSchema,
+  ThreadStartupTranscriptEntrySchema,
+  ThreadStartupErrorSchema,
+  ThreadStartupBlockSchema,
+  ThreadStartupSchema,
+  ThreadStartupStartInputSchema,
+  ThreadStartupGetInputSchema,
+  ThreadStartupListInputSchema,
+  ThreadStartupListResultSchema,
+  ThreadStartupCancelInputSchema,
+} from "./thread-startup.js";
+export type {
+  ThreadStartupKind,
+  ThreadStartupPhase,
+  ThreadStartupState,
+  ThreadStartupStepState,
+  ThreadStartupCancellation,
+  ThreadStartupStep,
+  ThreadStartupTranscriptEntry,
+  ThreadStartupError,
+  ThreadStartupBlock,
+  ThreadStartup,
+  ThreadStartupStartInput,
+  ThreadStartupGetInput,
+  ThreadStartupListInput,
+  ThreadStartupListResult,
+  ThreadStartupCancelInput,
+} from "./thread-startup.js";
 export type {
   PullRequestProvider,
   PullRequestOperationId,

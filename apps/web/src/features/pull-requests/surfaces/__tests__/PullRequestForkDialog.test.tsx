@@ -43,12 +43,31 @@ vi.mock("@/stores/composerDraftStore", () => ({
 vi.mock("@/features/conversation", () => ({
   Composer: ({
     workspaceId,
+    onThreadPreparing,
     onThreadCreated,
   }: {
     workspaceId: string;
+    onThreadPreparing: (thread: {
+      id: string;
+      workspace_id: string;
+      clientPreparing: boolean;
+      clientStartupId: string;
+    }) => void;
+    onThreadCreationFailed: () => void;
     onThreadCreated: (thread: { id: string }) => void;
   }) => (
     <div data-testid="fork-composer" data-workspace-id={workspaceId}>
+      <button
+        type="button"
+        onClick={() => onThreadPreparing({
+          id: "thread-placeholder",
+          workspace_id: workspaceId,
+          clientPreparing: true,
+          clientStartupId: "00000000-0000-4000-8000-000000000001",
+        })}
+      >
+        Start pending fork
+      </button>
       <button
         type="button"
         onClick={() => onThreadCreated({ id: "thread-created" })}
@@ -204,6 +223,12 @@ describe("PullRequestForkDialog", () => {
     expect(transport.createReviewTask).toHaveBeenCalledWith(
       expect.objectContaining({ action: "prepare", identity: detail.identity }),
     );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Start pending fork" }));
+    expect(screen.getByTestId("startup-progress")).toHaveTextContent(
+      "Preparing managed checkout",
+    );
+
   });
 
   it("prefills the Composer with selected review feedback", async () => {

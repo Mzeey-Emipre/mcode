@@ -1,5 +1,8 @@
 import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
+import {
+  THREAD_STARTUP_TRANSCRIPT_ENTRY_MAX_CHARS,
+} from "@mcode/contracts";
 import type {
   InteractionMode,
   ProviderId,
@@ -24,6 +27,7 @@ import {
   GitRepositoryService,
   PullRequestReviewGitService,
   PullRequestReviewGitError,
+  type PullRequestReviewGitObserver,
   type PullRequestReviewGitSource,
 } from "../../projects/index.js";
 import { AgentService } from "../../agents/index.js";
@@ -34,10 +38,12 @@ import {
   PullRequestService,
   type PullRequestReviewTaskSource,
 } from "../queries/pull-request-service.js";
+import { ThreadStartupService } from "../../thread-startup/thread-startup-service.js";
 
 const MAX_WORKSPACE_MAPPINGS = 50;
 const REVIEW_CONTEXT_MAX_BYTES = 48 * 1_024;
 const PROVIDER_STARTUP_GRACE_MS = 250;
+const TERMINAL_STARTUP_STATES = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
 interface ResolvedReviewSource {
   remote: PullRequestReviewTaskSource;
@@ -58,6 +64,12 @@ class CanonicalReviewTaskWonError extends Error {
   }
 }
 
+class ReviewStartupCancelledError extends Error {
+  constructor() {
+    super("Review task startup was cancelled");
+  }
+}
+
 function identityKey(identity: PullRequestIdentity): string {
   return `${identity.provider}\0${identity.repositoryNodeId}\0${identity.number}`;
 }
@@ -74,6 +86,13 @@ function truncateUtf8(value: string, maxBytes: number): string {
 
 function boundedRemoteText(value: string, maxBytes: number): string {
   return truncateUtf8(value.replace(/\0/g, ""), maxBytes);
+}
+
+function safeStartupOutput(value: string): string {
+  return value
+    .replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/\s@]*@/g, "$1[redacted]@")
+    .replace(/([?&](?:access[_-]?)?(?:token|password|secret|credential)=)[^&#\s]+/gi, "$1[redacted]")
+    .replace(/\b((?:access[_-]?)?(?:token|password|secret|authorization|credential))\s*[:=]\s*\S+/gi, "$1=[redacted]");
 }
 
 function pullRequestIdentityFromLink(link: PullRequestReviewLink): PullRequestIdentity | null {
@@ -113,43 +132,52 @@ export class ReviewWorktreeService {
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject(ProviderAvailabilityService)
     private readonly providerAvailability: ProviderAvailabilityService,
+    @inject(ThreadStartupService)
+    private readonly threadStartups: ThreadStartupService,
   ) {}
 
   /** Prepare or complete the confirmed local Review task flow. */
   async createReviewTask(
     request: PullRequestCreateReviewTaskRequest,
   ): Promise<PullRequestCreateReviewTaskResult> {
-    return this.withIdentityLock(request.identity, async () => {
-      const canonical = this.findActiveCanonicalLink(request.identity);
-      if (canonical) {
-        return {
-          ok: true,
-          status: "ready",
-          reused: true,
-          reviewLink: canonical,
-        };
-      }
-
-      try {
-        return await this.createReviewTaskUnderLock(request);
-      } catch (error) {
-        return { ok: false, error: this.toPullRequestError(error) };
-      }
-    });
+    let startupId: string | undefined;
+    try {
+      startupId = this.startReviewStartup(request);
+      return await this.withIdentityLock(request.identity, async () => {
+        const canonical = this.findActiveCanonicalLink(request.identity);
+        if (canonical) {
+          this.completeExistingReviewStartup(startupId, canonical.threadId);
+          return { ok: true, status: "ready", reused: true, reviewLink: canonical };
+        }
+        return await this.createReviewTaskUnderLock(request, startupId);
+      });
+    } catch (error) {
+      if (error instanceof ReviewStartupCancelledError) this.markReviewStartupCancelled(startupId);
+      else this.failReviewStartup(startupId);
+      return { ok: false, error: this.toPullRequestError(error) };
+    }
   }
 
   private async createReviewTaskUnderLock(
     request: PullRequestCreateReviewTaskRequest,
+    startupId: string | undefined,
   ): Promise<PullRequestCreateReviewTaskResult> {
     const source = await this.loadAndValidateSource(request.identity);
     const workspace = await this.resolveWorkspace(source.git.baseRepositoryUrl, request.workspaceId);
-    if ("error" in workspace) return { ok: false, error: workspace.error };
-    const compatible = await this.pullRequestReviews.findCompatiblePullRequestReviewWorktrees(
-      workspace.workspace.path,
-      source.git,
-    );
-    if (request.action === "prepare") return this.prepareReviewTask(source, workspace, compatible);
-    return this.completeReviewTask(request, source, workspace);
+    if ("error" in workspace) {
+      this.failReviewStartup(startupId);
+      return { ok: false, error: workspace.error };
+    }
+    if (request.action === "prepare") {
+      const compatible = await this.pullRequestReviews.findCompatiblePullRequestReviewWorktrees(
+        workspace.workspace.path,
+        source.git,
+      );
+      return this.prepareReviewTask(source, workspace, compatible);
+    }
+    this.advanceReviewStartup(startupId, "worktree");
+    this.cancelReviewStartupIfRequested(startupId);
+    return await this.completeReviewTask(request, source, workspace, startupId);
   }
 
   private prepareReviewTask(
@@ -179,19 +207,32 @@ export class ReviewWorktreeService {
     request: Exclude<PullRequestCreateReviewTaskRequest, { action: "prepare" }>,
     source: ResolvedReviewSource,
     workspace: Exclude<Awaited<ReturnType<ReviewWorktreeService["resolveWorkspace"]>>, { error: PullRequestError }>,
+    startupId: string | undefined,
   ): Promise<PullRequestCreateReviewTaskResult> {
     if (source.contract.expectedHeadOid.toLowerCase() !== request.expectedHeadOid.toLowerCase()) {
+      this.failReviewStartup(startupId);
       return { ok: false, error: { code: "conflict", message: "The pull request head changed. Refresh before creating the Review task." } };
     }
-    const mutation = await this.provisionReviewTask(request, source, workspace.workspace.id, workspace.workspace.path);
+    const mutation = await this.provisionReviewTask(
+      request,
+      source,
+      workspace.workspace.id,
+      workspace.workspace.path,
+      startupId,
+    );
     if (mutation instanceof CanonicalReviewTaskWonError) {
+      this.completeExistingReviewStartup(startupId, mutation.winner.threadId);
       return { ok: true, status: "ready", reused: true, reviewLink: mutation.winner };
     }
     if (mutation.kind === "requires_reuse") {
       return { ok: true, status: "existing_worktree", source: source.contract,
         workspace: workspace.candidate, worktree: mutation.candidate };
     }
+    this.bindReviewStartup(startupId, mutation.value.threadId);
+    this.cancelReviewStartupIfRequested(startupId);
+    this.advanceReviewStartup(startupId, "agent");
     const warnings = await this.seedInitialContext(mutation.value.threadId, request.intent, source.remote);
+    this.completeReviewStartup(startupId);
     return { ok: true, status: "ready", reused: false, reviewLink: mutation.value.link,
       ...(warnings.length > 0 ? { warnings } : {}) };
   }
@@ -201,6 +242,7 @@ export class ReviewWorktreeService {
     source: ResolvedReviewSource,
     workspaceId: string,
     workspacePath: string,
+    startupId: string | undefined,
   ): Promise<
     | ReviewTaskProvisionResult
     | CanonicalReviewTaskWonError
@@ -212,7 +254,11 @@ export class ReviewWorktreeService {
         request.action === "create_new"
           ? { action: "create_new", worktreeName: request.worktreeName }
           : { action: "reuse_existing", candidateId: request.candidateId },
-        (provisioned) => this.persistCanonicalReviewTask(request.identity, source, workspaceId, provisioned),
+        (provisioned) => {
+          this.throwIfReviewStartupCancelled(startupId);
+          return this.persistCanonicalReviewTask(request.identity, source, workspaceId, provisioned);
+        },
+        this.reviewStartupReporter(startupId),
       );
     } catch (error) {
       if (error instanceof CanonicalReviewTaskWonError) return error;
@@ -315,6 +361,99 @@ export class ReviewWorktreeService {
     } finally {
       release();
       if (this.identityLocks.get(key) === tail) this.identityLocks.delete(key);
+    }
+  }
+
+  private startReviewStartup(request: PullRequestCreateReviewTaskRequest): string | undefined {
+    if (request.action === "prepare" || !request.startupId || !this.threadStartups) return undefined;
+    const startup = this.threadStartups.start({
+      startupId: request.startupId,
+      workspaceId: request.workspaceId,
+      kind: "pull-request-review",
+    });
+    if (startup.state === "pending") this.threadStartups.advance(startup.startupId, "thread");
+    this.cancelReviewStartupIfRequested(startup.startupId);
+    return startup.startupId;
+  }
+
+  private completeExistingReviewStartup(startupId: string | undefined, threadId: string): void {
+    this.bindReviewStartup(startupId, threadId);
+    this.advanceReviewStartup(startupId, "worktree");
+    this.cancelReviewStartupIfRequested(startupId);
+    this.advanceReviewStartup(startupId, "agent");
+    this.cancelReviewStartupIfRequested(startupId);
+    this.completeReviewStartup(startupId);
+  }
+
+  private advanceReviewStartup(startupId: string | undefined, phase: "worktree" | "agent"): void {
+    if (!startupId) return;
+    const startup = this.threadStartups?.get(startupId);
+    if (!startup || startup.state !== "running" || startup.phase === phase) return;
+    this.threadStartups?.advance(startupId, phase);
+  }
+
+  private bindReviewStartup(startupId: string | undefined, threadId: string): void {
+    if (startupId) this.threadStartups?.bindThread(startupId, threadId);
+  }
+
+  private completeReviewStartup(startupId: string | undefined): void {
+    const startups = this.threadStartups;
+    if (!startupId || startups?.get(startupId)?.state !== "running") return;
+    startups.complete(startupId);
+  }
+
+  private cancelReviewStartupIfRequested(startupId: string | undefined): void {
+    const startups = this.threadStartups;
+    if (!startupId || !startups?.isCancellationRequested(startupId)) return;
+    startups.markCancelled(startupId);
+    throw new ReviewStartupCancelledError();
+  }
+
+  private throwIfReviewStartupCancelled(startupId: string | undefined): void {
+    if (startupId && this.threadStartups?.isCancellationRequested(startupId)) {
+      throw new ReviewStartupCancelledError();
+    }
+  }
+
+  private markReviewStartupCancelled(startupId: string | undefined): void {
+    if (startupId) this.threadStartups?.markCancelled(startupId);
+  }
+
+  private failReviewStartup(startupId: string | undefined): void {
+    if (!startupId) return;
+    const startup = this.threadStartups?.get(startupId);
+    if (!startup || TERMINAL_STARTUP_STATES.has(startup.state)) return;
+    if (startup.cancellation === "requested") {
+      this.threadStartups?.markCancelled(startupId);
+      return;
+    }
+    this.threadStartups?.fail(startupId, this.reviewStartupFailure(startup.phase));
+  }
+
+  private reviewStartupFailure(phase: string): { code: string; message: string; retryable: boolean } {
+    if (phase === "thread") {
+      return { code: "PULL_REQUEST_LOAD_FAILED", message: "Pull request loading failed", retryable: true };
+    }
+    if (phase === "worktree") {
+      return { code: "REVIEW_WORKTREE_FAILED", message: "Review worktree preparation failed", retryable: true };
+    }
+    return { code: "REVIEW_AGENT_START_FAILED", message: "Review agent startup failed", retryable: true };
+  }
+
+  private reviewStartupReporter(startupId: string | undefined): PullRequestReviewGitObserver | undefined {
+    if (!startupId || !this.threadStartups) return undefined;
+    return {
+      output: (content) => this.appendReviewStartupOutput(startupId, content),
+    };
+  }
+
+  private appendReviewStartupOutput(startupId: string, content: string): void {
+    const safeOutput = safeStartupOutput(content.replace(/\0/g, ""));
+    for (let offset = 0; offset < safeOutput.length; offset += THREAD_STARTUP_TRANSCRIPT_ENTRY_MAX_CHARS) {
+      this.threadStartups?.appendOutput(
+        startupId,
+        safeOutput.slice(offset, offset + THREAD_STARTUP_TRANSCRIPT_ENTRY_MAX_CHARS),
+      );
     }
   }
 

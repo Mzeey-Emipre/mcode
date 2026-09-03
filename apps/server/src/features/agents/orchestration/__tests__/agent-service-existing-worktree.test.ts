@@ -8,13 +8,15 @@ import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/datab
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
-import { createAgentServiceForTest } from "./agent-service-test-harness.js";
+import { createAgentServiceForTest, goalLifecycleForAgentServiceTest } from "./agent-service-test-harness.js";
 import { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import type { GitService } from "../../../projects/index.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
+import { ThreadStartupRepo } from "../../../thread-startup/persistence/thread-startup-repo.js";
+import { ThreadStartupService } from "../../../thread-startup/thread-startup-service.js";
 
 const roots: string[] = [];
 
@@ -44,12 +46,18 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
 
 function createAgentServiceHarness(automaticSetup?:
   | { queueAutomaticFirstTurn: ReturnType<typeof vi.fn>; admitAutomaticTurn?: ReturnType<typeof vi.fn> }
-  | ((deps: { readonly db: Database.Database; readonly threadRepo: ThreadRepo }) => WorkspaceEnvironmentService),
+  | ((deps: {
+    readonly db: Database.Database;
+    readonly threadRepo: ThreadRepo;
+    readonly threadStartups: ThreadStartupService;
+  }) => WorkspaceEnvironmentService),
+  useGoalLifecycle = false,
 ) {
   const db: Database.Database = openMemoryDatabase();
   const threadRepo = new ThreadRepo(db);
   const workspaceRepo = new WorkspaceRepo(db);
   const messageRepo = new MessageRepo(db);
+  const threadStartups = new ThreadStartupService(new ThreadStartupRepo(db));
   const gitService = {
     listWorktrees: vi.fn(),
     resolveWorkingDir: vi.fn(() => process.cwd()),
@@ -62,6 +70,9 @@ function createAgentServiceHarness(automaticSetup?:
     id: "claude" as const,
     sendTurn: vi.fn(async () => undefined),
     stopSession: vi.fn(async () => undefined),
+    setGoal: vi.fn(),
+    clearGoal: vi.fn(),
+    getGoal: vi.fn(),
   };
   const providerRegistry = {
     resolve: vi.fn(() => provider),
@@ -73,7 +84,7 @@ function createAgentServiceHarness(automaticSetup?:
   };
   const goals = { routeCommand: vi.fn(async () => ({ kind: "passthrough" as const })) };
   const resolvedAutomaticSetup = typeof automaticSetup === "function"
-    ? automaticSetup({ db, threadRepo })
+    ? automaticSetup({ db, threadRepo, threadStartups })
     : automaticSetup;
   const service = createAgentServiceForTest(
     threadRepo,
@@ -120,10 +131,12 @@ function createAgentServiceHarness(automaticSetup?:
     resolvedAutomaticSetup as never,
     undefined,
     undefined,
-    goals as never,
+    useGoalLifecycle ? undefined : goals as never,
     undefined,
     undefined,
     undefined,
+    undefined,
+    threadStartups,
   );
   return {
     db,
@@ -137,7 +150,9 @@ function createAgentServiceHarness(automaticSetup?:
     availability,
     attachmentService,
     goals,
+    goalLifecycle: goalLifecycleForAgentServiceTest(service),
     automaticSetup: resolvedAutomaticSetup,
+    threadStartups,
   };
 }
 
@@ -169,18 +184,22 @@ describe("AgentService.createAndSend defaults", () => {
     const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-automatic-setup-"));
     roots.push(root);
     const prepare = vi.fn();
-    const { threadRepo, workspaceRepo, threadService, service, provider, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
+    const { threadRepo, workspaceRepo, threadService, service, provider, automaticSetup, threadStartups } = createAgentServiceHarness(({ db, threadRepo: threads, threadStartups: startups }) =>
       new WorkspaceEnvironmentService({
         mcodeDir: root,
         database: db,
         threads: { findById: (id) => threads.findById(id) },
         terminalCommands: { prepare },
+        threadStartups: startups,
         platform: "linux",
       }),
     );
     const workspace = workspaceRepo.create("Repo", "/repo");
     const managed = threadRepo.create(workspace.id, "Managed first Turn", "worktree", "feature/managed", true, "claude");
-    vi.mocked(threadService.create).mockResolvedValue(managed);
+    vi.mocked(threadService.create).mockImplementation(async (_workspaceId, _title, _mode, _branch, options) => {
+      options.lifecycle?.onThreadPersisted(managed);
+      return managed;
+    });
     const providerCompletion = deferred<void>();
     provider.sendTurn.mockImplementation(async () => await providerCompletion.promise);
     const environment = automaticSetup as WorkspaceEnvironmentService;
@@ -191,6 +210,7 @@ describe("AgentService.createAndSend defaults", () => {
       content: "Dispatch without Setup",
       mode: "worktree",
       branch: "feature/managed",
+      startupId: "00000000-0000-4000-8000-000000000001",
     });
 
     await eventually(() => expect(provider.sendTurn).toHaveBeenCalledOnce());
@@ -200,7 +220,144 @@ describe("AgentService.createAndSend defaults", () => {
       attempt: null,
       queuedTurns: [{ state: "dispatched", dispatchedAt: expect.any(String) }],
     });
+    expect(threadStartups.get("00000000-0000-4000-8000-000000000001")).toMatchObject({
+      state: "completed",
+      phase: "agent",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "setup", state: "skipped" },
+        { phase: "agent", state: "completed" },
+      ],
+    });
     providerCompletion.resolve();
+  });
+
+  it("does not admit the queued provider turn when cancellation wins during admission", async () => {
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-cancelled-admission-"));
+    roots.push(root);
+    const prepare = vi.fn();
+    const { threadRepo, workspaceRepo, threadService, service, provider, automaticSetup, threadStartups, goals } = createAgentServiceHarness(({ db, threadRepo: threads, threadStartups: startups }) =>
+      new WorkspaceEnvironmentService({
+        mcodeDir: root,
+        database: db,
+        threads: { findById: (id) => threads.findById(id) },
+        terminalCommands: { prepare },
+        threadStartups: startups,
+        platform: "linux",
+      }),
+    );
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed first Turn", "worktree", "feature/managed", true, "claude");
+    vi.mocked(threadService.create).mockImplementation(async (_workspaceId, _title, _mode, _branch, options) => {
+      options.lifecycle?.onThreadPersisted(managed);
+      return managed;
+    });
+    const heldAdmission = deferred<{ kind: "passthrough" }>();
+    goals.routeCommand.mockImplementation(async () => await heldAdmission.promise);
+    const environment = automaticSetup as WorkspaceEnvironmentService;
+    environment.setAutomaticSetupDispatcher({ dispatch: (submission) => service.dispatchQueuedAutomaticTurn(submission) });
+    const startupId = "00000000-0000-4000-8000-000000000022";
+
+    const creating = service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Cancel during provider admission",
+      mode: "worktree",
+      branch: "feature/managed",
+      startupId,
+    });
+    await eventually(() => expect(goals.routeCommand).toHaveBeenCalledOnce());
+
+    threadStartups.cancel(startupId);
+    heldAdmission.resolve({ kind: "passthrough" });
+
+    await creating;
+    await eventually(() => expect(threadStartups.get(startupId)).toMatchObject({ state: "cancelled", phase: "agent" }));
+    expect(provider.sendTurn).not.toHaveBeenCalled();
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(managed.id);
+  });
+
+  it("does not admit the initial provider turn after managed startup cancellation wins during admission", async () => {
+    const automaticSetup = {
+      queueAutomaticFirstTurn: vi.fn(),
+      admitAutomaticTurn: vi.fn(() => ({ queued: false })),
+      getAutomaticSetup: vi.fn(() => ({ gate: "released" })),
+    };
+    const { threadRepo, workspaceRepo, threadService, service, provider, attachmentService, threadStartups } = createAgentServiceHarness(automaticSetup);
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed first Turn", "worktree", "feature/managed", true, "claude");
+    vi.mocked(threadService.create).mockImplementation(async (_workspaceId, _title, _mode, _branch, options) => {
+      options.lifecycle?.onThreadPersisted(managed);
+      return managed;
+    });
+    const heldAttachmentPersistence = deferred<{ stored: []; persisted: [] }>();
+    attachmentService.persist.mockImplementation(async () => await heldAttachmentPersistence.promise);
+    const startupId = "00000000-0000-4000-8000-000000000024";
+
+    const creating = service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Cancel managed initial provider admission",
+      mode: "worktree",
+      branch: "feature/managed",
+      startupId,
+    });
+    await eventually(() => expect(attachmentService.persist).toHaveBeenCalledOnce());
+
+    threadStartups.cancel(startupId);
+    threadStartups.markCancelled(startupId);
+    heldAttachmentPersistence.resolve({ stored: [], persisted: [] });
+
+    const result = await creating;
+
+    expect(threadStartups.get(startupId)).toMatchObject({ state: "cancelled", phase: "setup" });
+    expect(result.runtimeSnapshot).toEqual({ threadId: result.id, turnExecutionId: null, phase: "idle" });
+    expect(provider.sendTurn).not.toHaveBeenCalled();
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(result.id);
+  });
+
+  it("discards a prepared goal effect when queued cancellation wins before runtime reserve", async () => {
+    const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-cancelled-goal-admission-"));
+    roots.push(root);
+    const prepare = vi.fn();
+    const { threadRepo, workspaceRepo, threadService, service, provider, automaticSetup, threadStartups, goalLifecycle } = createAgentServiceHarness(({ db, threadRepo: threads, threadStartups: startups }) =>
+      new WorkspaceEnvironmentService({
+        mcodeDir: root,
+        database: db,
+        threads: { findById: (id) => threads.findById(id) },
+        terminalCommands: { prepare },
+        threadStartups: startups,
+        platform: "linux",
+      }),
+    true);
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed first Turn", "worktree", "feature/managed", true, "claude");
+    vi.mocked(threadService.create).mockImplementation(async (_workspaceId, _title, _mode, _branch, options) => {
+      options.lifecycle?.onThreadPersisted(managed);
+      return managed;
+    });
+    const environment = automaticSetup as WorkspaceEnvironmentService;
+    environment.setAutomaticSetupDispatcher({ dispatch: (submission) => service.dispatchQueuedAutomaticTurn(submission) });
+    const startupId = "00000000-0000-4000-8000-000000000023";
+    const routeCommand = goalLifecycle.routeCommand.bind(goalLifecycle);
+    vi.spyOn(goalLifecycle, "routeCommand").mockImplementation(async (...args) => {
+      const outcome = await routeCommand(...args);
+      threadStartups.cancel(startupId);
+      return outcome;
+    });
+
+    await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Cancel queued goal admission",
+      mode: "worktree",
+      branch: "feature/managed",
+      goalObjective: "Do not retain this goal",
+      startupId,
+    });
+
+    await eventually(() => expect(goalLifecycle.routeCommand).toHaveBeenCalledOnce());
+    await eventually(() => expect(threadStartups.get(startupId)).toMatchObject({ state: "cancelled", phase: "agent" }));
+    expect(goalLifecycle.pendingCommandEffectCount()).toBe(0);
+    expect(provider.sendTurn).not.toHaveBeenCalled();
   });
 
   it("persists each later Turn sent while automatic Setup remains blocked", async () => {
@@ -564,6 +721,29 @@ describe("AgentService.createAndSend defaults", () => {
       phase: "running",
     });
     expect(result.runtimeSnapshot.turnExecutionId).toEqual(expect.any(String));
+  });
+
+  it("completes startup when the initial native command is handled without a provider turn", async () => {
+    const { workspaceRepo, service, provider, threadStartups } = createAgentServiceHarness(undefined, true);
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const startupId = "00000000-0000-4000-8000-000000000025";
+
+    const result = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "/goal clear",
+      startupId,
+    });
+
+    expect(result.runtimeSnapshot).toEqual({ threadId: result.id, turnExecutionId: null, phase: "idle" });
+    expect(threadStartups.get(startupId)).toMatchObject({
+      state: "completed",
+      phase: "agent",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "agent", state: "completed" },
+      ],
+    });
+    expect(provider.sendTurn).not.toHaveBeenCalled();
   });
 
   it("returns an idle snapshot when startup fails before runtime ownership", async () => {

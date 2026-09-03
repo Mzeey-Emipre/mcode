@@ -69,6 +69,7 @@ import {
   registerTerminalPreferences,
 } from "../../features/terminal/composition/register-terminal.js";
 import { registerThreadControlServices } from "../../features/thread-control/composition/register-thread-control.js";
+import { registerThreadStartupServices } from "../../features/thread-startup/composition/register-thread-startup.js";
 import {
   registerCleanupRepository,
   registerThreadRepositories,
@@ -150,6 +151,7 @@ export function setupContainer(mcodeDir: string): typeof container {
   registerAgentServices(container);
   registerWorktreeRepository(container);
   registerThreadControlServices(container);
+  registerThreadStartupServices(container);
   registerPullRequestServices(container);
   container.register(
     FileService,

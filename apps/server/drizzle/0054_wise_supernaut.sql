@@ -1,0 +1,1 @@
+ALTER TABLE `thread_startups` ADD `block_json` text;

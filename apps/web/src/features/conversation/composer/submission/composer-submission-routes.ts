@@ -1,4 +1,8 @@
 import type { Thread } from "@/transport";
+import type { WorkspaceThread } from "@/lib/workspace-thread";
+import type { SelectedTextComment } from "@mcode/contracts";
+import type { ComposerDraft } from "@/stores/composerDraftStore";
+import { snapshotComposerDraft } from "@/lib/composer-session";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
 import type { ComposerExecutionTarget, ComposerExecutionTargetController } from "../execution/useComposerExecutionTarget";
 import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
@@ -20,6 +24,32 @@ export interface DispatchComposerTargetOptions {
   replyContext?: ComposerReplyContext;
   onBranchModeExit?(): void;
   onThreadCreated?(thread: Thread): void;
+  onThreadPreparing?(thread: WorkspaceThread): void;
+  onThreadCreationFailed?(): void;
+}
+
+function savedCommentsForTransport(
+  comments: SelectedTextComment[],
+): SelectedTextComment[] | undefined {
+  return comments.length > 0 ? comments : undefined;
+}
+
+function composerDraftForPendingCreation(
+  submission: PreparedComposerSubmission,
+): ComposerDraft {
+  const { snapshot } = submission;
+  return snapshotComposerDraft({
+    input: snapshot.rawInput,
+    mentions: snapshot.mentions,
+    selectedTextComments: snapshot.selectedTextComments,
+    selectedTextCommentEditor: snapshot.selectedTextCommentEditor,
+    attachments: snapshot.attachments,
+    modelId: snapshot.selection.modelId,
+    provider: snapshot.selection.provider,
+    reasoning: snapshot.selection.reasoning,
+    contextWindow: snapshot.selection.contextWindow ?? undefined,
+    codexFastMode: snapshot.selection.codexFastMode,
+  });
 }
 
 /** Dispatches a prepared Composer submit to the target selected by the user. */
@@ -50,12 +80,20 @@ export function isComposerTargetReady(target: ComposerExecutionTarget): boolean 
 async function dispatchNewThread(
   options: DispatchComposerTargetOptions,
 ): Promise<void> {
-  const { target, execution, submission, onThreadCreated } = options;
+  const {
+    target,
+    execution,
+    submission,
+    onThreadCreated,
+    onThreadPreparing,
+    onThreadCreationFailed,
+  } = options;
   if (target.kind !== "new-thread") return;
   synchronizeNewThreadTarget(execution, target);
   const { snapshot, prepared } = submission;
   const selection = snapshot.selection;
-  const thread = await useWorkspaceStore.getState().createAndSendMessage(
+  const workspace = useWorkspaceStore.getState();
+  const creatingThread = workspace.createAndSendMessage(
     prepared.content,
     selection.modelId,
     selection.permissionMode,
@@ -72,8 +110,36 @@ async function dispatchNewThread(
     submission.previewAnnotations,
     submission.goalObjective,
     selection.orchestrationMode,
+    savedCommentsForTransport(snapshot.selectedTextComments),
+    composerDraftForPendingCreation(submission),
   );
-  onThreadCreated?.(thread);
+  notifyThreadPreparing(onThreadPreparing);
+  await completeNewThreadCreation(creatingThread, onThreadCreated, onThreadCreationFailed);
+}
+
+async function completeNewThreadCreation(
+  creatingThread: Promise<Thread>,
+  onThreadCreated: ((thread: Thread) => void) | undefined,
+  onThreadCreationFailed: (() => void) | undefined,
+): Promise<void> {
+  try {
+    const thread = await creatingThread;
+    onThreadCreated?.(thread);
+  } catch (error) {
+    onThreadCreationFailed?.();
+    throw error;
+  }
+}
+
+function notifyThreadPreparing(
+  onThreadPreparing: ((thread: WorkspaceThread) => void) | undefined,
+): void {
+  if (!onThreadPreparing) return;
+  const workspace = useWorkspaceStore.getState();
+  const placeholder = workspace.threads.find((thread) => (
+    thread.id === workspace.activeThreadId && thread.clientPreparing === true
+  ));
+  if (placeholder) onThreadPreparing(placeholder);
 }
 
 /** Synchronizes workspace selection state before creating a new thread. */
@@ -122,6 +188,8 @@ function createBranchThreadRequest(
     existingWorktreeBaseBranch: resolveDetachedBaseBranch(target, activeThread),
     forkedFromMessageId,
     mentions: snapshot.mentions,
+    selectedTextComments: savedCommentsForTransport(snapshot.selectedTextComments),
+    composerDraft: composerDraftForPendingCreation(submission),
     previewAnnotations: submission.previewAnnotations,
     goalObjective: submission.goalObjective,
     ...branchThreadAgentOptions(snapshot.selection),

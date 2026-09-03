@@ -21,6 +21,7 @@ const MAX_ERROR_CHARS = 640;
 const EVIDENCE_DIRECTORY = NodePath.join(".dev", "verification", "agent-runtime");
 const WORKTREE_SETUP_ACTIVE_RUN_FILE = "worktree-setup-active-run.json";
 const WORKTREE_SETUP_MARKER = ".mcode-worktree-setup-proof";
+const WORKTREE_SETUP_PID_FILE = ".mcode-worktree-setup.pid";
 const WORKTREE_SETUP_SOURCE_FILES = Object.freeze({
   "checkout-root.txt": "root checkout complete\n",
   "fixtures/nested/checkout-nested.txt": "nested checkout complete\n",
@@ -84,7 +85,7 @@ Commands:
   live --provider <codex|claude|cursor> --model <id> --scenario <completion|stop> --confirm-provider-call [--keep-thread]
       Make one confirmed provider call in the registered current-worktree workspace. Does not start a runtime.
   worktree-setup --confirm-cleanup
-      Create an owned Git project, hold its automatic Setup gate open after it verifies every tracked fixture file, then remove the project, workspace, thread, and worktree. Does not make a provider call.
+      Create an owned Git project, verify its held automatic Setup gate, cancel Setup through the public API, then remove the project, workspace, thread, and worktree. Does not make a provider call.
   worktree-setup-cleanup --confirm-cleanup
       Remove a retained worktree-setup run after an interrupted proof.
   diagnostics
@@ -442,9 +443,10 @@ async function worktreeSetup(repoRoot) {
     await createWorktreeSetupFixture(run.record);
     const workspace = await createWorktreeSetupWorkspace(socket, run.evidenceDirectory, run.record, deadline);
     await saveWorktreeSetupConfiguration(socket, workspace.id, deadline);
-    const thread = await createWorktreeSetupThread(socket, workspace.id, deadline);
+    const thread = await createWorktreeSetupThread(socket, workspace.id, run.record.startupId, deadline);
     recordWorktreeSetupThread(run.evidenceDirectory, run.record, thread);
-    report.checkout = await proveWorktreeSetup(socket, run.record, deadline);
+    report.checkout = await proveWorktreeSetup(socket, run.evidenceDirectory, run.record, deadline);
+    report.cancellation = await cancelWorktreeSetup(socket, run.record, deadline);
   } catch (error) {
     report.failure = safeError(error);
   } finally {
@@ -462,6 +464,7 @@ function createWorktreeSetupReport() {
   return {
     command: "worktree-setup",
     checkout: null,
+    cancellation: null,
     cleanup: {
       attempted: false,
       threadDeleted: null,
@@ -489,9 +492,11 @@ function createWorktreeSetupRun(repoRoot) {
     id,
     runDirectory,
     sourceRepositoryPath: NodePath.join(runDirectory, "source"),
+    startupId: NodeCrypto.randomUUID(),
     workspaceId: null,
     threadId: null,
     worktreePath: null,
+    setupProcessId: null,
   };
   writeWorktreeSetupActiveRun(evidenceDirectory, record);
   return {
@@ -587,14 +592,16 @@ function worktreeSetupFixtureScript() {
     'for (const path of expectedFiles) if (!fs.existsSync(path)) throw new Error("checkout fixture is incomplete");',
     'for (const [path, contents] of Object.entries(expectedContents)) if (fs.readFileSync(path, "utf8") !== contents) throw new Error("checkout fixture is incomplete");',
     `fs.writeFileSync("${WORKTREE_SETUP_MARKER}", "ready\\n");`,
+    'fs.writeFileSync("' + WORKTREE_SETUP_PID_FILE + '", `${process.pid}\\n`);',
     'await new Promise(() => {});',
     '',
   ].join("\n");
 }
 
-async function createWorktreeSetupThread(socket, workspaceId, deadline) {
+async function createWorktreeSetupThread(socket, workspaceId, startupId, deadline) {
   const thread = await socket.rpc("agent.createAndSend", {
     workspaceId,
+    startupId,
     content: "Verify automatic Setup checkout readiness.",
     model: "claude-sonnet-4-6",
     provider: "claude",
@@ -620,7 +627,7 @@ function recordWorktreeSetupThread(evidenceDirectory, record, thread) {
   writeWorktreeSetupActiveRun(evidenceDirectory, record);
 }
 
-async function proveWorktreeSetup(socket, record, deadline) {
+async function proveWorktreeSetup(socket, evidenceDirectory, record, deadline) {
   const automatic = await waitForRunningAutomaticSetup(socket, record.threadId, deadline);
   if (!isRunningWorktreeSetup(automatic, record.worktreePath) || !hasQueuedFirstTurn(automatic)) {
     throw actionable("Automatic Setup did not remain active with its first Turn queued", "Run worktree-setup-cleanup with --confirm-cleanup, inspect runtime diagnostics, then retry.");
@@ -638,6 +645,12 @@ async function proveWorktreeSetup(socket, record, deadline) {
   if (!hasNoRuntimeForThread(running, record.threadId)) {
     throw actionable("The queued first Turn reached an agent runtime", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect automatic Setup execution.");
   }
+  const setupProcessId = await waitFor(() => readWorktreeSetupProcessId(record.worktreePath), deadline);
+  if (setupProcessId === null) {
+    throw actionable("Automatic Setup did not record its process ID before the live deadline", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect automatic Setup execution.");
+  }
+  record.setupProcessId = setupProcessId;
+  writeWorktreeSetupActiveRun(evidenceDirectory, record);
   return {
     automaticSetupState: settledAutomatic.attempt.state,
     checkoutPathMatchesWorktree: true,
@@ -645,6 +658,124 @@ async function proveWorktreeSetup(socket, record, deadline) {
     proofMarker: true,
     firstTurnQueued: true,
   };
+}
+
+async function cancelWorktreeSetup(socket, record, deadline) {
+  const cancelled = await socket.rpc("thread.startup.cancel", { startupId: record.startupId }, deadline);
+  if (!isTerminalWorktreeSetupCancellation(cancelled, record)) {
+    throw actionable("thread.startup.cancel did not return the terminal cancellation for the held Setup", "Run worktree-setup-cleanup with --confirm-cleanup, inspect runtime diagnostics, then retry.");
+  }
+  const setupProcessStopped = await waitFor(() => !isRecordedWorktreeSetupProcessAlive(record.setupProcessId), deadline);
+  if (!setupProcessStopped) {
+    throw actionable("The fixture Setup process remained alive after thread.startup.cancel returned", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect automatic Setup containment.");
+  }
+  const automatic = await socket.rpc("workspace.environment.automaticSetup.get", { threadId: record.threadId }, deadline);
+  if (!isInterruptedWorktreeSetup(automatic, record.worktreePath) || !hasQueuedFirstTurn(automatic)) {
+    throw actionable("Automatic Setup did not remain interrupted with its first Turn queued after cancellation", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect automatic Setup containment.");
+  }
+  const running = await socket.rpc("agent.listRunning", {}, deadline);
+  if (!hasNoRuntimeForThread(running, record.threadId)) {
+    throw actionable("The cancelled queued first Turn reached an agent runtime", "Run worktree-setup-cleanup with --confirm-cleanup, then inspect startup admission.");
+  }
+  return {
+    state: "cancelled",
+    cancellation: "requested",
+    startupIdMatches: true,
+    threadIdMatches: true,
+    setupStepCancelled: true,
+    agentStepPending: true,
+    setupProcessTerminated: true,
+    automaticSetupState: "interrupted",
+    firstTurnQueued: true,
+    noAgentRuntime: true,
+    providerCallMade: false,
+  };
+}
+
+function isTerminalWorktreeSetupCancellation(startup, record) {
+  if (!hasTerminalWorktreeSetupShape(startup, record)) return false;
+  return hasStartupStep(startup, "setup", "cancelled") && hasStartupStep(startup, "agent", "pending");
+}
+
+function hasTerminalWorktreeSetupShape(startup, record) {
+  return startup?.startupId === record.startupId
+    && startup?.threadId === record.threadId
+    && startup?.state === "cancelled"
+    && startup?.cancellation === "requested"
+    && startup?.phase === "setup";
+}
+
+function hasStartupStep(startup, phase, state) {
+  return Array.isArray(startup?.steps)
+    && startup.steps.some((step) => step?.phase === phase && step.state === state);
+}
+
+function isInterruptedWorktreeSetup(automatic, worktreePath) {
+  return automatic?.gate === "blocked"
+    && automatic.attempt?.state === "interrupted"
+    && pathsMatch(automatic.attempt.snapshot?.checkoutPath, worktreePath);
+}
+
+function readWorktreeSetupProcessId(worktreePath) {
+  const path = NodePath.join(worktreePath, WORKTREE_SETUP_PID_FILE);
+  const status = readWorktreeSetupPidFileStatus(path);
+  if (status === null) return null;
+  if (!isBoundedRegularFile(status)) {
+    throw actionable("The fixture Setup process ID file is not a bounded regular file", "Run worktree-setup-cleanup with --confirm-cleanup, then retry.");
+  }
+  return parseWorktreeSetupProcessId(NodeFS.readFileSync(path, "utf8"));
+}
+
+function readWorktreeSetupPidFileStatus(path) {
+  try {
+    return NodeFS.lstatSync(path);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function isBoundedRegularFile(status) {
+  return !status.isSymbolicLink() && status.isFile() && status.size >= 2 && status.size <= 12;
+}
+
+function parseWorktreeSetupProcessId(contents) {
+  if (!/^[1-9]\d{0,9}\r?\n?$/.test(contents)) {
+    throw actionable("The fixture Setup process ID file has invalid content", "Run worktree-setup-cleanup with --confirm-cleanup, then retry.");
+  }
+  const processId = Number(contents.trim());
+  if (!isWorktreeSetupProcessId(processId)) {
+    throw actionable("The fixture Setup process ID is outside the supported range", "Run worktree-setup-cleanup with --confirm-cleanup, then retry.");
+  }
+  return processId;
+}
+
+function isRecordedWorktreeSetupProcessAlive(processId) {
+  if (!isWorktreeSetupProcessId(processId)) {
+    throw actionable("The recorded fixture Setup process ID is invalid", "Run worktree-setup-cleanup with --confirm-cleanup, then retry.");
+  }
+  return isProcessAlive(processId);
+}
+
+function isProcessAlive(processId) {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    throw error;
+  }
+}
+
+function errorCode(error) {
+  if (!error || typeof error !== "object" || !("code" in error)) return null;
+  return typeof error.code === "string" ? error.code : null;
+}
+
+function isWorktreeSetupProcessId(value) {
+  return Number.isSafeInteger(value) && value > 0 && value <= 4_294_967_295;
 }
 
 function isRunningWorktreeSetup(automatic, worktreePath) {
@@ -802,6 +933,7 @@ function writeWorktreeSetupReceipt(repoRoot, receiptPath, report) {
     ok: report.failure === null && report.cleanup.failure === null,
     command: report.command,
     checkout: report.checkout,
+    cancellation: report.cancellation,
     cleanup: report.cleanup,
     failure: report.failure,
   };
@@ -863,25 +995,33 @@ function assertWorktreeSetupActiveRunFile(path) {
 }
 
 function assertWorktreeSetupRunRecord(evidenceDirectory, record) {
-  assertWorktreeSetupRunShape(record);
-  assertWorktreeSetupRunIdentity(record);
-  assertWorktreeSetupRunThread(record);
-  assertWorktreeSetupRunDirectory(evidenceDirectory, record);
-  return record;
+  const normalized = normalizeLegacyWorktreeSetupRunRecord(record);
+  assertWorktreeSetupRunShape(normalized);
+  assertWorktreeSetupRunIdentity(normalized);
+  assertWorktreeSetupRunThread(normalized);
+  assertWorktreeSetupRunDirectory(evidenceDirectory, normalized);
+  return normalized;
+}
+
+function normalizeLegacyWorktreeSetupRunRecord(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return record;
+  const legacyKeys = ["id", "runDirectory", "sourceRepositoryPath", "threadId", "workspaceId", "worktreePath"];
+  if (Object.keys(record).sort().join(",") !== legacyKeys.sort().join(",")) return record;
+  return { ...record, startupId: null, setupProcessId: null };
 }
 
 function assertWorktreeSetupRunShape(record) {
   if (!record || typeof record !== "object" || Array.isArray(record)) {
     throw actionable("The retained worktree Setup run record must be an object", "Inspect the verifier evidence before cleanup.");
   }
-  const keys = ["id", "runDirectory", "sourceRepositoryPath", "threadId", "workspaceId", "worktreePath"];
+  const keys = ["id", "runDirectory", "sourceRepositoryPath", "startupId", "threadId", "workspaceId", "worktreePath", "setupProcessId"];
   if (Object.keys(record).sort().join(",") !== keys.sort().join(",")) {
     throw actionable("The retained worktree Setup run record has an unexpected shape", "Inspect the verifier evidence before cleanup.");
   }
 }
 
 function assertWorktreeSetupRunIdentity(record) {
-  if (!isWorktreeSetupRunId(record.id) || !isAbsolutePath(record.runDirectory) || !isAbsolutePath(record.sourceRepositoryPath)) {
+  if (!isWorktreeSetupRunId(record.id) || !isOptionalUuid(record.startupId) || !isAbsolutePath(record.runDirectory) || !isAbsolutePath(record.sourceRepositoryPath)) {
     throw actionable("The retained worktree Setup run record has invalid paths or identity", "Inspect the verifier evidence before cleanup.");
   }
   if (!isOptionalWorktreeSetupId(record.workspaceId) || !isOptionalWorktreeSetupId(record.threadId)) {
@@ -890,7 +1030,7 @@ function assertWorktreeSetupRunIdentity(record) {
 }
 
 function assertWorktreeSetupRunThread(record) {
-  if (!isOptionalAbsolutePath(record.worktreePath)) {
+  if (!isOptionalAbsolutePath(record.worktreePath) || (record.setupProcessId !== null && !isWorktreeSetupProcessId(record.setupProcessId))) {
     throw actionable("The retained worktree Setup run record has an invalid worktree identity", "Inspect the verifier evidence before cleanup.");
   }
   if (record.threadId === null && record.worktreePath !== null) {
@@ -918,6 +1058,14 @@ function assertWorktreeSetupRunDirectory(evidenceDirectory, record) {
 
 function isWorktreeSetupRunId(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9-]{36}$/i.test(value);
+}
+
+function isUuid(value) {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isOptionalUuid(value) {
+  return value === null || isUuid(value);
 }
 
 function isOptionalWorktreeSetupId(value) {

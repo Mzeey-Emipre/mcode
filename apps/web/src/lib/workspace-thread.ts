@@ -14,6 +14,8 @@ export type WorkspaceThread = Thread & {
   clientWarnings?: string[] | null;
   /** Message body shown in the preparing shell (mirrors cleared composer input). */
   clientQueuedMessage?: string;
+  /** Client-generated startup lifecycle identity retained after the Thread is created. */
+  clientStartupId?: string;
   /**
    * Drives status copy in the preparing shell (new vs branch, direct vs worktree).
    */
@@ -53,6 +55,7 @@ type PlaceholderWorkspaceThreadParams = {
   worktreePath?: string | null;
   worktreeManaged?: boolean;
   clientPreparingContext: ClientPreparingContext;
+  startupId?: string;
   model?: string | null;
   provider?: string | null;
   reasoningLevel?: ReasoningLevel | null;
@@ -158,6 +161,7 @@ export function buildPlaceholderWorkspaceThread(
     clientPreparing: true,
     clientError: null,
     clientQueuedMessage: params.queuedMessage,
+    clientStartupId: params.startupId,
     clientPreparingContext: params.clientPreparingContext,
   };
 }

@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import {
   assertDesktopWorkflowMatrices,
+  parseDesktopWorkflowTargetMatrix,
   SUPPORTED_DESKTOP_TARGETS,
   resolveDesktopTarget,
   resolveDesktopTargetPackagePlans,
@@ -165,6 +166,10 @@ describe("desktop packaging workflow contract", () => {
   });
 
   it("keeps every channel matrix equal to the canonical target inventory", () => {
+    const pullRequestDryRun = NodeFS.readFileSync(
+      NodePath.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
+      "utf8",
+    );
     const matrices = assertDesktopWorkflowMatrices({
       nightly: NodeFS.readFileSync(
         NodePath.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
@@ -174,15 +179,23 @@ describe("desktop packaging workflow contract", () => {
         NodePath.join(repoRoot, ".github/workflows/build-release.yml"),
         "utf8",
       ),
-      "pull-request": NodeFS.readFileSync(
-        NodePath.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
-        "utf8",
-      ),
+      "pull-request-canary": {
+        source: pullRequestDryRun,
+        job: "package-canary",
+        expectedCount: 1,
+      },
+      "pull-request-full": {
+        source: pullRequestDryRun,
+        job: "package-full",
+        expectedCount: SUPPORTED_DESKTOP_TARGETS.length,
+      },
     });
     const expected = SUPPORTED_DESKTOP_TARGETS.map(({ id }) => id).sort();
 
-    for (const targets of Object.values(matrices)) {
-      expect(targets.map(({ id }) => id).sort()).toEqual(expected);
+    expect(matrices["pull-request-canary"].map(({ id }) => id)).toEqual(["linux-x64"]);
+    expect(matrices["pull-request-full"].map(({ id }) => id).sort()).toEqual(expected);
+    for (const workflowName of ["nightly", "stable"]) {
+      expect(matrices[workflowName].map(({ id }) => id).sort()).toEqual(expected);
     }
   });
 
@@ -277,16 +290,24 @@ describe("desktop packaging workflow contract", () => {
     expect(signedBlock).toContain("--config.mac.notarize=true");
   });
 
-  it("requires the complete four-target matrix in PR dry-run", () => {
+  it("uses a Linux canary on regular PRs and a full matrix on release PRs", () => {
     const source = NodeFS.readFileSync(
       NodePath.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
       "utf8",
     );
-    for (const target of ["windows-x64", "linux-x64", "macos-arm64", "macos-x64"]) {
-      expect(source).toContain(target);
-    }
-    expect(source).toContain("needs: package");
+    expect(source).toContain("package-canary:");
+    expect(source).toContain("package-full:");
+    expect(source).toContain("startsWith(github.head_ref, 'release-please--')");
+    expect(source).toContain("needs: package-full");
     expect(source).toContain("--channel pull-request");
+    expect(parseDesktopWorkflowTargetMatrix(source, "pull-request-canary", "package-canary")).toEqual([
+      { id: "linux-x64", platform: "linux", arch: "x64" },
+    ]);
+    expect(
+      parseDesktopWorkflowTargetMatrix(source, "pull-request-full", "package-full").map(
+        ({ id }) => id,
+      ).sort(),
+    ).toEqual(["linux-x64", "macos-arm64", "macos-x64", "windows-x64"]);
   });
 
   it("uses store for Windows PR and gzip for Linux PR", () => {
@@ -294,8 +315,12 @@ describe("desktop packaging workflow contract", () => {
       NodePath.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
       "utf8",
     );
+    const fullMatrixBlock = source.match(
+      /package-full:\r?\n([\s\S]*?)(?=\r?\n  verify-release-evidence:)/,
+    )?.[1];
+    expect(fullMatrixBlock).toBeDefined();
     const buildArgsFor = (targetId) => {
-      const targetBlock = source.match(
+      const targetBlock = fullMatrixBlock.match(
         new RegExp(
           `- target-id: ${targetId}\\r?\\n(?<body>[\\s\\S]*?)(?=\\r?\\n\\s+- target-id:|\\r?\\n\\s+uses:)`,
         ),

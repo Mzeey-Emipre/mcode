@@ -4,19 +4,27 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - ".github/workflows/desktop-package-target.yml"
       - ".github/workflows/desktop-package-dry-run.yml"
-      - ".github/workflows/nightly-desktop.yml"
-      - ".github/workflows/build-release.yml"
+      - ".github/workflows/desktop-package-target.yml"
       - "apps/desktop/**"
-      - "apps/server/**"
-      - "apps/web/**"
-      - "packages/**"
-      - "apps/desktop/scripts/**"
-      - ".github/workflows/**"
+      - "apps/server/package.json"
       - "scripts/build-server-dev-bundle.mjs"
+      - "scripts/postinstall.mjs"
+      - "scripts/electron-postinstall.mjs"
+      - "scripts/ensure-electron.mjs"
+      - "scripts/node-runtime.mjs"
+      - ".node-version"
       - "package.json"
       - "bun.lock"
+      - "CHANGELOG.md"
+      - ".release-please-manifest.json"
+      - "release-please-config.json"
+  workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: Package all four desktop targets (default is Linux x64 canary only)
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,7 +34,34 @@ permissions:
   contents: read
 
 jobs:
-  package:
+  package-canary:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.full_matrix != true) ||
+      (github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--'))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target-id: linux-x64
+            runner: blacksmith-2vcpu-ubuntu-2404
+            platform: linux
+            arch: x64
+            build-args: --config.deb.compression=gz
+    uses: ./.github/workflows/desktop-package-target.yml
+    with:
+      runner: ${{ matrix.runner }}
+      target-platform: ${{ matrix.platform }}
+      target-arch: ${{ matrix.arch }}
+      build-args: ${{ matrix.build-args }}
+      channel: pull-request
+      expected-legacy: true
+      signing-required: false
+      retention-days: 1
+
+  package-full:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.full_matrix == true) ||
+      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--'))
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +98,8 @@ jobs:
       retention-days: 1
 
   verify-release-evidence:
-    needs: package
+    needs: package-full
+    if: needs.package-full.result == 'success'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

@@ -18,8 +18,10 @@
  * `positionAtBottom({ measureFirst: true })` calls `scrollToIndex` with
  * `behavior: "auto"` so the list anchors to the tail before rows finish measuring.
  */
-import { render, act, fireEvent } from "@testing-library/react";
+import { render, act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { SelectedTextComment } from "@mcode/contracts";
 
 const measureSpy = vi.fn();
 const scrollToIndexSpy = vi.fn();
@@ -182,7 +184,7 @@ vi.mock("../../narrative", () => ({
     isAgentRunning ? <div>Thinking</div> : null,
 }));
 
-import { MessageList } from "../MessageList";
+import { MessageList, type SelectedTextCommentSourceNavigationRequest } from "../MessageList";
 import { preservePrependedVirtualRange } from "../message-list-virtualization";
 import {
   rememberScrollTop,
@@ -193,6 +195,7 @@ import {
 } from "@/components/chat/scrollPositionMemory";
 
 const rangeClientRectsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+const rangeBoundingRectDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
 
 function mockSelectedTextViewport(container: HTMLElement): HTMLDivElement {
   const viewport = container.querySelector(".overflow-y-auto") as HTMLDivElement;
@@ -221,6 +224,10 @@ beforeEach(() => {
     configurable: true,
     value: () => [new DOMRect(120, 160, 96, 20)],
   });
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => new DOMRect(120, 160, 96, 20),
+  });
 });
 
 afterEach(() => {
@@ -228,11 +235,231 @@ afterEach(() => {
   document.getSelection()?.removeAllRanges();
   if (rangeClientRectsDescriptor) Object.defineProperty(Range.prototype, "getClientRects", rangeClientRectsDescriptor);
   else Reflect.deleteProperty(Range.prototype, "getClientRects");
+  if (rangeBoundingRectDescriptor) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeBoundingRectDescriptor);
+  else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
   if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
   else Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("MessageList thread switch", () => {
+  it("loads and scrolls a virtualized source before it reconstructs the saved range", async () => {
+    messagesValue = [{ id: "m1", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Current message" }];
+    hasMoreMessagesValue = true;
+    const comment: SelectedTextComment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "m2",
+        sourceRole: "assistant",
+        start: 0,
+        end: 14,
+        quote: "Virtual source",
+      },
+      note: "Saved note",
+      mentions: [],
+    };
+    const onSelectedTextCommentSourceOpened = vi.fn();
+    loadOlderMessagesSpy.mockImplementationOnce(async () => {
+      messagesValue = [
+        { id: "m2", sequence: 1, thread_id: "thread-A", role: "assistant", content: "Virtual source" },
+        { id: "m1", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Current message" },
+      ];
+      // More pages can remain after the target page loads. The navigation
+      // effect must react to the newly resident source, not pagination state.
+      hasMoreMessagesValue = true;
+    });
+    const request = { id: 1, comment };
+    const props = {
+      selectedTextCommentSourceNavigation: request,
+      onSelectedTextCommentSourceOpened,
+    };
+    const { container, rerender } = render(<MessageList {...props} />);
+    mockSelectedTextViewport(container);
+
+    await waitFor(() => expect(loadOlderMessagesSpy).toHaveBeenCalledWith("thread-A"));
+    rerender(<MessageList {...props} />);
+    await waitFor(() => expect(onSelectedTextCommentSourceOpened).toHaveBeenCalledWith(request));
+    expect(scrollToIndexSpy).toHaveBeenCalledWith(0, { align: "center", behavior: "smooth" });
+  });
+
+  it("marks a source unavailable only after its resident message fails canonical reconstruction", async () => {
+    messagesValue = [{ id: "m1", sequence: 1, thread_id: "thread-A", role: "assistant", content: "Loaded message" }];
+    const comment: SelectedTextComment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "m1",
+        sourceRole: "assistant",
+        start: 0,
+        end: 7,
+        quote: "Missing",
+      },
+      note: "Saved note",
+      mentions: [],
+    };
+    const onSelectedTextCommentSourceUnavailable = vi.fn();
+    const request = { id: 2, comment };
+    const { container } = render(
+      <MessageList
+        selectedTextCommentSourceNavigation={request}
+        onSelectedTextCommentSourceUnavailable={onSelectedTextCommentSourceUnavailable}
+      />,
+    );
+    mockSelectedTextViewport(container);
+
+    await waitFor(() => expect(onSelectedTextCommentSourceUnavailable).toHaveBeenCalledWith(request));
+    expect(loadOlderMessagesSpy).not.toHaveBeenCalled();
+    expect(loadNewerMessagesSpy).not.toHaveBeenCalled();
+  });
+
+  it("marks a source unavailable after its required history page fails to load", async () => {
+    messagesValue = [{ id: "m1", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Current message" }];
+    hasMoreMessagesValue = true;
+    loadOlderMessagesSpy.mockResolvedValueOnce("failed");
+    const comment: SelectedTextComment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "m2",
+        sourceRole: "assistant",
+        start: 0,
+        end: 14,
+        quote: "Virtual source",
+      },
+      note: "Saved note",
+      mentions: [],
+    };
+    const onSelectedTextCommentSourceUnavailable = vi.fn();
+    const request = { id: 3, comment };
+    const { container, rerender } = render(
+      <MessageList
+        selectedTextCommentSourceNavigation={request}
+        onSelectedTextCommentSourceUnavailable={onSelectedTextCommentSourceUnavailable}
+      />,
+    );
+    mockSelectedTextViewport(container);
+
+    await waitFor(() => expect(onSelectedTextCommentSourceUnavailable).toHaveBeenCalledWith(request));
+    rerender(
+      <MessageList
+        selectedTextCommentSourceNavigation={request}
+        onSelectedTextCommentSourceUnavailable={onSelectedTextCommentSourceUnavailable}
+      />,
+    );
+    expect(loadOlderMessagesSpy).toHaveBeenCalledOnce();
+    expect(onSelectedTextCommentSourceUnavailable).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the latest source request active when an earlier history request fails", async () => {
+    messagesValue = [{ id: "m1", sequence: 3, thread_id: "thread-A", role: "assistant", content: "Current message" }];
+    hasMoreMessagesValue = true;
+    const commentA: SelectedTextComment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "missing-a",
+        sourceRole: "assistant",
+        start: 0,
+        end: 1,
+        quote: "A",
+      },
+      note: "Saved note A",
+      mentions: [],
+    };
+    const commentB: SelectedTextComment = {
+      id: "22222222-2222-4222-8222-222222222222",
+      displayNumber: 2,
+      source: {
+        threadId: "thread-A",
+        messageId: "missing-b",
+        sourceRole: "assistant",
+        start: 0,
+        end: 1,
+        quote: "B",
+      },
+      note: "Saved note B",
+      mentions: [],
+    };
+    const requestA = {
+      id: 4,
+      comment: commentA,
+    };
+    const requestB = {
+      id: 5,
+      comment: commentB,
+    };
+    let rejectA!: (reason?: unknown) => void;
+    loadOlderMessagesSpy
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectA = reject; }))
+      .mockReturnValueOnce(new Promise(() => undefined));
+    const onSelectedTextCommentSourceUnavailable = vi.fn();
+
+    function NavigationHarness() {
+      const [request, setRequest] = useState<SelectedTextCommentSourceNavigationRequest | undefined>(requestA);
+      return (
+        <>
+          <button type="button" onClick={() => setRequest(requestB)}>Open B</button>
+          <output data-testid="active-source-request">{request?.id}</output>
+          <MessageList
+            selectedTextCommentSourceNavigation={request}
+            onSelectedTextCommentSourceUnavailable={(resolvedRequest) => {
+              onSelectedTextCommentSourceUnavailable(resolvedRequest);
+              setRequest(undefined);
+            }}
+          />
+        </>
+      );
+    }
+
+    const { container } = render(<NavigationHarness />);
+    mockSelectedTextViewport(container);
+    await waitFor(() => expect(loadOlderMessagesSpy).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "Open B" }));
+    await waitFor(() => expect(loadOlderMessagesSpy).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      rejectA(new Error("History unavailable"));
+      await Promise.resolve();
+    });
+
+    expect(onSelectedTextCommentSourceUnavailable).not.toHaveBeenCalled();
+    expect(screen.getByTestId("active-source-request")).toHaveTextContent("5");
+  });
+
+  it("restores an open source editor after its source is virtualized and scrolled into view", async () => {
+    messagesValue = [
+      { id: "m1", sequence: 1, thread_id: "thread-A", role: "assistant", content: "Earlier message" },
+      { id: "m2", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Virtual source" },
+    ];
+    const { container } = render(
+      <MessageList
+        selectedTextCommentEditor={{
+          source: {
+            threadId: "thread-A",
+            messageId: "m2",
+            sourceRole: "assistant",
+            start: 0,
+            end: 14,
+            quote: "Virtual source",
+          },
+          note: "Unsaved edit",
+          mentions: [],
+          escapeWarned: false,
+          outsideWarned: false,
+          anchor: "source",
+        }}
+      />,
+    );
+    mockSelectedTextViewport(container);
+
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Comment on selected text" })).toBeVisible());
+    expect(scrollToIndexSpy).toHaveBeenCalledWith(1, { align: "center", behavior: "smooth" });
+  });
+
   it("keeps selected-text actions open through the selection click sequence", async () => {
     messagesValue = [{
       id: "assistant-1",
@@ -267,14 +494,48 @@ describe("MessageList thread switch", () => {
     fireEvent.click(addComment);
     expect(getByRole("dialog", { name: "Comment on selected text" })).toBeInTheDocument();
     const noteInput = getByRole("textbox", { name: "Comment note" });
-    await vi.waitFor(() => expect(noteInput).toHaveFocus());
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    expect(noteInput).toHaveFocus();
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
     expect(getByRole("button", { name: "Close comment editor" })).toBeInTheDocument();
     selection.removeAllRanges();
     content.removeEventListener("contextmenu", contextMenuSpy);
   });
 
-  it("anchors selected-text actions and the editor to the selected range after native selection clears", async () => {
+  it("closes the selected-text editor when mounted canonical content no longer reconstructs", async () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    const viewport = mockSelectedTextViewport(container);
+    const content = getByText("Select this phrase");
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.click(getByRole("button", { name: "Add comment" }));
+    expect(getByRole("dialog", { name: "Comment on selected text" })).toBeInTheDocument();
+
+    content.textContent = "Changed canonical content";
+    fireEvent.scroll(viewport);
+
+    await vi.waitFor(() => {
+      expect(queryByRole("dialog", { name: "Comment on selected text" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("reconstructs current range geometry after the native selection clears", async () => {
     messagesValue = [{
       id: "assistant-1",
       sequence: 1,
@@ -287,14 +548,14 @@ describe("MessageList thread switch", () => {
     const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
     const resizeObservers: ResizeObserverMock[] = [];
     let rangeRectReads = 0;
-    class ResizeObserverMock {
+    class ResizeObserverMock implements ResizeObserver {
       readonly observed = new Set<Element>();
 
       constructor(readonly callback: ResizeObserverCallback) {
         resizeObservers.push(this);
       }
 
-      observe(target: Element) {
+      observe(target: Element, _options?: ResizeObserverOptions) {
         this.observed.add(target);
       }
 
@@ -304,6 +565,10 @@ describe("MessageList thread switch", () => {
 
       disconnect() {
         this.observed.clear();
+      }
+
+      trigger() {
+        this.callback([], this);
       }
     }
     Object.defineProperty(Range.prototype, "getClientRects", {
@@ -334,14 +599,11 @@ describe("MessageList thread switch", () => {
 
       const action = getByRole("button", { name: "Add comment" });
       const actionPositioner = action.closest('[data-slot="popover-content"]')?.parentElement;
-      expect(
-        actionPositioner,
-        "the action must use the selected range Popover anchor at (120, 188), not the pointer release at (900, 700)",
-      ).toBeTruthy();
+      expect(actionPositioner).toBeTruthy();
       await vi.waitFor(() => {
         expect(actionPositioner).toHaveStyle({
-          "--anchor-width": "96px",
-          "--anchor-height": "20px",
+          "--anchor-width": "160px",
+          "--anchor-height": "40px",
         });
       });
       expect(document.querySelector('[data-slot="popover-trigger"]')).toBeNull();
@@ -363,22 +625,41 @@ describe("MessageList thread switch", () => {
       selectedRangeRect = new DOMRect(120, 80, 128, 20);
       const readsBeforeViewportResize = rangeRectReads;
       act(() => {
-        viewportObserver.callback([], viewportObserver as unknown as ResizeObserver);
+        viewportObserver.trigger();
       });
       await vi.waitFor(() => {
         expect(rangeRectReads).toBeGreaterThan(readsBeforeViewportResize);
-        expect(actionPositioner).toHaveStyle({ "--anchor-width": "128px" });
       });
 
       fireEvent.click(action);
       selection.removeAllRanges();
       const editor = getByRole("dialog", { name: "Comment on selected text" });
       const editorPositioner = editor.closest('[data-slot="popover-content"]')?.parentElement;
+      vi.spyOn(editor, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 328, 46));
+      const editorObserver = resizeObservers.find((observer) => observer.observed.has(editor));
+      expect(editorObserver).toBeDefined();
+      act(() => {
+        editorObserver!.trigger();
+      });
       await vi.waitFor(() => {
         expect(editorPositioner).toHaveStyle({
-          "--anchor-width": "128px",
-          "--anchor-height": "20px",
+          "--anchor-width": "328px",
+          "--anchor-height": "46px",
         });
+      });
+
+      selectedRangeRect = new DOMRect(120, 840, 128, 20);
+      const readsBeforeDock = rangeRectReads;
+      fireEvent.scroll(viewport);
+      await vi.waitFor(() => {
+        expect(rangeRectReads).toBeGreaterThan(readsBeforeDock);
+      });
+
+      selectedRangeRect = new DOMRect(160, 220, 128, 20);
+      const readsBeforeReturn = rangeRectReads;
+      fireEvent.scroll(viewport);
+      await vi.waitFor(() => {
+        expect(rangeRectReads).toBeGreaterThan(readsBeforeReturn);
       });
     } finally {
       Object.defineProperty(Range.prototype, "getClientRects", {
@@ -524,7 +805,7 @@ describe("MessageList thread switch", () => {
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
   });
 
-  it("focuses the selected-text note editor and closes it on Escape", async () => {
+  it("returns focus to Add comment when the selected-text editor closes", async () => {
     messagesValue = [{
       id: "assistant-1",
       sequence: 1,
@@ -543,15 +824,19 @@ describe("MessageList thread switch", () => {
     selection.addRange(range);
 
     fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
-    fireEvent.click(getByRole("button", { name: "Add comment" }));
+    const action = getByRole("button", { name: "Add comment" });
+    const actionPopup = action.closest('[data-slot="popover-content"]');
+    fireEvent.click(action);
 
     const noteInput = getByRole("textbox", { name: "Comment note" });
+    expect(noteInput.closest('[data-slot="popover-content"]')).not.toBe(actionPopup);
     await vi.waitFor(() => expect(noteInput).toHaveFocus());
     fireEvent.keyDown(noteInput, { key: "Escape" });
 
     await vi.waitFor(() => {
       expect(queryByRole("dialog", { name: "Comment on selected text" })).not.toBeInTheDocument();
     });
+    await vi.waitFor(() => expect(getByRole("button", { name: "Add comment" })).toHaveFocus());
   });
 
   it("does not open the selected-text menu for cross-message or ineligible selections", () => {

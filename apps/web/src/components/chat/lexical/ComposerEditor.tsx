@@ -28,6 +28,10 @@ interface ComposerEditorProps {
   isSlashPopupOpen: boolean;
   /** Ref callback to expose the LexicalEditor instance */
   editorRef?: React.MutableRefObject<LexicalEditor | null>;
+  /** Ref for the rendered editable element. */
+  contentEditableRef?: React.Ref<HTMLDivElement>;
+  /** Focuses the editable element when it mounts. */
+  autoFocus?: boolean;
   disabled?: boolean;
   placeholder?: string;
   /** DOM identifier for a focus target outside the editor. */
@@ -38,6 +42,8 @@ interface ComposerEditorProps {
   submitOnEnter?: boolean;
   /** Uses the compact annotation sizing required by selected-text comments. */
   compact?: boolean;
+  /** Caps the compact editor content without affecting the full composer. */
+  compactMaxHeight?: number;
   /** When true, intercept navigation keys for popup keyboard handling. */
   isPopupOpen?: boolean;
   /** Called when a navigation key is pressed while popup is open. Returns true if handled. */
@@ -47,6 +53,7 @@ interface ComposerEditorProps {
 const COMPOSER_MIN_HEIGHT = "80px";
 const COMPOSER_MAX_HEIGHT = "30vh";
 const COMPACT_EDITOR_MIN_HEIGHT = "2.25rem";
+const COMPACT_EDITOR_MIN_HEIGHT_PX = 36;
 
 const EDITOR_THEME = {
   paragraph: `min-h-[${COMPOSER_MIN_HEIGHT}]`,
@@ -55,6 +62,17 @@ const EDITOR_THEME = {
 const COMPACT_EDITOR_THEME = {
   paragraph: "min-h-0",
 };
+
+function editorHeightStyle(compact: boolean, compactMaxHeight: number | undefined) {
+  const maximumCompactHeight = compactMaxHeight === undefined ? undefined : Math.max(0, compactMaxHeight);
+  const minimumCompactHeight = maximumCompactHeight === undefined
+    ? COMPACT_EDITOR_MIN_HEIGHT
+    : Math.min(COMPACT_EDITOR_MIN_HEIGHT_PX, maximumCompactHeight);
+  return {
+    minHeight: compact ? minimumCompactHeight : COMPOSER_MIN_HEIGHT,
+    maxHeight: compact ? maximumCompactHeight ?? COMPOSER_MAX_HEIGHT : COMPOSER_MAX_HEIGHT,
+  };
+}
 
 /** Internal plugin that exposes the editor instance via ref. */
 function EditorRefPlugin({
@@ -89,17 +107,21 @@ export function ComposerEditor({
   onSlashDismiss,
   isSlashPopupOpen,
   editorRef,
+  contentEditableRef,
+  autoFocus,
   disabled,
   placeholder = "Ask for follow-up changes or attach images",
   id,
   ariaLabel,
   submitOnEnter,
   compact = false,
+  compactMaxHeight,
   isPopupOpen,
   onPopupKeyDown,
 }: ComposerEditorProps) {
   const internalRef = useRef<LexicalEditor | null>(null);
   const ref = editorRef ?? internalRef;
+  const heightStyle = editorHeightStyle(compact, compactMaxHeight);
 
   const initialConfig = useRef({
     namespace: "McodeComposer",
@@ -125,22 +147,23 @@ export function ComposerEditor({
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
+              ref={contentEditableRef}
+              autoFocus={autoFocus}
               className={compact
-                ? "w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none"
+                ? "w-full resize-none bg-transparent px-2 pt-2.5 pb-1.5 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none"
                 : "w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"}
               id={id}
               aria-label={ariaLabel}
               aria-placeholder={placeholder}
               placeholder={
                 <div className={compact
-                  ? "pointer-events-none absolute left-2 top-1.5 text-sm text-muted-foreground"
+                  ? "pointer-events-none absolute left-2 top-2.5 text-sm text-muted-foreground"
                   : "pointer-events-none absolute left-4 top-3 text-sm text-muted-foreground"}>
                   {placeholder}
                 </div>
               }
               style={{
-                minHeight: compact ? COMPACT_EDITOR_MIN_HEIGHT : COMPOSER_MIN_HEIGHT,
-                maxHeight: COMPOSER_MAX_HEIGHT,
+                ...heightStyle,
                 overflowY: "auto",
               }}
             />

@@ -24,6 +24,7 @@ import { setLayoutMeasurements } from "@/lib/composer-layout";
 const {
   mockCreateBranch,
   mockGetAutomaticSetup,
+  mockGetRightPanelVisible,
   mockGetWorkspaceSetupAttempt,
   mockListWorkspaceActionRuns,
   mockOpenSubagentsPanel,
@@ -36,6 +37,7 @@ const {
 } = vi.hoisted(() => ({
   mockCreateBranch: vi.fn(),
   mockGetAutomaticSetup: vi.fn(),
+  mockGetRightPanelVisible: vi.fn(),
   mockGetWorkspaceSetupAttempt: vi.fn(),
   mockListWorkspaceActionRuns: vi.fn(),
   mockOpenSubagentsPanel: vi.fn(),
@@ -113,7 +115,7 @@ vi.mock("@/stores/diffStore", async (importOriginal) => {
   const mockState = {
     snapshotsByThread: {},
     diffRevisionByScope: {},
-    getRightPanelVisible: vi.fn().mockReturnValue(false),
+    getRightPanelVisible: mockGetRightPanelVisible,
     getRightPanel: vi.fn().mockReturnValue({ width: 380 }),
     setSnapshots: vi.fn(),
   };
@@ -253,6 +255,7 @@ describe("ThreadOverview branchless Create PR", () => {
     mockWorkspaceState.worktreesLoadedForWorkspace = "ws-1";
     mockCreateBranch.mockReset().mockResolvedValue({ branch: "feat/issue-801" });
     mockGetAutomaticSetup.mockReset();
+    mockGetRightPanelVisible.mockReset().mockReturnValue(false);
     mockGetWorkspaceSetupAttempt.mockReset().mockResolvedValue(null);
     mockListWorkspaceActionRuns.mockReset().mockResolvedValue([]);
     mockReadWorkspaceEnvironment.mockReset().mockResolvedValue({
@@ -277,6 +280,24 @@ describe("ThreadOverview branchless Create PR", () => {
     useDiffStore.setState({ rightPanelByThread: {}, rightPanelFallbackByWorkspace: {} });
     useProjectActionStore.setState({ runsByThread: {} });
     setLayoutMeasurements(1200, 1200);
+  });
+
+  it("keeps Overview open when the normal right panel narrows the chat", () => {
+    const thread = makeThread();
+    const overview = render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
+
+    expect(screen.getByTestId("header-workspace-menu")).toHaveAttribute("aria-expanded", "true");
+
+    mockGetRightPanelVisible.mockReturnValue(true);
+    overview.rerender(<ThreadOverview thread={thread} threadPaneWidth={800} />);
+
+    expect(screen.getByTestId("header-workspace-menu")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("keeps Overview closed by default in a narrow chat pane", () => {
+    render(<ThreadOverview thread={makeThread()} threadPaneWidth={800} />);
+
+    expect(screen.getByTestId("header-workspace-menu")).toHaveAttribute("aria-expanded", "false");
   });
 
   it("launches an idle Action in the background, then focuses its retained terminal", async () => {

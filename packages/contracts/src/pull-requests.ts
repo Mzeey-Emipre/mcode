@@ -1348,6 +1348,8 @@ export const PullRequestCreateReviewTaskRequestSchema = lazySchema(() =>
       identity: PullRequestIdentitySchema(),
       workspaceId: z.string().min(1).max(128),
       expectedHeadOid: pullRequestReviewOidSchema,
+      /** Client-generated identity for a persisted startup lifecycle. */
+      startupId: z.string().uuid().optional(),
       worktreeName: pullRequestReviewWorktreeNameSchema,
       ...pullRequestReviewTaskSettings,
     }),
@@ -1357,6 +1359,8 @@ export const PullRequestCreateReviewTaskRequestSchema = lazySchema(() =>
       identity: PullRequestIdentitySchema(),
       workspaceId: z.string().min(1).max(128),
       expectedHeadOid: pullRequestReviewOidSchema,
+      /** Client-generated identity for a persisted startup lifecycle. */
+      startupId: z.string().uuid().optional(),
       candidateId: z.string().min(32).max(128).regex(/^[A-Za-z0-9_-]+$/),
       ...pullRequestReviewTaskSettings,
     }),

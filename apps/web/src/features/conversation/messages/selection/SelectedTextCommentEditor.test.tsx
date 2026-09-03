@@ -69,9 +69,9 @@ describe("SelectedTextCommentEditor", () => {
 
     expect(focusOrder(container)).toEqual([
       "Comment note",
-      "Close comment editor",
       "Save comment",
       "Delete comment",
+      "Close comment editor",
     ]);
     expect(container.querySelector("blockquote")).toBeNull();
     expect(screen.getByRole("textbox", { name: "Comment note" })).toHaveAttribute("aria-placeholder", "Write a note");
@@ -80,7 +80,25 @@ describe("SelectedTextCommentEditor", () => {
 
     expect(onSave).toHaveBeenCalledWith(comment);
     expect(onAnnouncement).toHaveBeenCalledWith("Comment 1 updated.");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith();
+  });
+
+  it("limits the note to the shell's available height so its own scrollbar remains usable", () => {
+    render(
+      <SelectedTextCommentEditor
+        source={source}
+        maxHeight={46}
+        onSave={() => {}}
+        onClose={() => {}}
+        onAnnouncement={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Comment on selected text" })).toHaveStyle({ maxHeight: "46px" });
+    expect(screen.getByRole("textbox", { name: "Comment note" })).toHaveStyle({
+      maxHeight: "36px",
+      overflowY: "auto",
+    });
   });
 
   it("saves a new multiline comment with its typed slash and mention metadata", async () => {
@@ -106,7 +124,7 @@ describe("SelectedTextCommentEditor", () => {
       writeComposerContent(editorRef.current!, "/review @notes.ts\nExplain this.", mentions);
     });
     await vi.waitFor(() => expect(screen.getByRole("button", { name: "Add comment" })).toBeEnabled());
-    expect(focusOrder(container)).toEqual(["Comment note", "Close comment editor", "Add comment"]);
+    expect(focusOrder(container)).toEqual(["Comment note", "Add comment", "Close comment editor"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
 
@@ -118,7 +136,47 @@ describe("SelectedTextCommentEditor", () => {
       mentions,
     });
     expect(onAnnouncement).toHaveBeenCalledWith("Comment 1 added.");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith({ restoreFocus: false });
+  });
+
+  it("restores an unsaved card edit and retains the assigned creation number", async () => {
+    const editorRef: { current: LexicalEditor | null } = { current: null };
+    const onSave = vi.fn();
+    const restoredMentions: MessageMention[] = [{
+      id: "file:src/app.ts",
+      kind: "file",
+      label: "src/app.ts",
+      path: "src/app.ts",
+      range: { start: 0, end: 10 },
+    }];
+    render(
+      <SelectedTextCommentEditor
+        source={source}
+        draft={{
+          source,
+          note: "Restored unsaved note",
+          mentions: restoredMentions,
+          escapeWarned: false,
+          outsideWarned: true,
+          anchor: "card",
+        }}
+        nextDisplayNumber={3}
+        editorRef={editorRef}
+        onSave={onSave}
+        onClose={vi.fn()}
+        onAnnouncement={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(editorRef.current).not.toBeNull());
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Add comment" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      displayNumber: 3,
+      note: "Restored unsaved note",
+      mentions: restoredMentions,
+    }));
   });
 
   it("requires independent dirty confirmations and resets them when the draft changes", async () => {
@@ -145,6 +203,20 @@ describe("SelectedTextCommentEditor", () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.pointerDown(document.body);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a dirty editor from its close button without arming discard confirmation", async () => {
+    const { editorRef, onAnnouncement, onClose } = renderNewEditor();
+    await vi.waitFor(() => expect(editorRef.current).not.toBeNull());
+    await act(async () => {
+      writeComposerContent(editorRef.current!, "Dirty note");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close comment editor" }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onAnnouncement).not.toHaveBeenCalledWith("Repeat this action to discard this comment.");
+    expect(screen.getByRole("dialog", { name: "Comment on selected text" })).not.toHaveClass("animate-preview-annotation-shake");
   });
 
   it("deletes a saved comment with its required announcement", () => {

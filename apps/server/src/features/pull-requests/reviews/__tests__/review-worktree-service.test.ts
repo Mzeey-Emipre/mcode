@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { ThreadStartupRepo } from "../../../thread-startup/persistence/thread-startup-repo.js";
+import { ThreadStartupService } from "../../../thread-startup/thread-startup-service.js";
 import { PullRequestReviewLinkRepo } from "../persistence/pull-request-review-link-repo.js";
-import type { GitService } from "../../../projects/index.js";
+import { PullRequestReviewGitError, type GitService } from "../../../projects/index.js";
 import type { AgentService } from "../../../agents/index.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
@@ -20,6 +22,9 @@ const identity = {
   repository: "mcode",
   number: 42,
 };
+const managedStartupId = "00000000-0000-4000-8000-000000000011";
+const reuseStartupId = "00000000-0000-4000-8000-000000000012";
+const failedStartupId = "00000000-0000-4000-8000-000000000013";
 
 function reviewSource(): PullRequestReviewTaskSource {
   return {
@@ -115,6 +120,7 @@ describe("ReviewWorktreeService", () => {
   let gitService: GitService;
   let pullRequestService: PullRequestService;
   let agentService: AgentService;
+  let startups: ThreadStartupService;
   let service: ReviewWorktreeService;
 
   beforeEach(() => {
@@ -122,6 +128,7 @@ describe("ReviewWorktreeService", () => {
     workspaceRepo = new WorkspaceRepo(db);
     threadRepo = new ThreadRepo(db);
     reviewLinkRepo = new PullRequestReviewLinkRepo(db);
+    startups = new ThreadStartupService(new ThreadStartupRepo(db));
     gitService = {
       listNormalizedRemotes: vi.fn().mockResolvedValue([{
         name: "origin",
@@ -149,8 +156,11 @@ describe("ReviewWorktreeService", () => {
         _source: unknown,
         _request: unknown,
         commit: (provisioned: unknown) => Promise<unknown> | unknown,
-      ) => {
-        const provisioned = await gitService.provisionPullRequestReviewWorktree(
+      observer?: { output(content: string): void },
+    ) => {
+      observer?.output("fetch progress\n");
+      observer?.output("https://user:password@example.test/repo?access_token=top-secret\n");
+      const provisioned = await gitService.provisionPullRequestReviewWorktree(
           "C:/repos/mcode",
           {} as never,
           {} as never,
@@ -195,6 +205,7 @@ describe("ReviewWorktreeService", () => {
       agentService,
       settingsService,
       availability,
+      startups,
     );
   });
 
@@ -444,6 +455,140 @@ describe("ReviewWorktreeService", () => {
       pullRequestUrl: "https://github.com/Mzeey-Empire/mcode/pull/42",
       pullRequestState: "open",
     });
+  });
+
+  it("records the managed Review checkout lifecycle and Git transcript", async () => {
+    const workspace = workspaceRepo.create("mcode", "C:/repos/mcode", true);
+
+    await expect(service.createReviewTask({
+      action: "create_new",
+      operationId: "create-startup",
+      startupId: managedStartupId,
+      identity,
+      workspaceId: workspace.id,
+      expectedHeadOid: "a".repeat(40),
+      worktreeName: "pr-42-startup",
+      intent: "Review this pull request.",
+    })).resolves.toMatchObject({ ok: true, status: "ready" });
+
+    expect(startups.get(managedStartupId)).toMatchObject({
+      state: "completed",
+      phase: "agent",
+      threadId: expect.any(String),
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "completed" },
+        { phase: "agent", state: "completed" },
+      ],
+      transcript: expect.arrayContaining([
+        expect.objectContaining({ phase: "worktree", content: "fetch progress\n" }),
+      ]),
+    });
+    const transcript = startups.get(managedStartupId)!.transcript.map((entry) => entry.content).join("");
+    expect(transcript).toContain("https://[redacted]@example.test/repo?access_token=[redacted]");
+    expect(transcript).not.toContain("top-secret");
+    expect(transcript).not.toContain("password");
+  });
+
+  it("cancels a reused Review checkout after Git without removing it", async () => {
+    const workspace = workspaceRepo.create("mcode", "C:/repos/mcode", true);
+    const rollback = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(gitService.provisionPullRequestReviewWorktreeAndCommit).mockImplementationOnce(async (
+      _repoPath,
+      _source,
+      _request,
+      commit,
+    ) => {
+      const provisioned = {
+        kind: "ready" as const,
+        disposition: "reused" as const,
+        path: "C:/existing/review-42",
+        name: "review-42",
+        branch: "feature/review",
+        managed: false,
+        pushRemote: "mcode-pr-fork",
+        pushRef: "feature/review",
+        managedRemoteName: null,
+        rollback,
+      };
+      startups.cancel(reuseStartupId);
+      try {
+        return { kind: "committed" as const, value: await commit(provisioned) };
+      } catch (error) {
+        await rollback();
+        throw error;
+      }
+    });
+
+    await expect(service.createReviewTask({
+      action: "reuse_existing",
+      operationId: "reuse-cancelled",
+      startupId: reuseStartupId,
+      identity,
+      workspaceId: workspace.id,
+      expectedHeadOid: "a".repeat(40),
+      candidateId: "a".repeat(43),
+      intent: "Review this pull request.",
+    })).resolves.toMatchObject({ ok: false });
+
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(startups.get(reuseStartupId)).toMatchObject({
+      state: "cancelled",
+      phase: "worktree",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "worktree", state: "cancelled" },
+        { phase: "agent", state: "pending" },
+      ],
+    });
+    expect(agentService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("records a Git failure on the worktree phase without changing the pull request error", async () => {
+    const workspace = workspaceRepo.create("mcode", "C:/repos/mcode", true);
+    vi.mocked(gitService.provisionPullRequestReviewWorktreeAndCommit).mockRejectedValueOnce(
+      new PullRequestReviewGitError("conflict", "The pull request head changed while the Review worktree was being prepared."),
+    );
+
+    await expect(service.createReviewTask({
+      action: "create_new",
+      operationId: "create-git-failure",
+      startupId: failedStartupId,
+      identity,
+      workspaceId: workspace.id,
+      expectedHeadOid: "a".repeat(40),
+      worktreeName: "pr-42-git-failure",
+      intent: "Review this pull request.",
+    })).resolves.toEqual({
+      ok: false,
+      error: {
+        code: "conflict",
+        message: "The pull request head changed while the Review worktree was being prepared.",
+      },
+    });
+
+    expect(startups.get(failedStartupId)).toMatchObject({
+      state: "failed",
+      phase: "worktree",
+      error: { code: "REVIEW_WORKTREE_FAILED", message: "Review worktree preparation failed" },
+    });
+  });
+
+  it("does not create a startup record for preparation or a request without startupId", async () => {
+    const workspace = workspaceRepo.create("mcode", "C:/repos/mcode", true);
+
+    await service.createReviewTask({ action: "prepare", operationId: "prepare-no-startup", identity, workspaceId: workspace.id });
+    await service.createReviewTask({
+      action: "create_new",
+      operationId: "create-no-startup",
+      identity,
+      workspaceId: workspace.id,
+      expectedHeadOid: "a".repeat(40),
+      worktreeName: "pr-42-no-startup",
+      intent: "Review this pull request.",
+    });
+
+    expect(startups.list(workspace.id)).toEqual([]);
   });
 
   it("completes create_new while the repository mutation lock is re-entered by provisioning", async () => {

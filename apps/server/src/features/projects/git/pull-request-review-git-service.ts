@@ -7,7 +7,7 @@ import { getMcodeDir, logger, validateWorktreeName } from "@mcode/shared";
 import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { normalizePathForComparison } from "../../../shared/filesystem/path-identity.js";
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
-import type { GitExecutor } from "./execution/index.js";
+import type { GitExecOptions, GitExecutor } from "./execution/index.js";
 import {
   GitRepositoryService,
   normalizeRemoteIdentity,
@@ -40,6 +40,11 @@ export interface PullRequestReviewGitCandidate {
   path: string;
   branch: string;
   managed: boolean;
+}
+
+/** Receives safe progress text for one pull request Review checkout operation. */
+export interface PullRequestReviewGitObserver {
+  output(content: string): void;
 }
 
 /** Result of provisioning or explicitly reusing a local Review worktree. */
@@ -240,9 +245,14 @@ export class PullRequestReviewGitService {
   async findCompatiblePullRequestReviewWorktrees(
     repoPath: string,
     source: PullRequestReviewGitSource,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<PullRequestReviewGitCandidate[]> {
     this.validatePullRequestReviewSource(source);
-    const remotes = await this.gitRepository.listNormalizedRemotes(repoPath);
+    observer?.output("Checking compatible Review worktrees.\n");
+    const remotes = await this.gitRepository.listNormalizedRemotes(
+      repoPath,
+      this.gitOutputCallbacks(observer),
+    );
     const headKey = normalizedRepositoryKey(source.headRepositoryUrl);
     if (!headKey) return [];
     const matchingRemotes = remotes.filter(
@@ -250,12 +260,12 @@ export class PullRequestReviewGitService {
     );
     const safeRemotes: NormalizedGitRemote[] = [];
     for (const remote of matchingRemotes) {
-      if (await this.remotePushTargetMatches(repoPath, remote, headKey)) {
+      if (await this.remotePushTargetMatches(repoPath, remote, headKey, observer)) {
         safeRemotes.push(remote);
       }
     }
     if (safeRemotes.length === 0) return [];
-    const branches = await this.listReviewBranches(repoPath);
+    const branches = await this.listReviewBranches(repoPath, observer);
     const matches = safeRemotes.flatMap((remote) =>
       branches
         .filter((branch) =>
@@ -279,9 +289,10 @@ export class PullRequestReviewGitService {
     repoPath: string,
     source: PullRequestReviewGitSource,
     request: PullRequestReviewGitProvisionRequest,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<PullRequestReviewGitProvisionResult> {
     return this.withReviewWorktreeMutationLock(repoPath, () =>
-      this.provisionPullRequestReviewWorktreeLocked(repoPath, source, request),
+      this.provisionPullRequestReviewWorktreeLocked(repoPath, source, request, observer),
     );
   }
 
@@ -293,6 +304,7 @@ export class PullRequestReviewGitService {
     commit: (
       provisioned: Extract<PullRequestReviewGitProvisionResult, { kind: "ready" }>,
     ) => Promise<T> | T,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<
     | Extract<PullRequestReviewGitProvisionResult, { kind: "requires_reuse" }>
     | { kind: "committed"; value: T }
@@ -302,6 +314,7 @@ export class PullRequestReviewGitService {
         repoPath,
         source,
         request,
+        observer,
       );
       if (provisioned.kind === "requires_reuse") return provisioned;
       try {
@@ -317,17 +330,18 @@ export class PullRequestReviewGitService {
     repoPath: string,
     source: PullRequestReviewGitSource,
     request: PullRequestReviewGitProvisionRequest,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<PullRequestReviewGitProvisionResult> {
     this.validatePullRequestReviewSource(source);
-    const attempt = await this.preparePullRequestReviewFetch(repoPath, source);
+    const attempt = await this.preparePullRequestReviewFetch(repoPath, source, observer);
     let completed = false;
 
     try {
-      const result = await this.provisionReviewWorktreeForAttempt(repoPath, source, request, attempt);
+      const result = await this.provisionReviewWorktreeForAttempt(repoPath, source, request, attempt, observer);
       completed = true;
       return result;
     } catch (error) {
-      if (!completed) await this.rollbackPullRequestReviewAttempt(attempt);
+      if (!completed) await this.rollbackPullRequestReviewAttempt(attempt, observer);
       throw error;
     }
   }
@@ -387,6 +401,30 @@ export class PullRequestReviewGitService {
     return this.repositoryMutationLock.run(repoPath, work);
   }
 
+  /** Run one Review Git command and stream output only when the caller requests observation. */
+  private async execReviewGit(
+    args: string[],
+    options: GitExecOptions,
+    observer?: PullRequestReviewGitObserver,
+    displayLine?: string,
+  ) {
+    if (displayLine) observer?.output(displayLine);
+    return await this.gitExecutor.exec(args, {
+      ...options,
+      ...this.gitOutputCallbacks(observer),
+    });
+  }
+
+  private gitOutputCallbacks(
+    observer?: PullRequestReviewGitObserver,
+  ): Pick<GitExecOptions, "onStdout" | "onStderr"> {
+    if (!observer) return {};
+    return {
+      onStdout: (content) => observer.output(content),
+      onStderr: (content) => observer.output(content),
+    };
+  }
+
   private validatePullRequestReviewSource(source: PullRequestReviewGitSource): void {
     if (hasInvalidPullRequestReviewSource(source)) {
       throw new PullRequestReviewGitError(
@@ -402,17 +440,19 @@ export class PullRequestReviewGitService {
     source: PullRequestReviewGitSource,
     request: PullRequestReviewGitProvisionRequest,
     attempt: ReviewProvisionAttempt,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<PullRequestReviewGitProvisionResult> {
-    const branches = await this.listReviewBranches(repoPath);
+    observer?.output("Checking the selected Review worktree.\n");
+    const branches = await this.listReviewBranches(repoPath, observer);
     const compatibleWorktrees = await this.compatibleReviewWorktrees(repoPath, source, attempt.remoteName, branches);
     if (request.action === "reuse_existing") {
-      return this.reuseReviewWorktree(request, source, attempt, compatibleWorktrees);
+      return this.reuseReviewWorktree(request, source, attempt, compatibleWorktrees, observer);
     }
     if (compatibleWorktrees.length > 0) {
-      await this.rollbackPullRequestReviewAttempt(attempt);
+      await this.rollbackPullRequestReviewAttempt(attempt, observer);
       return { kind: "requires_reuse", candidate: compatibleWorktrees[0]! };
     }
-    return this.createReviewWorktree(repoPath, source, request, attempt, branches);
+    return this.createReviewWorktree(repoPath, source, request, attempt, branches, observer);
   }
 
   private async compatibleReviewWorktrees(
@@ -434,6 +474,7 @@ export class PullRequestReviewGitService {
     source: PullRequestReviewGitSource,
     attempt: ReviewProvisionAttempt,
     candidates: readonly PullRequestReviewGitCandidate[],
+    observer?: PullRequestReviewGitObserver,
   ): Promise<Extract<PullRequestReviewGitProvisionResult, { kind: "ready" }>> {
     const candidate = candidates.find((item) => item.candidateId === request.candidateId);
     if (!candidate) {
@@ -442,8 +483,9 @@ export class PullRequestReviewGitService {
         "The selected Review worktree is no longer compatible with this pull request head.",
       );
     }
-    await this.deleteReviewImmutableRef(attempt);
-    return this.reviewWorktreeReadyResult("reused", source, attempt, candidate);
+    observer?.output("Reusing the compatible Review worktree.\n");
+    await this.deleteReviewImmutableRef(attempt, observer);
+    return this.reviewWorktreeReadyResult("reused", source, attempt, candidate, observer);
   }
 
   private async createReviewWorktree(
@@ -452,18 +494,19 @@ export class PullRequestReviewGitService {
     request: Extract<PullRequestReviewGitProvisionRequest, { action: "create_new" }>,
     attempt: ReviewProvisionAttempt,
     branches: ReviewBranchRecord[],
+    observer?: PullRequestReviewGitObserver,
   ): Promise<Extract<PullRequestReviewGitProvisionResult, { kind: "ready" }>> {
     const destination = this.getReviewWorktreeDestination(repoPath, request.worktreeName);
     await this.assertFreshManagedReviewDestination(repoPath, destination);
-    const selected = await this.selectReviewBranch(repoPath, source, attempt.remoteName, branches);
-    const canonicalDestination = await this.addReviewWorktree(repoPath, source, attempt, destination, selected);
-    await this.deleteReviewImmutableRef(attempt);
+    const selected = await this.selectReviewBranch(repoPath, source, attempt.remoteName, branches, observer);
+    const canonicalDestination = await this.addReviewWorktree(repoPath, source, attempt, destination, selected, observer);
+    await this.deleteReviewImmutableRef(attempt, observer);
     return this.reviewWorktreeReadyResult("created", source, attempt, {
       path: canonicalDestination,
       name: request.worktreeName,
       branch: selected.name,
       managed: true,
-    });
+    }, observer);
   }
 
   private async addReviewWorktree(
@@ -472,20 +515,28 @@ export class PullRequestReviewGitService {
     attempt: ReviewProvisionAttempt,
     destination: string,
     selected: { name: string; created: boolean },
+    observer?: PullRequestReviewGitObserver,
   ): Promise<string> {
     attempt.createdWorktreePath = destination;
     if (selected.created) {
       attempt.createdBranch = selected.name;
-      await this.gitExecutor.exec(
+      await this.execReviewGit(
         ["-C", repoPath, "worktree", "add", "-b", selected.name, destination, attempt.immutableRef],
         { timeout: 60_000 },
+        observer,
+        "Preparing the Review checkout.\n",
       );
     } else {
-      await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", destination, selected.name], { timeout: 60_000 });
+      await this.execReviewGit(
+        ["-C", repoPath, "worktree", "add", destination, selected.name],
+        { timeout: 60_000 },
+        observer,
+        "Preparing the Review checkout.\n",
+      );
     }
     const canonicalDestination = await this.assertReviewWorktreeDestination(repoPath, destination);
     attempt.createdWorktreePath = canonicalDestination;
-    if (selected.created) await this.setReviewBranchUpstream(repoPath, source, attempt.remoteName, selected.name);
+    if (selected.created) await this.setReviewBranchUpstream(repoPath, source, attempt.remoteName, selected.name, observer);
     return canonicalDestination;
   }
 
@@ -503,10 +554,13 @@ export class PullRequestReviewGitService {
     source: PullRequestReviewGitSource,
     remoteName: string,
     branchName: string,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<void> {
-    await this.gitExecutor.exec(
+    await this.execReviewGit(
       ["-C", repoPath, "branch", `--set-upstream-to=${remoteName}/${source.headRef}`, branchName],
       { timeout: 10_000 },
+      observer,
+      "Setting the Review branch upstream.\n",
     );
   }
 
@@ -515,6 +569,7 @@ export class PullRequestReviewGitService {
     source: PullRequestReviewGitSource,
     attempt: ReviewProvisionAttempt,
     candidate: Pick<PullRequestReviewGitCandidate, "path" | "name" | "branch" | "managed">,
+    observer?: PullRequestReviewGitObserver,
   ): Extract<PullRequestReviewGitProvisionResult, { kind: "ready" }> {
     return {
       kind: "ready",
@@ -523,14 +578,17 @@ export class PullRequestReviewGitService {
       pushRemote: attempt.remoteName,
       pushRef: source.headRef,
       managedRemoteName: attempt.createdRemote ? attempt.remoteName : null,
-      rollback: this.createReviewRollback(attempt),
+      rollback: this.createReviewRollback(attempt, observer),
     };
   }
 
-  private async listReviewBranches(repoPath: string): Promise<ReviewBranchRecord[]> {
+  private async listReviewBranches(
+    repoPath: string,
+    observer?: PullRequestReviewGitObserver,
+  ): Promise<ReviewBranchRecord[]> {
     let stdout: string;
     try {
-      ({ stdout } = await this.gitExecutor.exec(
+      ({ stdout } = await this.execReviewGit(
         [
           "-C",
           repoPath,
@@ -539,6 +597,7 @@ export class PullRequestReviewGitService {
           "refs/heads",
         ],
         { timeout: 10_000 },
+        observer,
       ));
     } catch {
       return [];
@@ -601,15 +660,20 @@ export class PullRequestReviewGitService {
   private async preparePullRequestReviewFetch(
     repoPath: string,
     source: PullRequestReviewGitSource,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<ReviewProvisionAttempt> {
     this.assertReviewRepositoryAvailable(repoPath);
-    const remotes = await this.gitRepository.listNormalizedRemotes(repoPath);
+    observer?.output("Resolving a remote for the pull request head.\n");
+    const remotes = await this.gitRepository.listNormalizedRemotes(
+      repoPath,
+      this.gitOutputCallbacks(observer),
+    );
     const baseKey = normalizedRepositoryKey(source.baseRepositoryUrl)!;
     const headKey = normalizedRepositoryKey(source.headRepositoryUrl)!;
     const baseRemote = this.requireBaseReviewRemote(remotes, baseKey);
-    const remote = await this.resolveReviewRemote(repoPath, source, remotes, baseRemote, baseKey, headKey);
-    const attempt = await this.createReviewProvisionAttempt(repoPath, source, remote);
-    return this.fetchPullRequestReviewHead(attempt, source);
+    const remote = await this.resolveReviewRemote(repoPath, source, remotes, baseRemote, baseKey, headKey, observer);
+    const attempt = await this.createReviewProvisionAttempt(repoPath, source, remote, observer);
+    return this.fetchPullRequestReviewHead(attempt, source, observer);
   }
 
   private assertReviewRepositoryAvailable(repoPath: string): void {
@@ -642,23 +706,25 @@ export class PullRequestReviewGitService {
     baseRemote: NormalizedGitRemote,
     baseKey: string,
     headKey: string,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<{ remote: NormalizedGitRemote; created: boolean }> {
-    const existing = await this.findReviewHeadRemote(repoPath, remotes, headKey);
+    const existing = await this.findReviewHeadRemote(repoPath, remotes, headKey, observer);
     if (existing) return { remote: existing, created: false };
-    if (baseKey === headKey && await this.remotePushTargetMatches(repoPath, baseRemote, headKey)) {
+    if (baseKey === headKey && await this.remotePushTargetMatches(repoPath, baseRemote, headKey, observer)) {
       return { remote: baseRemote, created: false };
     }
-    return this.createReviewHeadRemote(repoPath, source);
+    return this.createReviewHeadRemote(repoPath, source, observer);
   }
 
   private async findReviewHeadRemote(
     repoPath: string,
     remotes: readonly NormalizedGitRemote[],
     headKey: string,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<NormalizedGitRemote | null> {
     for (const remote of remotes) {
       if (normalizedRepositoryKey(remote.webUrl) !== headKey) continue;
-      if (await this.remotePushTargetMatches(repoPath, remote, headKey)) return remote;
+      if (await this.remotePushTargetMatches(repoPath, remote, headKey, observer)) return remote;
     }
     return null;
   }
@@ -666,15 +732,17 @@ export class PullRequestReviewGitService {
   private async createReviewHeadRemote(
     repoPath: string,
     source: PullRequestReviewGitSource,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<{ remote: NormalizedGitRemote; created: true }> {
     const remoteName = `mcode-pr-${NodeCrypto.createHash("sha256")
       .update(source.headRepositoryNodeId)
       .digest("hex")
       .slice(0, 12)}`;
     try {
-      await this.gitExecutor.exec(
+      await this.execReviewGit(
         ["-C", repoPath, "remote", "add", remoteName, source.headRepositoryUrl],
         { timeout: 10_000 },
+        observer,
       );
     } catch {
       throw new PullRequestReviewGitError(
@@ -692,6 +760,7 @@ export class PullRequestReviewGitService {
     repoPath: string,
     source: PullRequestReviewGitSource,
     remote: { remote: NormalizedGitRemote; created: boolean },
+    observer?: PullRequestReviewGitObserver,
   ): Promise<ReviewProvisionAttempt> {
     const remoteTrackingRef = `refs/remotes/${remote.remote.name}/${source.headRef}`;
     return {
@@ -699,7 +768,7 @@ export class PullRequestReviewGitService {
       remoteName: remote.remote.name,
       createdRemote: remote.created,
       remoteTrackingRef,
-      previousRemoteTrackingOid: await this.readReviewRefOid(repoPath, remoteTrackingRef),
+      previousRemoteTrackingOid: await this.readReviewRefOid(repoPath, remoteTrackingRef, observer),
       fetchedOid: source.headOid.toLowerCase(),
       immutableRef: reviewImmutableRef(source),
       createdImmutableRef: false,
@@ -711,23 +780,32 @@ export class PullRequestReviewGitService {
   private async fetchPullRequestReviewHead(
     attempt: ReviewProvisionAttempt,
     source: PullRequestReviewGitSource,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<ReviewProvisionAttempt> {
     try {
-      await this.gitExecutor.exec(
+      await this.execReviewGit(
         ["-C", attempt.repoPath, "fetch", "--no-tags", attempt.remoteName, `+refs/heads/${source.headRef}:${attempt.remoteTrackingRef}`],
         { timeout: 60_000 },
+        observer,
+        "Fetching the pull request head.\n",
       );
-      const fetchedOid = await this.requireFetchedPullRequestHead(attempt.repoPath, source.headOid);
-      await this.ensureImmutableReviewRef(attempt, fetchedOid);
+      observer?.output("Verifying the fetched pull request head.\n");
+      const fetchedOid = await this.requireFetchedPullRequestHead(attempt.repoPath, source.headOid, observer);
+      observer?.output("Recording the verified pull request ref.\n");
+      await this.ensureImmutableReviewRef(attempt, fetchedOid, observer);
       return attempt;
     } catch (error) {
-      await this.rollbackPullRequestReviewAttempt(attempt);
+      await this.rollbackPullRequestReviewAttempt(attempt, observer);
       throw error;
     }
   }
 
-  private async requireFetchedPullRequestHead(repoPath: string, expectedHeadOid: string): Promise<string> {
-    const fetchedOid = await this.readReviewRefOid(repoPath, "FETCH_HEAD");
+  private async requireFetchedPullRequestHead(
+    repoPath: string,
+    expectedHeadOid: string,
+    observer?: PullRequestReviewGitObserver,
+  ): Promise<string> {
+    const fetchedOid = await this.readReviewRefOid(repoPath, "FETCH_HEAD", observer);
     if (!fetchedOid || fetchedOid.toLowerCase() !== expectedHeadOid.toLowerCase()) {
       throw new PullRequestReviewGitError(
         "conflict",
@@ -737,17 +815,22 @@ export class PullRequestReviewGitService {
     return fetchedOid;
   }
 
-  private async ensureImmutableReviewRef(attempt: ReviewProvisionAttempt, fetchedOid: string): Promise<void> {
-    const existingOid = await this.readReviewRefOid(attempt.repoPath, attempt.immutableRef);
+  private async ensureImmutableReviewRef(
+    attempt: ReviewProvisionAttempt,
+    fetchedOid: string,
+    observer?: PullRequestReviewGitObserver,
+  ): Promise<void> {
+    const existingOid = await this.readReviewRefOid(attempt.repoPath, attempt.immutableRef, observer);
     if (existingOid) return this.assertImmutableReviewRefMatches(existingOid, fetchedOid);
     try {
-      await this.gitExecutor.exec(
+      await this.execReviewGit(
         ["-C", attempt.repoPath, "update-ref", attempt.immutableRef, fetchedOid, ""],
         { timeout: 10_000 },
+        observer,
       );
       attempt.createdImmutableRef = true;
     } catch {
-      const racedOid = await this.readReviewRefOid(attempt.repoPath, attempt.immutableRef);
+      const racedOid = await this.readReviewRefOid(attempt.repoPath, attempt.immutableRef, observer);
       if (!racedOid || racedOid.toLowerCase() !== fetchedOid.toLowerCase()) {
         throw new PullRequestReviewGitError(
           "conflict",
@@ -766,11 +849,16 @@ export class PullRequestReviewGitService {
     }
   }
 
-  private async readReviewRefOid(repoPath: string, ref: string): Promise<string | null> {
+  private async readReviewRefOid(
+    repoPath: string,
+    ref: string,
+    observer?: PullRequestReviewGitObserver,
+  ): Promise<string | null> {
     try {
-      const { stdout } = await this.gitExecutor.exec(
+      const { stdout } = await this.execReviewGit(
         ["-C", repoPath, "rev-parse", "--verify", `${ref}^{commit}`],
         { timeout: 5_000 },
+        observer,
       );
       const oid = stdout.trim();
       return /^[0-9a-f]{40,64}$/i.test(oid) ? oid : null;
@@ -784,10 +872,11 @@ export class PullRequestReviewGitService {
     source: PullRequestReviewGitSource,
     remoteName: string,
     branches: ReviewBranchRecord[],
+    observer?: PullRequestReviewGitObserver,
   ): Promise<{ name: string; created: boolean }> {
     let sawDivergence = false;
     for (const name of new Set(reviewBranchCandidates(source))) {
-      const selected = await this.reviewBranchSelection(repoPath, source, remoteName, branches, name);
+      const selected = await this.reviewBranchSelection(repoPath, source, remoteName, branches, name, observer);
       if (selected.kind === "selected") return selected.branch;
       if (selected.kind === "diverged") sawDivergence = true;
     }
@@ -800,8 +889,9 @@ export class PullRequestReviewGitService {
     remoteName: string,
     branches: readonly ReviewBranchRecord[],
     name: string,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<{ kind: "invalid" | "diverged" } | { kind: "selected"; branch: { name: string; created: boolean } }> {
-    if (!(await this.isValidReviewBranchName(repoPath, name))) return { kind: "invalid" };
+    if (!(await this.isValidReviewBranchName(repoPath, name, observer))) return { kind: "invalid" };
     const existing = branches.find((branch) => branch.name === name);
     if (!existing) return { kind: "selected", branch: { name, created: true } };
     if (isReusableReviewBranch(existing, source, remoteName)) {
@@ -810,12 +900,17 @@ export class PullRequestReviewGitService {
     return { kind: "diverged" };
   }
 
-  private async isValidReviewBranchName(repoPath: string, name: string): Promise<boolean> {
+  private async isValidReviewBranchName(
+    repoPath: string,
+    name: string,
+    observer?: PullRequestReviewGitObserver,
+  ): Promise<boolean> {
     try {
       assertSafeReviewBranch(name, "Review branch");
-      await this.gitExecutor.exec(
+      await this.execReviewGit(
         ["-C", repoPath, "check-ref-format", "--branch", name],
         { timeout: 5_000 },
+        observer,
       );
       return true;
     } catch {
@@ -851,10 +946,13 @@ export class PullRequestReviewGitService {
     }
   }
 
-  private async deleteReviewImmutableRef(attempt: ReviewProvisionAttempt): Promise<void> {
+  private async deleteReviewImmutableRef(
+    attempt: ReviewProvisionAttempt,
+    observer?: PullRequestReviewGitObserver,
+  ): Promise<void> {
     if (!attempt.createdImmutableRef) return;
     try {
-      await this.gitExecutor.exec(
+      await this.execReviewGit(
         [
           "-C",
           attempt.repoPath,
@@ -864,6 +962,7 @@ export class PullRequestReviewGitService {
           attempt.fetchedOid,
         ],
         { timeout: 10_000 },
+        observer,
       );
       attempt.createdImmutableRef = false;
     } catch (error) {
@@ -874,21 +973,27 @@ export class PullRequestReviewGitService {
     }
   }
 
-  private createReviewRollback(attempt: ReviewProvisionAttempt): () => Promise<void> {
+  private createReviewRollback(
+    attempt: ReviewProvisionAttempt,
+    observer?: PullRequestReviewGitObserver,
+  ): () => Promise<void> {
     let rolledBack = false;
     return async () => {
       if (rolledBack) return;
       rolledBack = true;
       await this.withReviewWorktreeMutationLock(attempt.repoPath, () =>
-        this.rollbackPullRequestReviewAttempt(attempt),
+        this.rollbackPullRequestReviewAttempt(attempt, observer),
       );
     };
   }
 
-  private async rollbackPullRequestReviewAttempt(attempt: ReviewProvisionAttempt): Promise<void> {
+  private async rollbackPullRequestReviewAttempt(
+    attempt: ReviewProvisionAttempt,
+    observer?: PullRequestReviewGitObserver,
+  ): Promise<void> {
     if (attempt.createdWorktreePath) {
       try {
-        await this.gitExecutor.exec(
+        await this.execReviewGit(
           [
             "-C",
             attempt.repoPath,
@@ -899,6 +1004,7 @@ export class PullRequestReviewGitService {
             "--force",
           ],
           { timeout: 30_000 },
+          observer,
         );
       } catch {
         if (isPathWithin(
@@ -907,7 +1013,7 @@ export class PullRequestReviewGitService {
           this.hostRuntime.platform,
         )) {
           await this.worktreeDirectoryRemover.remove(attempt.createdWorktreePath).catch(() => undefined);
-          await this.gitExecutor.exec(
+          await this.execReviewGit(
             [
               "-C",
               attempt.repoPath,
@@ -918,27 +1024,30 @@ export class PullRequestReviewGitService {
               "--force",
             ],
             { timeout: 10_000 },
+            observer,
           ).catch(() => undefined);
         }
       }
       attempt.createdWorktreePath = null;
     }
     if (attempt.createdBranch) {
-      await this.gitExecutor.exec(
+      await this.execReviewGit(
         ["-C", attempt.repoPath, "update-ref", "-d", `refs/heads/${attempt.createdBranch}`, attempt.fetchedOid],
         { timeout: 10_000 },
+        observer,
       ).catch(() => undefined);
       attempt.createdBranch = null;
     }
-    await this.deleteReviewImmutableRef(attempt);
+    await this.deleteReviewImmutableRef(attempt, observer);
 
     const currentTrackingOid = await this.readReviewRefOid(
       attempt.repoPath,
       attempt.remoteTrackingRef,
+      observer,
     );
     if (currentTrackingOid?.toLowerCase() === attempt.fetchedOid.toLowerCase()) {
       if (attempt.previousRemoteTrackingOid) {
-        await this.gitExecutor.exec(
+        await this.execReviewGit(
           [
             "-C",
             attempt.repoPath,
@@ -948,29 +1057,37 @@ export class PullRequestReviewGitService {
             attempt.fetchedOid,
           ],
           { timeout: 10_000 },
+          observer,
         ).catch(() => undefined);
       } else {
-        await this.gitExecutor.exec(
+        await this.execReviewGit(
           ["-C", attempt.repoPath, "update-ref", "-d", attempt.remoteTrackingRef, attempt.fetchedOid],
           { timeout: 10_000 },
+          observer,
         ).catch(() => undefined);
       }
     }
 
-    if (attempt.createdRemote && !(await this.isReviewRemoteReferenced(attempt.repoPath, attempt.remoteName))) {
-      await this.gitExecutor.exec(
+    if (attempt.createdRemote && !(await this.isReviewRemoteReferenced(attempt.repoPath, attempt.remoteName, observer))) {
+      await this.execReviewGit(
         ["-C", attempt.repoPath, "remote", "remove", attempt.remoteName],
         { timeout: 10_000 },
+        observer,
       ).catch(() => undefined);
       attempt.createdRemote = false;
     }
   }
 
-  private async isReviewRemoteReferenced(repoPath: string, remoteName: string): Promise<boolean> {
+  private async isReviewRemoteReferenced(
+    repoPath: string,
+    remoteName: string,
+    observer?: PullRequestReviewGitObserver,
+  ): Promise<boolean> {
     try {
-      const { stdout } = await this.gitExecutor.exec(
+      const { stdout } = await this.execReviewGit(
         ["-C", repoPath, "config", "--get-regexp", "^branch\\..*\\.remote$"],
         { timeout: 5_000 },
+        observer,
       );
       return stdout
         .split("\n")
@@ -985,12 +1102,14 @@ export class PullRequestReviewGitService {
     repoPath: string,
     remote: NormalizedGitRemote,
     expectedRepositoryKey: string,
+    observer?: PullRequestReviewGitObserver,
   ): Promise<boolean> {
     let pushUrls: string[] = [];
     try {
-      const { stdout } = await this.gitExecutor.exec(
+      const { stdout } = await this.execReviewGit(
         ["-C", repoPath, "config", "--get-all", `remote.${remote.name}.pushurl`],
         { timeout: 5_000 },
+        observer,
       );
       pushUrls = stdout
         .split("\n")

@@ -1,5 +1,5 @@
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
-import type { ComposerDraft } from "@/stores/composerDraftStore";
+import type { ComposerDraft, SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import type {
   ContextWindowMode,
   MessageMention,
@@ -22,6 +22,7 @@ export interface ComposerSession {
   input: string;
   mentions: MessageMention[];
   selectedTextComments: SelectedTextComment[];
+  selectedTextCommentEditor?: SelectedTextCommentEditorDraft;
   attachments: PendingAttachment[];
   modelId: string;
   provider: string;
@@ -69,7 +70,21 @@ export function snapshotComposerDraft(draft: ComposerDraft): ComposerDraft {
         range: { ...mention.range },
       })),
     })),
+    selectedTextCommentEditor: snapshotSelectedTextCommentEditor(draft.selectedTextCommentEditor),
     attachments: draft.attachments.map((attachment) => ({ ...attachment })),
+  };
+}
+
+function snapshotSelectedTextCommentEditor(
+  editor: SelectedTextCommentEditorDraft | undefined,
+): SelectedTextCommentEditorDraft | undefined {
+  return editor && {
+    ...editor,
+    source: { ...editor.source },
+    mentions: editor.mentions.map((mention) => ({
+      ...mention,
+      range: { ...mention.range },
+    })),
   };
 }
 
@@ -81,6 +96,7 @@ function buildDefaultComposerSession(
     input: "",
     mentions: [],
     selectedTextComments: [],
+    selectedTextCommentEditor: undefined,
     attachments: [],
     modelId,
     provider: getDefaultProviderId(),
@@ -112,6 +128,7 @@ function buildSavedComposerSession(
         range: { ...mention.range },
       })),
     })) ?? [],
+    selectedTextCommentEditor: snapshotSelectedTextCommentEditor(saved.selectedTextCommentEditor),
     attachments: saved.attachments.map((attachment) => ({ ...attachment })),
     modelId: saved.modelId,
     provider: saved.provider ?? getDefaultProviderId(),
@@ -189,6 +206,7 @@ function buildThreadComposerSession(
     input: "",
     mentions: [],
     selectedTextComments: [],
+    selectedTextCommentEditor: undefined,
     attachments: [],
     ...buildThreadModelSession(threadRow),
     ...buildThreadOptionSession(threadRow, globalDefaults),

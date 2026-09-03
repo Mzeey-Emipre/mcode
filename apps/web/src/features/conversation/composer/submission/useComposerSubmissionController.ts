@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { Thread } from "@/transport";
+import type { WorkspaceThread } from "@/lib/workspace-thread";
 import type { PreviewAnnotationBundle } from "@mcode/contracts";
 import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
 import { useToastStore } from "@/stores/toastStore";
@@ -57,6 +58,8 @@ export interface UseComposerSubmissionControllerOptions {
   replyContext?: ComposerReplyContext;
   onBranchModeExit?(): void;
   onThreadCreated?(thread: Thread): void;
+  onThreadPreparing?(thread: WorkspaceThread): void;
+  onThreadCreationFailed?(): void;
 }
 
 type SubmitAttemptOutcome = "complete" | "checkout-pending";
@@ -77,6 +80,8 @@ export function useComposerSubmissionController({
   replyContext,
   onBranchModeExit,
   onThreadCreated,
+  onThreadPreparing,
+  onThreadCreationFailed,
 }: UseComposerSubmissionControllerOptions) {
   const [pendingCheckoutConfirmation, setPendingCheckoutConfirmation] =
     useState<PendingCheckoutConfirmation | null>(null);
@@ -138,6 +143,8 @@ export function useComposerSubmissionController({
         replyContext,
         onBranchModeExit,
         onThreadCreated,
+        onThreadPreparing,
+        onThreadCreationFailed,
       });
       const draftCleared = form.clearSubmittedDraft(submission.snapshot);
       try {
@@ -145,7 +152,7 @@ export function useComposerSubmissionController({
       } catch (error) {
         if (draftCleared) form.restoreFailedDispatch();
         annotations.restoreAfterFailure();
-        showDispatchFailure(error);
+        showDispatchFailure(error, submission.snapshot.selectedTextComments.length > 0);
         return;
       }
       annotations.stopWatching();
@@ -157,7 +164,7 @@ export function useComposerSubmissionController({
         finishEditing: queue.finishEditing,
       });
     },
-    [activeThread, annotationScopeId, branchFromMessageId, execution, form, isAgentRunning, isNewThread, onBranchModeExit, onThreadCreated, queue.finishEditing, queuePrepared, replyContext, threadId, workspaceId],
+    [activeThread, annotationScopeId, branchFromMessageId, execution, form, isAgentRunning, isNewThread, onBranchModeExit, onThreadCreated, onThreadCreationFailed, onThreadPreparing, queue.finishEditing, queuePrepared, replyContext, threadId, workspaceId],
   );
 
   const runSubmissionAttempt = useCallback(async (): Promise<SubmitAttemptOutcome> => {
@@ -345,10 +352,10 @@ function createCheckoutConfirmation({
 }
 
 /** Displays a failed transport without clearing the submitted form state. */
-function showDispatchFailure(error: unknown): void {
+function showDispatchFailure(error: unknown, keptSelectedTextComments: boolean): void {
   useToastStore.getState().show(
     "error",
-    "Could not send message",
+    keptSelectedTextComments ? "Message not sent. Comments kept." : "Could not send message",
     error instanceof Error ? error.message : "Message dispatch failed",
   );
 }

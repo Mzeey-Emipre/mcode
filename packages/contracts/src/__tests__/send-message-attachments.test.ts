@@ -12,6 +12,21 @@ const sampleAttachment = {
   sourcePath: "/tmp/note.txt",
 };
 
+const selectedTextComments = [{
+  id: "11111111-1111-4111-8111-111111111111",
+  displayNumber: 1,
+  source: {
+    threadId: "thread-1",
+    messageId: "message-1",
+    sourceRole: "assistant" as const,
+    start: 0,
+    end: 5,
+    quote: "focus",
+  },
+  note: "Explain this choice.",
+  mentions: [],
+}];
+
 describe("SendMessageSchema attachments", () => {
   it(`allows up to ${MAX_ATTACHMENTS} attachments`, () => {
     const attachments = Array.from({ length: MAX_ATTACHMENTS }, (_, i) => ({
@@ -55,6 +70,22 @@ describe("SendMessageSchema client message identity", () => {
       ...base,
       messageId: "optimistic-message",
     }).success).toBe(false);
+  });
+});
+
+describe("selected-text comment transport", () => {
+  it("accepts saved cards on existing and initial turns, including comment-only submissions", () => {
+    expect(SendMessageSchema().safeParse({
+      threadId: "550e8400-e29b-41d4-a716-446655440000",
+      content: "",
+      selectedTextComments,
+    }).success).toBe(true);
+    expect(CreateAndSendSchema().safeParse({
+      workspaceId: "550e8400-e29b-41d4-a716-446655440000",
+      content: "",
+      model: "claude-sonnet-4-6",
+      selectedTextComments,
+    }).success).toBe(true);
   });
 });
 

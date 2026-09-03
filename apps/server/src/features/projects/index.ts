@@ -25,6 +25,7 @@ export type {
   PullRequestReviewGitCandidate,
   PullRequestReviewGitProvisionRequest,
   PullRequestReviewGitProvisionResult,
+  PullRequestReviewGitObserver,
   PullRequestReviewGitSource,
 } from "./git/pull-request-review-git-service.js";
 /** Creates, discovers, and removes Mcode-managed Git worktrees. */

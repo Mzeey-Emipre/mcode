@@ -13,6 +13,11 @@ import { AttachmentService } from "../../attachments/storage/attachment-service.
 import { HandoffStorage } from "../../handoff/index.js";
 import { ThreadDeletionTeardownService } from "./thread-deletion-teardown-service.js";
 
+/** Receives the durable thread record before managed checkout mutation begins. */
+export interface ThreadCreateLifecycle {
+  onThreadPersisted(thread: Thread): void;
+}
+
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
 export class ThreadService {
@@ -36,7 +41,7 @@ export class ThreadService {
     title: string,
     mode: string,
     branch: string,
-    options: { branchless?: boolean } = {},
+    options: { branchless?: boolean; lifecycle?: ThreadCreateLifecycle } = {},
   ): Promise<Thread & { warnings?: string[] }> {
     validateBranchName(branch);
 
@@ -61,6 +66,7 @@ export class ThreadService {
 
     if (threadMode === "worktree") {
       try {
+        options.lifecycle?.onThreadPersisted(thread);
         return await this.projectWorktreeService.provisionThreadWorktree(
           thread,
           workspaceId,

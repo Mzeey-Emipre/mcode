@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useCallback, useState, type ReactNode, type WheelEvent } from "react";
+import { useRef, useEffect, useLayoutEffect, useCallback, useMemo, useState, type MutableRefObject, type ReactNode, type RefObject, type WheelEvent } from "react";
 import { cn } from "@/lib/utils";
 import { useVirtualizer, type Range } from "@tanstack/react-virtual";
 import { recordThreadPositioned } from "@/lib/thread-switch-telemetry";
@@ -13,6 +13,12 @@ import { registerCommand } from "@/lib/command-registry";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { shouldShowStickyUserMessage, type StickyVisibilityVirtualizer } from "@/components/chat/sticky-user-message-visibility";
 import type { SelectedTextComment } from "@mcode/contracts";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
+import type { HistoryPageLoadResult } from "@/stores/threadStore";
+import {
+  findSelectedTextCommentContent,
+  reconstructCanonicalMessageRange,
+} from "./selected-text-projection";
 import {
   isMessageListPerformanceBuild,
   measureMessageListPerformance,
@@ -77,6 +83,189 @@ const MESSAGE_LIST_TOP_PADDING_PX = 16;
  */
 const TAIL_SETTLE_STABLE_FRAMES = 4;
 const TAIL_SETTLE_MAX_FRAMES = 60;
+const SOURCE_NAVIGATION_MAX_FRAMES = 20;
+
+/** A card source request that MessageList resolves through its resident transcript. */
+export interface SelectedTextCommentSourceNavigationRequest {
+  readonly id: number;
+  readonly comment: SelectedTextComment;
+  /** Opens an editor after navigation. Card selection omits this and only scrolls. */
+  readonly intent?: "edit";
+}
+
+interface SourceNavigationTarget {
+  readonly key: string;
+  readonly source: SelectedTextComment["source"];
+  readonly request?: SelectedTextCommentSourceNavigationRequest;
+  readonly restoredEditor?: SelectedTextCommentEditorDraft;
+}
+
+interface SourceNavigationCallbacks {
+  readonly onOpened?: (target: SourceNavigationTarget) => void;
+  readonly onUnavailable?: (target: SourceNavigationTarget) => void;
+}
+
+function sourceNavigationTarget(
+  explicitRequest: SelectedTextCommentSourceNavigationRequest | undefined,
+  selectedTextCommentEditor: SelectedTextCommentEditorDraft | undefined,
+  renderedThreadId: string | null | undefined,
+): SourceNavigationTarget | null {
+  if (explicitRequest) {
+    const source = explicitRequest.comment.source;
+    return source.threadId === renderedThreadId
+      ? { key: `request:${explicitRequest.id}`, source, request: explicitRequest }
+      : null;
+  }
+  return restoredSourceNavigationTarget(selectedTextCommentEditor, renderedThreadId);
+}
+
+function restoredSourceNavigationTarget(
+  editor: SelectedTextCommentEditorDraft | undefined,
+  renderedThreadId: string | null | undefined,
+): SourceNavigationTarget | null {
+  if (!editor || editor.anchor !== "source" || editor.source.threadId !== renderedThreadId) return null;
+  const source = editor.source;
+  return {
+    key: `editor:${source.threadId}:${source.messageId}:${source.start}:${source.end}:${editor.commentId ?? "new"}`,
+    source,
+    restoredEditor: editor,
+  };
+}
+
+function markSourceUnavailable(
+  target: SourceNavigationTarget,
+  callbacks: SourceNavigationCallbacks,
+): void {
+  callbacks.onUnavailable?.(target);
+}
+
+function sourceNavigationCallbacks(
+  onOpened: ((request: SelectedTextCommentSourceNavigationRequest) => void) | undefined,
+  onUnavailable: ((request: SelectedTextCommentSourceNavigationRequest) => void) | undefined,
+  onRestoredEditorUnavailable: ((editor: SelectedTextCommentEditorDraft) => void) | undefined,
+): SourceNavigationCallbacks {
+  return {
+    onOpened: (target) => {
+      if (target.request) onOpened?.(target.request);
+    },
+    onUnavailable: (target) => {
+      if (target.request) onUnavailable?.(target.request);
+      else if (target.restoredEditor) onRestoredEditorUnavailable?.(target.restoredEditor);
+    },
+  };
+}
+
+function useSourceNavigationCallbacks(
+  target: SourceNavigationTarget | null,
+  renderedThreadId: string | null | undefined,
+  completedNavigationKeyRef: MutableRefObject<string | null>,
+  onOpened: ((request: SelectedTextCommentSourceNavigationRequest) => void) | undefined,
+  onUnavailable: ((request: SelectedTextCommentSourceNavigationRequest) => void) | undefined,
+  onRestoredEditorUnavailable: ((editor: SelectedTextCommentEditorDraft) => void) | undefined,
+): SourceNavigationCallbacks {
+  const activeNavigationRef = useRef<{
+    key: string | null;
+    threadId: string | null | undefined;
+  }>({ key: null, threadId: null });
+  activeNavigationRef.current = { key: target?.key ?? null, threadId: renderedThreadId };
+  const callbacks = useMemo(() => sourceNavigationCallbacks(
+    onOpened,
+    onUnavailable,
+    onRestoredEditorUnavailable,
+  ), [onOpened, onRestoredEditorUnavailable, onUnavailable]);
+  const complete = useCallback((
+    completedTarget: SourceNavigationTarget,
+    callback: ((navigationTarget: SourceNavigationTarget) => void) | undefined,
+  ) => {
+    const active = activeNavigationRef.current;
+    if (active.key !== completedTarget.key || active.threadId !== completedTarget.source.threadId) return;
+    completedNavigationKeyRef.current = completedTarget.key;
+    callback?.(completedTarget);
+  }, [completedNavigationKeyRef]);
+  return useMemo<SourceNavigationCallbacks>(() => ({
+    onOpened: (completedTarget) => complete(completedTarget, callbacks.onOpened),
+    onUnavailable: (completedTarget) => complete(completedTarget, callbacks.onUnavailable),
+  }), [callbacks, complete]);
+}
+
+function requestMissingSourceHistory({
+  itemIndex,
+  target,
+  hasMore,
+  hasNewer,
+  isLoadingMore,
+  isLoadingNewer,
+  loadOlderMessages,
+  loadNewerMessages,
+  callbacks,
+}: {
+  readonly itemIndex: number;
+  readonly target: SourceNavigationTarget;
+  readonly hasMore: boolean;
+  readonly hasNewer: boolean;
+  readonly isLoadingMore: boolean;
+  readonly isLoadingNewer: boolean;
+  readonly loadOlderMessages: (threadId: string) => Promise<HistoryPageLoadResult>;
+  readonly loadNewerMessages: (threadId: string) => Promise<HistoryPageLoadResult>;
+  readonly callbacks: SourceNavigationCallbacks;
+}): boolean {
+  if (itemIndex !== -1) return false;
+  if (isLoadingMore || isLoadingNewer) return true;
+  if (hasMore) {
+    void loadOlderMessages(target.source.threadId)
+      .then((result) => {
+        if (result === "failed") markSourceUnavailable(target, callbacks);
+      })
+      .catch(() => markSourceUnavailable(target, callbacks));
+    return true;
+  }
+  if (hasNewer) {
+    void loadNewerMessages(target.source.threadId)
+      .then((result) => {
+        if (result === "failed") markSourceUnavailable(target, callbacks);
+      })
+      .catch(() => markSourceUnavailable(target, callbacks));
+    return true;
+  }
+  markSourceUnavailable(target, callbacks);
+  return true;
+}
+
+function inspectScrolledSource({
+  containerRef,
+  target,
+  renderedThreadId,
+  callbacks,
+}: {
+  readonly containerRef: RefObject<HTMLDivElement | null>;
+  readonly target: SourceNavigationTarget;
+  readonly renderedThreadId: string | null | undefined;
+  readonly callbacks: SourceNavigationCallbacks;
+}): () => void {
+  let frame = 0;
+  let animationFrame = 0;
+  const inspectSource = () => {
+    const viewport = containerRef.current;
+    const content = viewport
+      ? findSelectedTextCommentContent(target.source, viewport, renderedThreadId)
+      : null;
+    if (!content) {
+      if (frame++ < SOURCE_NAVIGATION_MAX_FRAMES) {
+        animationFrame = requestAnimationFrame(inspectSource);
+        return;
+      }
+      markSourceUnavailable(target, callbacks);
+      return;
+    }
+    if (reconstructCanonicalMessageRange(content, target.source.start, target.source.end, target.source.quote)) {
+      callbacks.onOpened?.(target);
+      return;
+    }
+    markSourceUnavailable(target, callbacks);
+  };
+  animationFrame = requestAnimationFrame(inspectSource);
+  return () => cancelAnimationFrame(animationFrame);
+}
 
 function reservedStickyTop(
   isStickyVisible: boolean,
@@ -97,12 +286,30 @@ export interface MessageListProps {
   displayThreadId?: string;
   /** Content that must appear before all persisted transcript messages. */
   leadingContent?: ReactNode;
+  /** Content inserted immediately after the first persisted user message. */
+  afterFirstUserContent?: ReactNode;
   /** Called when the user clicks the branch icon on a message. */
   onBranch?: (messageId: string) => void;
   /** Called when the user uses a message reply control. */
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Adds one selected-text comment to the active Composer draft. */
   onSelectedTextComment?: (comment: SelectedTextComment) => void;
+  /** Removes one saved selected-text comment from the active Composer draft. */
+  onDeleteSelectedTextComment?: (comment: SelectedTextComment) => void;
+  /** Persists open selected-text editor changes in the active ComposerDraft. */
+  onSelectedTextCommentEditorChange?: (editor: SelectedTextCommentEditorDraft | undefined) => void;
+  /** Restored selected-text editor state for the rendered thread. */
+  selectedTextCommentEditor?: SelectedTextCommentEditorDraft;
+  /** Card source navigation awaiting transcript loading and virtualized mounting. */
+  selectedTextCommentSourceNavigation?: SelectedTextCommentSourceNavigationRequest;
+  /** Opens the source editor after its active request reconstructs canonically. */
+  onSelectedTextCommentSourceOpened?: (request: SelectedTextCommentSourceNavigationRequest) => void;
+  /** Navigates a saved source marker before opening its editor. */
+  onOpenSelectedTextCommentEditor?: (comment: SelectedTextComment) => void;
+  /** Opens the affected card editor after its active request cannot load or reconstruct. */
+  onSelectedTextCommentSourceUnavailable?: (request: SelectedTextCommentSourceNavigationRequest) => void;
+  /** Moves a restored source editor to its card after source loading fails. */
+  onSelectedTextCommentEditorSourceUnavailable?: (editor: SelectedTextCommentEditorDraft) => void;
   /** Scopes selected-text comment mention and slash-skill suggestions. */
   selectedTextCommentEditorScope?: SelectedTextCommentEditorScope;
   /** Opens a selected canonical child through the composition root. */
@@ -117,9 +324,18 @@ export interface MessageListProps {
 export function MessageList({
   displayThreadId,
   leadingContent,
+  afterFirstUserContent,
   onBranch,
   onReply,
   onSelectedTextComment,
+  onDeleteSelectedTextComment,
+  onSelectedTextCommentEditorChange,
+  selectedTextCommentEditor,
+  selectedTextCommentSourceNavigation,
+  onSelectedTextCommentSourceOpened,
+  onOpenSelectedTextCommentEditor,
+  onSelectedTextCommentSourceUnavailable,
+  onSelectedTextCommentEditorSourceUnavailable,
   selectedTextCommentEditorScope,
   onSubagentSelect,
   onOpenSubagents,
@@ -211,6 +427,7 @@ export function MessageList({
   const stickyUserMessageTargetRef = useRef<{ id: string; itemIndex: number } | null>(null);
   /** Latest virtualizer instance for scroll-time sticky visibility checks. */
   const virtualizerRef = useRef<StickyVisibilityVirtualizer | null>(null);
+  const resolvedSelectedTextCommentNavigationKeyRef = useRef<string | null>(null);
 
   const {
     activeThreadId,
@@ -461,6 +678,7 @@ export function MessageList({
     isAgentRunning,
     latestTurnWithChanges,
     leadingContent,
+    afterFirstUserContent,
     messages,
     permissions,
     persistedFilesChanged,
@@ -551,6 +769,70 @@ export function MessageList({
     "tanstackVirtualItems",
     () => virtualizer.getVirtualItems(),
   );
+
+  const selectedTextCommentNavigationTarget = useMemo(
+    () => sourceNavigationTarget(
+      selectedTextCommentSourceNavigation,
+      selectedTextCommentEditor,
+      renderedThreadId,
+    ),
+    [renderedThreadId, selectedTextCommentEditor, selectedTextCommentSourceNavigation],
+  );
+  const guardedSelectedTextCommentNavigationCallbacks = useSourceNavigationCallbacks(
+    selectedTextCommentNavigationTarget,
+    renderedThreadId,
+    resolvedSelectedTextCommentNavigationKeyRef,
+    onSelectedTextCommentSourceOpened,
+    onSelectedTextCommentSourceUnavailable,
+    onSelectedTextCommentEditorSourceUnavailable,
+  );
+  const selectedTextCommentNavigationItemIndex = useMemo(() => {
+    const target = selectedTextCommentNavigationTarget;
+    if (!target) return -1;
+    return items.findIndex(
+      (item) => item.type === "message" && item.message.id === target.source.messageId,
+    );
+  }, [items, selectedTextCommentNavigationTarget]);
+  useEffect(() => {
+    resolvedSelectedTextCommentNavigationKeyRef.current = null;
+  }, [renderedThreadId]);
+  useEffect(() => {
+    const target = selectedTextCommentNavigationTarget;
+    if (!target) return;
+    if (resolvedSelectedTextCommentNavigationKeyRef.current === target.key) return;
+    if (requestMissingSourceHistory({
+      itemIndex: selectedTextCommentNavigationItemIndex,
+      target,
+      hasMore,
+      hasNewer,
+      isLoadingMore,
+      isLoadingNewer,
+      loadOlderMessages,
+      loadNewerMessages,
+      callbacks: guardedSelectedTextCommentNavigationCallbacks,
+    })) return;
+    pinListTailRef.current = false;
+    scrollToTailIntentRef.current = false;
+    virtualizer.scrollToIndex(selectedTextCommentNavigationItemIndex, { align: "center", behavior: "smooth" });
+    return inspectScrolledSource({
+      containerRef,
+      target,
+      renderedThreadId,
+      callbacks: guardedSelectedTextCommentNavigationCallbacks,
+    });
+  }, [
+    hasMore,
+    hasNewer,
+    isLoadingMore,
+    isLoadingNewer,
+    loadNewerMessages,
+    loadOlderMessages,
+    renderedThreadId,
+    guardedSelectedTextCommentNavigationCallbacks,
+    selectedTextCommentNavigationItemIndex,
+    selectedTextCommentNavigationTarget,
+    virtualizer,
+  ]);
 
   // Pinned to tail: always compensate for size changes so the viewport tracks
   // the bottom as rows measure. Adjusting by +delta when at scrollOffset = oldMaxScroll
@@ -1156,7 +1438,7 @@ export function MessageList({
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  {item.type === "leading-content" ? (
+                  {item.type === "leading-content" || item.type === "after-first-user-content" ? (
                     <div data-testid="message-list-leading-content">{item.content}</div>
                   ) : (
                     <TranscriptItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
@@ -1174,6 +1456,10 @@ export function MessageList({
         isLoadingMore={isLoadingMore}
         isLoadingNewer={isLoadingNewer}
         onSelectedTextComment={onSelectedTextComment}
+        onDeleteSelectedTextComment={onDeleteSelectedTextComment}
+        onSelectedTextCommentEditorChange={onSelectedTextCommentEditorChange}
+        onOpenSelectedTextCommentEditor={onOpenSelectedTextCommentEditor}
+        selectedTextCommentEditor={selectedTextCommentEditor}
         selectedTextCommentEditorScope={selectedTextCommentEditorScope}
         viewportRef={containerRef}
         renderedThreadId={renderedThreadId}

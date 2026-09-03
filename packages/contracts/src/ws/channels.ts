@@ -21,6 +21,7 @@ import { TurnSavingStatusSchema } from "../models/turn-runtime.js";
 import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
 import { ThreadObservedStateSchema } from "../thread-control.js";
 import { WorkspaceEnvironmentActionRunSchema } from "../models/workspace-environment.js";
+import { ThreadStartupSchema } from "../thread-startup.js";
 import { LegacyTerminalChannels } from "./terminal-legacy.js";
 
 /** Maximum canonical semantic events published in one durable batch. */
@@ -78,6 +79,8 @@ export const WS_CHANNELS = {
     threadId: z.string(),
     status: ThreadStatusSchema,
   }),
+  /** Publishes a complete authoritative startup snapshot after each lifecycle change. */
+  "thread.startup.updated": ThreadStartupSchema(),
   /** Publishes the latest retained result for one Project Action slot. */
   "workspace.environment.action.updated": z.object({
     threadId: z.string().min(1).max(256),

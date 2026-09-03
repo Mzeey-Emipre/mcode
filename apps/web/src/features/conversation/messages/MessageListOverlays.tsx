@@ -3,11 +3,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StickyUserMessage } from "@/components/chat/StickyUserMessage";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import type { SelectedTextComment } from "@mcode/contracts";
-import type { RefObject } from "react";
+import { useMemo, type RefObject } from "react";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import type { Message } from "@/transport/types";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { SelectedTextCommentControls } from "./selection/SelectedTextCommentControls";
 import type { SelectedTextCommentEditorScope } from "./selection/SelectedTextCommentControls";
+import { SelectedTextCommentMarkers } from "./selection/SelectedTextCommentMarkers";
 
 /** Props for transcript controls that float above the virtual rows. */
 interface MessageListOverlaysProps {
@@ -16,7 +18,13 @@ interface MessageListOverlaysProps {
   readonly isLoadingMore: boolean;
   readonly isLoadingNewer: boolean;
   readonly onSelectedTextComment: ((comment: SelectedTextComment) => void) | undefined;
+  readonly onDeleteSelectedTextComment: ((comment: SelectedTextComment) => void) | undefined;
+  readonly onSelectedTextCommentEditorChange:
+    | ((editor: SelectedTextCommentEditorDraft | undefined) => void)
+    | undefined;
+  readonly selectedTextCommentEditor: SelectedTextCommentEditorDraft | undefined;
   readonly selectedTextCommentEditorScope: SelectedTextCommentEditorScope | undefined;
+  readonly onOpenSelectedTextCommentEditor: ((comment: SelectedTextComment) => void) | undefined;
   /** Scroll viewport that bounds selected-text controls. */
   readonly viewportRef: RefObject<HTMLElement | null>;
   /** Thread whose transcript is currently rendered in the viewport. */
@@ -41,7 +49,11 @@ export function MessageListOverlays({
   isLoadingMore,
   isLoadingNewer,
   onSelectedTextComment,
+  onDeleteSelectedTextComment,
+  onSelectedTextCommentEditorChange,
+  selectedTextCommentEditor,
   selectedTextCommentEditorScope,
+  onOpenSelectedTextCommentEditor,
   viewportRef,
   renderedThreadId,
   stickyPreview,
@@ -52,6 +64,8 @@ export function MessageListOverlays({
   hasNewContent,
   onScrollToBottom,
 }: MessageListOverlaysProps) {
+  const messageIds = useMemo(() => messages.map((message) => message.id), [messages]);
+
   return (
     <>
       {shouldShowHandoffSkeleton(handoffStatus, messages) && (
@@ -68,10 +82,21 @@ export function MessageListOverlays({
       <SelectedTextCommentControls
         key={renderedThreadId ?? "no-rendered-thread"}
         onSelectedTextComment={onSelectedTextComment}
+        onDeleteSelectedTextComment={onDeleteSelectedTextComment}
+        editor={selectedTextCommentEditor}
+        onSelectedTextCommentEditorChange={onSelectedTextCommentEditorChange}
         selectedTextCommentEditorScope={selectedTextCommentEditorScope}
         viewportRef={viewportRef}
         renderedThreadId={renderedThreadId}
+        messageIds={messageIds}
       />
+      {onOpenSelectedTextCommentEditor && (
+        <SelectedTextCommentMarkers
+          viewportRef={viewportRef}
+          renderedThreadId={renderedThreadId}
+          onOpenComment={onOpenSelectedTextCommentEditor}
+        />
+      )}
       {stickyPreview && (
         <StickyUserMessage
           preview={stickyPreview}

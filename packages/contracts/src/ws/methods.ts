@@ -163,6 +163,13 @@ import {
   PullRequestMergeResultSchema,
 } from "../pull-requests.js";
 import {
+  ThreadStartupCancelInputSchema,
+  ThreadStartupGetInputSchema,
+  ThreadStartupListInputSchema,
+  ThreadStartupListResultSchema,
+  ThreadStartupSchema,
+} from "../thread-startup.js";
+import {
   BrowserAutomationHostRegistrationSchema,
   BrowserAutomationHostDispatchTargetSchema,
   BrowserAutomationResponseSchema,
@@ -305,7 +312,7 @@ export const SendMessageSchema = lazySchema(() => z.object({
     previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
     mentions: MessageMentionsSchema().optional(),
-    /** One selected-text comment sent with the current composer draft. */
+    /** Saved selected-text comments sent with the current composer draft. */
     selectedTextComments: SelectedTextCommentsSchema().optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
     provider: ProviderIdSchema.optional(),
@@ -349,6 +356,8 @@ export type SendMessageInput = z.infer<ReturnType<typeof SendMessageSchema>>;
 export const CreateAndSendSchema = lazySchema(() =>
   z.object({
     workspaceId: z.string(),
+    /** Client-generated identity for a persisted startup lifecycle. */
+    startupId: z.string().uuid().optional(),
     content: z.string(),
     displayContent: z.string().optional(),
     model: z.string(),
@@ -363,6 +372,8 @@ export const CreateAndSendSchema = lazySchema(() =>
     previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
     mentions: MessageMentionsSchema().optional(),
+    /** Saved selected-text comments sent with the current composer draft. */
+    selectedTextComments: SelectedTextCommentsSchema().optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
     provider: ProviderIdSchema.optional(),
     /** When "plan", the server wraps the message with the plan-mode question prompt. */
@@ -1022,6 +1033,21 @@ export const WS_METHODS = lazySchema(() => ({
   "agent.createAndSend": {
     params: CreateAndSendSchema(),
     result: CreateAndSendResultSchema(),
+  },
+  /** Get the authoritative startup snapshot for one client-generated startup ID. */
+  "thread.startup.get": {
+    params: ThreadStartupGetInputSchema(),
+    result: ThreadStartupSchema().nullable(),
+  },
+  /** List authoritative startup snapshots for one workspace. */
+  "thread.startup.list": {
+    params: ThreadStartupListInputSchema(),
+    result: ThreadStartupListResultSchema(),
+  },
+  /** Cancel startup and stop bound managed Project Setup before terminalization. */
+  "thread.startup.cancel": {
+    params: ThreadStartupCancelInputSchema(),
+    result: ThreadStartupSchema(),
   },
   /** Create one external thread-control pairing and return its credential once. */
   "threadControl.pairing.create": {
