@@ -169,7 +169,7 @@ describe("useQueuedMessageDispatch", () => {
     expect(useQueueStore.getState().autoDrainSuppressedThreadIds.has(THREAD_ID)).toBe(false);
   });
 
-  it("does not let Continue outrun a pending Stop", async () => {
+  it("does not retain Continue requested while Stop is still pending", async () => {
     queueMessage("first queued follow-up");
     let resolveStop!: (result: AgentStopResult) => void;
     (mockTransport.stopAgent as ReturnType<typeof vi.fn>).mockImplementationOnce(
@@ -204,9 +204,8 @@ describe("useQueuedMessageDispatch", () => {
       tokensOut: 0,
     } satisfies AgentEvent);
 
-    const continuing = result.current.resumeNext();
     await act(async () => {
-      await Promise.resolve();
+      await result.current.resumeNext();
     });
 
     expect(mockTransport.sendMessage).not.toHaveBeenCalled();
@@ -217,13 +216,16 @@ describe("useQueuedMessageDispatch", () => {
       status: "cancelled",
       dispatchState: "dispatched",
     });
+    await stopping;
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+
     await act(async () => {
-      await Promise.all([stopping, continuing]);
+      await result.current.resumeNext();
     });
     expect(mockTransport.sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("dispatches the one queued message requested by Continue after Stop settles idle", async () => {
+  it("sends one item when Continue is selected after Stop settles idle", async () => {
     queueMessage("first queued follow-up");
     queueMessage("second queued follow-up");
     let resolveStop!: (result: AgentStopResult) => void;
@@ -259,9 +261,6 @@ describe("useQueuedMessageDispatch", () => {
       tokensOut: 0,
     } satisfies AgentEvent);
 
-    const continuing = result.current.resumeNext();
-    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
-
     resolveStop({
       threadId: THREAD_ID,
       turnExecutionId: "execution-1",
@@ -270,7 +269,8 @@ describe("useQueuedMessageDispatch", () => {
       dispatchState: "dispatched",
     });
     await act(async () => {
-      await Promise.all([stopping, continuing]);
+      await stopping;
+      await result.current.resumeNext();
     });
 
     expect(mockTransport.sendMessage).toHaveBeenCalledTimes(1);
@@ -282,7 +282,7 @@ describe("useQueuedMessageDispatch", () => {
     ]);
   });
 
-  it("keeps a Continue request through a Stop-suppressed running window after Stop counts settle", async () => {
+  it("does not retain Continue requested while a Stop-suppressed thread is finalizing", async () => {
     queueMessage("first queued follow-up");
     queueMessage("second queued follow-up");
     useQueueStore.getState().suppressAutoDrain(THREAD_ID);
@@ -297,17 +297,19 @@ describe("useQueuedMessageDispatch", () => {
     });
     const { result } = renderHook(() => useQueuedMessageDispatch(THREAD_ID));
 
-    const continuing = result.current.resumeNext();
+    await result.current.resumeNext();
     expect(mockTransport.sendMessage).not.toHaveBeenCalled();
     useThreadStore.getState().applyThreadRuntimeSnapshot({
       threadId: THREAD_ID,
       turnExecutionId: "execution-1",
       phase: "cancelled",
     });
-    await act(async () => {
-      await continuing;
-    });
+    await Promise.resolve();
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
 
+    await act(async () => {
+      await result.current.resumeNext();
+    });
     expect(mockTransport.sendMessage).toHaveBeenCalledTimes(1);
     expect(mockTransport.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: THREAD_ID, content: "first queued follow-up" }),
@@ -340,7 +342,7 @@ describe("useQueuedMessageDispatch", () => {
     expect(mockTransport.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("keeps Continue blocked until concurrent Stop calls both settle", async () => {
+  it("does not retain Continue while concurrent Stop calls settle", async () => {
     queueMessage("first queued follow-up");
     let resolveFirst!: (result: AgentStopResult) => void;
     let resolveSecond!: (result: AgentStopResult) => void;
@@ -368,9 +370,8 @@ describe("useQueuedMessageDispatch", () => {
     });
     await firstStop;
 
-    const continuing = result.current.resumeNext();
     await act(async () => {
-      await Promise.resolve();
+      await result.current.resumeNext();
     });
     expect(mockTransport.sendMessage).not.toHaveBeenCalled();
 
@@ -381,8 +382,11 @@ describe("useQueuedMessageDispatch", () => {
       status: "cancelled",
       dispatchState: "dispatched",
     });
+    await secondStop;
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+
     await act(async () => {
-      await Promise.all([secondStop, continuing]);
+      await result.current.resumeNext();
     });
     expect(mockTransport.sendMessage).toHaveBeenCalledTimes(1);
   });

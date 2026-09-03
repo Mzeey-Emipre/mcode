@@ -225,15 +225,24 @@ vi.mock("@/components/chat/PrDetectedCard", () => ({
 vi.mock("@/components/chat/ComposerQueueList", () => ({
   ComposerQueueList: ({
     threadId,
+    isAgentRunning,
     onLoadIntoComposer,
   }: {
     threadId: string;
+    isAgentRunning: boolean;
     onLoadIntoComposer: (message: unknown) => void;
   }) => {
     const queue = useQueueStore((s) => s.queues[threadId] ?? EMPTY_QUEUE);
     return React.createElement(
       "div",
       null,
+      !isAgentRunning
+        ? React.createElement(
+          "button",
+          { type: "button", "aria-label": "Send next queued message" },
+          "Continue",
+        )
+        : null,
       queue.map((message) =>
         React.createElement(
           "button",
@@ -1279,6 +1288,49 @@ describe("Composer checkout confirmation", () => {
       } as AgentEvent);
     });
     await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+  });
+
+  it("keeps Continue hidden until a stopped thread is truly idle", () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: workspace.id });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({ currentThreadId: thread.id });
+    useThreadStore.setState({
+      records: seedThreadRecord(thread.id, { runtimePhase: "finalizing", turnExecutionId: "exec-stop" }),
+      pendingStopCounts: { [thread.id]: 1 },
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Continue after Stop",
+      displayContent: "Continue after Stop",
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+
+    expect(screen.queryByRole("button", { name: "Send next queued message" })).not.toBeInTheDocument();
+
+    act(() => {
+      useThreadStore.setState({ pendingStopCounts: {} });
+    });
+    expect(screen.queryByRole("button", { name: "Send next queued message" })).not.toBeInTheDocument();
+
+    act(() => {
+      useThreadStore.setState({
+        records: seedThreadRecord(thread.id, { runtimePhase: "cancelled" }),
+      });
+    });
+    expect(screen.getByRole("button", { name: "Send next queued message" })).toBeInTheDocument();
   });
 
   it("persists a pathless image before sending its durable attachment metadata", async () => {

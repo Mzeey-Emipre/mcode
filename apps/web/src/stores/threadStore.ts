@@ -329,9 +329,13 @@ function hasPendingPlanQuestions(threadId: string): boolean {
   return getThreadRecord(useThreadStore.getState().records, threadId).planQuestionsStatus === "pending";
 }
 
+type ThreadExecutionState = Pick<ThreadState, "records" | "runningThreadIds" | "pendingStopCounts">;
+
 /** Return true while a thread owns an active or optimistic turn. */
-export function isThreadExecuting(threadId: string): boolean {
-  const threadState = useThreadStore.getState();
+export function isThreadExecuting(
+  threadId: string,
+  threadState: ThreadExecutionState = useThreadStore.getState(),
+): boolean {
   const phase = threadState.records.get(threadId)?.runtimePhase;
   return (threadState.pendingStopCounts[threadId] ?? 0) > 0
     || threadState.runningThreadIds.has(threadId)

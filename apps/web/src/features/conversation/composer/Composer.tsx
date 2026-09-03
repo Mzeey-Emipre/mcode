@@ -1,5 +1,5 @@
 import { useRef, useCallback, useEffect, useMemo } from "react";
-import { useThreadStore } from "@/stores/threadStore";
+import { isThreadExecuting, useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord, getThreadRecord, getHandoffStatus } from "../state";
 import { useWorkspaceThread } from "@/features/projects/state/workspace-selectors";
 import type { Thread } from "@/transport";
@@ -424,10 +424,9 @@ export function Composer({
 
 
   const stopAgent = useThreadStore((s) => s.stopAgent);
-  // Subscribe to just the boolean for this thread instead of the full Set.
-  // Avoids Composer re-renders when other threads start/stop their agents.
+  // Keep the Composer's visible execution state aligned with queued-dispatch admission.
   const isAgentRunning = useThreadStore(
-    (s) => threadId ? s.runningThreadIds.has(threadId) : false,
+    (s) => threadId ? isThreadExecuting(threadId, s) : false,
   );
   const surfaceState = useComposerSurfaceState({
     threadId,
