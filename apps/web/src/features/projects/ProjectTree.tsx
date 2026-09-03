@@ -672,10 +672,16 @@ export function ProjectTree() {
   );
 
   const handleStartInlineEdit = useCallback(
-    (threadId: string, title: string) => {
-      setInlineEdit({ threadId, title, originalTitle: title });
+    (threadId: string) => {
+      const thread = threads.find((candidate) => candidate.id === threadId);
+      if (!thread) return;
+      setInlineEdit({
+        threadId,
+        title: thread.title,
+        originalTitle: thread.title,
+      });
     },
-    [],
+    [threads],
   );
 
   const handleProjectDragStart = useCallback((event: DragStartEvent) => {
@@ -979,7 +985,7 @@ interface VirtualizedThreadListProps {
   onInlineEditCommit: () => void;
   onInlineEditCancel: () => void;
   /** Start an inline rename for the given thread. */
-  onStartInlineEdit: (threadId: string, title: string) => void;
+  onStartInlineEdit: (threadId: string) => void;
   onSelectThread: (id: string) => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
   onCompleteThread: (threadId: string) => Promise<void>;
@@ -1005,8 +1011,8 @@ interface ThreadRowProps {
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
   onInlineEditCancel: () => void;
-  onThreadClick: (threadId: string, title: string) => void;
-  onThreadDoubleClick: (threadId: string, title: string) => void;
+  onThreadClick: (threadId: string) => void;
+  onThreadDoubleClick: (threadId: string) => void;
   onSelectThread: (id: string) => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
   onCompleteThread: (threadId: string) => Promise<void>;
@@ -1134,8 +1140,8 @@ interface ThreadRowVisualProps {
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
   onInlineEditCancel: () => void;
-  onThreadClick: (threadId: string, title: string) => void;
-  onThreadDoubleClick: (threadId: string, title: string) => void;
+  onThreadClick: (threadId: string) => void;
+  onThreadDoubleClick: (threadId: string) => void;
   onSelectThread: (id: string) => void;
   onThreadContextMenu: (event: React.MouseEvent, thread: Thread) => void;
   isActive: boolean;
@@ -1357,9 +1363,9 @@ const ThreadRowSurface = forwardRef<HTMLDivElement, ThreadRowSurfaceProps>(funct
       role="button"
       tabIndex={0}
       onKeyDown={(event) => handleThreadRowKeyDown(event, isEditing, onSelectThread, thread.id)}
-      onClick={() => onThreadClick(thread.id, thread.title)}
+      onClick={() => onThreadClick(thread.id)}
       onPointerDown={(event) => prefetchThreadRowOnPointerDown(event, isEditing, thread)}
-      onDoubleClick={() => onThreadDoubleClick(thread.id, thread.title)}
+      onDoubleClick={() => onThreadDoubleClick(thread.id)}
       onContextMenu={(event) => onThreadContextMenu(event, thread)}
       onMouseEnter={(event) => {
         scheduleThreadRowPrefetch(thread);
@@ -1494,8 +1500,9 @@ function ThreadRowContent({
           value={inlineEdit?.title ?? ""}
           onChange={(event) => onInlineEditChange(event.target.value)}
           onKeyDown={(event) => handleInlineEditKeyDown(event, onInlineEditCommit, onInlineEditCancel)}
-          onBlur={onInlineEditCommit}
+          onBlur={onInlineEditCancel}
           autoFocus
+          onFocus={(event) => event.currentTarget.select()}
           onClick={(event) => event.stopPropagation()}
           className="flex-1 border-ring"
         />
@@ -1940,7 +1947,7 @@ function VirtualizedThreadList({
   const lastClickTimeRef = useRef<Map<string, number>>(new Map());
 
   const handleThreadClick = useCallback(
-    (threadId: string, title: string) => {
+    (threadId: string) => {
       // If already editing this thread, clicks are absorbed to avoid conflicting with the input.
       if (inlineEdit?.threadId === threadId) return;
 
@@ -1954,7 +1961,7 @@ function VirtualizedThreadList({
         // Double-click: enter inline rename. The first click has already navigated,
         // which is fine — the row is now active and rename happens in place.
         lastClickTimeRef.current.delete(threadId);
-        onStartInlineEdit(threadId, title);
+        onStartInlineEdit(threadId);
       } else {
         // Single click navigates immediately. No artificial delay.
         onSelectThread(threadId);
@@ -1964,10 +1971,10 @@ function VirtualizedThreadList({
   );
 
   const handleThreadDoubleClick = useCallback(
-    (threadId: string, title: string) => {
+    (threadId: string) => {
       if (inlineEdit?.threadId === threadId) return;
       lastClickTimeRef.current.delete(threadId);
-      onStartInlineEdit(threadId, title);
+      onStartInlineEdit(threadId);
     },
     [inlineEdit, onStartInlineEdit],
   );
@@ -2069,7 +2076,7 @@ interface ProjectNodeProps {
   onInlineEditCommit: () => void;
   onInlineEditCancel: () => void;
   /** Start an inline rename for the given thread. */
-  onStartInlineEdit: (threadId: string, title: string) => void;
+  onStartInlineEdit: (threadId: string) => void;
   onToggle: (wsId: string) => void;
   onSelectThread: (wsId: string, threadId: string) => void;
   onCreateThread: (wsId: string) => void;
@@ -2449,7 +2456,7 @@ interface ProjectThreadSectionProps {
   onInlineEditChange: (title: string) => void;
   onInlineEditCommit: () => void;
   onInlineEditCancel: () => void;
-  onStartInlineEdit: (threadId: string, title: string) => void;
+  onStartInlineEdit: (threadId: string) => void;
   onToggleThreadList: (workspaceId: string) => void;
   onSelectThread: (workspaceId: string, threadId: string) => void;
   onThreadContextMenu: ProjectNodeProps["onThreadContextMenu"];
