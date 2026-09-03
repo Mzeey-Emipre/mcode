@@ -1025,6 +1025,106 @@ describe("ProjectTree thread interactions", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
+  it("prefills a double-click rename with the current thread title", () => {
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+
+    const threadRow = screen.getByRole("button", {
+      name: /^Provider, Claude My Thread/i,
+    });
+    fireEvent.click(threadRow);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    fireEvent.click(threadRow);
+
+    expect(screen.getByRole("textbox")).toHaveValue("My Thread");
+  });
+
+  it("commits a changed double-click rename with Enter", async () => {
+    const updateThreadTitle = vi.fn().mockResolvedValue(undefined);
+    setupStoreMocks({ updateThreadTitle });
+
+    render(<ProjectTree />);
+
+    const threadRow = screen.getByRole("button", {
+      name: /^Provider, Claude My Thread/i,
+    });
+    fireEvent.click(threadRow);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    fireEvent.click(threadRow);
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "Renamed thread" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+      await Promise.resolve();
+    });
+
+    expect(updateThreadTitle).toHaveBeenCalledWith("thread-1", "Renamed thread");
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("cancels a double-click rename with Escape", async () => {
+    const updateThreadTitle = vi.fn().mockResolvedValue(undefined);
+    setupStoreMocks({ updateThreadTitle });
+
+    render(<ProjectTree />);
+
+    const threadRow = screen.getByRole("button", {
+      name: /^Provider, Claude My Thread/i,
+    });
+    fireEvent.click(threadRow);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    fireEvent.click(threadRow);
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "Unsaved thread title" } });
+    act(() => {
+      fireEvent.keyDown(input, { key: "Escape" });
+    });
+
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(updateThreadTitle).not.toHaveBeenCalled();
+    expect(screen.getByTestId("thread-title")).toHaveTextContent("My Thread");
+  });
+
+  it("cancels a double-click rename when the user clicks outside the input", async () => {
+    const updateThreadTitle = vi.fn().mockResolvedValue(undefined);
+    setupStoreMocks({ updateThreadTitle });
+
+    render(<ProjectTree />);
+
+    const threadRow = screen.getByRole("button", {
+      name: /^Provider, Claude My Thread/i,
+    });
+    fireEvent.click(threadRow);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    fireEvent.click(threadRow);
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "Unsaved thread title" } });
+    input.focus();
+    await act(async () => {
+      fireEvent.pointerDown(threadRow);
+      fireEvent.blur(input, { relatedTarget: threadRow });
+      fireEvent.pointerUp(threadRow);
+      fireEvent.click(threadRow);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(updateThreadTitle).not.toHaveBeenCalled();
+    expect(screen.getByTestId("thread-title")).toHaveTextContent("My Thread");
+  });
+
   it("two clicks beyond the double-click window navigate twice (no rename)", () => {
     const setActiveThread = vi.fn();
     setupStoreMocks({ setActiveThread });
