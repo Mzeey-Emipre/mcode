@@ -59,11 +59,11 @@ Use `thread-lifecycle proof --confirm-cleanup` for the desktop action and receip
 6. Switch away from the thread and back. Confirm that saved cards and an open unsaved editor restore.
 7. Drag across the text again and right-click it.
 
-Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, aggregate cards, source markers, marker deletion, and direct card actions. Use focused composer-session tests for thread-switch editor restoration. The proof does not send a provider turn.
+Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, aggregate cards, source markers, marker deletion, and direct card actions. Use focused composer-session tests for thread-switch editor restoration. The proof does not send a provider turn. Focused server and web tests cover existing-thread text plus comments, comment-only provider input, durable user and assistant source metadata, and sent read-only chips.
 
 ## Coverage gaps
 
 - The provider workflows need an available model and a logged-in provider CLI. Record missing access as a blocked provider path.
 - The public subscription begins after thread creation. It cannot show lossless events before creation.
 - The completed-thread proof does not wait one day. Its focused integration checks use a controlled clock for the retention path.
-- The selected-text comment proof cannot inspect the hidden `MessageMention[]` payload or restore an off-screen source without sending a provider turn. Focused tests cover the payload and unavailable-source card state.
+- The selected-text comment proof cannot inspect the hidden `MessageMention[]` payload, provider input, or restore an off-screen source without sending a provider turn. Focused tests cover these paths and unavailable-source card state.

@@ -43,6 +43,7 @@ import { PlanTurnService } from "../planning/plan-turn-service.js";
 import {
   type ParentTurnDurability,
 } from "./parent-turn-durability.js";
+import { appendSelectedTextComments } from "./selected-text-comment-append.js";
 
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
 
@@ -841,7 +842,10 @@ export class TurnAdmissionDispatchCoordinator {
     if (prepared.command.replyToMessageId && prepared.command.providerWireOverride === undefined) {
       payload = this.withReplyContext(prepared, payload);
     }
-    const providerPayload = prepared.command.providerWireOverride ?? payload;
+    const providerPayload = appendSelectedTextComments(
+      prepared.command.providerWireOverride ?? payload,
+      prepared.command.selectedTextComments,
+    );
     return prepared.providerId === "codex" ? providerPayload : this.injectMentionFileContents(prepared, providerPayload);
   }
 

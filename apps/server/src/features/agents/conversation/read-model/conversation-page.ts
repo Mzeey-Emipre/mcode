@@ -379,6 +379,7 @@ export function loadConversationTail(
     attachments: message.attachments,
     previewAnnotations: message.previewAnnotations,
     mentions: message.mentions,
+    selectedTextComments: message.selectedTextComments,
     tool_call_count: message.tool_call_count,
     reply_to_message_id: message.reply_to_message_id,
     quoted_text: message.quoted_text,

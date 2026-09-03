@@ -507,6 +507,11 @@ async function assertSavedCommentMarkerAndCardLifecycle(
       && await page.getByRole("button", { name: "Open comment 1", exact: true }).count() === 1
       && await page.getByRole("button", { name: "Open comment 2", exact: true }).count() === 0,
   );
+  await page.waitForFunction(
+    () => document.activeElement?.getAttribute("aria-label") === "Open comment 1",
+    undefined,
+    { timeout: 1_000 },
+  );
   mark("marker_delete_returns_focus_to_survivor", await firstMarker.evaluate((element) => document.activeElement === element));
 
   dialog = await openEditor(content);

@@ -25,6 +25,7 @@ import { PreviewAnnotationBundleChip } from "@/components/chat/PreviewAnnotation
 import { useRetriableAttachmentImage } from "@/components/chat/useRetriableAttachmentImage";
 import { EntityToken } from "@/components/chat/EntityToken";
 import { basename } from "@/lib/path";
+import { SelectedTextCommentsComposerAttachment } from "../composer/SelectedTextCommentsComposerAttachment";
 
 /**
  * Returns true when the assistant message body collapses to nothing visible
@@ -467,30 +468,6 @@ function QuoteBlock({
   );
 }
 
-function SelectedTextCommentCard({
-  quote,
-  note,
-  displayNumber,
-}: {
-  quote: string;
-  note: string;
-  displayNumber: number;
-}) {
-  return (
-    <section
-      className="mt-2 rounded-md border border-border/60 bg-background/45 px-3 py-2 text-left"
-      data-selected-text-exclude
-      aria-label={`Selected text comment ${displayNumber}`}
-    >
-      <p className="text-xs font-medium text-muted-foreground">Comment {displayNumber}</p>
-      <blockquote className="mt-1 whitespace-pre-wrap border-l-2 border-primary/40 pl-2 text-xs text-muted-foreground">
-        {quote}
-      </blockquote>
-      <p className="mt-1 whitespace-pre-wrap text-sm text-accent-foreground">{note}</p>
-    </section>
-  );
-}
-
 type Attachment = NonNullable<Message["attachments"]>[number];
 
 const IMAGE_ATTACHMENT_ALIGNMENT_CLASS = {
@@ -710,12 +687,26 @@ function UserMessageFeedback({
   );
 }
 
-/** Renders persisted selected-text comments below a user message. */
+/** Renders persisted selected-text comments above a user message. */
 function UserMessageComments({ message }: { message: Message }) {
-  return message.selectedTextComments?.map((comment) => (
-    <SelectedTextCommentCard key={comment.id} quote={comment.source.quote} note={comment.note} displayNumber={comment.displayNumber} />
-  ));
+  if (!message.selectedTextComments?.length) return null;
+
+  return (
+    <SelectedTextCommentsComposerAttachment
+      comments={message.selectedTextComments}
+      readOnly
+      onRemove={ignoreSelectedTextComment}
+      onOpenSource={ignoreSelectedTextComment}
+      onEdit={ignoreSelectedTextComment}
+      onDelete={ignoreSelectedTextComment}
+      onFocusComposer={ignoreSelectedTextComment}
+      onSave={ignoreSelectedTextComment}
+      onEditorChange={ignoreSelectedTextComment}
+    />
+  );
 }
+
+function ignoreSelectedTextComment(): void {}
 
 /** Renders the user message action controls. */
 function UserMessageActions({
@@ -774,8 +765,8 @@ function UserMessageContent({
           <MessageImageAttachments message={message} images={imageAttachments} align="end" interactive={interactive} onOpenPreview={setImagePreviewIndex} />
           <MessageFileAttachments files={fileAttachments} align="end" />
           <UserMessageFeedback message={message} showParentAgentProvenance={showParentAgentProvenance} provenanceDetails={provenanceDetails} />
-          <UserMessageText message={message} displayText={displayText} userGoal={userGoal} />
           <UserMessageComments message={message} />
+          <UserMessageText message={message} displayText={displayText} userGoal={userGoal} />
           <UserMessageFooter
             message={message}
             displayText={displayText}

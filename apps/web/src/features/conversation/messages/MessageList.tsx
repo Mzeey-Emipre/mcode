@@ -1434,7 +1434,7 @@ export function MessageList({
                 className="absolute left-0 w-full px-4 py-2 sm:px-8"
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
-                <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
+                <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-clip")}>
                   {item.type === "leading-content" || item.type === "after-first-user-content" ? (
                     <div data-testid="message-list-leading-content">{item.content}</div>
                   ) : (
