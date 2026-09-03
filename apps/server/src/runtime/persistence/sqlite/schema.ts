@@ -634,6 +634,7 @@ export const canonicalCollaborationActions = sqliteTable(
     targetTurnId: text("target_turn_id"),
     status: text("status").notNull(),
     deliveryUnknown: integer("delivery_unknown").notNull().default(0),
+    message: text("message"),
     providerIdentitiesJson: text("provider_identities_json").notNull().default("[]"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),

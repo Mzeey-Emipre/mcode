@@ -148,6 +148,9 @@ export const CollaborationActionStatusSchema = z.enum([
 /** Delivery state for a collaboration action, separate from turn execution state. */
 export type CollaborationActionStatus = z.infer<typeof CollaborationActionStatusSchema>;
 
+/** Maximum retained length of a message sent through one collaboration action. */
+export const COLLABORATION_ACTION_MESSAGE_MAX_LENGTH = 32_768;
+
 /** Canonical source reference for a collaboration action. */
 export const CollaborationSourceSchema = z
   .object({
@@ -178,6 +181,7 @@ export const CollaborationActionSchema = z
     target: CollaborationTargetSchema,
     status: CollaborationActionStatusSchema,
     deliveryUnknown: z.boolean(),
+    message: z.string().trim().min(1).max(COLLABORATION_ACTION_MESSAGE_MAX_LENGTH).optional(),
     providerIdentities: ProviderIdentitiesSchema,
     ...RecordTimestampsSchema,
   })

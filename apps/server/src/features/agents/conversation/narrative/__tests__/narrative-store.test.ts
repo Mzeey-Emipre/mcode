@@ -9,6 +9,11 @@ import { HookExecutionRepo } from "../../../events/persistence/hook-execution-re
 import { NarrativeStore } from "../narrative-store.js";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../../../runtime/persistence/sqlite/bounded-write-batches.js";
 import { PARENT_ASSISTANT_TEXT_RETAINED_LIMITS } from "../../../turns/parent-assistant-text-checkpoint-service.js";
+import {
+  createCanonicalSubagentPresentation,
+  encodeCanonicalSubagentDetailTarget,
+  encodeSubagentAliasDetailTarget,
+} from "@mcode/contracts";
 
 /** Seed a workspace + thread so message/record foreign keys are satisfied. */
 function seedThread(db: Database.Database): string {
@@ -179,7 +184,47 @@ describe("NarrativeStore sub-agent identity persistence", () => {
     expect(persisted[0]?.displayName?.endsWith("…")).toBe(true);
     expect(persisted[0]?.displayName).not.toContain("Inspect private task details");
     expect(persisted[0]?.inputSummary).toContain("Inspect private task details");
-    expect(persisted[0]?.subagentIdentityKey).toBe("native-agent-1");
+    expect(persisted[0]?.subagentIdentityKey)
+      .toBe(encodeSubagentAliasDetailTarget("native-agent-1"));
+  });
+
+  it("persists a canonical target supplied with a late Agent result", () => {
+    let persisted: Array<{ subagentIdentityKey?: string }> = [];
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      {
+        bulkCreate: (records: Array<{ subagentIdentityKey?: string }>) => {
+          persisted = records;
+        },
+      } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/worker" },
+    });
+
+    store.updateBufferedToolCallOutput(
+      "thread-1",
+      "agent-1",
+      "done",
+      false,
+      undefined,
+      undefined,
+      createCanonicalSubagentPresentation(
+        { codexCollabKind: "spawnAgent", agentPath: "/root/worker" },
+        "agent-1",
+        "thread:codex-child:worker",
+      ),
+    );
+    store.persistNarrative("thread-1", "m1", "done", "completed");
+
+    expect(persisted[0]?.subagentIdentityKey)
+      .toBe(encodeCanonicalSubagentDetailTarget("thread:codex-child:worker"));
   });
 
   it("does not promote prompt or description to display identity", () => {
@@ -624,13 +669,13 @@ describe("NarrativeStore write seam (server-side traps)", () => {
         {
           id: "agent-direct",
           provider: "/root/worker",
-          identity: "native-direct",
+          identity: encodeSubagentAliasDetailTarget("native-direct"),
           parent: null,
         },
         {
           id: "agent-nested",
           provider: "/root/worker",
-          identity: "native-nested",
+          identity: encodeSubagentAliasDetailTarget("native-nested"),
           parent: "agent-direct",
         },
       ]);
@@ -640,8 +685,8 @@ describe("NarrativeStore write seam (server-side traps)", () => {
         .map((entry) => entry.record)
         .filter((record) => record.tool_name === "Agent");
       expect(transcript.map((record) => [record.subagent_identity_key, record.parent_tool_call_id])).toEqual([
-        ["native-direct", null],
-        ["native-nested", "agent-direct"],
+        [encodeSubagentAliasDetailTarget("native-direct"), null],
+        [encodeSubagentAliasDetailTarget("native-nested"), "agent-direct"],
       ]);
     });
 
@@ -704,7 +749,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       });
 
       expect(new ToolCallRecordRepo(db).listByMessage("m1")[0]?.subagent_identity_key)
-        .toBe("native-late-agent");
+        .toBe(encodeSubagentAliasDetailTarget("native-late-agent"));
     });
 
     it("falls back to the only running Agent when the SDK omits the parent", () => {

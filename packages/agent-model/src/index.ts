@@ -48,6 +48,7 @@ export {
   AgentTurnSchema,
   AgentTurnTriggerSchema,
   CollaborationActionKindSchema,
+  COLLABORATION_ACTION_MESSAGE_MAX_LENGTH,
   CollaborationActionSchema,
   CollaborationActionStatusSchema,
   CollaborationSourceSchema,

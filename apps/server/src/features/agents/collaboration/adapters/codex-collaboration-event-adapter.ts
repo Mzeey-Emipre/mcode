@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import {
   AgentEventType,
+  createCanonicalSubagentPresentation,
   type CodexChildEvidence,
   type CodexCollaborationEvidence,
   type CodexContinuationEvidence,
@@ -9,6 +10,7 @@ import {
   type CollaborationAction,
   type CollaborationActionKind,
   type ProviderRuntimeExtension,
+  type SubagentPresentation,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 
@@ -78,6 +80,10 @@ type CollaborationFailure = {
   diagnostic?: DiagnosticContext;
   reason: string;
 };
+
+type ChildDelegationStart =
+  | { delegation: CodexChildDelegation }
+  | { failure: CollaborationFailure };
 
 const CODEX_COLLABORATION_KIND_BY_NATIVE = new Map<string, CollaborationActionKind>([
   ["sendinput", "message"],
@@ -177,9 +183,18 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
   }
 
   private projectChildDelegation(event: CodexToolEvent): ProviderEventProjection {
-    const failure = this.startChildDelegation(event);
-    if (failure) return this.reject(event, undefined, failure.reason, failure.diagnostic);
-    return this.forward(event);
+    const started = this.startChildDelegation(event);
+    if ("failure" in started) {
+      return this.reject(event, undefined, started.failure.reason, started.failure.diagnostic);
+    }
+    return this.forward(
+      event,
+      createCanonicalSubagentPresentation(
+        event.toolInput ?? {},
+        event.toolCallId,
+        started.delegation.childThread.id,
+      ),
+    );
   }
 
   private projectCollaborationAction(event: CodexToolEvent): ProviderEventProjection {
@@ -193,15 +208,15 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
   private startChildDelegation(
     event: CodexToolEvent,
     parent?: { threadId: string; turnId: string; executionId: string; itemId: string },
-  ): CollaborationFailure | undefined {
+  ): ChildDelegationStart {
     const toolInput = event.toolInput;
-    if (!toolInput) return { reason: "missing-child-delegation-input" };
+    if (!toolInput) return { failure: { reason: "missing-child-delegation-input" } };
     const receiverThreadIds = this.nativeThreadIds(toolInput.receiverThreadIds);
-    if (receiverThreadIds.length !== 1) return { reason: "invalid-child-delegation-receivers" };
+    if (receiverThreadIds.length !== 1) return { failure: { reason: "invalid-child-delegation-receivers" } };
     const context = this.delegationContext(event, parent);
-    if (!context) return { reason: "child-delegation-context-not-found", diagnostic: this.parentDiagnostic(parent) };
+    if (!context) return { failure: { reason: "child-delegation-context-not-found", diagnostic: this.parentDiagnostic(parent) } };
     try {
-      this.durability.startCodexChildDelegation({
+      const delegation = this.durability.startCodexChildDelegation({
         parentThreadId: context.parentThreadId,
         parentTurnId: context.parentTurnId,
         parentExecutionId: context.parentExecutionId,
@@ -214,14 +229,14 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
         reasoningEffort: this.stringInput(toolInput.reasoningEffort),
         providerIdentities: context.providerIdentities,
       });
-      return undefined;
+      return { delegation };
     } catch (error) {
       logger.warn("Codex child provisional persistence failed", {
         threadId: event.threadId,
         toolCallId: event.toolCallId,
         error: error instanceof Error ? error.message : String(error),
       });
-      return { reason: "child-delegation-persistence-failed", diagnostic: this.parentDiagnostic(parent) };
+      return { failure: { reason: "child-delegation-persistence-failed", diagnostic: this.parentDiagnostic(parent) } };
     }
   }
 
@@ -516,11 +531,25 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
 
   private startChildTurn(evidence: CodexChildEvidence, context: ChildRoutingContext): void {
     if (!evidence.nativeTurnId) throw new Error("Codex child turn requires native turn evidence");
+    const prompt = evidence.prompt
+      ?? context.delegation.collaborationAction.message;
+    if (evidence.prompt) {
+      this.durability.startCodexChildDelegation({
+        parentThreadId: context.parentThreadId,
+        parentTurnId: context.parentTurnId,
+        parentExecutionId: context.parentExecutionId,
+        parentItemId: context.parentItemId,
+        receiverThreadIds: [evidence.nativeThreadId],
+        description: evidence.prompt,
+        prompt: evidence.prompt,
+        providerIdentities: context.delegation.collaborationAction.providerIdentities,
+      });
+    }
     this.durability.startCodexChildTurn({
       ...context,
       nativeThreadId: evidence.nativeThreadId,
       nativeTurnId: evidence.nativeTurnId,
-      ...(evidence.prompt ? { prompt: evidence.prompt } : {}),
+      ...(prompt ? { prompt } : {}),
     });
   }
 
@@ -568,8 +597,8 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
     if (!this.isChildDelegationEvent(event)) return false;
     const delegation = this.durability.loadCodexChildDelegation(childThreadId, `toolCall:${event.toolCallId}`);
     if (!delegation) return false;
-    const failure = this.startChildDelegation(event, this.nestedParent(childThreadId, delegation));
-    if (failure) throw new Error(failure.reason);
+    const started = this.startChildDelegation(event, this.nestedParent(childThreadId, delegation));
+    if ("failure" in started) throw new Error(started.failure.reason);
     return true;
   }
 
@@ -583,13 +612,13 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
       this.nativeIdentity("turn", nativeTurnId),
     );
     if (!childTurn) throw new Error("emitting-child-turn-not-found");
-    const failure = this.startChildDelegation(event, {
+    const started = this.startChildDelegation(event, {
       threadId: childThreadId,
       turnId: childTurn.id,
       executionId: this.durability.loadExecutionIdForTurn(childTurn.id),
       itemId: `toolCall:${event.toolCallId}`,
     });
-    if (failure) throw new Error(failure.reason);
+    if ("failure" in started) throw new Error(started.failure.reason);
   }
 
   private nestedParent(parentThreadId: string, delegation: CodexChildDelegation): {
@@ -929,15 +958,23 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
     return { providerId: this.providerId, scope, value, provenance: "native" as const };
   }
 
-  private forward(event: CodexRuntimeEvent): ProviderEventProjection {
-    return { status: "forward", event: this.sanitize(event) };
+  private forward(
+    event: CodexRuntimeEvent,
+    subagentPresentation?: SubagentPresentation,
+  ): ProviderEventProjection {
+    return { status: "forward", event: this.sanitize(event, subagentPresentation) };
   }
 
-  private sanitize(event: CodexRuntimeEvent): AgentEvent {
-    const { codexChild: _child, codexContinuation: _continuation, ...genericEvent } = event;
+  private sanitize(event: CodexRuntimeEvent, subagentPresentation?: SubagentPresentation): AgentEvent {
+    const {
+      codexChild: _child,
+      codexContinuation: _continuation,
+      ...genericEvent
+    } = event;
     if (genericEvent.type !== AgentEventType.ToolUse && genericEvent.type !== AgentEventType.ToolResult) {
       return genericEvent;
     }
+    const { subagentPresentation: _untrustedSubagentPresentation, ...toolEvent } = genericEvent;
     const {
       codexCollabKind: _kind,
       senderThreadId: _senderThreadId,
@@ -948,9 +985,16 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
       model: _model,
       reasoningEffort: _reasoningEffort,
       ...toolInput
-    } = genericEvent.toolInput ?? {};
-    if (genericEvent.type === AgentEventType.ToolUse) return { ...genericEvent, toolInput };
-    return Object.keys(toolInput).length > 0 ? { ...genericEvent, toolInput } : genericEvent;
+    } = toolEvent.toolInput ?? {};
+    if (toolEvent.type === AgentEventType.ToolUse) {
+      return {
+        ...toolEvent,
+        toolInput,
+        ...(subagentPresentation ? { subagentPresentation } : {}),
+      };
+    }
+    const sanitized = Object.keys(toolInput).length > 0 ? { ...toolEvent, toolInput } : toolEvent;
+    return subagentPresentation ? { ...sanitized, subagentPresentation } : sanitized;
   }
 
   private reject(
