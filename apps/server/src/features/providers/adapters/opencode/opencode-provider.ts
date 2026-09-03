@@ -88,10 +88,13 @@ function partRoleOf(
   roles: ReadonlyMap<string, string>,
   normalized: { type: string; properties: Record<string, unknown> },
 ): string | undefined {
-  if (normalized.type !== "message.part.updated") return undefined;
+  if (normalized.type !== "message.part.updated" && normalized.type !== "message.part.delta") return undefined;
+  // Deltas carry the message id at the top level; snapshots nest it in the part.
+  const direct = typeof normalized.properties.messageID === "string" ? normalized.properties.messageID : undefined;
+  if (direct) return roles.get(direct);
   const part = recordOf(normalized.properties.part);
-  const messageId = typeof part?.messageID === "string" ? part.messageID : undefined;
-  return messageId ? roles.get(messageId) : undefined;
+  const nested = typeof part?.messageID === "string" ? part.messageID : undefined;
+  return nested ? roles.get(nested) : undefined;
 }
 
 /**

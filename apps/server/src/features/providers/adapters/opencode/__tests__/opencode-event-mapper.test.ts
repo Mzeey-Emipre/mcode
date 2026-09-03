@@ -63,4 +63,31 @@ describe("mapOpenCodeEnvelope", () => {
     expect(userPart.disposition).toBe("state-only");
     expect(userPart.events).toHaveLength(0);
   });
+
+  it("maps standalone part deltas to text deltas", () => {
+    const delta = mapOpenCodeEnvelope({
+      type: "message.part.delta",
+      properties: { sessionID: "ses_1", messageID: "msg_1", partID: "prt_1", field: "text", delta: "hello" },
+    }, CTX);
+    expect(delta.disposition).toBe("mapped");
+    expect(delta.events[0]).toMatchObject({ type: "textDelta", delta: "hello" });
+
+    const userDelta = mapOpenCodeEnvelope({
+      type: "message.part.delta",
+      properties: { sessionID: "ses_1", messageID: "msg_user", partID: "prt_9", field: "text", delta: "do the thing" },
+    }, { ...CTX, partRole: "user" });
+    expect(userDelta.disposition).toBe("state-only");
+
+    const nonText = mapOpenCodeEnvelope({
+      type: "message.part.delta",
+      properties: { sessionID: "ses_1", messageID: "msg_1", partID: "prt_1", field: "reasoning", delta: "hmm" },
+    }, CTX);
+    expect(nonText.disposition).toBe("state-only");
+  });
+
+  it("ignores plugin lifecycle noise", () => {
+    const added = mapOpenCodeEnvelope({ type: "plugin.added", properties: { plugin: "opencode-pty" } }, CTX);
+    expect(added.disposition).toBe("ignored");
+    expect(added.reason).toBe("noise:plugin.added");
+  });
 });

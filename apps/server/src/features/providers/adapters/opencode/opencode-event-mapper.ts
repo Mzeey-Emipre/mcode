@@ -202,8 +202,25 @@ function mapPartByType(part: Record<string, unknown>, properties: Record<string,
   };
 }
 
-function mapMessagePartUpdated(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
-  const part = partOf(properties);
+/**
+ * Streaming text for one part. Upstream sends these as standalone
+ * `message.part.delta` events carrying only the new slice (`field: "text"`),
+ * distinct from `message.part.updated` snapshots.
+ */
+function mapPartDelta(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
+  if (ctx.partRole === "user") return { disposition: "state-only", events: [] };
+  if (typeof properties.field === "string" && properties.field !== "text") {
+    return { disposition: "state-only", events: [] };
+  }
+  const delta = typeof properties.delta === "string" ? properties.delta : "";
+  if (!delta) return { disposition: "state-only", events: [] };
+  return {
+    disposition: "mapped",
+    events: [withExecution({ type: "textDelta", threadId: ctx.threadId, delta: boundText(delta) } satisfies AgentEvent, ctx)],
+  };
+}
+
+function mapMessagePartUpdated(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {  const part = partOf(properties);
   if (!part) {
     return {
       disposition: "diagnostic",
@@ -244,9 +261,10 @@ const EXACT_HANDLERS: Readonly<Record<string, NormalizedHandler>> = {
   "session.error": (properties, ctx) => mapSessionError(properties, ctx),
   "message.updated": (properties, ctx) => mapMessageUpdated(properties, ctx),
   "message.part.updated": (properties, ctx) => mapMessagePartUpdated(properties, ctx),
+  "message.part.delta": (properties, ctx) => mapPartDelta(properties, ctx),
 };
 
-const NOISE_PREFIXES = ["todo.", "pty.", "tui.", "lsp.", "installation.", "server."] as const;
+const NOISE_PREFIXES = ["todo.", "pty.", "tui.", "lsp.", "installation.", "server.", "plugin."] as const;
 
 const NOISE_EXACT_TYPES = new Set([
   "file.edited",
