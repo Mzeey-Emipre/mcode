@@ -4,6 +4,7 @@ import type { CanonicalSubagentRoster, CanonicalSubagentRosterRow } from "@mcode
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { getSubagentIdentityPaletteIndex } from "@/components/ui/SubagentIdentityGlyph";
 
 const harness = vi.hoisted(() => ({
   loadCanonicalSubagentRoster: vi.fn(),
@@ -30,7 +31,7 @@ vi.mock("@/features/conversation", async (importOriginal) => ({
   ),
 }));
 
-import { SubagentsPanel } from "../SubagentsPanel";
+import { resolveCanonicalSubagentSelection, SubagentsPanel } from "../SubagentsPanel";
 
 function canonicalRow(
   overrides: Partial<CanonicalSubagentRosterRow> = {},
@@ -164,7 +165,8 @@ describe("SubagentsPanel", () => {
     const row = await screen.findByTestId("subagent-finished-row");
     expect(row).toHaveTextContent("Direct detail worker");
     expect(row).not.toHaveTextContent("direct_detail_worker");
-    expect(row).toHaveTextContent("Parent task: Read only README.md and return the full summary");
+    expect(row).toHaveTextContent("Read only README.md and return the full summary");
+    expect(row).toHaveTextContent("Direct detail worker");
     expect(row).toHaveTextContent("GPT-5.6 Sol · High");
   });
 
@@ -207,6 +209,31 @@ describe("SubagentsPanel", () => {
     } finally {
       intervalSpy.mockRestore();
     }
+  });
+
+  it("opens only the chat-selected canonical child transcript", async () => {
+    const selected = canonicalRow({ id: "canonical-chat-child", identity: "Selected child" });
+    const other = canonicalRow({ id: "canonical-other-child", identity: "Other child" });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([], [selected, other]));
+    useDiffStore.setState({
+      subagentDetailByThread: {
+        "thread-1": { id: "canonical-chat-child", originTab: "finished", scrollTop: 0 },
+      },
+      subagentReviewScopeByThread: {},
+    });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    expect(await screen.findAllByTestId("shared-message-list")).toHaveLength(1);
+    expect(screen.getByTestId("shared-message-list")).toHaveAttribute(
+      "data-display-thread-id",
+      "canonical-chat-child",
+    );
+    expect(document.querySelector('[data-subagent-identity-glyph="Selected child"]')).toHaveAttribute(
+      "data-subagent-palette",
+      String(getSubagentIdentityPaletteIndex("canonical-chat-child")),
+    );
+    expect(screen.queryByText("Other child")).not.toBeInTheDocument();
   });
 
   it("retains the last good roster and child lease after a polling failure", async () => {
@@ -403,7 +430,7 @@ describe("SubagentsPanel", () => {
       latestTurnStatus: "Running",
       terminalOutcome: null,
       canStop: true,
-      task: "Inspect the parent request",
+      task: "inspect_the_parent_request",
     });
     harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
 
@@ -414,9 +441,11 @@ describe("SubagentsPanel", () => {
     const header = detail.querySelector("header");
     const stop = screen.getByRole("button", { name: "Stop Detail layout child" });
     expect(header).toBeTruthy();
+    expect(header).toHaveTextContent("Inspect the parent request");
+    expect(header).not.toHaveTextContent("inspect_the_parent_request");
     expect(header).toHaveTextContent("Detail layout child");
     expect(header).toHaveTextContent("ancestor");
-    expect(header).toHaveTextContent("Parent task: Inspect the parent request");
+    expect(header).not.toHaveTextContent("Parent task:");
     expect(header).toHaveTextContent("GPT-5.6 Sol · High");
     expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
     expect(screen.queryByText("Canonical ID:")).not.toBeInTheDocument();
@@ -647,6 +676,30 @@ describe("SubagentsPanel", () => {
       "canonical-provider-child",
     );
     expect(screen.getByRole("region", { name: "Provider child subagent details" })).toBeInTheDocument();
+  });
+
+  it("rejects a provider-native selection shared by different providers", () => {
+    const sharedIdentity = "shared-native-child";
+    const codexChild = canonicalRow({
+      id: "canonical-codex-child",
+      providerIdentities: [{
+        providerId: "codex",
+        scope: "thread",
+        value: sharedIdentity,
+        provenance: "native",
+      }],
+    });
+    const cursorChild = canonicalRow({
+      id: "canonical-cursor-child",
+      providerIdentities: [{
+        providerId: "cursor",
+        scope: "thread",
+        value: sharedIdentity,
+        provenance: "native",
+      }],
+    });
+
+    expect(resolveCanonicalSubagentSelection(sharedIdentity, [codexChild, cursorChild])).toBeUndefined();
   });
 
   it("restores canonical roster focus and scroll position on Back", async () => {

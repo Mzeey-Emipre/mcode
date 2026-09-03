@@ -1,4 +1,10 @@
-import { createSubagentPresentation, resolveBrowserNarrativeTool } from "@mcode/contracts";
+import {
+  createCanonicalSubagentPresentation,
+  createSubagentPresentation,
+  decodeCanonicalSubagentDetailTarget,
+  decodeSubagentAliasDetailTarget,
+  resolveBrowserNarrativeTool,
+} from "@mcode/contracts";
 import type {
   HookExecution,
   HookExecutionRecord,
@@ -224,14 +230,26 @@ function persistedSubagentPresentation(record: ToolCallRecord): ToolCall["subage
   const input: Record<string, unknown> = {};
   addPersistedTextField(input, "agentName", record.display_name);
   addPersistedProviderAgentInput(input, record.provider_agent_key);
-  addPersistedTextField(input, "nativeThreadId", record.subagent_identity_key);
   addPersistedTextField(input, "subagentProviderName", record.subagent_provider_name);
-  addPersistedTextField(input, "prompt", record.subagent_prompt);
+  addPersistedTextField(input, "prompt", record.subagent_prompt ?? record.input_summary);
   addPersistedTextField(input, "subagentType", record.subagent_type);
   addPersistedTextField(input, "agentId", record.subagent_agent_id);
   addPersistedNumberField(input, "durationMs", record.subagent_duration_ms);
   addPersistedTextField(input, "model", record.model);
   addPersistedTextField(input, "reasoningEffort", record.reasoning_effort);
+  const canonicalChildThreadId = decodeCanonicalSubagentDetailTarget(record.subagent_identity_key);
+  if (canonicalChildThreadId) {
+    return createCanonicalSubagentPresentation(
+      input,
+      record.provider_agent_key ?? record.id,
+      canonicalChildThreadId,
+    );
+  }
+  addPersistedTextField(
+    input,
+    "nativeThreadId",
+    decodeSubagentAliasDetailTarget(record.subagent_identity_key) ?? record.subagent_identity_key,
+  );
   return createSubagentPresentation(input, record.provider_agent_key ?? record.id);
 }
 
