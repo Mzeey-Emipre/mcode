@@ -15,7 +15,7 @@ Use this skill before merge when a change affects Mcode's runtime, desktop UI, p
 
 ## Commands
 
-Run `bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs --help` for the command reference.
+Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs --help` for the command reference.
 
 Run `runtime health` before AgentService, provider-event, turn-runtime, or selected-text-comments proof. The runtime area rejects a missing or stale server bundle or runtime contract before it calls `/health`.
 
@@ -24,10 +24,10 @@ Run `thread-lifecycle health` before the completed-thread workflow. It also chec
 The public commands use these namespaces:
 
 ```sh
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime <health|check|inspect|live|worktree-setup|worktree-setup-cleanup|diagnostics|cleanup>
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle <health|check|proof|inspect|cleanup>
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue <check|health|proof|navigation-repro|inspect|cleanup>
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments <setup|proof|cleanup>
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs runtime <health|check|inspect|live|worktree-setup|worktree-setup-cleanup|diagnostics|cleanup>
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle <health|check|proof|inspect|cleanup>
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue <check|health|proof|navigation-repro|inspect|cleanup>
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments <setup|proof|cleanup>
 ```
 
 Runtime live proof requires `--confirm-provider-call`. It creates and normally deletes one direct thread. Thread-lifecycle proof and cleanup require `--confirm-cleanup`. The selected-text-comments setup and cleanup require a stopped Electron session.

@@ -48,7 +48,7 @@ const FOCUSED_WEB_TESTS = [
 const HELP = `Verify Mcode thread lifecycle
 
 Usage:
-  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle <command> [options]
+  bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle <command> [options]
 
 Commands:
   health
@@ -903,7 +903,7 @@ function activeRunError(condition) {
 }
 
 function cliError(condition) {
-  return actionable(condition, "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle --help.");
+  return actionable(condition, "Run bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle --help.");
 }
 
 function actionable(condition, nextAction) {

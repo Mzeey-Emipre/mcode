@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 const HELP = `Verify Mcode
 
 Usage:
-  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs <area> <command> [options]
+  bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs <area> <command> [options]
 
 Areas:
   composer-queue <check|health|proof|navigation-repro|inspect|cleanup>
@@ -19,16 +19,16 @@ Areas:
       Prepare, prove, or remove the Electron selected-text-comments fixture.
 
 Examples:
-  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime health
-  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle proof --confirm-cleanup
-  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments proof
+  bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs runtime health
+  bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs thread-lifecycle proof --confirm-cleanup
+  bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments proof
 
 Run an area command with --help for its options and proof limits.`;
 
 const SELECTED_TEXT_COMMENTS_HELP = `Verify Mcode desktop selected-text comments
 
 Usage:
-  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments <setup|proof|cleanup>
+  bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments <setup|proof|cleanup>
 
 Commands:
   setup
@@ -89,7 +89,7 @@ async function run(script, args) {
 }
 
 function usageError(condition) {
-  return new Error(`Condition: ${condition}. Next action: Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs --help.`);
+  return new Error(`Condition: ${condition}. Next action: Run bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs --help.`);
 }
 
 try {

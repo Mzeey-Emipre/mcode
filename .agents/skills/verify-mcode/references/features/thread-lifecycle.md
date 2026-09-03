@@ -19,7 +19,7 @@
 Run `runtime health`, then run:
 
 ```sh
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime live --provider codex --model <id> --scenario stop --confirm-provider-call
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs runtime live --provider codex --model <id> --scenario stop --confirm-provider-call
 ```
 
 The harness waits for `turnStarted`. It sends two `agent.stop` RPCs together. It requires matching cancelled results with one turn execution and dispatch state. It then checks a stopped event. It requires `agent.activeCount` to reach zero. It requires `agent.listRunning` to retain the matching cancelled snapshot for reconnect hydration.

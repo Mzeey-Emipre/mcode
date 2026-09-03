@@ -14,7 +14,7 @@ import {
   verifyThreadLifecycleHealth,
 } from "./thread-lifecycle.mjs";
 import { openRuntimeVerificationSocket } from "./runtime.mjs";
-import { stopElectron } from "../../electorn-live-testing/scripts/stop-electron.mjs";
+import { stopElectron } from "../../../../.codex/skills/electorn-live-testing/scripts/stop-electron.mjs";
 
 const EVIDENCE_DIRECTORY = ".dev/verification/composer-queue";
 const PROVIDERS = ["codex", "cursor"];
@@ -43,7 +43,7 @@ const CONFIRMATION_OPTION_KEYS = {
 const HELP = `Verify Mcode composer queue
 
 Usage:
-  bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue <command> [options]
+  bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue <command> [options]
 
 Commands:
   check
@@ -205,12 +205,12 @@ async function execute(parsed, repoRoot) {
 async function check(repoRoot) {
   const child = Bun.spawn({
     cmd: ["bun", "test", "composer-queue.test.mjs"],
-    cwd: NodePath.join(repoRoot, ".codex", "skills", "verify-mcode", "scripts"),
+    cwd: NodePath.join(repoRoot, ".agents", "skills", "verify-mcode", "scripts"),
     stderr: "inherit",
     stdout: "inherit",
   });
   if (await child.exited !== 0) throw new Error("Composer queue verifier checks failed");
-  return { testFile: ".codex/skills/verify-mcode/scripts/composer-queue.test.mjs" };
+  return { testFile: ".agents/skills/verify-mcode/scripts/composer-queue.test.mjs" };
 }
 
 async function health(repoRoot, options) {
@@ -1984,7 +1984,7 @@ function relativePath(repoRoot, path) {
 }
 
 function cliError(message) {
-  return actionable(message, "Run bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue --help.");
+  return actionable(message, "Run bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue --help.");
 }
 
 function actionable(message, nextAction) {
