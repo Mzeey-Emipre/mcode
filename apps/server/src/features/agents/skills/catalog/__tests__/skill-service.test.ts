@@ -413,6 +413,30 @@ describe("SkillService", () => {
       }
     });
 
+    it("scans project-level <cwd>/.agents/skills only for Cursor", () => {
+      const cwd = tmp();
+      try {
+        const skillDir = NodePath.join(cwd, ".agents", "skills", "shared-skill");
+        NodeFS.mkdirSync(skillDir, { recursive: true });
+        writeMd(NodePath.join(skillDir, "SKILL.md"), { description: "Shared project skill" });
+
+        const svc = new SkillService();
+        expect(svc.list(cwd, "cursor").find((item) => item.name === "shared-skill")).toMatchObject({
+          kind: "skill",
+          source: "project",
+          providers: ["cursor"],
+          path: NodePath.join(skillDir, "SKILL.md"),
+        });
+
+        svc.invalidate();
+        expect(svc.list(cwd, "claude").find((item) => item.name === "shared-skill")).toBeUndefined();
+        svc.invalidate();
+        expect(svc.list(cwd, "copilot").find((item) => item.name === "shared-skill")).toBeUndefined();
+      } finally {
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+
     it("cursor plugin cache: scans newest hash dir by mtime, not lexical order", () => {
       const pluginRoot = NodePath.join(fakeHome, ".cursor", "plugins", "cache", "mp", "myplug");
       /** Lexically last — would win if we wrongly sorted by name instead of mtime. */

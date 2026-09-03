@@ -354,6 +354,7 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
       { path: NodePath.join(cwd, ".copilot", "agents"), source: "project", providers: ["copilot"], kind: "both" },
 
       // Cursor project-level
+      { path: NodePath.join(cwd, ".agents", "skills"), source: "project", providers: ["cursor"], kind: "skills" },
       { path: NodePath.join(cwd, ".cursor", "skills"), source: "project", providers: ["cursor"], kind: "skills" },
       { path: NodePath.join(cwd, ".cursor", "commands"), source: "project", providers: ["cursor"], kind: "commands" },
     );

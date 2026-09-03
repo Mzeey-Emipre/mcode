@@ -51,6 +51,7 @@ describe("formatCursorSkillsAndCommandsForPrompt", () => {
     ]);
     expect(text).toContain("[skill] deploy");
     expect(text).toContain("[command] lint");
+    expect(text).toContain("project .agents and .cursor trees");
   });
 
   it("truncates excessively long descriptions and caps listing volume", () => {

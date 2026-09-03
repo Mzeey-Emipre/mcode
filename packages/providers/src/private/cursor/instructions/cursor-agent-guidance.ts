@@ -93,7 +93,7 @@ export function formatCursorSkillsAndCommandsForPrompt(
   }
   return [
     "<available-skills-and-commands>",
-    "Discovered Cursor provider skills and commands (user and project .cursor trees).",
+    "Discovered Cursor provider skills and commands (user .cursor plus project .agents and .cursor trees).",
     ...lines,
     "</available-skills-and-commands>",
   ].join("\n");
