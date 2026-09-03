@@ -47,7 +47,6 @@ import {
   setActiveConversation,
   setConversationTransientTextBytes,
 } from "@/features/conversation/hydration/record-cache";
-import { releaseBrowserCaptureSpills } from "@/features/preview/capture/browser-capture-spill";
 import { isGoalControlCommand } from "@/lib/goal-command";
 import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
 import { isGoalStatusNotice } from "@/lib/goal-message";
@@ -133,6 +132,8 @@ interface ThreadState {
   records: Map<string, ThreadRecord>;
   currentThreadId: string | null;
   runningThreadIds: Set<string>;
+  /** Number of Stop RPCs that have started but have not settled, keyed by thread. */
+  pendingStopCounts: Record<string, number>;
   /** In-memory Recap cache keyed by thread id. */
   recapByThread: Record<string, ThreadRecapCacheEntry>;
   /** Cache for tool call records to avoid re-fetching from server. */
@@ -328,29 +329,49 @@ function hasPendingPlanQuestions(threadId: string): boolean {
   return getThreadRecord(useThreadStore.getState().records, threadId).planQuestionsStatus === "pending";
 }
 
+type ThreadExecutionState = Pick<ThreadState, "records" | "runningThreadIds" | "pendingStopCounts">;
+
+/** Return true while a thread owns an active or optimistic turn. */
+export function isThreadExecuting(
+  threadId: string,
+  threadState: ThreadExecutionState = useThreadStore.getState(),
+): boolean {
+  const phase = threadState.records.get(threadId)?.runtimePhase;
+  return (threadState.pendingStopCounts[threadId] ?? 0) > 0
+    || threadState.runningThreadIds.has(threadId)
+    || phase === "running"
+    || phase === "finalizing";
+}
+
+function canAutoDrainQueuedMessage(threadId: string): boolean {
+  const threadExists = useWorkspaceStore.getState().threads.some(
+    (thread) => thread.id === threadId && thread.deleted_at == null,
+  );
+  if (!threadExists || isThreadExecuting(threadId)) return false;
+  const queueState = useQueueStore.getState();
+  return !queueState.autoDrainSuppressedThreadIds.has(threadId)
+    && queueState.editingThreadId !== threadId
+    && !hasPendingPlanQuestions(threadId);
+}
+
 /**
  * Resume auto-drain for a thread that was paused while the user edited a
- * queued message. Schedules the same 400ms-delayed check used by the
- * turnComplete handler. No-op when the thread is busy or the queue is empty.
+ * queued message. Schedules the same 400ms-delayed check used when a turn
+ * completes. No-op when the thread is busy or the queue is empty.
  */
 export function scheduleDrainAfterEdit(threadId: string): void {
+  if (useQueueStore.getState().autoDrainSuppressedThreadIds.has(threadId)) return;
   if (hasPendingPlanQuestions(threadId)) return;
   clearDequeueTimer(threadId);
   const timer = setTimeout(() => {
     dequeueTimers.delete(threadId);
-    const threadExists = useWorkspaceStore.getState().threads.some(
-      (t) => t.id === threadId && t.deleted_at == null,
-    );
-    if (!threadExists) return;
-    if (useThreadStore.getState().runningThreadIds.has(threadId)) return;
-    if (useQueueStore.getState().editingThreadId === threadId) return;
-    if (hasPendingPlanQuestions(threadId)) return;
-
-    const next = useQueueStore.getState().dequeueNext(threadId);
+    if (!canAutoDrainQueuedMessage(threadId)) return;
+    const queueState = useQueueStore.getState();
+    const next = queueState.claimNextQueuedMessage(threadId);
     if (next) {
       void (async (): Promise<void> => {
         try {
-          await useThreadStore.getState().sendMessage(
+          const sent = await useThreadStore.getState().sendMessage(
             threadId,
             next.content,
             next.model,
@@ -371,8 +392,9 @@ export function scheduleDrainAfterEdit(threadId: string): void {
             next.goalObjective,
             next.orchestrationMode,
           );
+          useQueueStore.getState().settleQueuedDispatch(threadId, next.id, sent);
         } catch {
-          void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);
+          useQueueStore.getState().settleQueuedDispatch(threadId, next.id, false);
         }
       })();
     }
@@ -1912,16 +1934,50 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   ): boolean => runtime.runtimeActive
     && (!runtime.incomingExecutionId || runtime.runtimeRecord.turnExecutionId === runtime.incomingExecutionId);
 
+  const matchesPersistedCompletion = (
+    event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
+    runtime: { incomingExecutionId: string | undefined; runtimeRecord: ThreadRecord },
+  ): boolean => event.type === "turnComplete"
+    && runtime.runtimeRecord.runtimePhase === "completed"
+    && runtime.incomingExecutionId !== undefined
+    && runtime.runtimeRecord.turnExecutionId === runtime.incomingExecutionId;
+
+  const suppressGuardrailQueueDrain = (
+    event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
+    runtime: { incomingExecutionId: string | undefined; runtimeRecord: ThreadRecord },
+  ): Message | null => {
+    const guardrail = guardrailMessageFor(event);
+    if (!guardrail) return null;
+    if (runtime.incomingExecutionId && runtime.runtimeRecord.turnExecutionId !== runtime.incomingExecutionId) {
+      return guardrail;
+    }
+    clearDequeueTimer(event.threadId);
+    useQueueStore.getState().suppressAutoDrain(event.threadId);
+    return guardrail;
+  };
+
+  const schedulePersistedCompletionDrain = (
+    event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
+    runtime: { incomingExecutionId: string | undefined; runtimeRecord: ThreadRecord },
+    guardrail: Message | null,
+  ): void => {
+    if (!matchesPersistedCompletion(event, runtime) || guardrail) return;
+    scheduleDrainAfterEdit(event.threadId);
+  };
+
   const handleTerminalEvent = (
     event: Extract<AgentEvent, { type: "turnComplete" | "ended" }>,
     runtime: { incomingExecutionId: string | undefined; runtimeActive: boolean; runtimeRecord: ThreadRecord },
   ): void => {
     if (releaseProviderLostTerminal(event, runtime)) return;
     if (event.type === "ended" && event.outcome === undefined) return;
-    if (!runtimeOwnsTerminalEvent(runtime)) return;
+    const guardrail = suppressGuardrailQueueDrain(event, runtime);
+    if (!runtimeOwnsTerminalEvent(runtime)) {
+      schedulePersistedCompletionDrain(event, runtime, guardrail);
+      return;
+    }
     const phase = terminalPhaseFor(event);
     if (!phase) return;
-    const guardrail = guardrailMessageFor(event);
     patchRec(event.threadId, (record) => appendTerminalMessages(record, event, phase, guardrail));
     conversationResidency.retainInactiveConversation(event.threadId);
     if (event.type === "turnComplete") updateTurnContext(event);
@@ -2409,6 +2465,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     records: new Map<string, ThreadRecord>(),
     currentThreadId: null,
     runningThreadIds: new Set<string>(),
+    pendingStopCounts: {},
     recapByThread: {},
     toolCallRecordCache: new LruCache<string, ToolCallRecord[]>(TOOL_CALL_CACHE_SIZE),
     recentlyAnsweredPlanMessageIds: new Set<string>(),
@@ -2775,6 +2832,14 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
   /** Request exact active turn stop and apply authoritative runtime result. */
   stopAgent: async (threadId) => {
+    clearDequeueTimer(threadId);
+    useQueueStore.getState().suppressAutoDrain(threadId);
+    set((state) => ({
+      pendingStopCounts: {
+        ...state.pendingStopCounts,
+        [threadId]: (state.pendingStopCounts[threadId] ?? 0) + 1,
+      },
+    }));
     const wasRunning = get().runningThreadIds.has(threadId);
     patchRec(threadId, { awaitingUserStopPersist: true, composerRecallFromStop: undefined });
     try {
@@ -2800,8 +2865,18 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         set((state) => ({ runningThreadIds: new Set([...state.runningThreadIds, threadId]) }));
       }
     }
-    invalidateDeferredNarrativeEvents(threadId);
-    threadHydrator.invalidatePermissionSnapshots(threadId);
+    finally {
+      set((state) => {
+        const count = state.pendingStopCounts[threadId] ?? 0;
+        if (count === 0) return state;
+        const pendingStopCounts = { ...state.pendingStopCounts };
+        if (count === 1) delete pendingStopCounts[threadId];
+        else pendingStopCounts[threadId] = count - 1;
+        return { pendingStopCounts };
+      });
+      invalidateDeferredNarrativeEvents(threadId);
+      threadHydrator.invalidatePermissionSnapshots(threadId);
+    }
   },
 
   setTurnSavingStatus: (status) => {
@@ -3052,6 +3127,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       return {
         records: deleteThreadRecord(state.records, threadId),
         recapByThread,
+        pendingStopCounts: Object.fromEntries(
+          Object.entries(state.pendingStopCounts).filter(([id]) => id !== threadId),
+        ),
         ...(isCurrentThread ? { currentThreadId: null } : {}),
       };
     });
@@ -3094,6 +3172,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       return {
         records,
         recapByThread,
+        pendingStopCounts: Object.fromEntries(
+          Object.entries(state.pendingStopCounts).filter(([id]) => !idsToDelete.has(id)),
+        ),
         ...(deletingCurrentThread ? { currentThreadId: null } : {}),
       };
     });

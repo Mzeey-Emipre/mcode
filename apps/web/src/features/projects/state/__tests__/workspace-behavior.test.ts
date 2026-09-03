@@ -4,9 +4,11 @@ import {
   hasTestThreadRecord,
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, patchThreadRecord, type ThreadRecord } from "@/stores/thread-record";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "../workspaceStore";
-import { useThreadStore } from "@/stores/threadStore";
+import { scheduleDrainAfterEdit, useThreadStore } from "@/stores/threadStore";
+import { useQueueStore } from "@/stores/queueStore";
+import { releaseBrowserCaptureSpills } from "@/features/preview/capture/browser-capture-spill";
 import { useComposerDraftStore, type ComposerDraft } from "@/stores/composerDraftStore";
 import { toComposerAttachmentMetas } from "@/features/conversation/composer/draft/composer-attachment-operations";
 import { useDiffStore } from "@/stores/diffStore";
@@ -18,6 +20,8 @@ import {
   createMockThread,
 } from "../../../../__tests__/mocks/transport";
 import type { CreateAndSendResult, SelectedTextComment, TurnRuntimeSnapshot } from "@mcode/contracts";
+import { act, renderHook } from "@testing-library/react";
+import { useQueuedMessageDispatch } from "@/features/conversation/composer/queue/useQueuedMessageDispatch";
 
 const selectedTextComments: SelectedTextComment[] = [{
   id: "11111111-1111-4111-8111-111111111111",
@@ -109,7 +113,38 @@ vi.mock("@/transport", async () => ({
   getTransport: () => mockTransport,
 }));
 
+vi.mock("@/features/preview/capture/browser-capture-spill", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/preview/capture/browser-capture-spill")>()),
+  releaseBrowserCaptureSpills: vi.fn(),
+}));
+
+function claimQueuedMessage(threadId: string, spillPath: string) {
+  useQueueStore.getState().enqueue(threadId, {
+    content: "queued follow-up",
+    displayContent: "queued follow-up",
+    attachments: [],
+    model: "claude-sonnet-4-6",
+    permissionMode: "full",
+    browserCaptureSpillPaths: [spillPath],
+  });
+  return useQueueStore.getState().claimNextQueuedMessage(threadId)!;
+}
+
+function queueMessage(threadId: string) {
+  expect(useQueueStore.getState().enqueue(threadId, {
+    content: "queued follow-up",
+    displayContent: "queued follow-up",
+    attachments: [],
+    model: "claude-sonnet-4-6",
+    permissionMode: "full",
+  })).toBe(true);
+}
+
 describe("Workspace Behavior", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     __resetThreadListMutationEpochForTests();
     __clearPendingThreadCreationsForTests();
@@ -127,6 +162,15 @@ describe("Workspace Behavior", () => {
     useDiffStore.setState({
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
+    });
+    useQueueStore.setState({
+      queues: {},
+      inFlightQueuedMessages: {},
+      disposedQueuedMessages: {},
+      queueGenerations: {},
+      autoDrainSuppressedThreadIds: new Set<string>(),
+      toast: null,
+      editingThreadId: null,
     });
     vi.clearAllMocks();
   });
@@ -183,6 +227,117 @@ describe("Workspace Behavior", () => {
     expect(state.activeWorkspaceId).toBeNull();
     expect(state.threads).toHaveLength(0);
     expect(state.activeThreadId).toBeNull();
+  });
+
+  it("does not drain while workspace deletion is awaiting the server", async () => {
+    vi.useFakeTimers();
+    const ws = createMockWorkspace({ id: "workspace-delete-pending" });
+    const thread = createMockThread({ id: "thread-delete-pending", workspace_id: ws.id });
+    useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id, threads: [thread], activeThreadId: thread.id });
+    resetThreadStoreForTests({ currentThreadId: thread.id });
+    queueMessage(thread.id);
+    let resolveDelete!: () => void;
+    (mockTransport.deleteWorkspace as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveDelete = resolve; }),
+    );
+
+    scheduleDrainAfterEdit(thread.id);
+    const deleting = useWorkspaceStore.getState().deleteWorkspace(ws.id);
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+
+    resolveDelete();
+    await deleting;
+    vi.useRealTimers();
+  });
+
+  it("re-arms a queued drain when workspace deletion fails", async () => {
+    vi.useFakeTimers();
+    const ws = createMockWorkspace({ id: "workspace-delete-reject" });
+    const thread = createMockThread({ id: "thread-delete-reject", workspace_id: ws.id });
+    useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id, threads: [thread], activeThreadId: thread.id });
+    resetThreadStoreForTests({ currentThreadId: thread.id });
+    queueMessage(thread.id);
+    (mockTransport.deleteWorkspace as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("delete failed"));
+
+    await expect(useWorkspaceStore.getState().deleteWorkspace(ws.id)).rejects.toThrow("delete failed");
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(mockTransport.sendMessage).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("disposes queued leases when deleting a workspace and releases their spills only after failure settles", async () => {
+    const ws = createMockWorkspace({ id: "workspace-delete-lease" });
+    const thread = createMockThread({ id: "thread-delete-lease", workspace_id: ws.id });
+    useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id, threads: [thread], activeThreadId: thread.id });
+    const claimed = claimQueuedMessage(thread.id, "browser-capture-spill/workspace-delete.json");
+
+    await useWorkspaceStore.getState().deleteWorkspace(ws.id);
+
+    expect(useQueueStore.getState().queues[thread.id]).toBeUndefined();
+    expect(useQueueStore.getState().inFlightQueuedMessages[thread.id]).toBeUndefined();
+    expect(useQueueStore.getState().autoDrainSuppressedThreadIds.has(thread.id)).toBe(false);
+    expect(useQueueStore.getState().queueGenerations[thread.id]).toBe(1);
+    expect(releaseBrowserCaptureSpills).not.toHaveBeenCalled();
+
+    useQueueStore.getState().settleQueuedDispatch(thread.id, claimed.id, false);
+
+    expect(useQueueStore.getState().queues[thread.id]).toBeUndefined();
+    expect(releaseBrowserCaptureSpills).toHaveBeenCalledWith(["browser-capture-spill/workspace-delete.json"]);
+    expect(useQueueStore.getState().enqueue(thread.id, {
+      content: "new queue after delete",
+      displayContent: "new queue after delete",
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    })).toBe(true);
+    expect(useQueueStore.getState().claimNextQueuedMessage(thread.id)?.content).toBe("new queue after delete");
+  });
+
+  it("disposes queued leases when dismissing a preparing thread", () => {
+    const ws = createMockWorkspace({ id: "workspace-dismiss-lease" });
+    const thread = { ...createMockThread({ id: "thread-dismiss-lease", workspace_id: ws.id }), clientPreparing: true };
+    useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id, threads: [thread], activeThreadId: thread.id });
+    const claimed = claimQueuedMessage(thread.id, "browser-capture-spill/preparing-dismiss.json");
+
+    useWorkspaceStore.getState().dismissPreparingThread(thread.id);
+
+    expect(useQueueStore.getState().queues[thread.id]).toBeUndefined();
+    expect(useQueueStore.getState().inFlightQueuedMessages[thread.id]).toBeUndefined();
+    expect(useQueueStore.getState().autoDrainSuppressedThreadIds.has(thread.id)).toBe(false);
+    expect(useQueueStore.getState().queueGenerations[thread.id]).toBe(1);
+    expect(releaseBrowserCaptureSpills).not.toHaveBeenCalled();
+
+    useQueueStore.getState().settleQueuedDispatch(thread.id, claimed.id, false);
+
+    expect(useQueueStore.getState().queues[thread.id]).toBeUndefined();
+    expect(releaseBrowserCaptureSpills).toHaveBeenCalledWith(["browser-capture-spill/preparing-dismiss.json"]);
+    expect(useQueueStore.getState().enqueue(thread.id, {
+      content: "new queue after dismiss",
+      displayContent: "new queue after dismiss",
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    })).toBe(true);
+  });
+
+  it("does not dispatch from a Continue callback captured before workspace teardown", async () => {
+    const ws = createMockWorkspace({ id: "workspace-stale-continue" });
+    const thread = createMockThread({ id: "thread-stale-continue", workspace_id: ws.id });
+    useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id, threads: [thread], activeThreadId: thread.id });
+    claimQueuedMessage(thread.id, "browser-capture-spill/stale-continue.json");
+    useQueueStore.getState().settleQueuedDispatch(thread.id, useQueueStore.getState().inFlightQueuedMessages[thread.id]!.message.id, false);
+    const { result } = renderHook(() => useQueuedMessageDispatch(thread.id));
+    const staleContinue = result.current.resumeNext;
+
+    await useWorkspaceStore.getState().deleteWorkspace(ws.id);
+    await act(async () => {
+      await staleContinue();
+    });
+
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
   });
 
   it("when the user deletes a non-active workspace, active selection is preserved", async () => {

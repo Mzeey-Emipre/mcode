@@ -28,6 +28,7 @@
 | A New worktree completes checkout before automatic Setup starts and can cancel a held Setup safely | [Managed-worktree Setup readiness](managed-worktree-setup.md) | `runtime worktree-setup --confirm-cleanup` and `runtime check` |
 | Local, managed-worktree, and PR-created threads show truthful startup progress and remove it after success | [Thread startup progress](thread-startup-progress.md) | Electron public UI proof and focused startup tests |
 | A user completes a worktree thread and the app schedules its cleanup | [Completed-thread cleanup](completed-thread-cleanup.md) | `thread-lifecycle proof --confirm-cleanup` and `thread-lifecycle check` |
+| Queued composer messages continue in FIFO order after completion and stay paused after Stop | [Composer queue](composer-queue.md) | `composer-queue proof --cursor-model <id> --allow-enable-cursor --confirm-provider-calls --confirm-cleanup` |
 | Thread Overview defaults open beside the right panel in split mode, even when the narrowed chat is below the usual threshold, and is unavailable while the panel is maximized | [Thread Overview and right panel](thread-overview-right-panel.md) | Electron public UI proof with the stable live-testing interface |
 | An existing thread title is renamed or cancelled from the Project tree | [Thread-list inline rename](thread-list-inline-rename.md) | Electron public UI proof with the stable live-testing interface |
 

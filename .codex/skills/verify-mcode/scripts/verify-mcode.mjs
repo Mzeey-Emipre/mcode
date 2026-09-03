@@ -9,6 +9,8 @@ Usage:
   bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs <area> <command> [options]
 
 Areas:
+  composer-queue <check|health|proof|navigation-repro|inspect|cleanup>
+      Verify the production Electron composer queue for the fixed Codex and Cursor matrix.
   runtime <health|check|inspect|live|diagnostics|cleanup>
       Verify AgentService, provider events, turn runtime, and runtime cleanup.
   thread-lifecycle <health|check|proof|inspect|cleanup>
@@ -53,6 +55,7 @@ async function main() {
 
 function resolveChild(args) {
   const [area, ...rest] = args;
+  if (area === "composer-queue") return { script: "composer-queue.mjs", args: rest };
   if (area === "runtime") return { script: "runtime.mjs", args: rest };
   if (area === "thread-lifecycle") return { script: "thread-lifecycle.mjs", args: rest };
   if (area === "desktop") return resolveDesktopChild(rest);

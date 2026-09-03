@@ -39,6 +39,10 @@ const FOCUSED_SERVER_TESTS = [
 const FOCUSED_WEB_TESTS = [
   "src/features/projects/__tests__/ProjectTree.test.tsx",
   "src/features/projects/state/__tests__/workspaceStore.completion.test.ts",
+  "src/features/projects/state/__tests__/workspace-behavior.test.ts",
+  "src/__tests__/threadStore-reconnect-queue.test.ts",
+  "src/features/conversation/composer/queue/useQueuedMessageDispatch.test.tsx",
+  "src/components/chat/__tests__/ComposerQueueList.lifecycle.test.tsx",
 ];
 
 const HELP = `Verify Mcode thread lifecycle
@@ -50,7 +54,7 @@ Commands:
   health
       Validate the current worktree runtime and its disposable fixture repository.
   check
-      Run focused completion, cleanup, worktree-safety, and Project Tree tests.
+      Run focused completion, composer-queue, cleanup, worktree-safety, and Project Tree tests.
   proof --confirm-cleanup
       Create disposable state, complete a worktree thread through Electron, capture proof, and remove the generated state.
   inspect
@@ -141,6 +145,11 @@ async function health(repoRoot) {
     fixtureRepositoryReady: true,
     playwrightReady: true,
   };
+}
+
+/** Reuses desktop, Playwright, fixture, and runtime readiness validation. */
+export async function verifyThreadLifecycleHealth(repoRoot) {
+  return await health(repoRoot);
 }
 
 async function check(repoRoot) {
@@ -423,9 +432,9 @@ function createRun(evidenceDirectory) {
   return { id, directory };
 }
 
-async function openDesktopSocket(repoRoot, runtimeDirectory) {
+export async function openDesktopSocket(repoRoot, runtimeDirectory, onPush = () => {}) {
   const connection = await waitForDesktopServer(repoRoot, runtimeDirectory);
-  return openSocket(repoRoot, connection);
+  return openSocket(repoRoot, connection, onPush);
 }
 
 async function waitForDesktopServer(repoRoot, runtimeDirectory) {
@@ -463,7 +472,7 @@ function readDesktopServerConnection(runtimeDirectory) {
   }
 }
 
-async function openSocket(repoRoot, connection) {
+async function openSocket(repoRoot, connection, onPush) {
   const serverRequire = NodeModule.createRequire(NodePath.join(repoRoot, "apps", "server", "package.json"));
   const { WebSocket } = serverRequire("ws");
   const endpoint = new URL(`ws://127.0.0.1:${connection.port}/`);
@@ -483,23 +492,7 @@ async function openSocket(repoRoot, connection) {
   };
   ws.on("error", fail);
   ws.on("close", () => fail(new Error("The verification WebSocket closed unexpectedly")));
-  ws.on("message", (raw) => {
-    let message;
-    try { message = JSON.parse(raw.toString()); } catch { return; }
-    if (message?.type === "refusal") {
-      fail(new Error(`The verification WebSocket was refused: ${String(message.error?.code ?? "UNKNOWN")}`));
-      return;
-    }
-    const entry = pending.get(message?.id);
-    if (!entry) return;
-    clearTimeout(entry.timer);
-    pending.delete(message.id);
-    if (message.error) {
-      entry.reject(new Error(`RPC ${entry.method} failed: ${String(message.error.code ?? "UNKNOWN")}`));
-      return;
-    }
-    entry.resolve(message.result);
-  });
+  ws.on("message", (raw) => handleDesktopSocketMessage(raw, pending, fail, onPush));
   await waitForSocketOpen(ws, state, fail);
 
   return {
@@ -538,6 +531,40 @@ async function openSocket(repoRoot, connection) {
   };
 }
 
+function handleDesktopSocketMessage(raw, pending, fail, onPush) {
+  const message = parseDesktopSocketMessage(raw);
+  if (!message) return;
+  if (message.type === "refusal") {
+    fail(new Error(`The verification WebSocket was refused: ${String(message.error?.code ?? "UNKNOWN")}`));
+    return;
+  }
+  if (message.type === "push") {
+    onPush(message);
+    return;
+  }
+  settleDesktopSocketRpc(pending, message);
+}
+
+function parseDesktopSocketMessage(raw) {
+  try {
+    return JSON.parse(raw.toString());
+  } catch {
+    return null;
+  }
+}
+
+function settleDesktopSocketRpc(pending, message) {
+  const entry = pending.get(message?.id);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  pending.delete(message.id);
+  if (message.error) {
+    entry.reject(new Error(`RPC ${entry.method} failed: ${String(message.error.code ?? "UNKNOWN")}`));
+    return;
+  }
+  entry.resolve(message.result);
+}
+
 function waitForSocketOpen(ws, state, fail) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -556,35 +583,36 @@ function waitForSocketOpen(ws, state, fail) {
   });
 }
 
-async function openDesktop(repoRoot) {
+export async function openDesktop(repoRoot, sessionFileName = ELECTRON_SESSION_FILE) {
   const skillDirectory = NodePath.join(repoRoot, ".codex", "skills", "electorn-live-testing", "scripts");
   const playwright = requirePlaywright(repoRoot);
   const { startElectron } = await import(NodeURL.pathToFileURL(NodePath.join(skillDirectory, "start-electron.mjs")).href);
   const { connectElectronSession, disconnectElectronSession } = await import(
     NodeURL.pathToFileURL(NodePath.join(skillDirectory, "electron-session.mjs")).href,
   );
-  const launch = await startElectron(repoRoot, { sessionFileName: ELECTRON_SESSION_FILE });
+  const launch = await startElectron(repoRoot, { sessionFileName });
   const session = await connectElectronSession({
     playwright,
     repoRoot,
-    sessionFileName: ELECTRON_SESSION_FILE,
+    sessionFileName,
   });
   return {
     disconnectElectronSession,
     page: session.page,
     runtimeDirectory: NodePath.join(launch.userDataDir, "runtime"),
+    sessionFileName,
     session,
   };
 }
 
-async function closeDesktop(desktop, repoRoot) {
+export async function closeDesktop(desktop, repoRoot) {
   if (!desktop) return;
   try {
     await desktop.disconnectElectronSession(desktop.session);
   } finally {
     const skillFile = NodePath.join(repoRoot, ".codex", "skills", "electorn-live-testing", "scripts", "stop-electron.mjs");
     const { stopElectron } = await import(NodeURL.pathToFileURL(skillFile).href);
-    stopElectron(repoRoot, { sessionFileName: ELECTRON_SESSION_FILE });
+    stopElectron(repoRoot, { sessionFileName: desktop.sessionFileName ?? ELECTRON_SESSION_FILE });
   }
 }
 
