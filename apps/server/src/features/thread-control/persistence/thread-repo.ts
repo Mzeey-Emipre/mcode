@@ -860,6 +860,7 @@ export class ThreadRepo {
          JOIN descendants ON descendants.id = thread.id
          WHERE thread.deleted_at IS NULL
            AND thread.user_completed_at IS NULL
+           AND ${canonicalChildVisibilityClause("thread")}
        )
        SELECT active.id
        FROM active_descendants AS active
