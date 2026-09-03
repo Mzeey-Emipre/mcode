@@ -131,7 +131,7 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
   {
     id: "opencode",
     name: "OpenCode",
-    comingSoon: true,
+    comingSoon: false,
     models: [],
   },
   {
