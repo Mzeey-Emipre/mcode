@@ -41,7 +41,7 @@ const RUNTIME_SOURCE_DIRECTORIES = [
   ["packages", "shared", "src"],
 ];
 const PROVIDERS = new Set(["codex", "claude", "cursor"]);
-const SCENARIOS = new Set(["completion", "stop"]);
+const SCENARIOS = new Set(["completion", "stop", "subagent"]);
 const FOCUSED_TEST_FILES = [
   "src/features/agents/composition/__tests__/agent-service-container.test.ts",
   "src/features/agents/orchestration/__tests__/agent-service-child-stop.test.ts",
@@ -62,12 +62,15 @@ const FOCUSED_TEST_FILES = [
   "src/features/agents/turns/__tests__/turn-event-sink.test.ts",
   "src/features/agents/turns/__tests__/turn-finalizer.test.ts",
   "src/features/agents/turns/__tests__/turn-runtime.test.ts",
+  "src/features/agents/canonical/__tests__/canonical-agent-event-sink.test.ts",
+  "src/features/agents/collaboration/adapters/__tests__/codex-collaboration-event-adapter.test.ts",
   "src/features/providers/composition/__tests__/provider-event-ingress.test.ts",
   "src/features/projects/git/__tests__/git-service-push.test.ts",
 ];
 const FIXED_PROMPTS = {
   completion: "Reply with exactly: Agent runtime verification complete. Do not edit files or invoke tools.",
   stop: "Inspect this repository with read-only file-search and file-reading tools. Do not write files, change settings, or run mutating commands. Explain the repository structure in detail.",
+  subagent: "Use exactly one subagent through provider-native collaboration. Give it this task: VERIFY_SUBAGENT_PARENT_TASK: wait five seconds without modifying files, then reply exactly VERIFY_SUBAGENT_CHILD_MESSAGE. After it finishes, reply exactly VERIFY_SUBAGENT_PARENT_DONE.",
 };
 
 const HELP = `Verify Mcode runtime
@@ -82,7 +85,7 @@ Commands:
       Run focused AgentService/event tests and bun run lint.
   inspect
       Read active runtime and workspace summaries through the authenticated WebSocket RPC API.
-  live --provider <codex|claude|cursor> --model <id> --scenario <completion|stop> --confirm-provider-call [--keep-thread]
+  live --provider <codex|claude|cursor> --model <id> --scenario <completion|stop|subagent> --confirm-provider-call [--keep-thread]
       Make one confirmed provider call in the registered current-worktree workspace. Does not start a runtime.
   worktree-setup --confirm-cleanup
       Create an owned Git project, verify its held automatic Setup gate, cancel Setup through the public API, then remove the project, workspace, thread, and worktree. Does not make a provider call.
@@ -179,7 +182,10 @@ function setLiveOption(options, option, value) {
 function validateLiveOptions(options, provider, model, scenario) {
   if (!PROVIDERS.has(provider)) throw cliError("--provider must be codex, claude, or cursor");
   if (typeof model !== "string" || !/^[^\s]{1,256}$/.test(model)) throw cliError("--model must be a non-empty ID of at most 256 non-space characters");
-  if (!SCENARIOS.has(scenario)) throw cliError("--scenario must be completion or stop");
+  if (!SCENARIOS.has(scenario)) throw cliError("--scenario must be completion, stop, or subagent");
+  if (scenario === "subagent" && (provider !== "codex" || model !== "gpt-5.6-terra")) {
+    throw cliError("the subagent scenario requires --provider codex --model gpt-5.6-terra");
+  }
   if (options.has("--confirm-provider-call")) return;
   throw actionable("Provider confirmation is missing", "Add --confirm-provider-call after you choose an available provider and model.");
 }
@@ -371,7 +377,10 @@ async function check(repoRoot) {
   const evidenceDirectory = ensureEvidenceDirectory(repoRoot);
   const stamp = fileStamp();
   const phases = [
-    { name: "focused-agent-runtime", args: ["--cwd", "apps/server", "run", "test", "--", ...FOCUSED_TEST_FILES] },
+    { name: "focused-agent-runtime", args: ["run", "--cwd", "apps/server", "test", "--", ...FOCUSED_TEST_FILES] },
+    { name: "codex-subagent-protocol", args: ["run", "--cwd", "packages/providers", "test", "--", "src/__tests__/codex/codex-app-server-handshake.test.ts", "src/__tests__/codex/codex-provider-subagent-turn.test.ts"] },
+    { name: "subagent-presentation-contract", args: ["test", "packages/contracts/src/__tests__/subagent-presentation.test.ts"] },
+    { name: "subagent-ui", args: ["run", "--cwd", "apps/web", "test", "--", "src/features/conversation/narrative/__tests__/build-persisted-narrative.test.ts", "src/features/conversation/narrative/__tests__/SubagentRow.test.tsx", "src/features/subagents/roster/__tests__/subagent-projection.test.ts", "src/features/subagents/roster/__tests__/SubagentsPanel.test.tsx"] },
     { name: "lint", args: ["run", "lint"] },
   ];
   const results = [];
@@ -1133,6 +1142,11 @@ function createLiveReport(options) {
     terminalEvent: null,
     conversationAssistant: false,
     messageAssistant: false,
+    subagentActiveSeen: false,
+    subagentCompleted: false,
+    subagentTaskRetained: false,
+    subagentParentMessageRetained: false,
+    subagentMessageRetained: false,
     stopResults: [],
     sharedStopResult: null,
     activeCountCleared: false,
@@ -1146,7 +1160,7 @@ function createLiveReport(options) {
 async function prepareLiveRun(repoRoot, options, run) {
   await health(repoRoot);
   run.socket = await openSocket(repoRoot, readRuntime(repoRoot), (push) => recordPush(run, push));
-  const workspace = await findCurrentWorkspace(run.socket, repoRoot);
+  const workspace = await findLiveWorkspace(run.socket, repoRoot, options.scenario);
   run.proofDeadline = Date.now() + LIVE_TIMEOUT_MS;
   run.threadId = await createLiveThread(run.socket, workspace, repoRoot, options, run.proofDeadline);
   run.report.thread = fingerprint(run.threadId);
@@ -1191,7 +1205,71 @@ async function subscribeToLiveThread(socket, threadId, deadline) {
 
 async function proveLiveScenario(scenario, run) {
   if (scenario === "completion") return proveCompletion(run);
+  if (scenario === "subagent") return proveSubagent(run);
   return proveStop(run);
+}
+
+async function findLiveWorkspace(socket, repoRoot, scenario) {
+  if (scenario !== "subagent") return findCurrentWorkspace(socket, repoRoot);
+  const fixtureRepo = getRuntimePaths(repoRoot).fixtureRepoDir;
+  const workspaces = await socket.rpc("workspace.list", {});
+  const workspace = Array.isArray(workspaces)
+    ? workspaces.find((candidate) => candidate && pathsMatch(candidate.path, fixtureRepo))
+    : null;
+  if (workspace) return workspace;
+  throw actionable(
+    "The disposable fixture workspace is not registered",
+    "Restart this worktree runtime with bun run --shell system agent:down and bun run --shell system agent:up.",
+  );
+}
+
+async function proveSubagent(run) {
+  const lifecycle = observeSubagentLifecycle(run);
+  await requireTerminalEvent(run.report, run.proofDeadline);
+  await requireDurableAssistant(run.socket, run.threadId, run.report, run.proofDeadline);
+  await lifecycle;
+}
+
+async function observeSubagentLifecycle(run) {
+  let childThreadId = null;
+  const verified = await waitForAsync(async () => {
+    const roster = await run.socket.rpc("canonicalAgent.roster", {
+      owningParentThreadId: run.threadId,
+    }, run.proofDeadline);
+    if (Array.isArray(roster?.active) && roster.active.length > 0) {
+      run.report.subagentActiveSeen = true;
+    }
+    const child = Array.isArray(roster?.done)
+      ? roster.done.find((row) => row?.terminalOutcome === "Completed")
+      : null;
+    if (!child) return false;
+    childThreadId = child.id;
+    run.report.subagentCompleted = true;
+    run.report.subagentTaskRetained = hasDescriptiveSubagentTask(child);
+    const conversation = await run.socket.rpc("conversation.page", { threadId: child.id, limit: 100 }, run.proofDeadline);
+    run.report.subagentParentMessageRetained = hasMessageText(
+      conversation,
+      "user",
+      "VERIFY_SUBAGENT_PARENT_TASK",
+    );
+    run.report.subagentMessageRetained = hasAssistantText(conversation, "VERIFY_SUBAGENT_CHILD_MESSAGE");
+    return run.report.subagentActiveSeen
+      && run.report.subagentTaskRetained
+      && run.report.subagentParentMessageRetained
+      && run.report.subagentMessageRetained;
+  }, run.proofDeadline);
+  if (verified) return;
+  throw actionable(
+    `The Codex subagent workflow was incomplete${childThreadId ? " for the recorded child" : ""}`,
+    "Inspect the redacted receipt, Codex protocol trace, and canonical roster before retrying with Terra.",
+  );
+}
+
+function hasDescriptiveSubagentTask(child) {
+  if (typeof child?.task !== "string") return false;
+  const task = child.task.trim().toLowerCase();
+  const identity = typeof child.identity === "string" ? child.identity.trim().toLowerCase() : "subagent";
+  return task.includes("verify") && task !== identity && task !== "subagent";
 }
 
 async function proveCompletion(run) {
@@ -1367,6 +1445,17 @@ function hasDurableAssistant(value) {
       && message.content.trim().length > 0);
 }
 
+function hasAssistantText(value, expectedText) {
+  return hasMessageText(value, "assistant", expectedText);
+}
+
+function hasMessageText(value, role, expectedText) {
+  return Array.isArray(value?.messages)
+    && value.messages.some((message) => message?.role === role
+      && typeof message.content === "string"
+      && message.content.includes(expectedText));
+}
+
 function summarizeSubscription(subscription, threadId) {
   if (!subscription || typeof subscription !== "object" || Array.isArray(subscription)) {
     throw actionable("push.setThreadSubscriptions returned an unexpected replay result", "Run bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs runtime diagnostics, then retry live verification.");
@@ -1402,6 +1491,11 @@ function redactReceipt(report) {
     terminalEvent: report.terminalEvent,
     conversationAssistant: report.conversationAssistant,
     messageAssistant: report.messageAssistant,
+    subagentActiveSeen: report.subagentActiveSeen,
+    subagentCompleted: report.subagentCompleted,
+    subagentTaskRetained: report.subagentTaskRetained,
+    subagentParentMessageRetained: report.subagentParentMessageRetained,
+    subagentMessageRetained: report.subagentMessageRetained,
     stopResults: report.stopResults.map((result) => ({ status: result?.status ?? null, phase: result?.snapshot?.phase ?? null, dispatchState: result?.dispatchState ?? null })),
     sharedStopResult: report.sharedStopResult,
     activeCountCleared: report.activeCountCleared,
