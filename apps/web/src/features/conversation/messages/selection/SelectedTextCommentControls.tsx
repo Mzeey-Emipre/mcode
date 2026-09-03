@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { SelectedTextComment } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
+import {
+  useComposerDraftStore,
+  type SelectedTextCommentEditorDraft,
+} from "@/stores/composerDraftStore";
 import { Popover, PopoverContent } from "@/components/ui/popover";
 import {
   createSelectedTextCommentSource,
@@ -25,6 +29,12 @@ export interface SelectedTextCommentEditorScope {
 export interface SelectedTextCommentControlsProps {
   /** Adds the captured selected-text comment to the active composer draft. */
   onSelectedTextComment?: (comment: SelectedTextComment) => void;
+  /** Saved comments that let this control restore and update an editor target. */
+  comments?: readonly SelectedTextComment[];
+  /** Per-thread open-editor state restored from the ComposerDraft. */
+  editor?: SelectedTextCommentEditorDraft;
+  /** Stores or clears the open editor snapshot in the current ComposerDraft. */
+  onSelectedTextCommentEditorChange?: (editor: SelectedTextCommentEditorDraft | undefined) => void;
   /** Scopes typed mention and slash-skill suggestions to the active thread. */
   selectedTextCommentEditorScope?: SelectedTextCommentEditorScope;
   /** Scroll viewport that bounds the selected range and Popover collision area. */
@@ -38,8 +48,10 @@ export interface SelectedTextCommentControlsProps {
 type CommentOverlay = {
   readonly source: SelectedTextCommentSource;
   readonly stage: "action" | "editor";
+  readonly editor?: SelectedTextCommentEditorDraft;
 };
 
+const EMPTY_SELECTED_TEXT_COMMENTS: readonly SelectedTextComment[] = [];
 type VirtualAnchor = {
   readonly getBoundingClientRect: () => DOMRect;
 };
@@ -118,12 +130,27 @@ function currentSourcePosition(
 /** Renders transcript selection actions and the selected-text comment editor. */
 export function SelectedTextCommentControls({
   onSelectedTextComment,
+  comments,
+  editor,
+  onSelectedTextCommentEditorChange,
   selectedTextCommentEditorScope,
   viewportRef,
   renderedThreadId,
   messageIds,
 }: SelectedTextCommentControlsProps) {
+  const draftComments = useComposerDraftStore((state) =>
+    renderedThreadId
+      ? state.drafts[renderedThreadId]?.selectedTextComments ?? EMPTY_SELECTED_TEXT_COMMENTS
+      : EMPTY_SELECTED_TEXT_COMMENTS,
+  );
+  const activeComments = comments ?? draftComments;
   const [overlay, setOverlay] = useState<CommentOverlay | null>(null);
+  const restoredOverlay = useMemo(() => (
+    editor?.anchor === "source" && editor.source.threadId === renderedThreadId
+      ? { source: editor.source, stage: "editor" as const, editor }
+      : null
+  ), [editor, renderedThreadId]);
+  const activeOverlay = overlay ?? restoredOverlay;
   const [, setLayoutVersion] = useState(0);
   const actionButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorElementRef = useRef<HTMLElement | null>(null);
@@ -143,10 +170,11 @@ export function SelectedTextCommentControls({
       : null;
   }, [messageIds, renderedThreadId, viewportRef]);
 
-  const closeOverlay = useCallback(() => {
+  const closeOverlay = useCallback((clearEditor = false) => {
     ignoreSelectionClickDismissalRef.current = false;
     setOverlay(null);
-  }, []);
+    if (clearEditor) onSelectedTextCommentEditorChange?.(undefined);
+  }, [onSelectedTextCommentEditorChange]);
 
   const openAction = useCallback((source: SelectedTextCommentSource) => {
     sourcePositionHistoryRef.current = {
@@ -207,19 +235,19 @@ export function SelectedTextCommentControls({
   }, [closeOverlay, overlay?.stage]);
 
   useEffect(() => {
-    if (!overlay) return;
+    if (!activeOverlay) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
     let observedSource: HTMLElement | null = null;
     let frame = 0;
     const refresh = () => {
-      const content = findSelectedTextCommentContent(overlay.source, viewport, renderedThreadId);
+      const content = findSelectedTextCommentContent(activeOverlay.source, viewport, renderedThreadId);
       if (content !== observedSource) {
         if (observedSource) resizeObserver?.unobserve(observedSource);
         observedSource = content;
         if (content) resizeObserver?.observe(content);
       }
-      if (!resolveSourcePosition(overlay.source)) {
+      if (!resolveSourcePosition(activeOverlay.source)) {
         closeOverlay();
         return;
       }
@@ -240,7 +268,7 @@ export function SelectedTextCommentControls({
       viewport.removeEventListener("scroll", scheduleRefresh);
       window.removeEventListener("resize", scheduleRefresh);
     };
-  }, [closeOverlay, overlay, renderedThreadId, resolveSourcePosition, viewportRef]);
+  }, [activeOverlay, closeOverlay, renderedThreadId, resolveSourcePosition, viewportRef]);
 
   const currentPlacement = useCallback((nextOverlay: CommentOverlay): CurrentPlacement | null => {
     const viewport = viewportRef.current;
@@ -266,38 +294,48 @@ export function SelectedTextCommentControls({
     };
   }, [resolveSourcePosition, viewportRef]);
 
-  const virtualAnchor: VirtualAnchor | null = overlay ? {
-    getBoundingClientRect: () => currentPlacement(overlay)?.anchor ?? new DOMRect(),
-  } : null;
+  const openSelectedTextCommentEditor = useCallback(() => {
+    if (!overlay || overlay.stage !== "action") return;
+    const nextEditor: SelectedTextCommentEditorDraft = {
+      source: overlay.source,
+      note: "",
+      mentions: [],
+      escapeWarned: false,
+      outsideWarned: false,
+      anchor: "source",
+    };
+    setOverlay({ ...overlay, stage: "editor", editor: nextEditor });
+    onSelectedTextCommentEditorChange?.(nextEditor);
+    setAnnouncement("Comment editor opened.");
+  }, [onSelectedTextCommentEditorChange, overlay]);
 
-  const editorPlacement = overlay?.stage === "editor" ? currentPlacement(overlay) : null;
+  const closeEditor = useCallback(({ restoreFocus = true }: { readonly restoreFocus?: boolean } = {}) => {
+    if (!restoreFocus) {
+      closeOverlay(true);
+      return;
+    }
+    setOverlay((current) => current?.stage === "editor" ? { ...current, stage: "action" } : current);
+    onSelectedTextCommentEditorChange?.(undefined);
+    requestAnimationFrame(() => actionButtonRef.current?.focus());
+  }, [closeOverlay, onSelectedTextCommentEditorChange]);
+
+  const saveSelectedTextComment = useCallback((comment: SelectedTextComment) => {
+    onSelectedTextComment?.(comment);
+    onSelectedTextCommentEditorChange?.(undefined);
+  }, [onSelectedTextComment, onSelectedTextCommentEditorChange]);
+
+  const virtualAnchor: VirtualAnchor | null = activeOverlay ? {
+    getBoundingClientRect: () => currentPlacement(activeOverlay)?.anchor ?? new DOMRect(),
+  } : null;
+  const editorPlacement = activeOverlay?.stage === "editor" ? currentPlacement(activeOverlay) : null;
   const editorStyle: CSSProperties | undefined = editorPlacement
     ? { width: editorPlacement.width, maxHeight: editorPlacement.maxHeight }
     : undefined;
 
-  const openSelectedTextCommentEditor = useCallback(() => {
-    if (!overlay || overlay.stage !== "action") return;
-    setOverlay({ ...overlay, stage: "editor" });
-    setAnnouncement("Comment editor opened.");
-  }, [overlay]);
-
-  const closeEditor = useCallback(({ restoreFocus = true }: { readonly restoreFocus?: boolean } = {}) => {
-    if (!restoreFocus) {
-      closeOverlay();
-      return;
-    }
-    setOverlay((current) => current?.stage === "editor" ? { ...current, stage: "action" } : current);
-    requestAnimationFrame(() => actionButtonRef.current?.focus());
-  }, [closeOverlay]);
-
-  const saveSelectedTextComment = useCallback((comment: SelectedTextComment) => {
-    onSelectedTextComment?.(comment);
-  }, [onSelectedTextComment]);
-
   return (
     <>
       <SelectedTextCommentPopover
-        overlay={overlay}
+        overlay={activeOverlay}
         virtualAnchor={virtualAnchor}
         viewportRef={viewportRef}
         ignoreSelectionClickDismissalRef={ignoreSelectionClickDismissalRef}
@@ -305,10 +343,12 @@ export function SelectedTextCommentControls({
         editorScope={selectedTextCommentEditorScope}
         editorStyle={editorStyle}
         onEditorElementChange={setEditorElement}
-        onOpenEditor={openSelectedTextCommentEditor}
-        onClose={closeOverlay}
         onCloseEditor={closeEditor}
+        comments={activeComments}
+        onOpenEditor={openSelectedTextCommentEditor}
+        onClose={() => closeOverlay(activeOverlay?.stage === "editor")}
         onSave={saveSelectedTextComment}
+        onEditorChange={onSelectedTextCommentEditorChange}
         onAnnouncement={setAnnouncement}
       />
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -327,10 +367,12 @@ function SelectedTextCommentPopover({
   editorScope,
   editorStyle,
   onEditorElementChange,
+  comments,
   onOpenEditor,
   onClose,
   onCloseEditor,
   onSave,
+  onEditorChange,
   onAnnouncement,
 }: {
   readonly overlay: CommentOverlay | null;
@@ -341,10 +383,12 @@ function SelectedTextCommentPopover({
   readonly editorScope?: SelectedTextCommentEditorScope;
   readonly editorStyle?: CSSProperties;
   readonly onEditorElementChange: (element: HTMLElement | null) => void;
+  readonly comments: readonly SelectedTextComment[];
   readonly onOpenEditor: () => void;
   readonly onClose: () => void;
   readonly onCloseEditor: (options?: { readonly restoreFocus?: boolean }) => void;
   readonly onSave: (comment: SelectedTextComment) => void;
+  readonly onEditorChange?: (editor: SelectedTextCommentEditorDraft | undefined) => void;
   readonly onAnnouncement: (message: string) => void;
 }) {
   if (!overlay || !virtualAnchor) return null;
@@ -381,39 +425,88 @@ function SelectedTextCommentPopover({
         </Button>
       </PopoverContent>
     )
-    : (
-      <PopoverContent
-        key={overlay.stage}
-        anchor={virtualAnchor}
-        side="bottom"
-        align="start"
-        sideOffset={0}
-        collisionBoundary={viewportRef.current ?? undefined}
-        collisionPadding={0}
-        collisionAvoidance={{ side: "none", align: "none", fallbackAxisSide: "none" }}
-        positionMethod="fixed"
-        initialFocus={() => document.getElementById("selected-text-comment-note")}
-        finalFocus={false}
-        style={editorStyle}
-        className="border-0 bg-transparent p-0 shadow-none"
-      >
-        <SelectedTextCommentEditor
-          key={`${overlay.source.messageId}:${overlay.source.start}:${overlay.source.end}`}
-          source={overlay.source}
-          workspaceId={editorScope?.workspaceId}
-          providerId={editorScope?.providerId}
-          maxHeight={typeof editorStyle?.maxHeight === "number" ? editorStyle.maxHeight : undefined}
-          onElementChange={onEditorElementChange}
-          onSave={onSave}
-          onClose={onCloseEditor}
-          onAnnouncement={onAnnouncement}
-        />
-      </PopoverContent>
-    );
+    : <SelectedTextCommentEditorPopoverContent
+      overlay={overlay}
+      virtualAnchor={virtualAnchor}
+      viewportRef={viewportRef}
+      editorScope={editorScope}
+      editorStyle={editorStyle}
+      onEditorElementChange={onEditorElementChange}
+      comments={comments}
+      onSave={onSave}
+      onEditorChange={onEditorChange}
+      onClose={onCloseEditor}
+      onAnnouncement={onAnnouncement}
+    />;
 
   return (
     <Popover open modal={false} onOpenChange={handleOpenChange}>
       {content}
     </Popover>
+  );
+}
+
+function SelectedTextCommentEditorPopoverContent({
+  overlay,
+  virtualAnchor,
+  viewportRef,
+  editorScope,
+  editorStyle,
+  onEditorElementChange,
+  comments,
+  onSave,
+  onEditorChange,
+  onClose,
+  onAnnouncement,
+}: {
+  readonly overlay: CommentOverlay;
+  readonly virtualAnchor: VirtualAnchor;
+  readonly viewportRef: RefObject<HTMLElement | null>;
+  readonly editorScope?: SelectedTextCommentEditorScope;
+  readonly editorStyle?: CSSProperties;
+  readonly onEditorElementChange: (element: HTMLElement | null) => void;
+  readonly comments: readonly SelectedTextComment[];
+  readonly onSave: (comment: SelectedTextComment) => void;
+  readonly onEditorChange?: (editor: SelectedTextCommentEditorDraft | undefined) => void;
+  readonly onClose: (options?: { readonly restoreFocus?: boolean }) => void;
+  readonly onAnnouncement: (message: string) => void;
+}) {
+  const comment = overlay.editor?.commentId
+    ? comments.find((candidate) => candidate.id === overlay.editor?.commentId)
+    : undefined;
+  const maxHeight = typeof editorStyle?.maxHeight === "number" ? editorStyle.maxHeight : undefined;
+
+  return (
+    <PopoverContent
+      key={overlay.stage}
+      anchor={virtualAnchor}
+      side="bottom"
+      align="start"
+      sideOffset={0}
+      collisionBoundary={viewportRef.current ?? undefined}
+      collisionPadding={0}
+      collisionAvoidance={{ side: "none", align: "none", fallbackAxisSide: "none" }}
+      positionMethod="fixed"
+      initialFocus={() => document.getElementById("selected-text-comment-note")}
+      finalFocus={false}
+      style={editorStyle}
+      className="border-0 bg-transparent p-0 shadow-none"
+    >
+      <SelectedTextCommentEditor
+        key={`${overlay.source.messageId}:${overlay.source.start}:${overlay.source.end}`}
+        source={overlay.source}
+        comment={comment}
+        draft={overlay.editor}
+        nextDisplayNumber={comments.length + 1}
+        workspaceId={editorScope?.workspaceId}
+        providerId={editorScope?.providerId}
+        maxHeight={maxHeight}
+        onElementChange={onEditorElementChange}
+        onSave={onSave}
+        onDraftChange={onEditorChange}
+        onClose={onClose}
+        onAnnouncement={onAnnouncement}
+      />
+    </PopoverContent>
   );
 }

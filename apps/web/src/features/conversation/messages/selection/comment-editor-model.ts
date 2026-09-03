@@ -30,17 +30,20 @@ export function buildSelectedTextComment({
   source,
   note,
   mentions,
+  displayNumber = 1,
 }: {
   readonly comment?: SelectedTextComment;
   readonly source: SelectedTextCommentSource;
   readonly note: string;
   readonly mentions: MessageMention[];
+  /** Creation-order position for a new comment. Ignored while editing. */
+  readonly displayNumber?: number;
 }): SelectedTextComment {
   return comment
     ? { ...comment, note, mentions }
     : {
         id: crypto.randomUUID(),
-        displayNumber: 1,
+        displayNumber,
         source,
         note,
         mentions,

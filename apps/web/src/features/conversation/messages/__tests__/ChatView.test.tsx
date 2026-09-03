@@ -123,7 +123,7 @@ vi.mock("@/stores/thread-selectors", async () => {
 
 vi.mock("@/stores/composerDraftStore", () => ({
   useComposerDraftStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ setPendingPrefill: vi.fn() })
+    selector({ drafts: {}, setPendingPrefill: vi.fn() })
   ),
 }));
 

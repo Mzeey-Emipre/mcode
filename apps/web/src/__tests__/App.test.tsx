@@ -338,7 +338,7 @@ describe("App", () => {
 
     const { unmount } = render(<App />);
     const titleBar = screen.getByTestId("desktop-title-bar");
-    expect(titleBar).toHaveClass("h-10", "bg-page");
+    expect(titleBar).toHaveClass("h-12", "bg-page");
     expect(titleBar).toHaveStyle({ zIndex: "var(--z-desktop-title-bar)" });
     expect(
       within(titleBar).getByRole("button", { name: "Back" }),

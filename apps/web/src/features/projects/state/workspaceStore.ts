@@ -12,6 +12,7 @@ import {
   type CreateAndSendResult,
   type MessageMention,
   type PreviewAnnotationBundle,
+  type SelectedTextComment,
 } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "@/stores/threadStore";
@@ -20,7 +21,8 @@ import { getConversationResidency } from "@/features/conversation/residency/conv
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useQueueStore } from "@/stores/queueStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { useComposerDraftStore } from "@/stores/composerDraftStore";
+import { useComposerDraftStore, type ComposerDraft } from "@/stores/composerDraftStore";
+import { toComposerAttachmentMetas } from "@/features/conversation/composer/draft/composer-attachment-operations";
 import { useDiffStore } from "@/stores/diffStore";
 import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
 import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
@@ -212,6 +214,10 @@ interface PendingThreadCreation {
   mentions?: MessageMention[];
   /** Structured Preview Annotation bundle sent beside normal attachments. */
   previewAnnotations?: PreviewAnnotationBundle;
+  /** Saved selected-text comments sent with the first turn. */
+  selectedTextComments?: SelectedTextComment[];
+  /** Complete Composer state restored while optimistic creation awaits persistence. */
+  composerDraft?: ComposerDraft;
   model: string;
   permissionMode?: PermissionMode;
   transportMode: "direct" | "worktree";
@@ -267,6 +273,8 @@ interface BranchThreadParams {
   codexFastMode?: boolean;
   mentions?: MessageMention[];
   previewAnnotations?: PreviewAnnotationBundle;
+  selectedTextComments?: SelectedTextComment[];
+  composerDraft?: ComposerDraft;
   goalObjective?: string;
   orchestrationMode?: OrchestrationMode;
 }
@@ -437,10 +445,57 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     displayContent: pending.displayContent,
     mentions: pending.mentions,
     previewAnnotations: pending.previewAnnotations,
+    selectedTextComments: pending.selectedTextComments,
     goalObjective: pending.goalObjective,
     orchestrationMode: pending.orchestrationMode,
   });
 }
+
+function retryMessageForDraft(
+  pending: PendingThreadCreation,
+  draft: ComposerDraft,
+): Pick<PendingThreadCreation, "content" | "displayContent"> | undefined {
+  if (
+    pending.displayContent === undefined
+    || !pending.content.startsWith(pending.displayContent)
+  ) {
+    return undefined;
+  }
+
+  const displayContent = draft.input.trim();
+  const hiddenContent = pending.content.slice(pending.displayContent.length);
+  const contentWithHiddenContext = pending.displayContent === "" && displayContent && hiddenContent
+    ? `${displayContent}\n\n${hiddenContent}`
+    : `${displayContent}${hiddenContent}`;
+
+  return { content: contentWithHiddenContext.trim(), displayContent };
+}
+
+function pendingCreationWithCurrentDraft(
+  pending: PendingThreadCreation,
+  draft: ComposerDraft | undefined,
+): PendingThreadCreation {
+  if (!draft) return pending;
+  const message = retryMessageForDraft(pending, draft);
+  if (!message) return pending;
+
+  return {
+    ...pending,
+    ...message,
+    mentions: draft.mentions,
+    selectedTextComments: draft.selectedTextComments?.length
+      ? draft.selectedTextComments
+      : undefined,
+    attachments: toComposerAttachmentMetas(draft.attachments),
+    model: draft.modelId,
+    provider: draft.provider,
+    reasoningLevel: draft.reasoning,
+    contextWindow: draft.contextWindow,
+    codexFastMode: draft.provider === "codex" ? draft.codexFastMode ?? undefined : undefined,
+    composerDraft: draft,
+  };
+}
+
 /**
  * Optional RPC dispatch callback used by workspace actions. Tests inject a
  * stub here; production code uses {@link getTransport} directly. The shape
@@ -532,6 +587,8 @@ interface WorkspaceState {
     previewAnnotations?: PreviewAnnotationBundle,
     goalObjective?: string,
     orchestrationMode?: OrchestrationMode,
+    selectedTextComments?: SelectedTextComment[],
+    composerDraft?: ComposerDraft,
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: BranchThreadParams) => Promise<Thread>;
@@ -656,18 +713,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     workspaceId: string,
     result: CreateAndSendResult,
     transportWasWorktree: boolean,
+    releasePlaceholderDraft: boolean,
   ) => {
     const { runtimeSnapshot, warnings, ...thread } = result;
     if (!pendingThreadCreationByPlaceholderId.has(placeholderId)) {
       return;
     }
     if (!get().workspaces.some((w) => w.id === workspaceId)) {
-      pendingThreadCreationByPlaceholderId.delete(placeholderId);
+      abandonPendingThreadCreation(placeholderId);
       return;
     }
     const pending = pendingThreadCreationByPlaceholderId.get(placeholderId);
     bumpThreadListMutationEpoch(workspaceId);
     pendingThreadCreationByPlaceholderId.delete(placeholderId);
+    const draftStore = useComposerDraftStore.getState();
+    if (releasePlaceholderDraft) draftStore.clearDraft(placeholderId);
+    else draftStore.removeDraftAfterAttachmentTransfer(placeholderId);
     useThreadStore.getState().transferThreadRuntime(placeholderId, thread.id);
     useThreadStore.getState().applyThreadRuntimeSnapshot(runtimeSnapshot);
     useDiffStore.getState().hideRightPanel(workspaceId, thread.id);
@@ -714,6 +775,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     }));
   };
 
+  const abandonPendingThreadCreation = (placeholderId: string) => {
+    pendingThreadCreationByPlaceholderId.delete(placeholderId);
+    useComposerDraftStore.getState().clearDraft(placeholderId);
+  };
+
+  const abandonPendingThreadCreationsForWorkspace = (workspaceId: string) => {
+    for (const [placeholderId, pending] of pendingThreadCreationByPlaceholderId) {
+      if (pending.workspaceId === workspaceId) abandonPendingThreadCreation(placeholderId);
+    }
+  };
+
   const beginOptimisticThreadCreation = (
     pending: PendingThreadCreation,
     clientPreparingContext: ClientPreparingContext,
@@ -731,6 +803,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     );
     bumpThreadListMutationEpoch(attempt.workspaceId);
     pendingThreadCreationByPlaceholderId.set(placeholderId, attempt);
+    if (attempt.composerDraft) {
+      useComposerDraftStore.getState().saveDraft(placeholderId, attempt.composerDraft);
+    }
     useDiffStore.getState().hideRightPanel(attempt.workspaceId, placeholderId);
     set((state) => ({
       threads: [placeholder, ...state.threads],
@@ -757,6 +832,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         attempt.workspaceId,
         result,
         attempt.transportMode === "worktree",
+        false,
       );
       return result;
     } catch (error) {
@@ -898,15 +974,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       await getTransport().deleteWorkspace(id);
       releaseBrowserAutomationWorkspaceScopes(id);
       bumpThreadListMutationEpoch(id);
-      const draftStore = useComposerDraftStore.getState();
+      abandonPendingThreadCreationsForWorkspace(id);
       const taskStore = useTaskStore.getState();
       const terminalStore = useTerminalStore.getState();
       const diffStore = useDiffStore.getState();
+      const draftStore = useComposerDraftStore.getState();
       for (const tid of deletedThreadIds) {
-        draftStore.clearDraft(tid);
         taskStore.clearTasks(tid);
         terminalStore.clearThread(tid);
         diffStore.clearThread(tid);
+        draftStore.clearDraft(tid);
       }
       // The right panel is workspace-global, so its state is dropped once per
       // workspace rather than per thread.
@@ -940,6 +1017,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
   removeWorkspaceFromState: (id) => {
     releaseBrowserAutomationWorkspaceScopes(id);
+    abandonPendingThreadCreationsForWorkspace(id);
     set((state) => ({
       workspaces: state.workspaces.filter((w) => w.id !== id),
       activeWorkspaceId: state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
@@ -1175,6 +1253,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     previewAnnotations,
     goalObjective,
     orchestrationMode,
+    selectedTextComments,
+    composerDraft,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -1203,6 +1283,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       codexFastMode,
       mentions,
       previewAnnotations,
+      selectedTextComments,
+      composerDraft,
       goalObjective,
     };
 
@@ -1233,6 +1315,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       codexFastMode: params.codexFastMode,
       mentions: params.mentions,
       previewAnnotations: params.previewAnnotations,
+      selectedTextComments: params.selectedTextComments,
+      composerDraft: params.composerDraft,
       goalObjective: params.goalObjective,
     };
 
@@ -1266,8 +1350,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }),
     }));
     try {
-      const result = await runCreateAndSend(attempt);
-      applyOptimisticSuccess(placeholderId, attempt.workspaceId, result, attempt.transportMode === "worktree");
+      const currentPending = pendingCreationWithCurrentDraft(
+        attempt,
+        useComposerDraftStore.getState().getDraft(placeholderId),
+      );
+      pendingThreadCreationByPlaceholderId.set(placeholderId, currentPending);
+      const result = await runCreateAndSend(currentPending);
+      applyOptimisticSuccess(
+        placeholderId,
+        currentPending.workspaceId,
+        result,
+        currentPending.transportMode === "worktree",
+        true,
+      );
       return result;
     } catch (e) {
       applyOptimisticFailure(placeholderId, e);
@@ -1279,7 +1374,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     const workspaceId = pendingThreadCreationByPlaceholderId.get(placeholderId)?.workspaceId ??
       get().threads.find((thread) => thread.id === placeholderId)?.workspace_id;
     if (workspaceId) releaseBrowserAutomationThreadScope(workspaceId, placeholderId);
-    pendingThreadCreationByPlaceholderId.delete(placeholderId);
+    abandonPendingThreadCreation(placeholderId);
     useThreadStore.getState().clearThreadState(placeholderId);
     const didClearActiveThread = get().activeThreadId === placeholderId;
     set((state) => ({

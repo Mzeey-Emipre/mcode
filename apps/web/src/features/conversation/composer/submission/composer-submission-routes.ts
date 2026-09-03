@@ -1,5 +1,8 @@
 import type { Thread } from "@/transport";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
+import type { SelectedTextComment } from "@mcode/contracts";
+import type { ComposerDraft } from "@/stores/composerDraftStore";
+import { snapshotComposerDraft } from "@/lib/composer-session";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
 import type { ComposerExecutionTarget, ComposerExecutionTargetController } from "../execution/useComposerExecutionTarget";
 import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
@@ -23,6 +26,30 @@ export interface DispatchComposerTargetOptions {
   onThreadCreated?(thread: Thread): void;
   onThreadPreparing?(thread: WorkspaceThread): void;
   onThreadCreationFailed?(): void;
+}
+
+function savedCommentsForTransport(
+  comments: SelectedTextComment[],
+): SelectedTextComment[] | undefined {
+  return comments.length > 0 ? comments : undefined;
+}
+
+function composerDraftForPendingCreation(
+  submission: PreparedComposerSubmission,
+): ComposerDraft {
+  const { snapshot } = submission;
+  return snapshotComposerDraft({
+    input: snapshot.rawInput,
+    mentions: snapshot.mentions,
+    selectedTextComments: snapshot.selectedTextComments,
+    selectedTextCommentEditor: snapshot.selectedTextCommentEditor,
+    attachments: snapshot.attachments,
+    modelId: snapshot.selection.modelId,
+    provider: snapshot.selection.provider,
+    reasoning: snapshot.selection.reasoning,
+    contextWindow: snapshot.selection.contextWindow ?? undefined,
+    codexFastMode: snapshot.selection.codexFastMode,
+  });
 }
 
 /** Dispatches a prepared Composer submit to the target selected by the user. */
@@ -83,6 +110,8 @@ async function dispatchNewThread(
     submission.previewAnnotations,
     submission.goalObjective,
     selection.orchestrationMode,
+    savedCommentsForTransport(snapshot.selectedTextComments),
+    composerDraftForPendingCreation(submission),
   );
   notifyThreadPreparing(onThreadPreparing);
   await completeNewThreadCreation(creatingThread, onThreadCreated, onThreadCreationFailed);
@@ -159,6 +188,8 @@ function createBranchThreadRequest(
     existingWorktreeBaseBranch: resolveDetachedBaseBranch(target, activeThread),
     forkedFromMessageId,
     mentions: snapshot.mentions,
+    selectedTextComments: savedCommentsForTransport(snapshot.selectedTextComments),
+    composerDraft: composerDraftForPendingCreation(submission),
     previewAnnotations: submission.previewAnnotations,
     goalObjective: submission.goalObjective,
     ...branchThreadAgentOptions(snapshot.selection),

@@ -20,7 +20,10 @@ import {
   normalizeReasoningLevelForModel,
 } from "@/lib/model-registry";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import { useComposerDraftStore } from "@/stores/composerDraftStore";
+import {
+  useComposerDraftStore,
+  type SelectedTextCommentEditorDraft,
+} from "@/stores/composerDraftStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useThreadRecord } from "@/features/conversation/state";
 import { useThreadStore } from "@/stores/threadStore";
@@ -53,6 +56,7 @@ export interface ComposerFormState {
   text: string;
   mentions: MessageMention[];
   selectedTextComments: SelectedTextComment[];
+  selectedTextCommentEditor?: SelectedTextCommentEditorDraft;
   attachments: PendingAttachment[];
   selection: ComposerAgentSelection;
   goalPending: boolean;
@@ -66,6 +70,7 @@ export interface ComposerFormSubmission {
   rawInput: string;
   mentions: MessageMention[];
   selectedTextComments: SelectedTextComment[];
+  selectedTextCommentEditor?: SelectedTextCommentEditorDraft;
   attachments: PendingAttachment[];
   selection: ComposerAgentSelection;
   goalPending: boolean;
@@ -102,7 +107,10 @@ export interface UseComposerFormControllerOptions {
   workspaceId?: string;
   branchFromMessageId?: string;
   branchFromMessageContent?: string;
-  activeThread?: Thread;
+  activeThread?: Thread & {
+    clientPreparing?: boolean;
+    clientError?: string | null;
+  };
 }
 
 /** Form state, attachment bindings, and editor operations owned by one Composer session. */
@@ -117,7 +125,12 @@ export interface ComposerFormController {
   attachmentBindings: ComposerAttachmentBindings;
   updateDraft(text: string, mentions: readonly MessageMention[]): void;
   replaceDraft(text: string, mentions?: readonly MessageMention[], italic?: boolean): void;
-  setSelectedTextComments(comments: readonly SelectedTextComment[]): void;
+  setSelectedTextComments(
+    comments: readonly SelectedTextComment[],
+    editor?: SelectedTextCommentEditorDraft,
+  ): void;
+  setSelectedTextCommentEditor(editor: SelectedTextCommentEditorDraft | undefined): void;
+  requestSelectedTextCommentEditorDismissal(): string | null;
   updateSelection(patch: Partial<ComposerAgentSelection>): void;
   setGoalPending(value: boolean): void;
   markAgentSettingsTouched(): void;
@@ -144,6 +157,8 @@ export function useComposerFormController({
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<MessageMention[]>([]);
   const [selectedTextComments, setSelectedTextComments] = useState<SelectedTextComment[]>([]);
+  const [selectedTextCommentEditor, setSelectedTextCommentEditor] =
+    useState<SelectedTextCommentEditorDraft | undefined>();
   const [goalPending, setGoalPending] = useState(false);
   const { selection, setSelection, updateSelection } = useComposerSelectionState();
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -160,6 +175,7 @@ export function useComposerFormController({
     input,
     mentions,
     selectedTextComments,
+    selectedTextCommentEditor,
     attachments: attachments.attachments,
     modelId: selection.modelId,
     provider: selection.provider,
@@ -174,6 +190,7 @@ export function useComposerFormController({
   const currentThreadIdRef = useRef(threadId);
   currentThreadIdRef.current = threadId;
   const threadSwitchRef = useRef(false);
+  const restoredDraftOwnerRef = useRef<string | undefined>(undefined);
   const lastServerThreadModelKeyRef = useRef("");
   const saveDraft = useComposerDraftStore((state) => state.saveDraft);
   const getDraft = useComposerDraftStore((state) => state.getDraft);
@@ -207,6 +224,9 @@ export function useComposerFormController({
     (state) => state.clearComposerRecallFromStop,
   );
   const clearDraft = useComposerDraftStore((state) => state.clearDraft);
+  const removeDraftAfterAttachmentTransfer = useComposerDraftStore(
+    (state) => state.removeDraftAfterAttachmentTransfer,
+  );
   const previewReferenceQueueSignal = usePreviewReferenceQueueStore((state) => state.signal);
   const previewReferenceScopeId = threadId ?? workspaceId;
   const markAgentSettingsTouched = useCallback(() => {
@@ -231,18 +251,52 @@ export function useComposerFormController({
     [updateDraft],
   );
 
-  const setSelectedTextCommentDraft = useCallback((comments: readonly SelectedTextComment[]) => {
+  const setSelectedTextCommentDraft = useCallback(function setSelectedTextCommentDraft(
+    comments: readonly SelectedTextComment[],
+    editor?: SelectedTextCommentEditorDraft,
+  ) {
     const submittedDraftClear = submittedDraftClearRef.current;
     submittedDraftClearRef.current = null;
     if (submittedDraftClear) releaseAttachments(submittedDraftClear.attachments);
     const nextComments = [...comments];
-    setSelectedTextComments(nextComments);
-    if (!threadId) return;
-    saveDraft(threadId, snapshotComposerDraft({
+    const nextEditor = arguments.length > 1
+      ? editor
+      : draftRef.current.selectedTextCommentEditor;
+    const nextDraft = {
       ...draftRef.current,
       selectedTextComments: nextComments,
-    }));
+      selectedTextCommentEditor: nextEditor,
+    };
+    draftRef.current = nextDraft;
+    setSelectedTextComments(nextComments);
+    setSelectedTextCommentEditor(nextEditor);
+    if (!threadId) return;
+    saveDraft(threadId, snapshotComposerDraft(nextDraft));
   }, [releaseAttachments, saveDraft, threadId]);
+
+  const setSelectedTextCommentEditorDraft = useCallback((
+    editor: SelectedTextCommentEditorDraft | undefined,
+  ) => {
+    setSelectedTextCommentDraft(draftRef.current.selectedTextComments, editor);
+  }, [setSelectedTextCommentDraft]);
+
+  const requestSelectedTextCommentEditorDismissal = useCallback((): string | null => {
+    const editor = selectedTextCommentEditor;
+    if (!editor) return null;
+    const saved = editor.commentId
+      ? selectedTextComments.find((comment) => comment.id === editor.commentId)
+      : undefined;
+    const isDirty = saved
+      ? editor.note !== saved.note || JSON.stringify(editor.mentions) !== JSON.stringify(saved.mentions)
+      : editor.note.trim().length > 0 || editor.mentions.length > 0;
+    if (!isDirty) return null;
+    if (!editor.outsideWarned) {
+      setSelectedTextCommentEditorDraft({ ...editor, outsideWarned: true });
+      return "Repeat this action to discard this comment.";
+    }
+    setSelectedTextCommentEditorDraft(undefined);
+    return null;
+  }, [selectedTextCommentEditor, selectedTextComments, setSelectedTextCommentEditorDraft]);
 
   const setGoalPendingValue = useCallback((value: boolean) => {
     setGoalPending(value);
@@ -256,11 +310,13 @@ export function useComposerFormController({
     const message = editorRef.current
       ? extractComposerMessage(editorRef.current)
       : { text: input, mentions };
+    const draft = draftRef.current;
     return {
       revision: submissionRevisionRef.current,
       rawInput: message.text,
       mentions: message.mentions,
-      selectedTextComments,
+      selectedTextComments: draft.selectedTextComments,
+      selectedTextCommentEditor: draft.selectedTextCommentEditor,
       attachments: attachments.attachments,
       selection: { ...selection },
       goalPending,
@@ -270,7 +326,6 @@ export function useComposerFormController({
     goalPending,
     input,
     mentions,
-    selectedTextComments,
     selection,
   ]);
 
@@ -296,6 +351,7 @@ export function useComposerFormController({
       const currentAttachments = collectAndClearAttachments();
       replaceDraft("");
       setSelectedTextComments([]);
+      setSelectedTextCommentEditor(undefined);
       if (reason === "dispatch" && threadId) clearDraft(threadId);
       return currentAttachments;
     },
@@ -313,14 +369,15 @@ export function useComposerFormController({
     const dispatchedAttachments = detachAttachments();
     replaceDraft("");
     setSelectedTextComments([]);
-    if (threadId) clearDraft(threadId);
+    setSelectedTextCommentEditor(undefined);
+    if (threadId) removeDraftAfterAttachmentTransfer(threadId);
     submittedDraftClearRef.current = {
       ownerThreadId: threadId,
       submission,
       attachments: dispatchedAttachments,
     };
     return true;
-  }, [clearDraft, detachAttachments, replaceDraft, threadId]);
+  }, [detachAttachments, removeDraftAfterAttachmentTransfer, replaceDraft, threadId]);
 
   const restoreFailedDispatch = useCallback(() => {
     const submittedDraftClear = submittedDraftClearRef.current;
@@ -335,7 +392,10 @@ export function useComposerFormController({
       submittedDraftClear.submission.mentions,
     );
     replaceAttachments(submittedDraftClear.attachments);
-    setSelectedTextCommentDraft(submittedDraftClear.submission.selectedTextComments);
+    setSelectedTextCommentDraft(
+      submittedDraftClear.submission.selectedTextComments,
+      submittedDraftClear.submission.selectedTextCommentEditor,
+    );
     focus();
   }, [focus, releaseAttachments, replaceAttachments, replaceDraft, setSelectedTextCommentDraft]);
 
@@ -352,6 +412,7 @@ export function useComposerFormController({
       input,
       mentions,
       selectedTextComments,
+      selectedTextCommentEditor,
       attachments: attachments.attachments,
       modelId: selection.modelId,
       provider: selection.provider,
@@ -363,16 +424,49 @@ export function useComposerFormController({
   });
 
   useEffect(() => {
+    if (
+      !threadId
+      || restoredDraftOwnerRef.current !== threadId
+      || (!activeThread?.clientPreparing && !activeThread?.clientError)
+    ) return;
+    saveDraft(threadId, snapshotComposerDraft(draftRef.current));
+  }, [
+    activeThread?.clientError,
+    activeThread?.clientPreparing,
+    attachments.attachments,
+    input,
+    mentions,
+    saveDraft,
+    selectedTextCommentEditor,
+    selectedTextComments,
+    selection.codexFastMode,
+    selection.contextWindow,
+    selection.modelId,
+    selection.provider,
+    selection.reasoning,
+    selection.thinking,
+    threadId,
+  ]);
+
+  useEffect(() => {
     const submittedDraftClear = submittedDraftClearRef.current;
     if (!submittedDraftClear) return;
     if (
       input === ""
       && mentions.length === 0
       && selectedTextComments.length === 0
+      && !selectedTextCommentEditor
       && attachments.attachments.length === 0
     ) return;
     discardSubmittedDraftClear();
-  }, [attachments.attachments.length, discardSubmittedDraftClear, input, mentions.length, selectedTextComments.length]);
+  }, [
+    attachments.attachments.length,
+    discardSubmittedDraftClear,
+    input,
+    mentions.length,
+    selectedTextComments.length,
+    selectedTextCommentEditor,
+  ]);
 
   useEffect(() => {
     submissionRevisionRef.current += 1;
@@ -382,6 +476,7 @@ export function useComposerFormController({
     input,
     mentions,
     selectedTextComments,
+    selectedTextCommentEditor,
     selection,
   ]);
 
@@ -456,6 +551,7 @@ export function useComposerFormController({
     setInput(session.input);
     setMentions(session.mentions);
     setSelectedTextComments(session.selectedTextComments);
+    setSelectedTextCommentEditor(session.selectedTextCommentEditor);
     replaceAttachments(session.attachments);
     setSelection((current) => ({
       ...current,
@@ -481,6 +577,7 @@ export function useComposerFormController({
       if (isNewThread) queueMicrotask(() => editorRef.current?.focus());
     }
     threadSwitchRef.current = true;
+    restoredDraftOwnerRef.current = threadId;
     previousThreadIdRef.current = threadId;
   }, [getDraft, isNewThread, replaceAttachments, saveDraft, setSelection, threadId]);
 
@@ -574,6 +671,7 @@ export function useComposerFormController({
       mentions,
       attachments: attachments.attachments,
       selectedTextComments,
+      selectedTextCommentEditor,
       selection: { ...selection },
       goalPending,
       isDragOver: attachments.isDragOver,
@@ -589,6 +687,7 @@ export function useComposerFormController({
       input,
       mentions,
       selectedTextComments,
+      selectedTextCommentEditor,
       selection,
     ],
   );
@@ -625,6 +724,8 @@ export function useComposerFormController({
     updateDraft,
     replaceDraft,
     setSelectedTextComments: setSelectedTextCommentDraft,
+    setSelectedTextCommentEditor: setSelectedTextCommentEditorDraft,
+    requestSelectedTextCommentEditorDismissal,
     updateSelection,
     setGoalPending: setGoalPendingValue,
     markAgentSettingsTouched,

@@ -68,7 +68,9 @@
 }
 
 :root[data-mcode-desktop] {
-  --desktop-title-bar-height: 4rem;
+  /* Matches the 48px DesktopTitleBar (h-12) and the Windows titleBarOverlay
+     height in create-window so native caption buttons are never clipped. */
+  --desktop-title-bar-height: 3rem;
 }
 
 .app-viewport-fixed {

@@ -312,7 +312,7 @@ export const SendMessageSchema = lazySchema(() => z.object({
     previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
     mentions: MessageMentionsSchema().optional(),
-    /** One selected-text comment sent with the current composer draft. */
+    /** Saved selected-text comments sent with the current composer draft. */
     selectedTextComments: SelectedTextCommentsSchema().optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
     provider: ProviderIdSchema.optional(),
@@ -372,6 +372,8 @@ export const CreateAndSendSchema = lazySchema(() =>
     previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
     mentions: MessageMentionsSchema().optional(),
+    /** Saved selected-text comments sent with the current composer draft. */
+    selectedTextComments: SelectedTextCommentsSchema().optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
     provider: ProviderIdSchema.optional(),
     /** When "plan", the server wraps the message with the plan-mode question prompt. */

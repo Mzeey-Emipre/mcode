@@ -28,6 +28,7 @@
 | A New worktree completes checkout before automatic Setup starts and can cancel a held Setup safely | [Managed-worktree Setup readiness](managed-worktree-setup.md) | `runtime worktree-setup --confirm-cleanup` and `runtime check` |
 | Local, managed-worktree, and PR-created threads show truthful startup progress and remove it after success | [Thread startup progress](thread-startup-progress.md) | Electron public UI proof and focused startup tests |
 | A user completes a worktree thread and the app schedules its cleanup | [Completed-thread cleanup](completed-thread-cleanup.md) | `thread-lifecycle proof --confirm-cleanup` and `thread-lifecycle check` |
+| Thread Overview defaults open beside the right panel in split mode, even when the narrowed chat is below the usual threshold, and is unavailable while the panel is maximized | [Thread Overview and right panel](thread-overview-right-panel.md) | Electron public UI proof with the stable live-testing interface |
 
 Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that crosses the server, web or Electron UI, provider adapters, persistence, or managed worktrees.
 
@@ -39,7 +40,8 @@ Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that cro
 4. Run `runtime worktree-setup --confirm-cleanup` when managed-worktree checkout, automatic Setup, or Setup cancellation changed.
 5. Run the thread startup progress journey when thread creation, checkout, Setup, or PR fork UI changed.
 6. Run `thread-lifecycle health`, `thread-lifecycle check`, and the completed-thread proof when thread completion or worktree cleanup changed.
-7. Run the applicable multi-surface journey last, inspect receipts, then run cleanup.
+7. Run the Thread Overview and right-panel workflow when shared workspace navigation or panel layout changed.
+8. Run the applicable multi-surface journey last, inspect receipts, then run cleanup.
 
 ## Coverage gaps
 
@@ -47,6 +49,7 @@ Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that cro
 - Provider discovery does not prove provider account login.
 - The public subscription RPC cannot prove a pre-create subscription without a caller-supplied thread ID or workspace subscription.
 - The selected-text-comments proof cannot show native operating-system menu rendering.
+- The selected-text-comments live proof covers rendered source cards. It does not load a source that is absent from the current transcript window.
 - Saved-comment edit, delete, and focus return need the card and marker entry points planned for #1557 and #1558.
 - Thread retention has a minimum of one day. The live proof shows the scheduled deletion, while focused integration checks show later worktree cleanup.
 - If `agent.createAndSend` creates a thread but its response is lost before the ID arrives, the public RPC has no safe cleanup identifier. Record this as a coverage gap. Do not delete threads by heuristic.

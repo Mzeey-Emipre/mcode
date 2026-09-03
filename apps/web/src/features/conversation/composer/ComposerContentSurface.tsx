@@ -30,6 +30,7 @@ import type {
   SelectedTextComment,
 } from "@mcode/contracts";
 import type { Thread } from "@/transport";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import { cn } from "@/lib/utils";
 import { ComposerAgentControls } from "./controls/ComposerAgentControls";
 import { ComposerNewThreadContext } from "./execution/ComposerNewThreadContext";
@@ -85,6 +86,8 @@ interface ComposerContentSurfaceProps {
     readonly annotationScopeId?: string;
     readonly attachments: ComponentProps<typeof AttachmentPreview>["attachments"];
     readonly selectedTextComments: readonly SelectedTextComment[];
+    readonly selectedTextCommentEditor?: SelectedTextCommentEditorDraft;
+    readonly unavailableSelectedTextCommentIds: readonly string[];
     readonly isCompacting: boolean;
     readonly hasRetryState: boolean;
     readonly isThreadScaffold: boolean;
@@ -147,6 +150,12 @@ interface ComposerContentSurfaceProps {
     readonly onDetachOrchestration: ComposerAgentControlsProps["onDetachOrchestration"];
     readonly onStop: () => void;
     readonly onClearSelectedTextComments: () => void;
+    readonly onEditSelectedTextComment: (comment: SelectedTextComment) => void;
+    readonly onDeleteSelectedTextComment: (comment: SelectedTextComment) => void;
+    readonly onFocusComposer: () => void;
+    readonly onOpenSelectedTextCommentSource: (comment: SelectedTextComment) => void;
+    readonly onSaveSelectedTextComment: (comment: SelectedTextComment) => void;
+    readonly onSelectedTextCommentEditorChange: (editor: SelectedTextCommentEditorDraft | undefined) => void;
   };
 }
 
@@ -665,7 +674,15 @@ function ComposerInputSurface({
       <ComposerReplySurface model={model} actions={actions} />
       <SelectedTextCommentsComposerAttachment
         comments={model.selectedTextComments}
+        editor={model.selectedTextCommentEditor}
+        unavailableSourceCommentIds={model.unavailableSelectedTextCommentIds}
         onRemove={actions.onClearSelectedTextComments}
+        onOpenSource={actions.onOpenSelectedTextCommentSource}
+        onEdit={actions.onEditSelectedTextComment}
+        onDelete={actions.onDeleteSelectedTextComment}
+        onFocusComposer={actions.onFocusComposer}
+        onSave={actions.onSaveSelectedTextComment}
+        onEditorChange={actions.onSelectedTextCommentEditorChange}
       />
       <ComposerDetectedPullRequest model={model} actions={actions} />
       <ComposerProviderUnavailableBanner model={model} />
