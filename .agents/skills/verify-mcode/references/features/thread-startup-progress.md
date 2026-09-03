@@ -26,7 +26,7 @@ Run these gates from the repository root:
 bun run --cwd apps/web test -- src/features/thread-startup/__tests__/StartupProgressCard.test.tsx src/features/conversation/messages/__tests__/ChatView.test.tsx
 bun run --cwd apps/web typecheck
 bun run lint apps/web/src/features/thread-startup/StartupProgressCard.tsx apps/web/src/features/thread-startup/__tests__/StartupProgressCard.test.tsx
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime worktree-setup --confirm-cleanup
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs runtime worktree-setup --confirm-cleanup
 ```
 
 ## Evidence

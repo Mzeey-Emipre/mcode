@@ -21,8 +21,8 @@
 Run the live Codex and Cursor matrix with the default Codex model, `gpt-5.6-luna`, and an exact Cursor model ID. Pass `--codex-model <id>` only to override the Codex default. The proof requires both confirmations because it creates one owned direct thread per provider and sends real provider turns.
 
 ```sh
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue health --cursor-model <cursor-model-id> --allow-enable-cursor
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue proof --cursor-model <cursor-model-id> --allow-enable-cursor --confirm-provider-calls --confirm-cleanup
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue health --cursor-model <cursor-model-id> --allow-enable-cursor
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue proof --cursor-model <cursor-model-id> --allow-enable-cursor --confirm-provider-calls --confirm-cleanup
 ```
 
 If Cursor starts disabled, `--allow-enable-cursor` gives explicit consent for a temporary change through the owned Electron-local `settings.update` socket. Before that change, the verifier writes the Electron runtime directory, Cursor's original disabled state, and its restoration intent to recovery metadata. It attempts to restore that state through the same socket after success, provider failure, matrix failure, interruption cleanup, and cleanup failure. If restoration fails, it retains the recovery metadata. It never changes the worktree settings store or Codex. If Cursor still lacks a CLI login or model after enablement, the verifier restores its Electron-local state and records that provider as blocked.
@@ -38,7 +38,7 @@ The proof opens its Electron-local socket before it reads Cursor settings or che
 Run the verifier's own deterministic check before proof collection:
 
 ```sh
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue check
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue check
 ```
 
 `composer-queue.test.mjs` does not belong to `thread-lifecycle check`. The Composer queue check covers verifier ownership, evidence, selection, and terminal-event behavior. `thread-lifecycle check` remains supporting product evidence for FIFO order, Stop suppression across late terminal events, Continue, in-flight leases, guardrail ordering, capacity, and capture-spill cleanup. Its transport mock stays at the external server boundary.
@@ -48,14 +48,14 @@ bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue check
 The matrix writes separate redacted receipts under `.dev/verification/composer-queue/receipts/`. A successful provider proof writes three composer-only screenshots. A blocked provider writes its receipt only. Receipts record only bounded counts and booleans for durable prompts, queue rows, running state, terminal evidence, and temporary Cursor restoration. It retains evidence after removing its owned direct thread and Electron process. Interrupted cleanup reconnects only to the recorded Electron-local runtime for that owned session. It restores a pending Cursor setting before it removes recovery metadata. If a proof is interrupted, inspect it, then run:
 
 ```sh
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue inspect
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue cleanup --confirm-cleanup
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue inspect
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue cleanup --confirm-cleanup
 ```
 
 Use the no-provider navigation check when Electron fails before a provider turn. It launches and cleans up only an owned Electron session, then records page and context close diagnostics without retaining app content.
 
 ```sh
-bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue navigation-repro --confirm-cleanup
+bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs composer-queue navigation-repro --confirm-cleanup
 ```
 
 ## Coverage gap

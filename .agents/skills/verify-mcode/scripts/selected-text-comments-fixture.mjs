@@ -2,7 +2,7 @@
 import { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { probeCdpVersion } from "../../electorn-live-testing/scripts/start-electron.mjs";
+import { probeCdpVersion } from "../../../../.codex/skills/electorn-live-testing/scripts/start-electron.mjs";
 
 const REPO_ROOT = NodePath.resolve(import.meta.dirname, "../../../../");
 const DATABASE_PATH = NodePath.join(REPO_ROOT, ".dev", "electron-live-testing", "runtime", "db", "app.sqlite");

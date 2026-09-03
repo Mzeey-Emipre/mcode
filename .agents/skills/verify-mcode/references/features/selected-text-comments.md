@@ -36,16 +36,16 @@
 
 The first Electron launch initializes `.dev/electron-live-testing/runtime/db/app.sqlite`. Stop Electron before fixture setup. The second launch loads the fixture rows at server startup. The fixture never touches `.dev/db/app.sqlite`.
 
-1. Run `bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs runtime health`.
+1. Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs runtime health`.
 2. Run `bun run --cwd apps/desktop build` when the desktop bundle is missing or older than the changed UI source.
 3. Run `bun .codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs`.
 4. Run `bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs`.
 5. Stop Electron.
-6. Run `bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments setup`.
+6. Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments setup`.
 7. Run `bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs`.
-8. Run `bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments proof`.
+8. Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments proof`.
 9. Stop Electron.
-10. Run `bun .codex/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments cleanup`.
+10. Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments cleanup`.
 11. Run `bun run --shell system agent:down`.
 
 The verifier writes `.dev/verification/selected-text-comments-action.png`, `.dev/verification/selected-text-comments-editor.png`, `.dev/verification/selected-text-comments-result.png`, and `.dev/verification/selected-text-comments.json`. The proof first selects the full list and checks that the action appears with the preferred 8px source-range gap. It then runs the editor workflow from one list item. It validates source docking and reconstructed-range reanchoring after scroll, two multiline saves, persistent highlights, numbered markers, marker keyboard editing and deletion, aggregate card navigation and deletion, aggregate removal, and dirty dismissal states. It also checks compact-editor text alignment and popup paint order over a source highlight. It covers a real secondary pointer click that the app does not prevent, editor focus and control boundaries, and typed skill and file chips.
