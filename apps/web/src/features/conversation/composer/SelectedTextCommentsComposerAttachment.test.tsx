@@ -108,8 +108,35 @@ describe("SelectedTextCommentsComposerAttachment", () => {
 
     await user.hover(screen.getByRole("button", { name: "1 annotation. Preview available." }));
 
-    expect(screen.getByTestId("selected-text-comment-preview")).toHaveClass("top-[calc(100%+0.25rem)]");
+    const preview = screen.getByTestId("selected-text-comment-preview");
+    expect(preview).toHaveClass("top-[calc(100%+0.25rem)]");
+    await user.hover(preview);
+    expect(preview).toHaveClass("top-[calc(100%+0.25rem)]");
     rectSpy.mockRestore();
+  });
+
+  it("anchors a sent preview inside the message viewport's right inset", async () => {
+    const handlers = {
+      onRemove: vi.fn(),
+      onOpenSource: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onFocusComposer: vi.fn(),
+      onSave: vi.fn(),
+      onEditorChange: vi.fn(),
+    };
+    const user = userEvent.setup();
+    render(
+      <div data-testid="message-list" className="px-8">
+        <SelectedTextCommentsComposerAttachment comments={[comments[0]!]} readOnly {...handlers} />
+      </div>,
+    );
+
+    await user.hover(screen.getByRole("button", { name: "1 annotation. Preview available." }));
+
+    const preview = screen.getByTestId("selected-text-comment-preview");
+    expect(preview).toHaveClass("right-0", "left-auto");
+    expect(preview).not.toHaveClass("left-0");
   });
 
   it("assigns each attachment chip its own preview relationship", () => {

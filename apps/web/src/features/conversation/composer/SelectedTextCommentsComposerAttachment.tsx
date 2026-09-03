@@ -313,7 +313,7 @@ function useSentPreviewPlacement({
   readonly previewRef: { readonly current: HTMLDivElement | null };
   readonly previewRootRef: { readonly current: HTMLDivElement | null };
   readonly readOnly: boolean;
-}): readonly ["above" | "below", () => void] {
+}): "above" | "below" {
   const [placement, setPlacement] = useState<"above" | "below">("above");
   useLayoutEffect(() => {
     if (!readOnly || !isPreviewOpen) return;
@@ -328,11 +328,15 @@ function useSentPreviewPlacement({
     const availableBelow = viewportBounds.bottom - rootBounds.bottom - gap;
     setPlacement(availableAbove >= preview.getBoundingClientRect().height || availableAbove >= availableBelow ? "above" : "below");
   }, [commentCount, isPreviewOpen, previewRef, previewRootRef, readOnly]);
-  return [placement, () => setPlacement("above")];
+  return placement;
 }
 
 function previewPlacementClass(readOnly: boolean, sentPreviewPlacement: "above" | "below"): string {
   return readOnly && sentPreviewPlacement === "below" ? "top-[calc(100%+0.25rem)]" : "bottom-[calc(100%+0.25rem)]";
+}
+
+function previewHorizontalPlacementClass(readOnly: boolean): string {
+  return readOnly ? "right-0 left-auto" : "left-0";
 }
 
 /** Renders every saved selected-text comment as one aggregate composer attachment. */
@@ -354,7 +358,7 @@ export function SelectedTextCommentsComposerAttachment({
   const previewId = useId();
   const previewRootRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
-  const [sentPreviewPlacement, resetSentPreviewPlacement] = useSentPreviewPlacement({
+  const sentPreviewPlacement = useSentPreviewPlacement({
     commentCount: comments.length,
     isPreviewOpen,
     previewRef,
@@ -390,7 +394,6 @@ export function SelectedTextCommentsComposerAttachment({
   };
   const openPreview = () => {
     if (previewCloseTimerRef.current !== undefined) window.clearTimeout(previewCloseTimerRef.current);
-    resetSentPreviewPlacement();
     setIsPreviewOpen(true);
   };
   const schedulePreviewClose = () => {
@@ -452,7 +455,7 @@ export function SelectedTextCommentsComposerAttachment({
                 ref={previewRef}
                 id={previewId}
                 aria-label={`${label} preview`}
-                className={`absolute ${previewPlacementClass(readOnly, sentPreviewPlacement)} left-0 z-50 w-[min(38rem,calc(100vw-1.5rem))] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-md`}
+                className={`absolute ${previewPlacementClass(readOnly, sentPreviewPlacement)} ${previewHorizontalPlacementClass(readOnly)} z-50 w-[min(38rem,calc(100vw-1.5rem))] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-md`}
                 data-testid="selected-text-comment-preview"
                 onPointerEnter={openPreview}
                 onFocus={openPreview}
