@@ -12,15 +12,26 @@ export async function connectElectronSession({ playwright, repoRoot, sessionFile
   const ports = readRuntimePorts(root, record.appUrlPrefix);
   const connection = await connectToElectron(playwright, record, ports);
   const page = await waitForAppPage(connection.context, record.appUrlPrefix);
-  await page.reload({ waitUntil: "domcontentloaded" });
+  const livePage = await reloadElectronAppPage(connection.context, page, record.appUrlPrefix);
   return {
     appUrl: ports?.appUrl ?? null,
     ...connection,
-    page,
+    page: livePage,
     pid: record.pid,
     repoRoot: root,
     sessionFile,
   };
+}
+
+/** Reloads the worktree app and reacquires Electron's replacement page when navigation detaches the prior one. */
+export async function reloadElectronAppPage(context, page, appUrl) {
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+  } catch (error) {
+    if (!isAbortedOrDetachedReload(error)) throw error;
+    return waitForAppPage(context, appUrl, page);
+  }
+  return requireLiveAppPage(context, page, appUrl);
 }
 
 function validateConnectionArguments(playwright, repoRoot, sessionFileName) {
@@ -85,14 +96,30 @@ export async function disconnectElectronSession(session) {
   await session.browser.close();
 }
 
-async function waitForAppPage(context, appUrl) {
+async function waitForAppPage(context, appUrl, excludedPage = null) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    const page = context.pages().find((candidate) => candidate.url().startsWith(appUrl));
+    const page = context.pages().find((candidate) => candidate !== excludedPage && isLiveAppPage(candidate, appUrl));
     if (page) return page;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   throw new Error(`Electron did not open the worktree app URL within 30 seconds`);
+}
+
+function requireLiveAppPage(context, page, appUrl) {
+  if (isLiveAppPage(page, appUrl)) return page;
+  const replacement = context.pages().find((candidate) => isLiveAppPage(candidate, appUrl));
+  if (replacement) return replacement;
+  throw new Error("No live Electron app page remained after navigation");
+}
+
+function isLiveAppPage(page, appUrl) {
+  return !page.isClosed() && page.url().startsWith(appUrl);
+}
+
+function isAbortedOrDetachedReload(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("net::ERR_ABORTED") || message.includes("frame was detached");
 }
 
 function validateSessionRecord(record, root) {
