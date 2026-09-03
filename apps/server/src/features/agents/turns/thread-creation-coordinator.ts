@@ -119,7 +119,7 @@ export class ThreadCreationCoordinator {
     if (startupId) this.startups()?.advance(startupId, "agent");
   }
 
-  /** Complete a startup only after its first provider runtime has authoritative admission. */
+  /** Complete a startup after its initial command is handled or receives runtime admission. */
   completeInitialAgent(startupId: string | undefined): void {
     if (startupId) this.startups()?.complete(startupId);
   }

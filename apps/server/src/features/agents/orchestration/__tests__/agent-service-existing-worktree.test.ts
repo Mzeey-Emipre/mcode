@@ -277,6 +277,44 @@ describe("AgentService.createAndSend defaults", () => {
     expect(service.runtimeAccess().activeThreadIds()).not.toContain(managed.id);
   });
 
+  it("does not admit the initial provider turn after managed startup cancellation wins during admission", async () => {
+    const automaticSetup = {
+      queueAutomaticFirstTurn: vi.fn(),
+      admitAutomaticTurn: vi.fn(() => ({ queued: false })),
+      getAutomaticSetup: vi.fn(() => ({ gate: "released" })),
+    };
+    const { threadRepo, workspaceRepo, threadService, service, provider, attachmentService, threadStartups } = createAgentServiceHarness(automaticSetup);
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed first Turn", "worktree", "feature/managed", true, "claude");
+    vi.mocked(threadService.create).mockImplementation(async (_workspaceId, _title, _mode, _branch, options) => {
+      options.lifecycle?.onThreadPersisted(managed);
+      return managed;
+    });
+    const heldAttachmentPersistence = deferred<{ stored: []; persisted: [] }>();
+    attachmentService.persist.mockImplementation(async () => await heldAttachmentPersistence.promise);
+    const startupId = "00000000-0000-4000-8000-000000000024";
+
+    const creating = service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Cancel managed initial provider admission",
+      mode: "worktree",
+      branch: "feature/managed",
+      startupId,
+    });
+    await eventually(() => expect(attachmentService.persist).toHaveBeenCalledOnce());
+
+    threadStartups.cancel(startupId);
+    threadStartups.markCancelled(startupId);
+    heldAttachmentPersistence.resolve({ stored: [], persisted: [] });
+
+    const result = await creating;
+
+    expect(threadStartups.get(startupId)).toMatchObject({ state: "cancelled", phase: "setup" });
+    expect(result.runtimeSnapshot).toEqual({ threadId: result.id, turnExecutionId: null, phase: "idle" });
+    expect(provider.sendTurn).not.toHaveBeenCalled();
+    expect(service.runtimeAccess().activeThreadIds()).not.toContain(result.id);
+  });
+
   it("discards a prepared goal effect when queued cancellation wins before runtime reserve", async () => {
     const root = await NodeFSPromises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mcode-agent-cancelled-goal-admission-"));
     roots.push(root);
@@ -683,6 +721,29 @@ describe("AgentService.createAndSend defaults", () => {
       phase: "running",
     });
     expect(result.runtimeSnapshot.turnExecutionId).toEqual(expect.any(String));
+  });
+
+  it("completes startup when the initial native command is handled without a provider turn", async () => {
+    const { workspaceRepo, service, provider, threadStartups } = createAgentServiceHarness(undefined, true);
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const startupId = "00000000-0000-4000-8000-000000000025";
+
+    const result = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "/goal clear",
+      startupId,
+    });
+
+    expect(result.runtimeSnapshot).toEqual({ threadId: result.id, turnExecutionId: null, phase: "idle" });
+    expect(threadStartups.get(startupId)).toMatchObject({
+      state: "completed",
+      phase: "agent",
+      steps: [
+        { phase: "thread", state: "completed" },
+        { phase: "agent", state: "completed" },
+      ],
+    });
+    expect(provider.sendTurn).not.toHaveBeenCalled();
   });
 
   it("returns an idle snapshot when startup fails before runtime ownership", async () => {

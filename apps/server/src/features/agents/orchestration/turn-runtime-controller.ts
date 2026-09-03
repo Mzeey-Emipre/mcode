@@ -649,28 +649,42 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
     throw error;
   }
 
-  /** Start a prepared first-turn command and return the authoritative runtime snapshot. */
+  /** Start a prepared first-turn command and return its authoritative admission outcome. */
   private async sendInitialMessageAndSnapshot(
     command: SendMessageCommand,
     onError: (error: unknown) => void,
-  ): Promise<TurnRuntimeSnapshot> {
+    canReserve?: () => boolean,
+  ): Promise<{ runtimeSnapshot: TurnRuntimeSnapshot; providerAdmitted: boolean; failed: boolean }> {
+    let providerAdmitted = false;
     let resolveStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       resolveStarted = resolve;
     });
     const send = this.sendMessage({
       ...command,
-      onTurnStarted: resolveStarted,
-    });
-    void send.catch(onError);
-    await Promise.race([
-      started,
-      send.then(() => undefined, () => undefined),
+      onTurnStarted: () => {
+        providerAdmitted = true;
+        resolveStarted();
+      },
+    }, canReserve);
+    const outcome = await Promise.race([
+      started.then(() => "started" as const),
+      send.then(
+        () => "finished" as const,
+        (error) => {
+          onError(error);
+          return "failed" as const;
+        },
+      ),
     ]);
-    return this.turnRuntime.snapshot(command.threadId) ?? {
-      threadId: command.threadId,
-      turnExecutionId: null,
-      phase: "idle",
+    return {
+      runtimeSnapshot: this.turnRuntime.snapshot(command.threadId) ?? {
+        threadId: command.threadId,
+        turnExecutionId: null,
+        phase: "idle",
+      },
+      providerAdmitted,
+      failed: outcome === "failed",
     };
   }
 
@@ -1219,14 +1233,19 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
     let runtimeSnapshot: TurnRuntimeSnapshot;
     try {
       this.threadCreation.startInitialAgent(created.startupId);
-      runtimeSnapshot = await this.sendInitialMessageAndSnapshot(created.command, (err) => {
+      const initialDispatch = await this.sendInitialMessageAndSnapshot(created.command, (err) => {
         logger.error("createAndSend initial send failed", {
           threadId: created.thread.id,
           error: err instanceof Error ? err.message : String(err),
         });
         this.threadCreation.failInitialAgent(created.startupId);
-      });
-      if (runtimeSnapshot.turnExecutionId) this.threadCreation.completeInitialAgent(created.startupId);
+      }, () => this.threadCreation.canAdmitQueuedAgent(created.thread.id, created.startupId));
+      runtimeSnapshot = initialDispatch.runtimeSnapshot;
+      if (!initialDispatch.failed && (
+        initialDispatch.providerAdmitted || this.threadCreation.canAdmitQueuedAgent(created.thread.id, created.startupId)
+      )) {
+        this.threadCreation.completeInitialAgent(created.startupId);
+      }
     } catch (error) {
       this.threadCreation.failInitialAgent(created.startupId);
       throw error;
