@@ -484,39 +484,6 @@ describe("MessageBubble user messages", () => {
     expect(lb?.getAttribute("data-active-title")).toBe("Annotation 1 screenshot.png");
   });
 
-  it("uses an annotation reply fallback for annotation-only messages", async () => {
-    const user = userEvent.setup();
-    const onReply = vi.fn();
-    const message: Message = {
-      ...makeMessage(""),
-      previewAnnotations: makePreviewAnnotationBundle(),
-    };
-
-    const { getByLabelText } = render(
-      <MessageBubble message={message} onReply={onReply} />,
-    );
-
-    await user.click(getByLabelText("Reply to this message"));
-
-    expect(onReply).toHaveBeenCalledWith("msg-1", "[Annotation]", "user");
-  });
-
-  it("uses a comment reply fallback for code-comment-only messages", async () => {
-    const user = userEvent.setup();
-    const onReply = vi.fn();
-    const message: Message = {
-      ...makeMessage(""),
-      previewAnnotations: makeCodeCommentBundle(),
-    };
-
-    const { getByLabelText } = render(
-      <MessageBubble message={message} onReply={onReply} />,
-    );
-
-    await user.click(getByLabelText("Reply to this message"));
-
-    expect(onReply).toHaveBeenCalledWith("msg-1", "[Comment]", "user");
-  });
 });
 
 describe("MessageBubble agent response state", () => {
@@ -533,7 +500,6 @@ describe("MessageBubble agent response state", () => {
     const { getByTestId } = render(
       <MessageBubble
         message={makeAgentMessage()}
-        onReply={vi.fn()}
         onBranch={vi.fn()}
         agentDisplayState={{ phase: "completed" }}
       />,
@@ -551,7 +517,6 @@ describe("MessageBubble agent response state", () => {
     const { queryByTestId } = render(
       <MessageBubble
         message={makeAgentMessage()}
-        onReply={vi.fn()}
         onBranch={vi.fn()}
         agentDisplayState={{ phase: "finalizing" }}
       />,

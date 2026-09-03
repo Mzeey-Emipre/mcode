@@ -37,15 +37,3 @@ export function composerFeedbackLabel(bundle: PreviewAnnotationBundle): string {
 export function composerFeedbackAccessibleLabel(bundle: PreviewAnnotationBundle): string {
   return feedbackCountParts(bundle).join(" and ");
 }
-
-/** Returns the quoted-message fallback for feedback-only user messages. */
-export function composerFeedbackReplyFallback(bundle: PreviewAnnotationBundle): string {
-  const counts = feedbackCounts(bundle);
-  if (counts.comments === 0) {
-    return counts.annotations === 1 ? "[Annotation]" : "[Annotations]";
-  }
-  if (counts.annotations === 0) {
-    return counts.comments === 1 ? "[Comment]" : "[Comments]";
-  }
-  return "[Annotations and comments]";
-}

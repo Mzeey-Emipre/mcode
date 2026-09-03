@@ -4,8 +4,6 @@ import {
   type QueuedComposerSerializationInput,
 } from "./queued-composer-serialization";
 
-export type { QueuedComposerReplyContext } from "./queued-composer-serialization";
-
 /** Inputs that create a queue payload from the current Composer form. */
 export type CreateQueuedComposerPayloadOptions = QueuedComposerSerializationInput;
 
@@ -17,7 +15,6 @@ export function createQueuedComposerPayload({
   previewAnnotations,
   selection,
   goalPending,
-  replyContext,
 }: CreateQueuedComposerPayloadOptions): Omit<QueuedMessage, "id" | "queuedAt"> {
   return serializeQueuedComposerForm({
     attachments,
@@ -26,6 +23,5 @@ export function createQueuedComposerPayload({
     previewAnnotations,
     selection,
     goalPending,
-    replyContext,
   });
 }

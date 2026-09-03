@@ -1,10 +1,9 @@
 import { useCallback } from "react";
 import type { QueuedMessage } from "@/stores/queueStore";
 import { useQueueStore } from "@/stores/queueStore";
-import { useReplyStore } from "@/stores/replyStore";
 import { isThreadExecuting, useThreadStore } from "@/stores/threadStore";
 
-/** Dispatches queued messages while preserving queue order and reply cleanup. */
+/** Dispatches queued messages while preserving queue order. */
 export function useQueuedMessageDispatch(threadId: string | undefined): {
   resumeNext(): Promise<void>;
   sendNow(message: QueuedMessage): Promise<void>;
@@ -26,8 +25,8 @@ export function useQueuedMessageDispatch(threadId: string | undefined): {
           message.contextWindow,
           message.thinking,
           message.codexFastMode,
-          message.replyToMessageId,
-          message.quotedText,
+          undefined,
+          undefined,
           undefined,
           message.mentions,
           message.previewAnnotations,
@@ -35,11 +34,6 @@ export function useQueuedMessageDispatch(threadId: string | undefined): {
           message.orchestrationMode,
         );
         useQueueStore.getState().settleQueuedDispatch(threadId, message.id, sent);
-        if (!sent) return;
-        const activeReply = useReplyStore.getState().getReply(threadId);
-        if (message.replyToMessageId && activeReply?.messageId === message.replyToMessageId) {
-          useReplyStore.getState().clearReply(threadId);
-        }
       } catch {
         useQueueStore.getState().settleQueuedDispatch(threadId, message.id, false);
       }

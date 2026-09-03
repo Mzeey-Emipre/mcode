@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, useCallback, useRef, useEffect, useSyncExternalStore, lazy, Suspense, type ReactNode } from "react";
 import type { Message } from "@/transport";
-import { ImageIcon, RotateCcw, Copy, Check, GitFork, AlertCircle, Reply, Target } from "lucide-react";
+import { ImageIcon, RotateCcw, Copy, Check, GitFork, AlertCircle, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 const LazyMarkdownContent = lazy(() => import("@/components/chat/MarkdownContent"));
 import { stripInjectedFiles } from "@/lib/file-tags";
@@ -21,7 +21,6 @@ import { AnsweredSummary } from "@/components/chat/plan-questions/AnsweredSummar
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 import { DeltaBlock } from "../narrative/DeltaBlock";
 import { parseGoalStatusNotice } from "@/lib/goal-message";
-import { composerFeedbackReplyFallback } from "@/lib/composer-feedback";
 import { PreviewAnnotationBundleChip } from "@/components/chat/PreviewAnnotationBundleChip";
 import { useRetriableAttachmentImage } from "@/components/chat/useRetriableAttachmentImage";
 import { EntityToken } from "@/components/chat/EntityToken";
@@ -296,12 +295,10 @@ const COMPLETED_AGENT_DISPLAY_STATE: AgentDisplayState = { phase: "completed" };
 interface MessageBubbleProps {
   /** The message object to render. */
   message: Message;
-  /** Controls whether user-message actions such as copy, reply, or fork are available. */
+  /** Controls whether user-message actions such as copy or fork are available. */
   interactive?: boolean;
   /** Called when the user clicks the branch icon on this message. */
   onBranch?: (messageId: string) => void;
-  /** Called when the user clicks the reply button on this message. */
-  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Called when the user clicks a quote block to scroll to the original message. */
   onScrollToMessage?: (messageId: string) => void;
   /** Lifecycle state that controls the visible treatment of this agent response. */
@@ -430,27 +427,6 @@ function BranchButton({ onClick }: { onClick: () => void }) {
         }
       />
       <TooltipContent side="top" className="text-xs">Fork from here</TooltipContent>
-    </Tooltip>
-  );
-}
-
-/** Reply button visible on hover, matching BranchButton style. */
-function ReplyButton({ onClick }: { onClick: () => void }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            onClick={onClick}
-            className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground opacity-0 scale-90 transition-all duration-150 hover:bg-primary/10 hover:text-primary group-hover/msg:opacity-100 group-hover/msg:scale-100"
-            aria-label="Reply to this message"
-          >
-            <Reply size={14} className="scale-x-[-1]" />
-          </button>
-        }
-      />
-      <TooltipContent side="top" className="text-xs">Reply</TooltipContent>
     </Tooltip>
   );
 }
@@ -631,48 +607,29 @@ function MessageImageLightbox({
   );
 }
 
-/** Returns the fallback reply text for a message without user-entered text. */
-function getUserReplyFallback(message: Message, hasPreviewAnnotations: boolean): string {
-  if (hasPreviewAnnotations && message.previewAnnotations) {
-    return composerFeedbackReplyFallback(message.previewAnnotations);
-  }
-  const attachment = message.attachments?.[0];
-  if (attachment?.mimeType.startsWith("image/")) return "[Image attachment]";
-  if (attachment?.mimeType === "application/pdf") return "[PDF attachment]";
-  if (attachment) return "[File attachment]";
-  return "[Attachment]";
-}
-
 /** Renders actions and the timestamp for a user message. */
 function UserMessageFooter({
   message,
   displayText,
   formattedTime,
-  hasPreviewAnnotations,
   interactive,
   onBranch,
-  onReply,
   userGoal,
 }: {
   message: Message;
   displayText: string;
   formattedTime: string;
-  hasPreviewAnnotations: boolean;
   interactive: boolean;
   onBranch?: (messageId: string) => void;
-  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   userGoal: { condition: string } | null;
 }) {
-  const replyContent = displayText.trim() || getUserReplyFallback(message, hasPreviewAnnotations);
   return (
     <div className="flex flex-col items-end gap-0.5 pr-1">
       <UserMessageActions
         message={message}
         displayText={displayText}
-        replyContent={replyContent}
         interactive={interactive}
         onBranch={onBranch}
-        onReply={onReply}
       />
       <div className="flex items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground/55">
         {userGoal && <GoalReceipt label="Sent as goal" tone="muted" />}
@@ -764,21 +721,16 @@ function UserMessageComments({ message }: { message: Message }) {
 function UserMessageActions({
   message,
   displayText,
-  replyContent,
   interactive,
   onBranch,
-  onReply,
 }: {
   message: Message;
   displayText: string;
-  replyContent: string;
   interactive: boolean;
   onBranch?: (messageId: string) => void;
-  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      {interactive && onReply && <ReplyButton onClick={() => onReply(message.id, replyContent, "user")} />}
       {interactive && onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
       {interactive && displayText.trim() && <CopyButton content={displayText} />}
     </div>
@@ -790,7 +742,6 @@ function UserMessageContent({
   message,
   interactive,
   onBranch,
-  onReply,
   onScrollToMessage,
   showParentAgentProvenance,
 }: MessageBubbleProps & { interactive: boolean; showParentAgentProvenance: boolean }) {
@@ -829,10 +780,8 @@ function UserMessageContent({
             message={message}
             displayText={displayText}
             formattedTime={formattedTime}
-            hasPreviewAnnotations={hasPreviewAnnotations}
             interactive={interactive}
             onBranch={onBranch}
-            onReply={onReply}
             userGoal={userGoal}
           />
         </div>
@@ -928,48 +877,38 @@ function AssistantMessageFooter({
   formattedTime,
   modelDisplayLabel,
   isAgentResponseComplete,
-  hasImageAttachments,
   onBranch,
-  onReply,
 }: {
   message: Message;
   textContent: string;
   formattedTime: string;
   modelDisplayLabel: string | null;
   isAgentResponseComplete: boolean;
-  hasImageAttachments: boolean;
   onBranch?: (messageId: string) => void;
-  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
 }) {
   if (!isAgentResponseComplete) return null;
-  const replyContent = textContent.trim() || (hasImageAttachments ? "[Generated image]" : "[Assistant message]");
   return (
     <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-1">
-      <AssistantMessageActions message={message} textContent={textContent} replyContent={replyContent} onBranch={onBranch} onReply={onReply} />
+      <AssistantMessageActions message={message} textContent={textContent} onBranch={onBranch} />
       <AssistantMessageMetadata message={message} modelDisplayLabel={modelDisplayLabel} formattedTime={formattedTime} />
     </div>
   );
 }
 
-/** Renders completed assistant reply, fork, and copy controls. */
+/** Renders completed assistant fork and copy controls. */
 function AssistantMessageActions({
   message,
   textContent,
-  replyContent,
   onBranch,
-  onReply,
 }: {
   message: Message;
   textContent: string;
-  replyContent: string;
   onBranch?: (messageId: string) => void;
-  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
 }) {
-  const hasActions = Boolean(onReply || onBranch || textContent.trim());
+  const hasActions = Boolean(onBranch || textContent.trim());
   if (!hasActions) return null;
   return (
     <div className="flex items-center gap-x-3 opacity-0 transition-opacity duration-150 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100" data-testid="agent-message-actions">
-      {onReply && <ReplyButton onClick={() => onReply(message.id, replyContent, "assistant")} />}
       {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
       {textContent.trim() && <CopyButton content={textContent} />}
     </div>
@@ -999,7 +938,6 @@ function AssistantMessageMetadata({
 function AssistantMessageContent({
   message,
   onBranch,
-  onReply,
   onScrollToMessage,
   agentDisplayState,
 }: MessageBubbleProps) {
@@ -1042,9 +980,7 @@ function AssistantMessageContent({
         formattedTime={formattedTime}
         modelDisplayLabel={modelDisplayLabel}
         isAgentResponseComplete={isAgentResponseComplete}
-        hasImageAttachments={imageAttachments.length > 0}
         onBranch={onBranch}
-        onReply={onReply}
       />
       <MessageImageLightbox imagePreviewIndex={imagePreviewIndex} imageSlides={imageSlides} onClose={() => setImagePreviewIndex(null)} />
     </div>
@@ -1056,16 +992,15 @@ function MessageRoleContent({
   message,
   interactive = true,
   onBranch,
-  onReply,
   onScrollToMessage,
   agentDisplayState,
   showParentAgentProvenance = true,
 }: MessageBubbleProps) {
   if (message.role === "system") return <SystemMessageContent message={message} />;
   if (message.role === "user") {
-    return <UserMessageContent message={message} interactive={interactive} onBranch={onBranch} onReply={onReply} onScrollToMessage={onScrollToMessage} agentDisplayState={agentDisplayState} showParentAgentProvenance={showParentAgentProvenance} />;
+    return <UserMessageContent message={message} interactive={interactive} onBranch={onBranch} onScrollToMessage={onScrollToMessage} agentDisplayState={agentDisplayState} showParentAgentProvenance={showParentAgentProvenance} />;
   }
-  return <AssistantMessageContent message={message} interactive={interactive} onBranch={onBranch} onReply={onReply} onScrollToMessage={onScrollToMessage} agentDisplayState={agentDisplayState} showParentAgentProvenance={showParentAgentProvenance} />;
+  return <AssistantMessageContent message={message} interactive={interactive} onBranch={onBranch} onScrollToMessage={onScrollToMessage} agentDisplayState={agentDisplayState} showParentAgentProvenance={showParentAgentProvenance} />;
 }
 
 /** Renders a single chat message and preserves memoization across unchanged props. */

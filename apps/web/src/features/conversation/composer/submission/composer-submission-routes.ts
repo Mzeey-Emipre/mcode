@@ -5,7 +5,7 @@ import type { ComposerDraft } from "@/stores/composerDraftStore";
 import { snapshotComposerDraft } from "@/lib/composer-session";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
 import type { ComposerExecutionTarget, ComposerExecutionTargetController } from "../execution/useComposerExecutionTarget";
-import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
+import type { PreparedComposerSubmission } from "./composer-submission-types";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   createPreparedThreadMessagePayload,
@@ -21,7 +21,6 @@ export interface DispatchComposerTargetOptions {
   target: ComposerExecutionTarget;
   execution: ComposerExecutionTargetController;
   submission: PreparedComposerSubmission;
-  replyContext?: ComposerReplyContext;
   onBranchModeExit?(): void;
   onThreadCreated?(thread: Thread): void;
   onThreadPreparing?(thread: WorkspaceThread): void;
@@ -225,9 +224,9 @@ async function dispatchExistingThread(
   options: DispatchComposerTargetOptions,
   threadId: string,
 ): Promise<void> {
-  const { submission, replyContext } = options;
+  const { submission } = options;
   await sendComposerThreadMessage(
     threadId,
-    createPreparedThreadMessagePayload(submission, replyContext),
+    createPreparedThreadMessagePayload(submission),
   );
 }

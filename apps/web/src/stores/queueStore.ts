@@ -38,9 +38,6 @@ export interface QueuedMessage {
   codexFastMode?: boolean;
   /** Goal objective installed atomically when this queued turn dispatches. */
   goalObjective?: string;
-  replyToMessageId?: string;
-  /** Quoted text excerpt for the reply. */
-  quotedText?: string;
   /** Preview spill paths to unlink when this item is permanently removed from the queue. */
   browserCaptureSpillPaths?: string[];
   /** Unix timestamp (ms) when this message was enqueued. */

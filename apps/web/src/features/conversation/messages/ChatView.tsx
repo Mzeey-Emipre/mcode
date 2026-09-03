@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { SelectedTextComment } from "@mcode/contracts";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useRecoveryIncidentStore, useVisibleRecoveryIncident } from "@/features/recovery/state/recoveryIncidentStore";
-import { useReplyStore } from "@/stores/replyStore";
 import { useThreadStore } from "@/stores/threadStore";
 import {
   useComposerDraftStore,
@@ -286,12 +285,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     });
   }, [setForkMode]);
 
-  const handleReply = useCallback((messageId: string, content: string, role: "user" | "assistant") => {
-    const activeThreadId = useWorkspaceStore.getState().activeThreadId;
-    if (!activeThreadId) return;
-    useReplyStore.getState().setReply(activeThreadId, messageId, role, content.slice(0, 150), content.slice(0, 2000));
-  }, []);
-
   const handleStopSafely = useCallback(async () => {
     if (state.activeThreadId) await useThreadStore.getState().stopAgent(state.activeThreadId);
   }, [state.activeThreadId]);
@@ -325,7 +318,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   }, [activeThreadId, setForkMode]);
   const interactions = useMemo<ChatViewInteractions>(() => ({
     onBranch: handleBranch,
-    onReply: handleReply,
     ...selectedTextComments.interactions,
     onPromptSelect: setPendingPrefill,
     onStopSafely: handleStopSafely,
@@ -340,7 +332,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     handleDismissCliError,
     handleExitForkMode,
     handleOpenSettings,
-    handleReply,
     handleSaveTitle,
     handleStopSafely,
     selectedTextComments.interactions,

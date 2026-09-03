@@ -32,7 +32,6 @@ import { useDiffStore } from "@/stores/diffStore";
 import { handleSlashCommandPopupKey, useSlashCommand } from "@/components/chat/useSlashCommand";
 import type { Command } from "@/components/chat/useSlashCommand";
 import { SlashCommandPopup } from "@/components/chat/SlashCommandPopup";
-import { useReplyStore } from "@/stores/replyStore";
 import { useQueueStore } from "@/stores/queueStore";
 import { attachmentAcceptAttribute, isGoalOpen } from "@mcode/contracts";
 import type { MessageMention, SelectedTextComment } from "@mcode/contracts";
@@ -311,8 +310,6 @@ export function Composer({
   // doesn't briefly render the popover trigger and snap to inline buttons.
   const showInlineComposerOptions = showComposerOptionsInline(composerWidth);
 
-  const replyContext = useReplyStore((s) => threadId ? s.replyByThread[threadId] : undefined);
-  const clearReply = useReplyStore((s) => s.clearReply);
   const planPreview = usePlanStore((s) =>
     threadId ? s.livePreviewByThread[threadId] : undefined,
   );
@@ -520,24 +517,6 @@ export function Composer({
       }
     },
   });
-  // Dismiss reply when the user clicks outside both the composer and any message bubble.
-  // Portaled overlays (popovers, dropdowns) render outside the composer DOM tree,
-  // so we also check for popover-content markers to avoid false dismissals.
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (!threadId) return;
-      const target = e.target as Element;
-      const composerEl = composerContainerRef.current;
-      if (composerEl && !composerEl.contains(target)) {
-        if (target.closest?.("[data-message-id]")) return;
-        if (target.closest?.('[data-slot="popover-content"], [role="dialog"], [role="listbox"], [role="menu"]')) return;
-        clearReply(threadId);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [threadId, clearReply]);
-
   const handleStop = useCallback(() => {
     if (threadId) {
       stopAgent(threadId);
@@ -561,7 +540,6 @@ export function Composer({
     annotationScopeId,
     handoffStatus,
     form,
-    replyContext,
   });
 
   const handlePrReview = useCallback(async () => {
@@ -597,7 +575,6 @@ export function Composer({
     form,
     execution,
     queue: submissionQueue,
-    replyContext,
     onBranchModeExit,
     onThreadCreated,
     onThreadPreparing,
@@ -694,7 +671,6 @@ export function Composer({
             editingFromQueue,
             composerMode,
             isDragOver,
-            replyContext,
             detectedPullRequest: detectedPr,
             fetchingBranch: Boolean(fetchingBranch),
             effectiveProviderId: surfaceState.effectiveProviderId,
@@ -748,7 +724,6 @@ export function Composer({
             onDragLeave: handleDragLeave,
             onDragOver: handleDragOver,
             onDrop: handleAttachmentDrop,
-            onClearReply: clearReply,
             onReviewDetectedPullRequest: handlePrReview,
             onDismissDetectedPullRequest: dismissDetectedPr,
             onCancelEdit: cancelEditFromQueue,

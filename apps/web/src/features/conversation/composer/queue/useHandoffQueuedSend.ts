@@ -19,8 +19,6 @@ export interface HandoffQueuedSend {
   orchestrationMode?: OrchestrationMode;
   attachments: AttachmentMeta[];
   selection: ComposerAgentSelection;
-  replyToMessageId?: string;
-  quotedText?: string;
   browserCaptureSpillPaths?: string[];
 }
 
