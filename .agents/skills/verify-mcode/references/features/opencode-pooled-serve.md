@@ -32,5 +32,6 @@ Serve-pool mechanics without a model call (spawn, health, session create, abort,
 
 - Provider discovery does not check account login. Record a live authentication error as a blocked provider, then rerun after login. Missing OpenCode auth is a coverage gap, not a pass.
 - Model IDs are `provider/model` slugs from `provider.listModels` for `opencode` (for example `anthropic/claude-sonnet-4-6`), not bare model names.
+- Free-tier models can interrupt a turn under load; the harness records the phase and the next turn still dispatches. Treat isolated interruptions as flakiness, repeats as a defect.
 - The pool keys on binary path, working directory, and hostname. Proving isolation needs two threads in different worktrees, not two threads in one worktree.
 - A desktop reload needs `$electorn-live-testing`; this harness proves the public server conversation RPC only.

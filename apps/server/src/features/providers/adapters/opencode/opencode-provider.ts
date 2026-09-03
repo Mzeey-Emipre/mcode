@@ -37,6 +37,8 @@ interface OpenCodeTurnState {
   active: boolean;
   aborted: boolean;
   chain: Promise<void>;
+  /** Upstream message id to role, so user parts never become assistant deltas. */
+  messageRoles: Map<string, string>;
 }
 
 function nestedSessionId(holder: unknown): string | undefined {
@@ -59,13 +61,37 @@ function isMissingSessionError(error: unknown): boolean {
   return /\b404\b/.test(message);
 }
 
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Largest retained upstream message-role map per turn before pruning oldest. */
+const MAX_TRACKED_MESSAGE_ROLES = 256;
+
+function sessionIdOfNormalized(normalized: { properties: Record<string, unknown> }): string | undefined {
+  return nestedSessionId(normalized.properties)
+    ?? nestedSessionId(normalized.properties.info)
+    ?? nestedSessionId(normalized.properties.part);
+}
+
 /** Extract the upstream session id an SSE envelope belongs to, if any. */
 export function openCodeEnvelopeSessionId(envelope: unknown): string | undefined {
   const normalized = normalizeOpenCodeEnvelope(envelope);
   if (!normalized) return undefined;
-  return nestedSessionId(normalized.properties)
-    ?? nestedSessionId(normalized.properties.info)
-    ?? nestedSessionId(normalized.properties.part);
+  return sessionIdOfNormalized(normalized);
+}
+
+/** Resolve the tracked role of the message a part belongs to, if any. */
+function partRoleOf(
+  roles: ReadonlyMap<string, string>,
+  normalized: { type: string; properties: Record<string, unknown> },
+): string | undefined {
+  if (normalized.type !== "message.part.updated") return undefined;
+  const part = recordOf(normalized.properties.part);
+  const messageId = typeof part?.messageID === "string" ? part.messageID : undefined;
+  return messageId ? roles.get(messageId) : undefined;
 }
 
 /**
@@ -179,7 +205,6 @@ export class OpenCodeProvider extends NodeEvents.EventEmitter implements IAgentP
     await this.stopSession(sessionId);
     // Force the next sendTurn onto a fresh upstream session instead of
     // re-adopting the discarded one.
-    state.upstreamSessionId = "";
     this.turns.delete(sessionId);
   }
 
@@ -209,6 +234,7 @@ export class OpenCodeProvider extends NodeEvents.EventEmitter implements IAgentP
       active: false,
       aborted: false,
       chain: Promise.resolve(),
+      messageRoles: new Map<string, string>(),
     };
     this.turns.set(sessionId, created);
     return created;
@@ -364,13 +390,38 @@ export class OpenCodeProvider extends NodeEvents.EventEmitter implements IAgentP
     settler: OpenCodeTurnSettler,
   ): void {
     if (state.aborted) return;
-    const owner = openCodeEnvelopeSessionId(envelope);
-    if (owner && owner !== upstreamId) return;
     const threadId = this.threadIdFor(req.sessionId);
-    const mapped = mapOpenCodeEnvelope(envelope, { threadId, turnExecutionId: req.turnExecutionId });
+    const normalized = normalizeOpenCodeEnvelope(envelope);
+    if (normalized) {
+      this.trackMessageRole(state, normalized);
+      const owner = sessionIdOfNormalized(normalized);
+      if (owner && owner !== upstreamId) return;
+    }
+    const mapped = mapOpenCodeEnvelope(envelope, {
+      threadId,
+      turnExecutionId: req.turnExecutionId,
+      partRole: normalized ? partRoleOf(state.messageRoles, normalized) : undefined,
+    });
     this.forwardTurnEvents(mapped.events, req, threadId, settler);
     if (mapped.events.some((e) => e.type === AgentEventType.Error)) settler.settle("errored");
     else if (mapped.events.some((e) => e.type === AgentEventType.TurnComplete)) settler.settle("completed");
+  }
+
+  /** Remember upstream message roles so user parts stay out of assistant text. */
+  private trackMessageRole(
+    state: OpenCodeTurnState,
+    normalized: { type: string; properties: Record<string, unknown> },
+  ): void {
+    if (normalized.type !== "message.updated") return;
+    const info = recordOf(normalized.properties.info);
+    const id = typeof info?.id === "string" ? info.id : undefined;
+    const role = typeof info?.role === "string" ? info.role : undefined;
+    if (!id || !role) return;
+    state.messageRoles.set(id, role);
+    if (state.messageRoles.size > MAX_TRACKED_MESSAGE_ROLES) {
+      const oldest = state.messageRoles.keys().next().value as string | undefined;
+      if (oldest !== undefined) state.messageRoles.delete(oldest);
+    }
   }
 
   private forwardTurnEvents(

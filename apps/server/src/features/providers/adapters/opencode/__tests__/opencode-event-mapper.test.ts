@@ -50,4 +50,17 @@ describe("mapOpenCodeEnvelope", () => {
     expect(noise.disposition).toBe("ignored");
     expect(noise.reason).toBe("noise:todo.updated");
   });
+
+  it("never turns user message parts into assistant deltas", () => {
+    const userPart = mapOpenCodeEnvelope({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "ses_1",
+        part: { type: "text", id: "p1", sessionID: "ses_1", messageID: "msg_user" },
+        delta: "do the thing",
+      },
+    }, { ...CTX, partRole: "user" });
+    expect(userPart.disposition).toBe("state-only");
+    expect(userPart.events).toHaveLength(0);
+  });
 });

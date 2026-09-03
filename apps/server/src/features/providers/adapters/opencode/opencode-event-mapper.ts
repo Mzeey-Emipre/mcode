@@ -25,6 +25,8 @@ export interface OpenCodeMappedOutput {
 interface MapperContext {
   threadId: string;
   turnExecutionId?: string;
+  /** Role of the message the part belongs to, when the caller tracked it. */
+  partRole?: string;
 }
 
 interface NormalizedEnvelope {
@@ -209,6 +211,9 @@ function mapMessagePartUpdated(properties: Record<string, unknown>, ctx: MapperC
       reason: "part-without-body",
     };
   }
+  // User message parts share the session SSE feed. They must never become
+  // assistant deltas otherwise every reply echoes the prompt.
+  if (ctx.partRole === "user") return { disposition: "state-only", events: [] };
   return mapPartByType(part, properties, ctx);
 }
 
