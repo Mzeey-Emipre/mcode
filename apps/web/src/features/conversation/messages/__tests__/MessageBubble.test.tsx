@@ -146,7 +146,8 @@ describe("MessageBubble user messages", () => {
     });
   });
 
-  it("renders persisted selected-text comments as read-only transcript cards", () => {
+  it("renders persisted selected-text comments as read-only annotation chips", async () => {
+    const user = userEvent.setup();
     const message: Message = {
       ...makeMessage("Please explain this."),
       selectedTextComments: [{
@@ -154,8 +155,8 @@ describe("MessageBubble user messages", () => {
         displayNumber: 1,
         source: {
           threadId: "thread-1",
-          messageId: "assistant-1",
-          sourceRole: "assistant",
+          messageId: "completed-user-message",
+          sourceRole: "user",
           start: 3,
           end: 8,
           quote: "focus",
@@ -165,10 +166,32 @@ describe("MessageBubble user messages", () => {
       }],
     };
 
-    const { getByLabelText, getByText } = render(<MessageBubble message={message} />);
+    const { container, getByRole, getByTestId, queryByRole, queryByTestId } = render(<MessageBubble message={message} />);
+    const chip = getByRole("button", { name: "1 annotation. Preview available." });
+    const attachment = getByTestId("selected-text-comment-attachment");
+    const textBubble = container.querySelector("[data-selected-text-content]");
 
-    expect(getByLabelText("Selected text comment 1")).toHaveTextContent("focus");
-    expect(getByText("Explain this choice.")).toBeInTheDocument();
+    expect(attachment).toHaveAttribute("data-selected-text-exclude", "true");
+    expect(attachment.compareDocumentPosition(textBubble!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(attachment).toHaveClass("flex", "justify-end", "relative", "z-10");
+    expect(getByTestId("selected-text-comment-chip")).toHaveClass("h-8");
+    expect(queryByRole("button", { name: "Remove 1 annotation" })).not.toBeInTheDocument();
+
+    await user.hover(chip);
+
+    expect(getByTestId("selected-text-comment-preview")).toHaveTextContent("focus");
+    expect(getByTestId("selected-text-comment-preview")).toHaveTextContent("Explain this choice.");
+    expect(queryByRole("button", { name: "Open source for comment 1" })).not.toBeInTheDocument();
+    expect(queryByRole("button", { name: "Edit comment 1" })).not.toBeInTheDocument();
+    expect(queryByRole("button", { name: "Delete comment 1" })).not.toBeInTheDocument();
+
+    await user.unhover(chip);
+    await waitFor(() => {
+      expect(queryByTestId("selected-text-comment-preview")).not.toBeInTheDocument();
+    });
+    fireEvent.focus(chip);
+
+    expect(getByTestId("selected-text-comment-preview")).toHaveTextContent("focus");
   });
 
   it("preserves selected entity identity in the sent user bubble", () => {

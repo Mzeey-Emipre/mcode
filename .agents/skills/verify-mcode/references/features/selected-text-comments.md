@@ -50,11 +50,20 @@ The first Electron launch initializes `.dev/electron-live-testing/runtime/db/app
 
 The verifier writes `.dev/verification/selected-text-comments-action.png`, `.dev/verification/selected-text-comments-editor.png`, `.dev/verification/selected-text-comments-result.png`, and `.dev/verification/selected-text-comments.json`. The proof first selects the full list and checks that the action appears with the preferred 8px source-range gap. It then runs the editor workflow from one list item. It validates source docking and reconstructed-range reanchoring after scroll, two multiline saves, persistent highlights, numbered markers, marker keyboard editing and deletion, aggregate card navigation and deletion, aggregate removal, and dirty dismissal states. It also checks compact-editor text alignment and popup paint order over a source highlight. It covers a real secondary pointer click that the app does not prevent, editor focus and control boundaries, and typed skill and file chips.
 
+## Provider input and sent records
+
+The Electron proof does not send a provider turn. Focused server and web tests cover these flows:
+
+- An existing-thread message with typed text and a saved comment produces schema-delimited provider input and persists the comment.
+- A saved-comment-only message produces non-empty schema-delimited provider input and persists the comment.
+- Comments from completed user and assistant messages retain UUIDs, display numbers, source roles, UTF-16 offsets, quotes, notes, and typed mentions through persistence and hydration.
+- A sent user message renders the same compact chip and hover or focus preview as the composer. It sits above the user bubble at the right edge, and its preview paints above transcript content without clipping. The sent chip has no remove, edit, delete, or source actions.
+
 ## Gotchas
 
 - Stop Electron before the fixture setup and cleanup commands.
 - Cleanup removes its thread, message, and owned fixture skill. It does not delete the built-in `.dev/fixture-repo` workspace.
 - Automated desktop coverage uses a real secondary pointer click and proves that the app does not prevent it. It cannot inspect native OS menu rendering.
 - Setup creates one owned Claude fixture skill in `.dev/fixture-repo/.claude/skills/verification-comment/`. Cleanup removes it only when its path and contents still match the verifier.
-- The live UI proves visible chips and the composer draft. The focused editor test proves the hidden `MessageMention[]` payload without sending a provider turn.
+- The live UI proves visible chips and the composer draft. Focused tests prove the provider input and sent records without sending a provider turn.
 - The live proof exercises rendered-source markers, marker deletion with focus return, card navigation, and direct card deletion. Unavailable sources remain covered by focused UI tests.

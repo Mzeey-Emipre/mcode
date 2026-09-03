@@ -382,6 +382,55 @@ describe("ThreadHydrator", () => {
     ]);
   });
 
+  it("replaces optimistic selected-text comments with canonical user-source metadata", async () => {
+    const canonicalComments = [{
+      id: "550e8400-e29b-41d4-a716-446655440003",
+      displayNumber: 1,
+      source: {
+        threadId: THREAD_A,
+        messageId: "completed-user-message",
+        sourceRole: "user" as const,
+        start: 1,
+        end: 3,
+        quote: "😀",
+      },
+      note: "Canonical note.",
+      mentions: [],
+    }];
+    const optimisticMessage = createMockMessage({
+      id: "user-selected-comment",
+      thread_id: THREAD_A,
+      role: "user",
+      content: "Explain this.",
+      sequence: 8,
+      selectedTextComments: [{ ...canonicalComments[0]!, note: "Optimistic note." }],
+    });
+    const canonicalMessage = createMockMessage({
+      ...optimisticMessage,
+      selectedTextComments: canonicalComments,
+    });
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [canonicalMessage],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+    resetThreadStoreForTests({
+      records: new Map([[THREAD_A, makeCachedRecord([optimisticMessage])]]),
+    });
+
+    await hydrator.hydrate(THREAD_A, "active", { force: true });
+
+    expect(getTestActiveMessages()[0]?.selectedTextComments).toEqual(canonicalComments);
+    expect(getTestActiveMessages()[0]?.selectedTextComments?.[0]?.source).toEqual({
+      threadId: THREAD_A,
+      messageId: "completed-user-message",
+      sourceRole: "user",
+      start: 1,
+      end: 3,
+      quote: "😀",
+    });
+  });
+
   it("cache miss fetches a conversation page, commits store, and populates cache", async () => {
     await hydrator.hydrate(THREAD_A, "active");
 

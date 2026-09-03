@@ -52,6 +52,7 @@ function createAgentServiceHarness(automaticSetup?:
     readonly threadStartups: ThreadStartupService;
   }) => WorkspaceEnvironmentService),
   useGoalLifecycle = false,
+  threadBranching?: { create: ReturnType<typeof vi.fn> },
 ) {
   const db: Database.Database = openMemoryDatabase();
   const threadRepo = new ThreadRepo(db);
@@ -134,7 +135,7 @@ function createAgentServiceHarness(automaticSetup?:
     useGoalLifecycle ? undefined : goals as never,
     undefined,
     undefined,
-    undefined,
+    threadBranching as never,
     undefined,
     threadStartups,
   );
@@ -798,6 +799,57 @@ describe("AgentService.createAndSend defaults", () => {
       sessionId: `mcode-${thread.id}`,
       model: "claude-sonnet-4-6",
     })));
+  });
+
+  it("adds selected-text comments to a branched first-turn handoff and persists their metadata", async () => {
+    const threadBranching = { create: vi.fn() };
+    const { threadRepo, workspaceRepo, messageRepo, service, provider } = createAgentServiceHarness(
+      undefined,
+      false,
+      threadBranching,
+    );
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const parent = threadRepo.create(workspace.id, "Parent", "direct", "main", true, "claude");
+    const child = threadRepo.create(workspace.id, "Child", "direct", "branch/comment", true, "claude");
+    const comment = {
+      id: "550e8400-e29b-41d4-a716-446655440010",
+      displayNumber: 1,
+      source: {
+        threadId: parent.id,
+        messageId: "completed-user-message",
+        sourceRole: "user" as const,
+        start: 1,
+        end: 3,
+        quote: "😀",
+      },
+      note: "Explain the selected text.",
+      mentions: [],
+    };
+    threadBranching.create.mockResolvedValue({
+      thread: child,
+      providerWireOverride: "<branch-handoff>Historical context</branch-handoff>",
+    });
+
+    await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Continue from this branch.",
+      mode: "direct",
+      branch: "branch/comment",
+      parentThreadId: parent.id,
+      selectedTextComments: [comment],
+    });
+
+    await eventually(() => expect(provider.sendTurn).toHaveBeenCalledOnce());
+    const request = vi.mocked(provider.sendTurn).mock.calls[0]![0];
+    expect(request.message).toContain("<branch-handoff>Historical context</branch-handoff>");
+    expect(request.message.match(/<!-- mcode-selected-text-comments-v1 -->/g)).toHaveLength(1);
+    expect(request.message).toContain('"sourceRole":"user"');
+    expect(messageRepo.listByThread(child.id, 10).messages).toEqual([
+      expect.objectContaining({
+        content: "Continue from this branch.",
+        selectedTextComments: [comment],
+      }),
+    ]);
   });
 });
 

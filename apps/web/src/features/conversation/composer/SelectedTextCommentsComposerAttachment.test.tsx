@@ -59,6 +59,111 @@ afterEach(() => {
 });
 
 describe("SelectedTextCommentsComposerAttachment", () => {
+  it("keeps composer padding while right-aligning read-only sent annotations", () => {
+    const handlers = {
+      onRemove: vi.fn(),
+      onOpenSource: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onFocusComposer: vi.fn(),
+      onSave: vi.fn(),
+      onEditorChange: vi.fn(),
+    };
+    const { getByTestId, rerender } = render(
+      <SelectedTextCommentsComposerAttachment comments={[comments[0]!]} {...handlers} />,
+    );
+
+    expect(getByTestId("selected-text-comment-attachment")).toHaveClass("px-3", "pt-2");
+
+    rerender(<SelectedTextCommentsComposerAttachment comments={[comments[0]!]} readOnly {...handlers} />);
+
+    expect(getByTestId("selected-text-comment-attachment")).toHaveClass("relative", "z-10", "flex", "justify-end", "pt-2");
+    expect(getByTestId("selected-text-comment-attachment")).not.toHaveClass("px-3");
+  });
+
+  it("opens a sent preview below its chip when the message viewport has no room above", async () => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+      if (this.classList.contains("overflow-y-auto")) return new DOMRect(0, 100, 1_000, 600);
+      if (this.dataset.testid === "selected-text-comment-preview") return new DOMRect(0, 0, 600, 200);
+      if (this.classList.contains("inline-flex") && this.classList.contains("relative")) return new DOMRect(700, 140, 160, 32);
+      return new DOMRect();
+    });
+    const handlers = {
+      onRemove: vi.fn(),
+      onOpenSource: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onFocusComposer: vi.fn(),
+      onSave: vi.fn(),
+      onEditorChange: vi.fn(),
+    };
+    const user = userEvent.setup();
+    render(
+      <div data-testid="message-list">
+        <div className="overflow-y-auto">
+          <SelectedTextCommentsComposerAttachment comments={[comments[0]!]} readOnly {...handlers} />
+        </div>
+      </div>,
+    );
+
+    await user.hover(screen.getByRole("button", { name: "1 annotation. Preview available." }));
+
+    const preview = screen.getByTestId("selected-text-comment-preview");
+    expect(preview).toHaveClass("top-[calc(100%+0.25rem)]");
+    await user.hover(preview);
+    expect(preview).toHaveClass("top-[calc(100%+0.25rem)]");
+    rectSpy.mockRestore();
+  });
+
+  it("anchors a sent preview inside the message viewport's right inset", async () => {
+    const handlers = {
+      onRemove: vi.fn(),
+      onOpenSource: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onFocusComposer: vi.fn(),
+      onSave: vi.fn(),
+      onEditorChange: vi.fn(),
+    };
+    const user = userEvent.setup();
+    render(
+      <div data-testid="message-list" className="px-8">
+        <SelectedTextCommentsComposerAttachment comments={[comments[0]!]} readOnly {...handlers} />
+      </div>,
+    );
+
+    await user.hover(screen.getByRole("button", { name: "1 annotation. Preview available." }));
+
+    const preview = screen.getByTestId("selected-text-comment-preview");
+    expect(preview).toHaveClass("right-0", "left-auto");
+    expect(preview).not.toHaveClass("left-0");
+  });
+
+  it("assigns each attachment chip its own preview relationship", () => {
+    const handlers = {
+      onRemove: vi.fn(),
+      onOpenSource: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onFocusComposer: vi.fn(),
+      onSave: vi.fn(),
+      onEditorChange: vi.fn(),
+    };
+    render(
+      <>
+        <SelectedTextCommentsComposerAttachment comments={comments} {...handlers} />
+        <SelectedTextCommentsComposerAttachment comments={comments} {...handlers} />
+      </>,
+    );
+
+    const previewIds = screen
+      .getAllByRole("button", { name: "2 annotations. Preview available." })
+      .map((button) => button.getAttribute("aria-controls"));
+
+    expect(previewIds).toEqual([expect.any(String), expect.any(String)]);
+    expect(new Set(previewIds).size).toBe(2);
+  });
+
   it("shows an annotation preview with navigation-only source cards and direct removal", async () => {
     const user = userEvent.setup();
     const { onDelete, onEdit, onOpenSource, onRemove } = renderAttachment({
@@ -74,6 +179,7 @@ describe("SelectedTextCommentsComposerAttachment", () => {
 
     const preview = screen.getByTestId("selected-text-comment-preview");
     expect(preview).toHaveClass("w-[min(38rem,calc(100vw-1.5rem))]");
+    expect(preview).toHaveClass("bottom-[calc(100%+0.25rem)]");
     const firstItem = within(preview).getByTestId("selected-text-comment-preview-item-1");
     expect(firstItem).toHaveTextContent(/1\. Selected text:[\s\S]*First quote[\s\S]*User comment:[\s\S]*First note/);
     expect(within(preview).getByText("2. Selected text:")).toBeVisible();
