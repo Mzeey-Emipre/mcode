@@ -474,8 +474,6 @@ describe("MessageList thread switch", () => {
     );
     mockSelectedTextViewport(container);
     const content = getByText("Select this phrase");
-    const contextMenuSpy = vi.fn();
-    content.addEventListener("contextmenu", contextMenuSpy);
     const text = content.firstChild!;
     const selection = document.getSelection()!;
     const range = document.createRange();
@@ -487,9 +485,9 @@ describe("MessageList thread switch", () => {
     fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
     fireEvent.click(content, { button: 0, clientX: 24, clientY: 24 });
 
-    expect(contextMenuSpy).not.toHaveBeenCalled();
     const addComment = getByRole("button", { name: "Add comment" });
     expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(fireEvent.contextMenu(content, { button: 2, clientX: 24, clientY: 24 })).toBe(true);
 
     fireEvent.click(addComment);
     expect(getByRole("dialog", { name: "Comment on selected text" })).toBeInTheDocument();
@@ -502,7 +500,6 @@ describe("MessageList thread switch", () => {
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
     expect(getByRole("button", { name: "Close comment editor" })).toBeInTheDocument();
     selection.removeAllRanges();
-    content.removeEventListener("contextmenu", contextMenuSpy);
   });
 
   it("closes the selected-text editor when mounted canonical content no longer reconstructs", async () => {

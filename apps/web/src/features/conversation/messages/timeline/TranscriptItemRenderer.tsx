@@ -21,8 +21,6 @@ export interface TranscriptItemRendererProps {
   turnExpandRef?: RefObject<Map<string, boolean>>;
   /** Activates branch mode from a message. */
   onBranch?: (messageId: string) => void;
-  /** Activates reply mode from a message. */
-  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Opens a selected canonical child through the composition root. */
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's subagent roster. */
@@ -45,7 +43,6 @@ type MessageTranscriptItem = Extract<ChatVirtualItem, { type: "message" }>;
 function MessageTranscriptItemRenderer({
   item,
   onBranch,
-  onReply,
   onScrollToMessage,
   currentTurnMessageIdByThread,
   showParentAgentProvenance,
@@ -62,7 +59,6 @@ function MessageTranscriptItemRenderer({
       <MessageBubble
         message={messageItem.message}
         onBranch={agentActionsDisabled ? undefined : onBranch}
-        onReply={agentActionsDisabled ? undefined : onReply}
         onScrollToMessage={onScrollToMessage}
         agentDisplayState={messageItem.agentDisplayState}
         showParentAgentProvenance={showParentAgentProvenance}
@@ -216,7 +212,6 @@ function sameTranscriptItemHandlers(
   next: TranscriptItemRendererProps,
 ): boolean {
   return previous.onBranch === next.onBranch
-    && previous.onReply === next.onReply
     && previous.onSubagentSelect === next.onSubagentSelect
     && previous.onOpenSubagents === next.onOpenSubagents
     && previous.onScrollToMessage === next.onScrollToMessage;
@@ -238,7 +233,6 @@ export const TranscriptItemRenderer = memo(function TranscriptItemRenderer({
   item,
   turnExpandRef,
   onBranch,
-  onReply,
   onSubagentSelect,
   onOpenSubagents,
   onScrollToMessage,
@@ -252,7 +246,6 @@ export const TranscriptItemRenderer = memo(function TranscriptItemRenderer({
       item={item}
       turnExpandRef={turnExpandRef}
       onBranch={onBranch}
-      onReply={onReply}
       onSubagentSelect={onSubagentSelect}
       onOpenSubagents={onOpenSubagents}
       onScrollToMessage={onScrollToMessage}

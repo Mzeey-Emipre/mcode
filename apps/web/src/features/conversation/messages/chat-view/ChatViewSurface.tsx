@@ -57,8 +57,6 @@ const NEW_THREAD_STARTERS = [
 export interface ChatViewInteractions {
   /** Opens inline fork mode from a transcript message. */
   onBranch: (messageId: string) => void;
-  /** Opens inline reply mode from a transcript message. */
-  onReply: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Starts a selected-text comment in the composer. */
   onSelectedTextComment: (comment: SelectedTextComment) => void;
   /** Removes one saved selected-text comment from the active Composer draft. */
@@ -430,7 +428,6 @@ function ChatMessageStage({ state, interactions, automaticSetup, selectedTextCom
     : undefined;
   const messageListProps = {
     onBranch: interactions.onBranch,
-    onReply: interactions.onReply,
     onSelectedTextComment: interactions.onSelectedTextComment,
     onDeleteSelectedTextComment: interactions.onDeleteSelectedTextComment,
     onSelectedTextCommentEditorChange: interactions.onSelectedTextCommentEditorChange,

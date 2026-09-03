@@ -290,8 +290,6 @@ export interface MessageListProps {
   afterFirstUserContent?: ReactNode;
   /** Called when the user clicks the branch icon on a message. */
   onBranch?: (messageId: string) => void;
-  /** Called when the user uses a message reply control. */
-  onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Adds one selected-text comment to the active Composer draft. */
   onSelectedTextComment?: (comment: SelectedTextComment) => void;
   /** Removes one saved selected-text comment from the active Composer draft. */
@@ -326,7 +324,6 @@ export function MessageList({
   leadingContent,
   afterFirstUserContent,
   onBranch,
-  onReply,
   onSelectedTextComment,
   onDeleteSelectedTextComment,
   onSelectedTextCommentEditorChange,
@@ -1441,7 +1438,7 @@ export function MessageList({
                   {item.type === "leading-content" || item.type === "after-first-user-content" ? (
                     <div data-testid="message-list-leading-content">{item.content}</div>
                   ) : (
-                    <TranscriptItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
+                    <TranscriptItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
                   )}
                 </div>
               </div>
