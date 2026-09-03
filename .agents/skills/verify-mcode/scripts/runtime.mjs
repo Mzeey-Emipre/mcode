@@ -40,7 +40,7 @@ const RUNTIME_SOURCE_DIRECTORIES = [
   ["packages", "providers", "src"],
   ["packages", "shared", "src"],
 ];
-const PROVIDERS = new Set(["codex", "claude", "cursor"]);
+const PROVIDERS = new Set(["codex", "claude", "cursor", "opencode"]);
 const SCENARIOS = new Set(["completion", "stop"]);
 const FOCUSED_TEST_FILES = [
   "src/features/agents/composition/__tests__/agent-service-container.test.ts",
@@ -82,7 +82,7 @@ Commands:
       Run focused AgentService/event tests and bun run lint.
   inspect
       Read active runtime and workspace summaries through the authenticated WebSocket RPC API.
-  live --provider <codex|claude|cursor> --model <id> --scenario <completion|stop> --confirm-provider-call [--keep-thread]
+  live --provider <codex|claude|cursor|opencode> --model <id> --scenario <completion|stop> --confirm-provider-call [--keep-thread]
       Make one confirmed provider call in the registered current-worktree workspace. Does not start a runtime.
   worktree-setup --confirm-cleanup
       Create an owned Git project, verify its held automatic Setup gate, cancel Setup through the public API, then remove the project, workspace, thread, and worktree. Does not make a provider call.
@@ -177,7 +177,7 @@ function setLiveOption(options, option, value) {
 }
 
 function validateLiveOptions(options, provider, model, scenario) {
-  if (!PROVIDERS.has(provider)) throw cliError("--provider must be codex, claude, or cursor");
+  if (!PROVIDERS.has(provider)) throw cliError("--provider must be codex, claude, cursor, or opencode");
   if (typeof model !== "string" || !/^[^\s]{1,256}$/.test(model)) throw cliError("--model must be a non-empty ID of at most 256 non-space characters");
   if (!SCENARIOS.has(scenario)) throw cliError("--scenario must be completion or stop");
   if (options.has("--confirm-provider-call")) return;
