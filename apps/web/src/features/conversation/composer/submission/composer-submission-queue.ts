@@ -4,17 +4,15 @@ import { stripPreviewAnnotationFence } from "@/features/preview/capture/preview-
 import { usePreviewAnnotationStore } from "@/features/preview/state/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/features/preview/state/previewDesignModeStore";
 import { useQueueStore } from "@/stores/queueStore";
-import { useReplyStore } from "@/stores/replyStore";
 import { useToastStore } from "@/stores/toastStore";
 import type { ComposerAgentSelection, ComposerFormController } from "../draft/useComposerFormController";
 import type { ComposerQueueEdit } from "../queue/useComposerQueueEditing";
 import type { HandoffQueuedSend } from "../queue/useHandoffQueuedSend";
-import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
+import type { PreparedComposerSubmission } from "./composer-submission-types";
 
 /** Inputs for creating a deferred handoff payload. */
 export interface CreateHandoffQueuedSendOptions {
   submission: PreparedComposerSubmission;
-  replyContext?: ComposerReplyContext;
 }
 
 /** Inputs for persisting a queued existing-thread submit. */
@@ -22,12 +20,10 @@ export interface QueueComposerSubmissionOptions {
   threadId?: string;
   editing: ComposerQueueEdit | null;
   submission: PreparedComposerSubmission;
-  replyContext?: ComposerReplyContext;
 }
 
 /** Inputs for finishing a Composer submit that entered a queue. */
 export interface CompleteQueuedComposerSubmissionOptions {
-  threadId?: string;
   annotationScopeId?: string;
   annotations?: PreviewAnnotationBundle;
   goalObjective?: string;
@@ -39,7 +35,6 @@ export interface CompleteQueuedComposerSubmissionOptions {
 /** Creates the full payload retained while a child-thread handoff is generating. */
 export function createHandoffQueuedSend({
   submission,
-  replyContext,
 }: CreateHandoffQueuedSendOptions): HandoffQueuedSend {
   const { snapshot, prepared } = submission;
   const browserCaptureSpillPaths = collectBrowserCaptureSpillPaths(prepared.browserCaptures);
@@ -52,8 +47,6 @@ export function createHandoffQueuedSend({
     orchestrationMode: snapshot.selection.orchestrationMode,
     attachments: submission.attachmentMetas,
     selection: snapshot.selection,
-    replyToMessageId: replyContext?.messageId,
-    quotedText: replyContext?.quotedText,
     browserCaptureSpillPaths: browserCaptureSpillPaths.length > 0 ? browserCaptureSpillPaths : undefined,
   };
 }
@@ -63,11 +56,10 @@ export function queueComposerSubmission({
   threadId,
   editing,
   submission,
-  replyContext,
 }: QueueComposerSubmissionOptions): boolean {
   if (!threadId) return false;
   const spillPaths = collectBrowserCaptureSpillPaths(submission.prepared.browserCaptures);
-  const payload = createPersistentQueuePayload(submission, replyContext, spillPaths);
+  const payload = createPersistentQueuePayload(submission, spillPaths);
   const enqueued = editing
     ? useQueueStore.getState().insertAt(threadId, editing.originalIndex, payload)
     : useQueueStore.getState().enqueue(threadId, payload);
@@ -77,7 +69,6 @@ export function queueComposerSubmission({
 
 /** Applies the shared UI cleanup after a queued submit is accepted. */
 export function completeQueuedComposerSubmission({
-  threadId,
   annotationScopeId,
   annotations,
   goalObjective,
@@ -90,14 +81,12 @@ export function completeQueuedComposerSubmission({
   if (goalObjective) form.setGoalPending(false);
   if (editing) showQueueEditSaved(editing);
   finishEditing();
-  if (threadId) useReplyStore.getState().clearReply(threadId);
   form.focus();
 }
 
 /** Maps a prepared submit onto the persistent queue-store representation. */
 function createPersistentQueuePayload(
   submission: PreparedComposerSubmission,
-  replyContext: ComposerReplyContext | undefined,
   browserCaptureSpillPaths: string[],
 ) {
   const { snapshot, prepared } = submission;
@@ -118,8 +107,6 @@ function createPersistentQueuePayload(
     thinking: selection.thinking ?? undefined,
     codexFastMode: optionalCodexFastMode(selection),
     goalObjective: submission.goalObjective,
-    replyToMessageId: replyContext?.messageId,
-    quotedText: replyContext?.quotedText,
     browserCaptureSpillPaths: browserCaptureSpillPaths.length > 0 ? browserCaptureSpillPaths : undefined,
   };
 }

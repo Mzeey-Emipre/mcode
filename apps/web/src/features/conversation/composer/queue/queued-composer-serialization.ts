@@ -6,12 +6,6 @@ import type { QueuedMessage } from "@/stores/queueStore";
 import { createComposerSubmission } from "../submission/composer-submission";
 import type { ComposerAgentSelection } from "../draft/composer-selection-state";
 
-/** Reply context that remains attached to a queued Composer message. */
-export interface QueuedComposerReplyContext {
-  messageId: string;
-  quotedText?: string;
-}
-
 /** Inputs that serialize one Composer form into durable queue state. */
 export interface QueuedComposerSerializationInput {
   attachments: PendingAttachment[];
@@ -20,7 +14,6 @@ export interface QueuedComposerSerializationInput {
   previewAnnotations?: PreviewAnnotationBundle;
   selection: ComposerAgentSelection;
   goalPending: boolean;
-  replyContext?: QueuedComposerReplyContext;
 }
 
 function serializeQueuedAttachments(
@@ -72,7 +65,6 @@ export function serializeQueuedComposerForm({
   previewAnnotations,
   selection,
   goalPending,
-  replyContext,
 }: QueuedComposerSerializationInput): Omit<QueuedMessage, "id" | "queuedAt"> {
   const submission = createComposerSubmission({
     rawInput: input,
@@ -89,8 +81,6 @@ export function serializeQueuedComposerForm({
     attachments: serializeQueuedAttachments(attachments),
     ...serializeQueuedSelection(selection),
     goalObjective: goalPending ? input.trim() : undefined,
-    replyToMessageId: replyContext?.messageId,
-    quotedText: replyContext?.quotedText,
     browserCaptureSpillPaths:
       browserCaptureSpillPaths.length > 0 ? browserCaptureSpillPaths : undefined,
   };

@@ -5,7 +5,7 @@ import { usePreviewAnnotationStore } from "@/features/preview/state/previewAnnot
 import { usePreviewDesignModeStore } from "@/features/preview/state/previewDesignModeStore";
 import { useComposerQueueEditing } from "../queue/useComposerQueueEditing";
 import { useQueuedMessageDispatch } from "../queue/useQueuedMessageDispatch";
-import { createQueuedComposerPayload, type QueuedComposerReplyContext } from "../queue/createQueuedComposerPayload";
+import { createQueuedComposerPayload } from "../queue/createQueuedComposerPayload";
 import { useComposerHandoffDispatch } from "./useComposerHandoffDispatch";
 
 type HandoffStatus = "generating" | "ready" | "fallback" | "error" | undefined;
@@ -16,7 +16,6 @@ export interface UseComposerQueueControllerOptions {
   annotationScopeId?: string;
   handoffStatus: HandoffStatus;
   form: ComposerFormController;
-  replyContext?: QueuedComposerReplyContext;
 }
 
 /** Owns handoff deferral, queue editing, and explicit queued-message dispatch for one Composer. */
@@ -25,7 +24,6 @@ export function useComposerQueueController({
   annotationScopeId,
   handoffStatus,
   form,
-  replyContext,
 }: UseComposerQueueControllerOptions) {
   const setPreviewDesignModeActive = usePreviewDesignModeStore((state) => state.setActive);
   const clearAnnotations = useCallback(() => {
@@ -55,7 +53,6 @@ export function useComposerQueueController({
               : undefined) ?? restoredPreviewAnnotations,
           selection: form.state.selection,
           goalPending: form.state.goalPending,
-          replyContext,
         }),
       restore: form.restoreQueued,
       clear: () => {
@@ -63,7 +60,7 @@ export function useComposerQueueController({
       },
       invalidateAttachments: form.attachmentBindings.invalidatePreparation,
     }),
-    [annotationScopeId, form, replyContext],
+    [annotationScopeId, form],
   );
   const annotationsForQueueEdit = useMemo(
     () => ({ restore: restoreAnnotations, clear: clearAnnotations }),

@@ -7,7 +7,7 @@ import type {
 } from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
-import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
+import type { PreparedComposerSubmission } from "./composer-submission-types";
 
 /** A normalized Composer payload that can be sent to an existing thread. */
 export interface ComposerThreadMessagePayload {
@@ -20,8 +20,6 @@ export interface ComposerThreadMessagePayload {
   goalObjective?: string;
   orchestrationMode?: OrchestrationMode;
   selectedTextComments?: SelectedTextComment[];
-  replyToMessageId?: string;
-  quotedText?: string;
 }
 
 /** Sends one normalized Composer payload to its existing thread. */
@@ -43,8 +41,8 @@ export async function sendComposerThreadMessage(
     selection.contextWindow ?? undefined,
     selection.thinking ?? undefined,
     selection.provider === "codex" ? selection.codexFastMode ?? undefined : undefined,
-    payload.replyToMessageId,
-    payload.quotedText,
+    undefined,
+    undefined,
     undefined,
     payload.mentions,
     payload.previewAnnotations,
@@ -55,10 +53,9 @@ export async function sendComposerThreadMessage(
   if (!sent) throw new Error("Message dispatch failed");
 }
 
-/** Adapts a prepared submit and its reply context for existing-thread transport. */
+/** Adapts a prepared submit for existing-thread transport. */
 export function createPreparedThreadMessagePayload(
   submission: PreparedComposerSubmission,
-  replyContext: ComposerReplyContext | undefined,
 ): ComposerThreadMessagePayload {
   return {
     content: submission.prepared.content,
@@ -72,7 +69,5 @@ export function createPreparedThreadMessagePayload(
     selectedTextComments: submission.snapshot.selectedTextComments.length > 0
       ? submission.snapshot.selectedTextComments
       : undefined,
-    replyToMessageId: replyContext?.messageId,
-    quotedText: replyContext?.quotedText,
   };
 }

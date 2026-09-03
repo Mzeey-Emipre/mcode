@@ -1,6 +1,5 @@
 import { releaseBrowserCaptureSpills } from "@/features/preview/capture/browser-capture-spill";
 import { useQueueStore } from "@/stores/queueStore";
-import { useReplyStore } from "@/stores/replyStore";
 import type { HandoffQueuedSend } from "../queue/useHandoffQueuedSend";
 import { sendComposerThreadMessage } from "./composer-thread-message";
 
@@ -10,7 +9,6 @@ export async function dispatchHandoffQueuedSend(
   queued: HandoffQueuedSend,
 ): Promise<void> {
   await sendComposerThreadMessage(threadId, queued);
-  clearDispatchedReply(threadId, queued.replyToMessageId);
 }
 
 /** Returns a delayed send to the thread queue when its eventual transport fails. */
@@ -44,16 +42,6 @@ function createHandoffQueuePayload(queued: HandoffQueuedSend) {
     thinking: selection.thinking ?? undefined,
     codexFastMode: selection.provider === "codex" ? selection.codexFastMode ?? undefined : undefined,
     goalObjective: queued.goalObjective,
-    replyToMessageId: queued.replyToMessageId,
-    quotedText: queued.quotedText,
     browserCaptureSpillPaths: queued.browserCaptureSpillPaths,
   };
-}
-
-/** Removes a reply context only when it still matches the dispatched payload. */
-function clearDispatchedReply(threadId: string, replyToMessageId: string | undefined): void {
-  const activeReply = useReplyStore.getState().getReply(threadId);
-  if (replyToMessageId && activeReply?.messageId === replyToMessageId) {
-    useReplyStore.getState().clearReply(threadId);
-  }
 }

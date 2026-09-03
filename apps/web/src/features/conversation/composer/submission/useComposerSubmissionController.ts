@@ -20,7 +20,7 @@ import {
   dispatchComposerTarget,
   isComposerTargetReady,
 } from "./composer-submission-routes";
-import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
+import type { PreparedComposerSubmission } from "./composer-submission-types";
 import { prepareComposerSubmission } from "./prepare-composer-submission";
 import { shouldQueueActiveThreadSubmit } from "./composer-submit-policy";
 
@@ -55,7 +55,6 @@ export interface UseComposerSubmissionControllerOptions {
   form: ComposerFormController;
   execution: ComposerExecutionTargetController;
   queue: ComposerSubmissionQueue;
-  replyContext?: ComposerReplyContext;
   onBranchModeExit?(): void;
   onThreadCreated?(thread: Thread): void;
   onThreadPreparing?(thread: WorkspaceThread): void;
@@ -77,7 +76,6 @@ export function useComposerSubmissionController({
   form,
   execution,
   queue,
-  replyContext,
   onBranchModeExit,
   onThreadCreated,
   onThreadPreparing,
@@ -91,7 +89,6 @@ export function useComposerSubmissionController({
   const completeQueued = useCallback(
     (submission: PreparedComposerSubmission): void => {
       completeQueuedComposerSubmission({
-        threadId,
         annotationScopeId,
         annotations: submission.currentAnnotations,
         goalObjective: submission.goalObjective,
@@ -100,7 +97,7 @@ export function useComposerSubmissionController({
         finishEditing: queue.finishEditing,
       });
     },
-    [annotationScopeId, form, queue.editing, queue.finishEditing, threadId],
+    [annotationScopeId, form, queue.editing, queue.finishEditing],
   );
 
   const queuePrepared = useCallback(
@@ -109,12 +106,11 @@ export function useComposerSubmissionController({
         threadId,
         editing: queue.editing,
         submission,
-        replyContext,
       });
       if (queued) completeQueued(submission);
       return queued;
     },
-    [completeQueued, queue.editing, replyContext, threadId],
+    [completeQueued, queue.editing, threadId],
   );
 
   const executePreparedDispatch = useCallback(
@@ -140,7 +136,6 @@ export function useComposerSubmissionController({
         target,
         execution,
         submission,
-        replyContext,
         onBranchModeExit,
         onThreadCreated,
         onThreadPreparing,
@@ -157,14 +152,12 @@ export function useComposerSubmissionController({
       }
       annotations.stopWatching();
       completeSuccessfulComposerSubmission({
-        threadId,
         form,
         submission,
-        replyContext,
         finishEditing: queue.finishEditing,
       });
     },
-    [activeThread, annotationScopeId, branchFromMessageId, execution, form, isAgentRunning, isNewThread, onBranchModeExit, onThreadCreated, onThreadCreationFailed, onThreadPreparing, queue.finishEditing, queuePrepared, replyContext, threadId, workspaceId],
+    [activeThread, annotationScopeId, branchFromMessageId, execution, form, isAgentRunning, isNewThread, onBranchModeExit, onThreadCreated, onThreadCreationFailed, onThreadPreparing, queue.finishEditing, queuePrepared, threadId, workspaceId],
   );
 
   const runSubmissionAttempt = useCallback(async (): Promise<SubmitAttemptOutcome> => {
@@ -179,7 +172,7 @@ export function useComposerSubmissionController({
     if (!submission) return "complete";
     if (submission.snapshot.selectedTextComments.length === 0
       && shouldDeferToHandoff({ threadId, branchFromMessageId, isNewThread })
-      && queue.queueIfGenerating(createHandoffQueuedSend({ submission, replyContext }))) {
+      && queue.queueIfGenerating(createHandoffQueuedSend({ submission }))) {
       completeQueued(submission);
       return "complete";
     }
@@ -202,7 +195,7 @@ export function useComposerSubmissionController({
     if (checkoutPending) return "checkout-pending";
     await executePreparedDispatch(submission, target);
     return "complete";
-  }, [annotationScopeId, branchFromMessageId, completeQueued, executePreparedDispatch, execution, form, isAgentRunning, isNewThread, isThreadScaffold, queue, queuePrepared, replyContext, threadId, workspaceId]);
+  }, [annotationScopeId, branchFromMessageId, completeQueued, executePreparedDispatch, execution, form, isAgentRunning, isNewThread, isThreadScaffold, queue, queuePrepared, threadId, workspaceId]);
 
   const submit = useCallback(async () => {
     if (submitInFlightRef.current) return;
