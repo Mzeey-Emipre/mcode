@@ -142,6 +142,8 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       type: z.literal(AgentEventType.System),
       threadId: z.string(),
       subtype: z.string(),
+      /** Bounded provider-neutral notice text for renderer presentation. */
+      message: z.string().max(1_000).optional(),
     }),
     z.object({
       /** Emitted when the SDK starts or finishes compacting the context window. */

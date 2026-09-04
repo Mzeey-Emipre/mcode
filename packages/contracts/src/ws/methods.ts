@@ -113,7 +113,11 @@ import {
   ProviderCatalogSnapshotSchema,
 } from "../providers/capability-catalog.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
-import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
+import {
+  PermissionDecisionSchema,
+  PermissionRequestSchema,
+  PermissionResponseAnswersSchema,
+} from "../models/permission.js";
 import { GoalLookupResultSchema, GoalObjectiveSchema } from "../models/goal.js";
 import {
   CanonicalAgentReconnectRecoverySchema,
@@ -1131,6 +1135,7 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({
       requestId: z.string(),
       decision: PermissionDecisionSchema,
+      answers: PermissionResponseAnswersSchema().optional(),
     }),
     result: z.void(),
   },

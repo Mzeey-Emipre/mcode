@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 
-import { isRuntimeHarnessEvidenceFile } from "./runtime.mjs";
+import { isOpenCodeSessionInvalidatedEvent, isRuntimeHarnessEvidenceFile } from "./runtime.mjs";
 
 const CLI = NodePath.join(import.meta.dirname, "verify-mcode.mjs");
 const BROWSER_PROOF = NodePath.join(import.meta.dirname, "browser-opencode-proof.mjs");
@@ -53,4 +53,9 @@ NodeTest.test("cleans only OpenCode resume artifacts created by the runtime veri
   NodeAssertStrict.equal(isRuntimeHarnessEvidenceFile("2026-09-04T12-34-56-789Z-opencode-resume-receipt.json"), true);
   NodeAssertStrict.equal(isRuntimeHarnessEvidenceFile("2026-09-04T12-34-56-789Z-opencode-resume-timeline.html"), true);
   NodeAssertStrict.equal(isRuntimeHarnessEvidenceFile("2026-09-04T12-34-56-789Z-opencode-resume-notes.txt"), false);
+});
+
+NodeTest.test("recognizes the provider-neutral OpenCode session invalidation subtype", () => {
+  NodeAssertStrict.equal(isOpenCodeSessionInvalidatedEvent({ type: "system", subtype: "sdk_session_invalidated" }), true);
+  NodeAssertStrict.equal(isOpenCodeSessionInvalidatedEvent({ type: "system", subtype: "opencode:session-recreated" }), false);
 });

@@ -44,6 +44,7 @@ const PROVIDERS = new Set(["codex", "claude", "cursor", "opencode"]);
 const SCENARIOS = new Set(["completion", "stop", "subagent", "opencode-resume"]);
 const OPENCODE_RESUME_MODEL = "opencode/muse-spark-1.3-contributor-free";
 const OPENCODE_RESUME_WORKSPACE_NAME = "Verify OpenCode resume";
+const OPENCODE_SESSION_INVALIDATED_SUBTYPE = "sdk_session_invalidated";
 const FOCUSED_TEST_FILES = [
   "src/features/agents/composition/__tests__/agent-service-container.test.ts",
   "src/features/agents/orchestration/__tests__/agent-service-child-stop.test.ts",
@@ -1351,7 +1352,7 @@ async function proveOpenCodeResume(repoRoot, run) {
   const otherRecreatedSession = await requireOpenCodeSessionId(run.socket, workspace.id, otherThreadId, run.proofDeadline);
   const primaryFinalSession = await requireOpenCodeSessionId(run.socket, workspace.id, primaryThreadId, run.proofDeadline);
   const recreatedEvents = liveEventsAfter(run, otherThreadId, otherRecreatedStart);
-  resume.recreatedNoticeSeen = recreatedEvents.some((event) => event.type === "system" && event.subtype === "opencode:session-recreated");
+  resume.recreatedNoticeSeen = recreatedEvents.some(isOpenCodeSessionInvalidatedEvent);
   resume.recreatedSessionChanged = otherRecreatedSession !== otherInitialSession;
   resume.otherThreadSessionRetained = primaryFinalSession === primaryInitialSession;
 
@@ -1652,7 +1653,7 @@ function liveEventFromPush(push) {
     return {
       kind: "agent",
       type: push.data.type,
-      subtype: push.data.subtype === "opencode:session-recreated" ? push.data.subtype : undefined,
+      subtype: push.data.subtype === OPENCODE_SESSION_INVALIDATED_SUBTYPE ? push.data.subtype : undefined,
       elapsedMs: Date.now(),
     };
   }
@@ -1663,7 +1664,12 @@ function liveEventFromPush(push) {
 }
 
 function includeInReceipt(run, threadId, event) {
-  return threadId === run.threadId || event.subtype === "opencode:session-recreated";
+  return threadId === run.threadId || event.subtype === OPENCODE_SESSION_INVALIDATED_SUBTYPE;
+}
+
+/** True when a recorded runtime event is the provider-neutral session reset notice. */
+export function isOpenCodeSessionInvalidatedEvent(event) {
+  return event?.type === "system" && event.subtype === OPENCODE_SESSION_INVALIDATED_SUBTYPE;
 }
 
 function hasDurableAssistant(value) {

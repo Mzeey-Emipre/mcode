@@ -178,7 +178,7 @@ const agentHandlers: AgentRpcHandlerMap = {
   "thread.getTasks": (deps, params) => deps.taskRepo.get(params.threadId),
   "permission.respond": async (deps, params) => {
     if (await deps.threadControlService.respondToApproval(params.requestId, params.decision)) return;
-    deps.agentPermissionService.respondToPermission(params.requestId, params.decision);
+    deps.agentPermissionService.respondToPermission(params.requestId, params.decision, params.answers);
   },
   "permission.listPending": (deps, params) => [
     ...deps.threadControlService.listPendingApprovals(params.threadId),

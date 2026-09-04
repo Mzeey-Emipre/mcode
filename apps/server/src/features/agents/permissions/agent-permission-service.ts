@@ -1,8 +1,10 @@
 import {
   PermissionDecisionSchema,
   PermissionRequestSchema,
+  PermissionResponseAnswersSchema,
   type PermissionDecision,
   type PermissionRequest,
+  type PermissionResponseAnswers,
   type IProviderRegistry,
 } from "@mcode/contracts";
 import { inject, injectable } from "tsyringe";
@@ -14,10 +16,18 @@ export class AgentPermissionService {
   constructor(@inject("IProviderRegistry") private readonly providers: IProviderRegistry) {}
 
   /** Resolve one provider permission request after contract validation. */
-  respondToPermission(requestId: string, decision: PermissionDecision): void {
+  respondToPermission(
+    requestId: string,
+    decision: PermissionDecision,
+    answers?: PermissionResponseAnswers,
+  ): void {
     const validatedDecision = PermissionDecisionSchema.parse(decision);
+    const validatedAnswers = PermissionResponseAnswersSchema().optional().parse(answers);
     for (const provider of this.providers.resolveAll()) {
-      if (provider.resolvePermission?.(requestId, validatedDecision)) return;
+      const resolved = validatedAnswers === undefined
+        ? provider.resolvePermission?.(requestId, validatedDecision)
+        : provider.resolvePermission?.(requestId, validatedDecision, validatedAnswers);
+      if (resolved) return;
     }
     logger.warn("permission.respond: no provider holds requestId %s", requestId);
   }

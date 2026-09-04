@@ -1163,17 +1163,14 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     return [...segments.slice(0, -1), { ...last, endedAt: Date.now() }];
   };
 
-  const systemNoticeFor = (subtype: string): string | null => {
+  const systemNoticeFor = (subtype: string, message: string | undefined): string | null => {
     if (subtype === "session_restarted") {
       return "Session restarted. The agent no longer has context from earlier messages.";
     }
     if (subtype === "sdk_session_invalidated") {
       return "Session reset. Earlier context cleared. Send again to continue.";
     }
-    if (subtype === "opencode:session-recreated") {
-      return "OpenCode session recreated. Earlier context cleared. Send again to continue.";
-    }
-    return null;
+    return message ?? null;
   };
 
   const handleGoalUpdated = (event: Extract<AgentEvent, { type: "goalUpdated" }>): void => {
@@ -1185,7 +1182,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   };
 
   const handleSystemEvent = (event: Extract<AgentEvent, { type: "system" }>): void => {
-    const notice = systemNoticeFor(event.subtype);
+    const notice = systemNoticeFor(event.subtype, event.message);
     if (notice) appendMessageToThread(event.threadId, createSystemMessage(event.threadId, notice));
   };
 

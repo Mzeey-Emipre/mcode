@@ -105,6 +105,7 @@ function PermissionRequestTranscriptItemRenderer({ item }: TranscriptItemRendere
       toolName={request.toolName}
       input={request.input}
       title={request.title}
+      questions={request.questions}
       settled={request.settled}
       decision={request.decision}
     />

@@ -13,6 +13,16 @@ describe("AgentPermissionService", () => {
     expect(() => permissions.respondToPermission("request-1", "invalid" as never)).toThrow();
   });
 
+  it("forwards validated question answers without changing their labels", () => {
+    const provider = { resolvePermission: vi.fn(() => true) };
+    const permissions = new AgentPermissionService({ resolveAll: vi.fn(() => [provider]) } as never);
+
+    permissions.respondToPermission("question-1", "allow", [[" staging "]]);
+
+    expect(provider.resolvePermission).toHaveBeenCalledWith("question-1", "allow", [[" staging "]]);
+    expect(() => permissions.respondToPermission("question-1", "allow", [["  "]] as never)).toThrow();
+  });
+
   it("validates pending requests returned by providers", () => {
     const pendingRequest = {
       requestId: "request-1",
