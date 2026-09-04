@@ -41,7 +41,9 @@ const RUNTIME_SOURCE_DIRECTORIES = [
   ["packages", "shared", "src"],
 ];
 const PROVIDERS = new Set(["codex", "claude", "cursor", "opencode"]);
-const SCENARIOS = new Set(["completion", "stop", "subagent"]);
+const SCENARIOS = new Set(["completion", "stop", "subagent", "opencode-resume"]);
+const OPENCODE_RESUME_MODEL = "opencode/muse-spark-1.3-contributor-free";
+const OPENCODE_RESUME_WORKSPACE_NAME = "Verify OpenCode resume";
 const FOCUSED_TEST_FILES = [
   "src/features/agents/composition/__tests__/agent-service-container.test.ts",
   "src/features/agents/orchestration/__tests__/agent-service-child-stop.test.ts",
@@ -71,6 +73,7 @@ const FIXED_PROMPTS = {
   completion: "Reply with exactly: Agent runtime verification complete. Do not edit files or invoke tools.",
   stop: "Inspect this repository with read-only file-search and file-reading tools. Do not write files, change settings, or run mutating commands. Explain the repository structure in detail.",
   subagent: "Use exactly one subagent through provider-native collaboration. Give it this task: VERIFY_SUBAGENT_PARENT_TASK: wait five seconds without modifying files, then reply exactly VERIFY_SUBAGENT_CHILD_MESSAGE. After it finishes, reply exactly VERIFY_SUBAGENT_PARENT_DONE.",
+  "opencode-resume": "Reply with exactly: Agent runtime verification complete. Do not edit files or invoke tools.",
 };
 
 const HELP = `Verify Mcode runtime
@@ -85,8 +88,8 @@ Commands:
       Run focused AgentService/event tests and bun run lint.
   inspect
       Read active runtime and workspace summaries through the authenticated WebSocket RPC API.
-  live --provider <codex|claude|cursor|opencode> --model <id> --scenario <completion|stop|subagent> --confirm-provider-call [--keep-thread]
-      Make one confirmed provider call in the registered current-worktree workspace. Does not start a runtime.
+  live --provider <codex|claude|cursor|opencode> --model <id> --scenario <completion|stop|subagent|opencode-resume> --confirm-provider-call [--keep-thread]
+      Make one confirmed provider call in an owned or registered workspace. Does not start a runtime.
   worktree-setup --confirm-cleanup
       Create an owned Git project, verify its held automatic Setup gate, cancel Setup through the public API, then remove the project, workspace, thread, and worktree. Does not make a provider call.
   worktree-setup-cleanup --confirm-cleanup
@@ -105,7 +108,10 @@ Live limitation:
   The harness requests retained agent-event replay with cursor 0 immediately after creation. It cannot prove a pre-create subscription until the public contract adds a caller-supplied thread ID or workspace subscription.
 
 Stop proof:
-  The stop scenario requires agent.activeCount to reach 0 and agent.listRunning to retain the matching cancelled snapshot for reconnect hydration.`;
+  The stop scenario requires agent.activeCount to reach 0 and agent.listRunning to retain the matching cancelled snapshot for reconnect hydration.
+
+OpenCode resume proof:
+  The opencode-resume scenario requires --provider opencode and --model ${OPENCODE_RESUME_MODEL}. It creates and removes an owned temporary workspace, creates two owned direct threads, restarts only this worktree runtime, deletes one owned upstream session, and removes both threads after proof.`;
 
 async function main() {
   const parsed = parseArguments(process.argv.slice(2));
@@ -182,12 +188,19 @@ function setLiveOption(options, option, value) {
 function validateLiveOptions(options, provider, model, scenario) {
   if (!PROVIDERS.has(provider)) throw cliError("--provider must be codex, claude, cursor, or opencode");
   if (typeof model !== "string" || !/^[^\s]{1,256}$/.test(model)) throw cliError("--model must be a non-empty ID of at most 256 non-space characters");
-  if (!SCENARIOS.has(scenario)) throw cliError("--scenario must be completion, stop, or subagent");
+  validateLiveScenario(provider, model, scenario);
+  if (options.has("--confirm-provider-call")) return;
+  throw actionable("Provider confirmation is missing", "Add --confirm-provider-call after you choose an available provider and model.");
+}
+
+function validateLiveScenario(provider, model, scenario) {
+  if (!SCENARIOS.has(scenario)) throw cliError("--scenario must be completion, stop, subagent, or opencode-resume");
   if (scenario === "subagent" && (provider !== "codex" || model !== "gpt-5.6-terra")) {
     throw cliError("the subagent scenario requires --provider codex --model gpt-5.6-terra");
   }
-  if (options.has("--confirm-provider-call")) return;
-  throw actionable("Provider confirmation is missing", "Add --confirm-provider-call after you choose an available provider and model.");
+  if (scenario === "opencode-resume" && (provider !== "opencode" || model !== OPENCODE_RESUME_MODEL)) {
+    throw cliError(`the opencode-resume scenario requires --provider opencode --model ${OPENCODE_RESUME_MODEL}`);
+  }
 }
 
 async function execute(parsed, repoRoot) {
@@ -429,10 +442,19 @@ function childCommandEnvironment() {
 
 async function live(repoRoot, options) {
   const artifacts = createLiveArtifacts(repoRoot, options);
-  const run = { report: createLiveReport(options), socket: null, threadId: null, proofDeadline: null };
+  const run = {
+    report: createLiveReport(options),
+    socket: null,
+    threadId: null,
+    workspace: null,
+    ownedWorkspaceId: null,
+    proofDeadline: null,
+    ownedThreadIds: [],
+    eventsByThread: new Map(),
+  };
   try {
     await prepareLiveRun(repoRoot, options, run);
-    await proveLiveScenario(options.scenario, run);
+    await proveLiveScenario(repoRoot, options.scenario, run);
   } catch (error) {
     run.report.failure = safeError(error);
   } finally {
@@ -1147,11 +1169,12 @@ function createLiveReport(options) {
     subagentTaskRetained: false,
     subagentParentMessageRetained: false,
     subagentMessageRetained: false,
+    opencodeResume: null,
     stopResults: [],
     sharedStopResult: null,
     activeCountCleared: false,
     cancelledSnapshotRetained: false,
-    cleanup: { attempted: false, deleted: null, retained: options.keepThread },
+    cleanup: { attempted: false, deleted: null, workspaceDeleted: null, retained: options.keepThread },
     events: [],
     failure: null,
   };
@@ -1160,9 +1183,11 @@ function createLiveReport(options) {
 async function prepareLiveRun(repoRoot, options, run) {
   await health(repoRoot);
   run.socket = await openSocket(repoRoot, readRuntime(repoRoot), (push) => recordPush(run, push));
-  const workspace = await findLiveWorkspace(run.socket, repoRoot, options.scenario);
   run.proofDeadline = Date.now() + LIVE_TIMEOUT_MS;
+  const workspace = await findLiveWorkspace(run.socket, repoRoot, options.scenario, run);
+  run.workspace = workspace;
   run.threadId = await createLiveThread(run.socket, workspace, repoRoot, options, run.proofDeadline);
+  trackLiveThread(run, run.threadId);
   run.report.thread = fingerprint(run.threadId);
   const subscription = await subscribeToLiveThread(run.socket, run.threadId, run.proofDeadline);
   run.report.subscription = subscription;
@@ -1203,13 +1228,21 @@ async function subscribeToLiveThread(socket, threadId, deadline) {
   return summarizeSubscription(subscription, threadId);
 }
 
-async function proveLiveScenario(scenario, run) {
+function trackLiveThread(run, threadId) {
+  if (run.ownedThreadIds.includes(threadId)) return;
+  run.ownedThreadIds.push(threadId);
+  run.eventsByThread.set(threadId, []);
+}
+
+async function proveLiveScenario(repoRoot, scenario, run) {
   if (scenario === "completion") return proveCompletion(run);
   if (scenario === "subagent") return proveSubagent(run);
+  if (scenario === "opencode-resume") return proveOpenCodeResume(repoRoot, run);
   return proveStop(run);
 }
 
-async function findLiveWorkspace(socket, repoRoot, scenario) {
+async function findLiveWorkspace(socket, repoRoot, scenario, run) {
+  if (scenario === "opencode-resume") return createOpenCodeResumeWorkspace(socket, repoRoot, run);
   if (scenario !== "subagent") return findCurrentWorkspace(socket, repoRoot);
   const fixtureRepo = getRuntimePaths(repoRoot).fixtureRepoDir;
   const workspaces = await socket.rpc("workspace.list", {});
@@ -1275,6 +1308,161 @@ function hasDescriptiveSubagentTask(child) {
 async function proveCompletion(run) {
   await requireTerminalEvent(run.report, run.proofDeadline);
   await requireDurableAssistant(run.socket, run.threadId, run.report, run.proofDeadline);
+}
+
+async function proveOpenCodeResume(repoRoot, run) {
+  const workspace = run.workspace;
+  if (!workspace) throw new Error("OpenCode resume workspace is unavailable");
+  const primaryThreadId = run.threadId;
+  const primaryInitialOutcome = await requireThreadCompletion(run, primaryThreadId, 0, run.proofDeadline);
+  await requireDurableAssistant(run.socket, primaryThreadId, run.report, run.proofDeadline);
+  const primaryInitialSession = await requireOpenCodeSessionId(run.socket, workspace.id, primaryThreadId, run.proofDeadline);
+  const otherThreadId = await createLiveThread(run.socket, workspace, repoRoot, run.report, run.proofDeadline);
+  trackLiveThread(run, otherThreadId);
+  await subscribeToLiveThreads(run.socket, run.ownedThreadIds, run.proofDeadline);
+  const otherInitialOutcome = await requireThreadCompletion(run, otherThreadId, 0, run.proofDeadline);
+  const otherInitialSession = await requireOpenCodeSessionId(run.socket, workspace.id, otherThreadId, run.proofDeadline);
+
+  const resume = {
+    initialCompletion: primaryInitialOutcome !== null,
+    otherInitialCompletion: otherInitialOutcome !== null,
+    runtimeRestarted: false,
+    resumedSameSession: false,
+    deletedUpstreamSession: false,
+    recreatedNoticeSeen: false,
+    recreatedSessionChanged: false,
+    otherThreadSessionRetained: false,
+  };
+  run.report.opencodeResume = resume;
+
+  await restartOpenCodeResumeRuntime(repoRoot, run);
+  resume.runtimeRestarted = true;
+  const primaryResumeStart = liveEventCount(run, primaryThreadId);
+  await sendLiveMessage(run.socket, primaryThreadId, run.proofDeadline, run.report);
+  await requireThreadCompletion(run, primaryThreadId, primaryResumeStart, run.proofDeadline);
+  const primaryResumedSession = await requireOpenCodeSessionId(run.socket, workspace.id, primaryThreadId, run.proofDeadline);
+  resume.resumedSameSession = primaryResumedSession === primaryInitialSession;
+
+  await deleteOwnedOpenCodeSession(repoRoot, otherInitialSession);
+  resume.deletedUpstreamSession = true;
+  const otherRecreatedStart = liveEventCount(run, otherThreadId);
+  await sendLiveMessage(run.socket, otherThreadId, run.proofDeadline, run.report);
+  await requireThreadCompletion(run, otherThreadId, otherRecreatedStart, run.proofDeadline);
+  const otherRecreatedSession = await requireOpenCodeSessionId(run.socket, workspace.id, otherThreadId, run.proofDeadline);
+  const primaryFinalSession = await requireOpenCodeSessionId(run.socket, workspace.id, primaryThreadId, run.proofDeadline);
+  const recreatedEvents = liveEventsAfter(run, otherThreadId, otherRecreatedStart);
+  resume.recreatedNoticeSeen = recreatedEvents.some((event) => event.type === "system" && event.subtype === "opencode:session-recreated");
+  resume.recreatedSessionChanged = otherRecreatedSession !== otherInitialSession;
+  resume.otherThreadSessionRetained = primaryFinalSession === primaryInitialSession;
+
+  if (resume.resumedSameSession
+    && resume.recreatedNoticeSeen
+    && resume.recreatedSessionChanged
+    && resume.otherThreadSessionRetained) return;
+  throw actionable(
+    "The OpenCode restart, recreated-session, or thread-isolation proof did not complete",
+    "Inspect the redacted receipt, then retry with an authenticated OpenCode account.",
+  );
+}
+
+async function createOpenCodeResumeWorkspace(socket, repoRoot, run) {
+  const name = `${OPENCODE_RESUME_WORKSPACE_NAME} ${fileStamp()}`;
+  const workspace = await socket.rpc("workspace.create", { name, path: repoRoot }, run.proofDeadline);
+  if (typeof workspace?.id !== "string" || workspace.id.length === 0 || workspace.name !== name || !pathsMatch(workspace.path, repoRoot)) {
+    throw actionable("workspace.create did not return the owned OpenCode resume workspace", "Run runtime diagnostics, then remove the named verification workspace before retrying.");
+  }
+  run.ownedWorkspaceId = workspace.id;
+  return workspace;
+}
+
+async function sendLiveMessage(socket, threadId, deadline, { model, provider }) {
+  await socket.rpc("agent.send", {
+    threadId,
+    content: FIXED_PROMPTS.completion,
+    model,
+    provider,
+    permissionMode: "full",
+  }, deadline);
+}
+
+async function requireThreadCompletion(run, threadId, startAt, deadline) {
+  const outcome = await waitFor(() => findCompletionOutcome(liveEventsAfter(run, threadId, startAt)), deadline);
+  if (!outcome) {
+    throw actionable("No terminal provider event arrived before the live deadline", "Inspect the redacted receipt, then retry with an available model.");
+  }
+  if (!outcome.succeeded) {
+    throw actionable(`The target thread ended with ${outcome.label} before successful completion`, "Inspect the redacted receipt, then retry with an available model.");
+  }
+  return outcome.label;
+}
+
+function liveEventCount(run, threadId) {
+  return run.eventsByThread.get(threadId)?.length ?? 0;
+}
+
+function liveEventsAfter(run, threadId, startAt) {
+  return (run.eventsByThread.get(threadId) ?? []).slice(startAt);
+}
+
+async function requireOpenCodeSessionId(socket, workspaceId, threadId, deadline) {
+  let sessionId = null;
+  const found = await waitForAsync(async () => {
+    const threads = await socket.rpc("thread.list", { workspaceId }, deadline);
+    const thread = Array.isArray(threads) ? threads.find((candidate) => candidate?.id === threadId) : null;
+    if (typeof thread?.sdk_session_id !== "string" || !thread.sdk_session_id.startsWith("ses_")) return false;
+    sessionId = thread.sdk_session_id;
+    return true;
+  }, deadline);
+  if (found && sessionId) return sessionId;
+  throw actionable("The OpenCode thread did not persist its upstream session ID", "Inspect the redacted receipt, then retry with an authenticated OpenCode account.");
+}
+
+async function restartOpenCodeResumeRuntime(repoRoot, run) {
+  await run.socket?.close();
+  run.socket = null;
+  await runWorktreeRuntimeCommand(repoRoot, "agent:down");
+  await runWorktreeRuntimeCommand(repoRoot, "agent:up");
+  await health(repoRoot);
+  run.socket = await openSocket(repoRoot, readRuntime(repoRoot), (push) => recordPush(run, push));
+  const subscription = await run.socket.rpc("push.setThreadSubscriptions", {
+    threadIds: run.ownedThreadIds,
+    cursors: Object.fromEntries(run.ownedThreadIds.map((threadId) => [threadId, 0])),
+  }, run.proofDeadline);
+  const hydrationRequired = Array.isArray(subscription?.hydrationRequiredThreadIds)
+    && subscription.hydrationRequiredThreadIds.some((threadId) => run.ownedThreadIds.includes(threadId));
+  if (!hydrationRequired) return;
+  throw actionable("The restarted runtime requires hydration for an OpenCode proof thread", "Run runtime inspect, then retry the OpenCode resume proof.");
+}
+
+async function runWorktreeRuntimeCommand(repoRoot, script) {
+  const child = Bun.spawn({
+    cmd: ["bun", "run", "--shell", "system", script],
+    cwd: repoRoot,
+    env: childCommandEnvironment(),
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  if (await child.exited === 0) return;
+  throw actionable(`${script} failed for this worktree runtime`, "Run runtime health, then retry the OpenCode resume proof.");
+}
+
+async function deleteOwnedOpenCodeSession(repoRoot, sessionId) {
+  const child = Bun.spawn({
+    cmd: ["opencode", "session", "delete", sessionId],
+    cwd: repoRoot,
+    env: childCommandEnvironment(),
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  if (await child.exited === 0) return;
+  throw actionable("OpenCode did not delete the verifier-owned upstream session", "Inspect the OpenCode CLI login, then retry the OpenCode resume proof.");
+}
+
+async function subscribeToLiveThreads(socket, threadIds, deadline) {
+  await socket.rpc("push.setThreadSubscriptions", {
+    threadIds,
+    cursors: Object.fromEntries(threadIds.map((threadId) => [threadId, 0])),
+  }, deadline);
 }
 
 async function requireTerminalEvent(report, deadline) {
@@ -1396,22 +1584,41 @@ async function requireCancelledRuntimeState(socket, threadId, report, deadline) 
 }
 
 async function disposeLiveRun(run, keepThread) {
-  await deleteLiveThread(run, keepThread);
-  if (run.socket) await run.socket.close();
+  try {
+    await deleteLiveThread(run, keepThread);
+    await deleteLiveWorkspace(run, keepThread);
+  } finally {
+    if (run.socket) await run.socket.close();
+  }
 }
 
 async function deleteLiveThread(run, keepThread) {
   if (!run.threadId || !run.socket || keepThread) return;
   run.report.cleanup.attempted = true;
-  try {
-    const deleted = await run.socket.rpc("thread.delete", { threadId: run.threadId, cleanupWorktree: false });
-    run.report.cleanup.deleted = deleted === true;
-    if (deleted !== true) {
-      run.report.cleanup.failure = safeError(actionable("thread.delete did not confirm deletion of the harness-created thread", "Inspect the retained thread in Mcode, then delete it before you retry live verification."));
+  let deletedEveryThread = true;
+  for (const threadId of run.ownedThreadIds) {
+    try {
+      const deleted = await run.socket.rpc("thread.delete", { threadId, cleanupWorktree: false });
+      if (deleted === true) continue;
+      deletedEveryThread = false;
+      run.report.cleanup.failure ??= safeError(actionable("thread.delete did not confirm deletion of a harness-created thread", "Inspect the retained thread in Mcode, then delete it before you retry live verification."));
+    } catch (error) {
+      deletedEveryThread = false;
+      run.report.cleanup.failure ??= safeError(error);
     }
+  }
+  run.report.cleanup.deleted = deletedEveryThread;
+}
+
+async function deleteLiveWorkspace(run, keepThread) {
+  if (!run.ownedWorkspaceId || !run.socket || keepThread) return;
+  try {
+    const deleted = await run.socket.rpc("workspace.forceDelete", { id: run.ownedWorkspaceId });
+    run.report.cleanup.workspaceDeleted = deleted === true;
+    if (deleted !== true) run.report.cleanup.failure ??= safeError(actionable("workspace.forceDelete did not confirm deletion of the OpenCode resume workspace", "Inspect the named verification workspace in Mcode before retrying."));
   } catch (error) {
-    run.report.cleanup.deleted = false;
-    run.report.cleanup.failure = safeError(error);
+    run.report.cleanup.workspaceDeleted = false;
+    run.report.cleanup.failure ??= safeError(error);
   }
 }
 
@@ -1428,14 +1635,35 @@ function writeLiveArtifacts(repoRoot, artifacts, report) {
 }
 
 function recordPush(run, push) {
-  if (typeof run.threadId !== "string" || push?.data?.threadId !== run.threadId) return;
+  const threadId = push?.data?.threadId;
+  if (typeof threadId !== "string" || !run.ownedThreadIds.includes(threadId)) return;
+  const events = run.eventsByThread.get(threadId);
+  if (!events) return;
+  const event = liveEventFromPush(push);
+  if (!event) return;
+  events.push(event);
+  if (!includeInReceipt(run, threadId, event)) return;
+  run.report.events.push(event);
+  if (run.report.events.length > 400) run.report.events.splice(0, run.report.events.length - 400);
+}
+
+function liveEventFromPush(push) {
   if (push.channel === "agent.event" && typeof push.data.type === "string") {
-    run.report.events.push({ kind: "agent", type: push.data.type, elapsedMs: Date.now() });
+    return {
+      kind: "agent",
+      type: push.data.type,
+      subtype: push.data.subtype === "opencode:session-recreated" ? push.data.subtype : undefined,
+      elapsedMs: Date.now(),
+    };
   }
   if (push.channel === "thread.status" && typeof push.data.status === "string") {
-    run.report.events.push({ kind: "status", status: push.data.status, elapsedMs: Date.now() });
+    return { kind: "status", status: push.data.status, elapsedMs: Date.now() };
   }
-  if (run.report.events.length > 400) run.report.events.splice(0, run.report.events.length - 400);
+  return null;
+}
+
+function includeInReceipt(run, threadId, event) {
+  return threadId === run.threadId || event.subtype === "opencode:session-recreated";
 }
 
 function hasDurableAssistant(value) {
@@ -1496,6 +1724,7 @@ function redactReceipt(report) {
     subagentTaskRetained: report.subagentTaskRetained,
     subagentParentMessageRetained: report.subagentParentMessageRetained,
     subagentMessageRetained: report.subagentMessageRetained,
+    opencodeResume: report.opencodeResume,
     stopResults: report.stopResults.map((result) => ({ status: result?.status ?? null, phase: result?.snapshot?.phase ?? null, dispatchState: result?.dispatchState ?? null })),
     sharedStopResult: report.sharedStopResult,
     activeCountCleared: report.activeCountCleared,
@@ -1528,7 +1757,7 @@ function cleanup(repoRoot) {
   }
   const removed = [];
   for (const entry of NodeFS.readdirSync(evidenceDirectory, { withFileTypes: true })) {
-    if (!entry.isFile() || !isHarnessEvidenceFile(entry.name)) continue;
+    if (!entry.isFile() || !isRuntimeHarnessEvidenceFile(entry.name)) continue;
     const candidate = NodePath.join(evidenceDirectory, entry.name);
     NodeFS.rmSync(candidate);
     removed.push(relativeTo(repoRoot, candidate));
@@ -1545,10 +1774,11 @@ function cleanup(repoRoot) {
   };
 }
 
-function isHarnessEvidenceFile(name) {
+/** Return true only for evidence files the runtime verifier created. */
+export function isRuntimeHarnessEvidenceFile(name) {
   const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/;
   if (!timestamp.test(name)) return false;
-  return /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:completion|stop)-(?:receipt\.json|timeline\.html)|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-worktree-setup-receipt\.json|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:focused-agent-runtime|lint)\.log)$/.test(name);
+  return /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:completion|stop|opencode-resume)-(?:receipt\.json|timeline\.html)|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-worktree-setup-receipt\.json|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(?:focused-agent-runtime|lint)\.log)$/.test(name);
 }
 
 function ensureEvidenceDirectory(repoRoot) {

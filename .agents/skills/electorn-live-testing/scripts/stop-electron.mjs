@@ -34,13 +34,17 @@ export function stopElectron(repoRoot = process.cwd(), options = {}) {
     throw new Error("Recorded PID no longer matches the owned Electron command");
   }
 
-  const stopped = terminateProcessTree(record.pid);
-  if (!stopped.ok) {
-    throw new Error(`Could not stop Electron process tree: ${stopped.error}`);
-  }
-
+  const status = stopValidatedProcess(record.pid);
   rmSync(sessionFile, { force: true });
-  return { pid: record.pid, status: "stopped" };
+  return { pid: record.pid, status };
+}
+
+function stopValidatedProcess(pid) {
+  const stopped = terminateProcessTree(pid);
+  if (stopped.ok) return "stopped";
+  // The process can exit after ownership validation but before taskkill runs.
+  if (!readCommandLine(pid)) return "already-stopped";
+  throw new Error(`Could not stop Electron process tree: ${stopped.error}`);
 }
 
 function readCommandLine(pid) {

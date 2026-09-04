@@ -20,6 +20,16 @@ Use `runtime live --scenario completion --confirm-provider-call` for server and 
 
 Use `runtime live --scenario stop --confirm-provider-call` for the public server proof. The harness requests retained event replay after it creates the thread.
 
+## OpenCode restart resume and deleted upstream session
+
+1. Create an owned temporary workspace, then start two owned direct OpenCode threads with `opencode/muse-spark-1.3-contributor-free`.
+2. Restart only the current worktree runtime after both turns complete.
+3. Send another message to the first thread and confirm its persisted upstream session identity remains the same.
+4. Delete the second thread's upstream session with `opencode session delete`.
+5. Send another message to the second thread and confirm the public `opencode:session-recreated` event, a new persisted session identity, and the first thread's unchanged identity.
+
+Use `runtime live --provider opencode --model opencode/muse-spark-1.3-contributor-free --scenario opencode-resume --confirm-provider-call` for the public server and persistence proof. It removes only its owned threads and temporary workspace. The focused web store test proves the event text renders. The focused OpenCode HTTP-client tests prove the exact history bound, timeout, abort, 404, and malformed-response contract. This journey does not prove the notice through Electron.
+
 ## Composer queue matrix
 
 1. Start a direct Electron thread with the selected Codex or Cursor model.
