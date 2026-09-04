@@ -242,6 +242,14 @@ afterEach(() => {
 });
 
 describe("MessageList thread switch", () => {
+  it("keeps virtual message rails vertically visible for sent annotation previews", () => {
+    const { container } = render(<MessageList />);
+    const rail = container.querySelector("[data-index] > div");
+
+    expect(rail).toHaveClass("overflow-x-clip");
+    expect(rail).not.toHaveClass("overflow-x-hidden");
+  });
+
   it("loads and scrolls a virtualized source before it reconstructs the saved range", async () => {
     messagesValue = [{ id: "m1", sequence: 2, thread_id: "thread-A", role: "assistant", content: "Current message" }];
     hasMoreMessagesValue = true;

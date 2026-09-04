@@ -567,7 +567,10 @@ export class CanonicalCodexCollaborationCoordinator {
     existing: CodexChildDelegation,
   ): CodexChildDelegation {
     const updatedItem = this.updatedParentItem(existing.parentItem, input, normalized);
-    if (this.isSameParentItem(updatedItem, existing.parentItem)) {
+    const updatedAction = this.updatedDelegationAction(existing.collaborationAction, normalized.prompt);
+    const itemChanged = !this.isSameParentItem(updatedItem, existing.parentItem);
+    const actionChanged = updatedAction !== existing.collaborationAction;
+    if (!itemChanged && !actionChanged) {
       this.recordLatePrompt(existing, normalized.prompt);
       return existing;
     }
@@ -576,16 +579,41 @@ export class CanonicalCodexCollaborationCoordinator {
     if (!parentTurn || parentTurn.threadId !== parentThread.id) {
       throw new Error(`Codex parent turn is not canonical: ${input.parentTurnId}`);
     }
-    this.commitParentItem(
-      input.parentExecutionId,
-      parentThread,
-      parentTurn,
-      updatedItem,
-      parentItemMetadataEventId(input, normalized, existing.parentItem.updatedAt, updatedItem.providerIdentities),
+    const eventId = parentItemMetadataEventId(
+      input,
+      normalized,
+      existing.parentItem.updatedAt,
+      updatedItem.providerIdentities,
     );
-    const delegation = { ...existing, parentItem: updatedItem };
+    this.operations.commit({
+      threadId: parentThread.id,
+      turnId: parentTurn.id,
+      executionId: input.parentExecutionId,
+      phase: "running",
+      events: [
+        ...(itemChanged
+          ? [this.operations.itemDraft(input.parentExecutionId, parentThread, parentTurn, updatedItem, eventId)]
+          : []),
+        ...(actionChanged
+          ? [this.operations.actionDraft(input.parentExecutionId, parentThread, updatedAction, `${eventId}:action`)]
+          : []),
+      ],
+    });
+    const delegation = {
+      ...existing,
+      parentItem: itemChanged ? updatedItem : existing.parentItem,
+      collaborationAction: updatedAction,
+    };
     this.recordLatePrompt(delegation, normalized.prompt);
     return delegation;
+  }
+
+  private updatedDelegationAction(
+    action: CollaborationAction,
+    prompt: string | undefined,
+  ): CollaborationAction {
+    if (!prompt || action.message === prompt) return action;
+    return { ...action, message: prompt, updatedAt: new Date().toISOString() };
   }
 
   private updatedParentItem(
@@ -619,7 +647,7 @@ export class CanonicalCodexCollaborationCoordinator {
     const now = new Date().toISOString();
     const childThread = newChildThread(parentThread, now);
     const parentItem = newDelegationParentItem(input, normalized, parentThread, parentTurn, childThread, now);
-    const action = newDelegationAction(input, parentThread, parentItem, childThread, now);
+    const action = newDelegationAction(input, normalized, parentThread, parentItem, childThread, now);
     this.commitNewDelegation(input, parentThread, parentTurn, childThread, parentItem, action);
     return { childThread, parentItem, collaborationAction: action };
   }
@@ -674,22 +702,6 @@ export class CanonicalCodexCollaborationCoordinator {
       null,
       thread.parentThreadId ?? null,
     );
-  }
-
-  private commitParentItem(
-    executionId: string,
-    parentThread: AgentThread,
-    parentTurn: AgentTurn,
-    parentItem: AgentItem,
-    eventId: string,
-  ): void {
-    this.operations.commit({
-      threadId: parentThread.id,
-      turnId: parentTurn.id,
-      executionId,
-      phase: "running",
-      events: [this.operations.itemDraft(executionId, parentThread, parentTurn, parentItem, eventId)],
-    });
   }
 
   private recordLatePrompt(delegation: CodexChildDelegation, prompt: string | undefined): void {
@@ -1182,9 +1194,12 @@ function withDelegationMetadata(
   payload: Record<string, unknown>,
   normalized: NormalizedDelegationInput,
 ): Record<string, unknown> {
+  const storesDescription = payload.projection !== "narrativeRecovery";
   return {
     ...payload,
-    ...(normalized.description !== undefined ? { description: normalized.description } : {}),
+    ...(storesDescription && normalized.description !== undefined
+      ? { description: normalized.description }
+      : {}),
     ...(normalized.identity !== undefined ? { identity: normalized.identity } : {}),
     ...(normalized.model !== undefined ? { model: normalized.model } : {}),
     ...(normalized.reasoningEffort !== undefined ? { reasoningEffort: normalized.reasoningEffort } : {}),
@@ -1203,6 +1218,7 @@ function parentItemMetadataEventId(
     identity: normalized.identity,
     model: normalized.model,
     reasoningEffort: normalized.reasoningEffort,
+    prompt: normalized.prompt,
     providerIdentities: [...providerIdentities],
   }));
   return `${input.parentExecutionId}:codex-child:${hashCodexKey(input.parentItemId)}:metadata:${metadataKey}`;
@@ -1258,6 +1274,7 @@ function newDelegationParentItem(
 
 function newDelegationAction(
   input: CodexChildDelegationInput,
+  normalized: NormalizedDelegationInput,
   parentThread: AgentThread,
   parentItem: AgentItem,
   childThread: AgentThread,
@@ -1271,6 +1288,7 @@ function newDelegationAction(
     target: { threadId: childThread.id },
     status: "Dispatched",
     deliveryUnknown: false,
+    ...(normalized.prompt ? { message: normalized.prompt } : {}),
     providerIdentities: uniqueProviderIdentities([...input.providerIdentities, ...receiverIdentities]),
     createdAt: now,
     updatedAt: now,

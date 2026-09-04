@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
-import type { Message, MessageMention, PreviewAnnotationBundle, StoredAttachment } from "@mcode/contracts";
+import type { Message, MessageMention, PreviewAnnotationBundle, SelectedTextComment, StoredAttachment } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../persistence/message-repo.js";
 import { ToolCallRecordRepo } from "../../../tools/persistence/tool-call-record-repo.js";
@@ -381,6 +381,20 @@ describe("loadConversationTail", () => {
         note: "Keep this visible.",
       }],
     };
+    const selectedTextComments: SelectedTextComment[] = [{
+      id: "550e8400-e29b-41d4-a716-446655440004",
+      displayNumber: 1,
+      source: {
+        threadId: "thread-1",
+        messageId: "a1",
+        sourceRole: "assistant",
+        start: 0,
+        end: 7,
+        quote: "Earlier",
+      },
+      note: "Keep this comment in the tail.",
+      mentions: [],
+    }];
     const persisted = deps.messageRepo.create(
       "thread-1",
       "assistant",
@@ -405,6 +419,7 @@ describe("loadConversationTail", () => {
       tool_call_count: 1,
       outcome: "completed",
       outcomeExecutionId: "execution-1",
+      selectedTextComments,
       legacyProvenance: {
         source: "messages",
         migrationVersion: 1,
@@ -431,6 +446,7 @@ describe("loadConversationTail", () => {
       attachments: [attachment],
       previewAnnotations,
       mentions,
+      selectedTextComments,
       reply_to_message_id: "a1",
       quoted_text: "earlier answer",
       model: "gpt-5.6",

@@ -30,6 +30,17 @@ Use `runtime live --scenario stop --confirm-provider-call` for the public server
 
 Use `composer-queue proof --cursor-model <id> --allow-enable-cursor --confirm-provider-calls --confirm-cleanup` when Cursor starts disabled. The command uses `gpt-5.6-luna` unless `--codex-model <id>` overrides it. The flag temporarily enables Cursor through the owned Electron-local settings RPC. The verifier records its original state and Electron runtime directory before the change, then restores that Electron-local state during each terminal path. It retains recovery metadata if that restoration fails. A successful provider proof records one redacted receipt and three composer-only screenshots. A blocked provider records its receipt only. It uses one Electron-local socket for settings, UI thread RPCs, and replayed events. It uses 5-second root waits and 10-second queued waits. Both providers require exact durable prompt identities, exact queue rows, and a running composer for A and B admission. Provider events remain redacted diagnostics. Deterministic tests cover native Codex and Cursor terminal order.
 
+## Codex subagent detail and durable transcript
+
+1. Start a direct Codex thread with `gpt-5.6-terra` and delegate one marked task.
+2. Confirm that either Codex protocol event shape maps to one canonical child.
+3. Observe Active, then Completed, in the canonical roster.
+4. Open the chat row and confirm that the exact child detail uses the same glyph color.
+5. Confirm that the parent task and child assistant message render in the child transcript.
+6. Reload and confirm the same title, state, color, and message.
+
+Use `runtime check` for both protocol shapes. Use `runtime live --scenario subagent --provider codex --model gpt-5.6-terra --confirm-provider-call` for the live provider and persistence proof. Use the Electron steps in [Codex subagent view](codex-subagent-view.md) for click, color, and reload evidence.
+
 ## Managed-worktree Setup readiness
 
 1. Create a New-worktree first turn through the public agent API.
@@ -59,11 +70,11 @@ Use `thread-lifecycle proof --confirm-cleanup` for the desktop action and receip
 6. Switch away from the thread and back. Confirm that saved cards and an open unsaved editor restore.
 7. Drag across the text again and right-click it.
 
-Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, aggregate cards, source markers, marker deletion, and direct card actions. Use focused composer-session tests for thread-switch editor restoration. The proof does not send a provider turn.
+Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, aggregate cards, source markers, marker deletion, and direct card actions. Use focused composer-session tests for thread-switch editor restoration. The proof does not send a provider turn. Focused server and web tests cover existing-thread text plus comments, comment-only provider input, durable user and assistant source metadata, and sent read-only chips.
 
 ## Coverage gaps
 
 - The provider workflows need an available model and a logged-in provider CLI. Record missing access as a blocked provider path.
 - The public subscription begins after thread creation. It cannot show lossless events before creation.
 - The completed-thread proof does not wait one day. Its focused integration checks use a controlled clock for the retention path.
-- The selected-text comment proof cannot inspect the hidden `MessageMention[]` payload or restore an off-screen source without sending a provider turn. Focused tests cover the payload and unavailable-source card state.
+- The selected-text comment proof cannot inspect the hidden `MessageMention[]` payload, provider input, or restore an off-screen source without sending a provider turn. Focused tests cover these paths and unavailable-source card state.

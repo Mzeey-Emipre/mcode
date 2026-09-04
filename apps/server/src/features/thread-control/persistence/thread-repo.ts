@@ -59,6 +59,15 @@ function canonicalChildVisibilityClause(alias: string): string {
   )`;
 }
 
+function independentThreadClause(alias: string): string {
+  return `NOT EXISTS (
+    SELECT 1
+    FROM canonical_collaboration_actions delegation
+    WHERE delegation.target_thread_id = ${alias}.id
+      AND delegation.kind = 'delegate'
+  )`;
+}
+
 const CANONICAL_CHILD_DELETE_BATCH_SIZE = 64;
 
 /** Persisted delegation provenance attached to a destination thread. */
@@ -860,6 +869,7 @@ export class ThreadRepo {
          JOIN descendants ON descendants.id = thread.id
          WHERE thread.deleted_at IS NULL
            AND thread.user_completed_at IS NULL
+           AND ${independentThreadClause("thread")}
        )
        SELECT active.id
        FROM active_descendants AS active

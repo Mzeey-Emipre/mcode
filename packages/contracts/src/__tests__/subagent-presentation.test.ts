@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   createSubagentPresentation,
+  createCanonicalSubagentPresentation,
+  decodeCanonicalSubagentDetailTarget,
+  decodeSubagentAliasDetailTarget,
+  encodeCanonicalSubagentDetailTarget,
+  encodeSubagentAliasDetailTarget,
   mergeSubagentPresentation,
   resolveSubagentExactIdentity,
 } from "../models/tool-call-record.js";
 
 describe("sub-agent presentation", () => {
-  it("normalizes provider identity and keeps task text out of the model", () => {
+  it("normalizes provider identity and carries the bounded parent task separately", () => {
     expect(createSubagentPresentation({
       agentName: "direct_detail_worker",
       prompt: "Do not expose this task",
@@ -15,12 +20,36 @@ describe("sub-agent presentation", () => {
       reasoningEffort: "low",
     }, "call-1")).toEqual({
       displayName: "Direct detail worker",
+      task: "Do not expose this task",
       hasExplicitIdentity: true,
       identityKey: "child-1",
-      detail: { kind: "canonical-child" },
+      detail: { kind: "canonical-alias", identityKey: "child-1" },
       model: "gpt-5.6-luna",
       reasoningEffort: "low",
     });
+  });
+
+  it("uses a server-provided child thread ID as the canonical detail target", () => {
+    expect(createCanonicalSubagentPresentation({
+      receiverThreadIds: ["native-child"],
+      agentPath: "/root/worker",
+    }, "call-1", "thread:codex-child:generated")).toMatchObject({
+      identityKey: "native-child",
+      detail: { kind: "canonical-child", threadId: "thread:codex-child:generated" },
+    });
+  });
+
+  it("distinguishes new canonical storage from legacy native aliases", () => {
+    const childThreadId = "thread:codex-child:generated";
+    const nativeIdentity = "mcode:subagent:v1:provider-native";
+
+    expect(decodeCanonicalSubagentDetailTarget(encodeCanonicalSubagentDetailTarget(childThreadId)))
+      .toBe(childThreadId);
+    expect(decodeCanonicalSubagentDetailTarget(encodeSubagentAliasDetailTarget(nativeIdentity)))
+      .toBeUndefined();
+    expect(decodeSubagentAliasDetailTarget(encodeSubagentAliasDetailTarget(nativeIdentity)))
+      .toBe(nativeIdentity);
+    expect(decodeCanonicalSubagentDetailTarget(nativeIdentity)).toBeUndefined();
   });
 
   it("uses an explicit Codex task path when no receiver thread is available", () => {
@@ -60,14 +89,15 @@ describe("sub-agent presentation", () => {
   });
 
   it("enriches a terminal row without losing its established child identity", () => {
-    const initial = createSubagentPresentation({ receiverThreadIds: ["child-1"] }, "call-1");
+    const initial = createCanonicalSubagentPresentation({ receiverThreadIds: ["child-1"] }, "call-1", "canonical-child-1");
     const late = createSubagentPresentation({ agentName: "Hubble", model: "gpt-5.6-luna" }, "call-1");
 
     expect(mergeSubagentPresentation(initial, late, "call-1")).toEqual({
       displayName: "Hubble",
+      task: undefined,
       hasExplicitIdentity: true,
       identityKey: "child-1",
-      detail: { kind: "canonical-child" },
+      detail: { kind: "canonical-child", threadId: "canonical-child-1" },
       providerAgentKey: undefined,
       model: "gpt-5.6-luna",
       reasoningEffort: undefined,

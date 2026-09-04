@@ -1,5 +1,6 @@
 import { logger } from "@mcode/shared";
 import {
+  AgentEventType,
   CanonicalAgentEventEnvelopeSchema,
   ProviderIdSchema,
   ProviderRuntimeEventSchema,
@@ -79,6 +80,13 @@ function canonicalReceipt(envelope: CanonicalAgentEventEnvelope): CanonicalProvi
 
 function agentEventMatchesProvider(event: AgentEvent, providerId: ProviderId): boolean {
   return !("providerId" in event) || event.providerId === undefined || event.providerId === providerId;
+}
+
+/** Removes presentation data that only server-side provider adapters may create. */
+function withoutUntrustedSubagentPresentation(event: AgentEvent): AgentEvent {
+  if (event.type !== AgentEventType.ToolUse && event.type !== AgentEventType.ToolResult) return event;
+  const { subagentPresentation: _subagentPresentation, ...sanitized } = event;
+  return sanitized;
 }
 
 /** Owns provider subscriptions, validates inbound delivery, and queues accepted downstream events. */
@@ -245,7 +253,9 @@ export class ProviderEventIngress {
   }
 
   private acceptRuntimeEvent(event: ProviderEventIngressEvent): boolean {
-    const projection = this.adapterFor(event.providerId)?.project(event) ?? { status: "forward" as const, event: event.event };
+    const trustedEvent = { ...event, event: withoutUntrustedSubagentPresentation(event.event) };
+    const projection = this.adapterFor(trustedEvent.providerId)?.project(trustedEvent)
+      ?? { status: "forward" as const, event: trustedEvent.event };
     if (projection.status === "consumed") return true;
     if (projection.status === "rejected") {
       this.report({
@@ -259,7 +269,7 @@ export class ProviderEventIngress {
     const normalized = projection.event.type === "error"
       ? { ...projection.event, error: normalizeProviderError(event.providerId, projection.event.error ?? "") }
       : projection.event;
-    return this.enqueue({ ...event, event: normalized });
+    return this.enqueue({ ...trustedEvent, event: normalized });
   }
 
   private adapterFor(providerId: ProviderId): ProviderEventAdapter | undefined {

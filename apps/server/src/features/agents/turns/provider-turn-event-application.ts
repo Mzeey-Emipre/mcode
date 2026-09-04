@@ -410,6 +410,7 @@ export class ProviderTurnEventApplication implements TurnEventApplication {
       event.isError,
       event.toolInput,
       toolResultMetadata(event),
+      event.subagentPresentation,
     );
     this.featureEffects.onToolResult(event.threadId, event.toolCallId, event.output, event.isError);
     return true;
@@ -558,7 +559,8 @@ export class ProviderTurnEventApplication implements TurnEventApplication {
     if (event.type === AgentEventType.ToolUse && event.toolName === "Agent") {
       return {
         ...event,
-        subagentPresentation: createSubagentPresentation(event.toolInput, event.toolCallId),
+        subagentPresentation: event.subagentPresentation
+          ?? createSubagentPresentation(event.toolInput, event.toolCallId),
       };
     }
     if (event.type !== AgentEventType.ToolResult || !event.toolInput) return event;
@@ -567,10 +569,11 @@ export class ProviderTurnEventApplication implements TurnEventApplication {
     if (!bufferedAgent) return event;
     return {
       ...event,
-      subagentPresentation: createSubagentPresentation({
-        ...bufferedAgent._rawToolInput,
-        ...event.toolInput,
-      }, event.toolCallId),
+      subagentPresentation: event.subagentPresentation
+        ?? createSubagentPresentation({
+          ...bufferedAgent._rawToolInput,
+          ...event.toolInput,
+        }, event.toolCallId),
     };
   }
 

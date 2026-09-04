@@ -38,13 +38,13 @@ import * as NodeCrypto from "node:crypto";
 import { logger } from "@mcode/shared";
 import {
   resolveBrowserNarrativeTool,
-  resolveProviderAgentKey,
-  resolveSubagentDisplayName,
   resolveSubagentDuration,
   resolveSubagentMetadata,
   resolveSubagentPrompt,
+  encodeCanonicalSubagentDetailTarget,
+  encodeSubagentAliasDetailTarget,
   createSubagentPresentation,
-  resolveSubagentExactIdentity,
+  mergeSubagentPresentation,
   type Message,
   type NarrativeEntry,
   type ParentNarrativeRecoveryItem,
@@ -74,6 +74,7 @@ const DEFAULT_LOAD_LIMIT = 200;
 /** Buffered tool call with raw input preserved for deferred summarization. */
 export interface BufferedToolCall extends CreateToolCallRecordInput {
   _rawToolInput?: Record<string, unknown>;
+  _subagentPresentation?: SubagentPresentation;
 }
 
 /** Extracts bounded provider metadata that must survive a persisted Agent card. */
@@ -84,6 +85,16 @@ function persistedSubagentMetadata(input: Record<string, unknown>) {
     subagentAgentId: resolveSubagentMetadata(input.agentId),
     subagentDurationMs: resolveSubagentDuration(input.durationMs),
   };
+}
+
+function persistedSubagentIdentityKey(presentation: SubagentPresentation | undefined): string | undefined {
+  if (!presentation) return undefined;
+  if (presentation.detail.kind === "canonical-child") {
+    return encodeCanonicalSubagentDetailTarget(presentation.detail.threadId);
+  }
+  return presentation.detail.kind === "canonical-alias"
+    ? encodeSubagentAliasDetailTarget(presentation.detail.identityKey)
+    : undefined;
 }
 
 /** In-flight thought segment accumulated from consecutive textDelta events. */
@@ -511,6 +522,12 @@ export class NarrativeStore {
     };
     existing._rawToolInput = mergedToolInput;
     if (event.toolName === "Agent") {
+      existing._subagentPresentation = mergeSubagentPresentation(
+        existing._subagentPresentation,
+        event.subagentPresentation
+          ?? createSubagentPresentation(mergedToolInput, event.toolCallId),
+        event.toolCallId,
+      );
       this.applyAgentPresentation(existing, mergedToolInput, event.toolCallId);
     }
   }
@@ -535,10 +552,11 @@ export class NarrativeStore {
     rawToolInput: Record<string, unknown>,
     toolCallId: string,
   ): void {
-    const presentation = createSubagentPresentation(rawToolInput, toolCallId);
+    const presentation = toolCall._subagentPresentation
+      ?? createSubagentPresentation(rawToolInput, toolCallId);
     toolCall.displayName = presentation.hasExplicitIdentity ? presentation.displayName : undefined;
     toolCall.providerAgentKey = presentation.providerAgentKey;
-    toolCall.subagentIdentityKey = resolveSubagentExactIdentity(rawToolInput);
+    toolCall.subagentIdentityKey = persistedSubagentIdentityKey(presentation) ?? toolCall.subagentIdentityKey;
     toolCall.subagentProviderName = this.subagentProviderName(presentation);
     Object.assign(toolCall, persistedSubagentMetadata(rawToolInput));
     if (toolCall.messageId && toolCall.subagentIdentityKey) {
@@ -588,7 +606,7 @@ export class NarrativeStore {
       toolName: event.toolName,
       displayName: presentation?.hasExplicitIdentity ? presentation.displayName : undefined,
       providerAgentKey: presentation?.providerAgentKey,
-      subagentIdentityKey: isAgent ? resolveSubagentExactIdentity(event.toolInput) : undefined,
+      subagentIdentityKey: isAgent ? persistedSubagentIdentityKey(presentation) : undefined,
       subagentProviderName: this.subagentProviderName(presentation),
       ...(isAgent ? persistedSubagentMetadata(event.toolInput) : {}),
       model: presentation?.model,
@@ -600,6 +618,7 @@ export class NarrativeStore {
       sortOrder,
       parentToolCallId,
       _rawToolInput: event.toolInput,
+      ...(presentation ? { _subagentPresentation: presentation } : {}),
     };
   }
 
@@ -624,12 +643,23 @@ export class NarrativeStore {
       outputArtifactPath?: string;
       exitCode?: number;
     },
+    subagentPresentation?: SubagentPresentation,
   ): void {
     this.removeAgentFromStack(threadId, toolCallId);
     const toolCall = this.latestBufferedToolCall(threadId, toolCallId);
     if (!toolCall) return;
     this.applyToolCallOutput(toolCall, output, isError, outputMeta);
     this.mergeToolCallInput(toolCall, toolInput);
+    if (toolCall.toolName === "Agent") {
+      const incomingPresentation = subagentPresentation
+        ?? createSubagentPresentation(toolCall._rawToolInput ?? {}, toolCallId);
+      toolCall._subagentPresentation = mergeSubagentPresentation(
+        toolCall._subagentPresentation,
+        incomingPresentation,
+        toolCallId,
+      );
+      this.applyAgentPresentation(toolCall, toolCall._rawToolInput ?? {}, toolCallId);
+    }
   }
 
   private removeAgentFromStack(threadId: string, toolCallId: string): void {
@@ -1413,14 +1443,18 @@ export class NarrativeStore {
     toolCall: BufferedToolCall,
     rawToolInput: Record<string, unknown>,
   ): void {
-    toolCall.displayName = resolveSubagentDisplayName(rawToolInput);
-    toolCall.providerAgentKey = resolveProviderAgentKey(rawToolInput);
-    toolCall.subagentIdentityKey = resolveSubagentExactIdentity(rawToolInput);
     const presentation = createSubagentPresentation(rawToolInput, toolCall.toolCallId!);
-    toolCall.subagentProviderName = this.subagentProviderName(presentation);
+    const persistedPresentation = toolCall._subagentPresentation ?? presentation;
+    toolCall.displayName = persistedPresentation.hasExplicitIdentity
+      ? persistedPresentation.displayName
+      : undefined;
+    toolCall.providerAgentKey = persistedPresentation.providerAgentKey;
+    toolCall.subagentIdentityKey = persistedSubagentIdentityKey(persistedPresentation)
+      ?? toolCall.subagentIdentityKey;
+    toolCall.subagentProviderName = this.subagentProviderName(persistedPresentation);
     Object.assign(toolCall, persistedSubagentMetadata(rawToolInput));
-    toolCall.model = resolveSubagentMetadata(rawToolInput.model);
-    toolCall.reasoningEffort = resolveSubagentMetadata(rawToolInput.reasoningEffort);
+    toolCall.model = persistedPresentation.model;
+    toolCall.reasoningEffort = persistedPresentation.reasoningEffort;
   }
 
   private closeOpenHooksForPersistence(threadId: string): void {

@@ -26,10 +26,11 @@ import { getTransport } from "@/transport";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
 import { formatRelative } from "@/lib/format-relative";
 import { getConversationResidency, MessageList } from "@/features/conversation";
-import type {
-  CanonicalSubagentRoster,
-  CanonicalSubagentRosterRow,
-  CanonicalSubagentStopResult,
+import {
+  formatSubagentDisplayName,
+  type CanonicalSubagentRoster,
+  type CanonicalSubagentRosterRow,
+  type CanonicalSubagentStopResult,
 } from "@mcode/contracts";
 
 type StopAllTarget = {
@@ -65,6 +66,10 @@ function formatReasoningLevel(value: string): string {
 
 function canonicalIdentity(row: CanonicalSubagentRosterRow): string {
   return formatSubagentIdentity(row.identity ?? "Subagent");
+}
+
+function canonicalTitle(row: CanonicalSubagentRosterRow): string {
+  return row.task ? formatSubagentDisplayName(row.task) : canonicalIdentity(row);
 }
 
 function canonicalIsActive(row: CanonicalSubagentRosterRow): boolean {
@@ -103,19 +108,24 @@ function canonicalNamedLineage(row: CanonicalSubagentRosterRow, rows: readonly C
     .join(" / ");
 }
 
-/** Resolves a canonical child from any identity exposed by the roster contract. */
+/** Resolves a canonical child without guessing across provider-native alias collisions. */
 export function resolveCanonicalSubagentSelection(
   selectionId: string,
   rows: readonly CanonicalSubagentRosterRow[],
 ): CanonicalSubagentRosterRow | undefined {
   const sourceItemId = `toolCall:${selectionId}`;
-  return rows.find((row) => (
-    row.id === selectionId
-    || row.sourceItemId === sourceItemId
-    || [...row.providerIdentities, ...row.sourceProviderIdentities].some(
+  const directChild = rows.find((row) => row.id === selectionId);
+  if (directChild) return directChild;
+  const sourceItem = rows.find((row) => row.sourceItemId === sourceItemId);
+  if (sourceItem) return sourceItem;
+
+  // Legacy aliases contain only a value, not the provider/scope tuple required
+  // to disambiguate a shared native identifier.
+  const providerAliasMatches = rows.filter((row) =>
+    [...row.providerIdentities, ...row.sourceProviderIdentities].some(
       (identity) => identity.value === selectionId,
-    )
-  ));
+    ));
+  return providerAliasMatches.length === 1 ? providerAliasMatches[0] : undefined;
 }
 
 function CanonicalRosterRow({
@@ -187,11 +197,11 @@ function CanonicalRosterMetadata({
   return (
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{canonicalIdentity(row)}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{canonicalTitle(row)}</span>
         <CanonicalRosterTimestamp active={active} status={status} lastActiveAt={lastActiveAt} lastActiveLabel={lastActiveLabel} />
       </span>
       {lineage && <span className="mt-0.5 block truncate text-xs text-muted-foreground" aria-label={`Lineage: ${lineage}`}>{lineage}</span>}
-      {row.task && <span className="mt-0.5 block truncate text-xs text-muted-foreground">Parent task: {row.task}</span>}
+      {row.task && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{canonicalIdentity(row)}</span>}
       {configuration && <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">{configuration}</span>}
       {!active && row.hasActiveDescendant && <span className="mt-0.5 block text-xs text-primary">Active descendant</span>}
     </span>
@@ -227,17 +237,20 @@ function CanonicalRosterTimestamp({
 function CanonicalDetailView({
   row,
   rows,
+  paletteSeed,
   onBack,
   onStop,
   onTerminal,
 }: {
   readonly row: CanonicalSubagentRosterRow;
   readonly rows: readonly CanonicalSubagentRosterRow[];
+  readonly paletteSeed: string;
   readonly onBack: () => void;
   readonly onStop: () => Promise<CanonicalSubagentStopResult>;
   readonly onTerminal: () => Promise<void> | void;
 }) {
   const identity = canonicalIdentity(row);
+  const title = canonicalTitle(row);
   const lineage = canonicalLineage(row, rows);
   const active = canonicalIsActive(row);
   const configuration = canonicalConfiguration(row);
@@ -256,11 +269,11 @@ function CanonicalDetailView({
           <ArrowLeft size={15} aria-hidden />
         </Button>
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <SubagentIdentityGlyph identity={identity} hasExplicitIdentity={row.identity !== undefined} paletteSeed={row.id} className="size-6" size={15} />
+          <SubagentIdentityGlyph identity={identity} hasExplicitIdentity={row.identity !== undefined} paletteSeed={paletteSeed} className="size-6" size={15} />
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-semibold">{identity}</h2>
+            <h2 className="truncate text-sm font-semibold">{title}</h2>
+            {row.task && <p className="truncate text-xs text-muted-foreground">{identity}</p>}
             {lineage && <p className="truncate text-xs text-muted-foreground">{lineage}</p>}
-            {row.task && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">Parent task: {row.task}</p>}
           </div>
           <span role="status" className="sr-only">
             {canonicalStatus(row)}
@@ -652,6 +665,7 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
       key={selectedCanonicalRow.id}
       row={selectedCanonicalRow}
       rows={detail.rows}
+      paletteSeed={detail.selection.id}
       onStop={() => getTransport().stopCanonicalSubagent(selectedCanonicalRow.owningParentThreadId, selectedCanonicalRow.id)}
       onTerminal={refreshRoster}
       onBack={() => {

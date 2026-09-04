@@ -16,6 +16,8 @@ const AUTOMATIC_SETUP_MIGRATION = "0044_small_prodigy";
 const ASSISTANT_TEXT_CHECKPOINT_MIGRATION = "0045_tiny_stardust";
 const QUEUED_TURNS_FIFO_MIGRATION = "0046_queued_turns_fifo";
 const PROJECT_ACTION_RUNS_MIGRATION = "0047_conscious_tusk";
+const PREVIOUS_MIGRATION = "0054_wise_supernaut";
+const CODEX_CHILD_ORPHAN_REPAIR_MIGRATION = "0055_codex_child_orphan_repair";
 
 type JournalEntry = {
   idx: number;
@@ -462,6 +464,108 @@ describe("successful database migration recovery", () => {
         .all(migrationHash(currentMigrationsDirectory, MESSAGE_OUTCOME_MIGRATION));
       expect(outcomeMigrationRows).toEqual([{
         created_at: migrationEntry(currentMigrationsDirectory, MESSAGE_OUTCOME_MIGRATION).when,
+      }]);
+    } finally {
+      upgradedDatabase.close();
+    }
+  });
+
+  it("removes generated orphaned Codex children without deleting genuine roots", () => {
+    const currentMigrationsDirectory = NodePath.join(process.cwd(), "drizzle");
+    const previousMigrationsDirectory = NodePath.join(directory, "drizzle-through-0054");
+    copyMigrationsThrough(
+      currentMigrationsDirectory,
+      previousMigrationsDirectory,
+      PREVIOUS_MIGRATION,
+    );
+    const orphanedRootId = "thread:codex-child:orphaned-root";
+    const nestedChildId = "thread:codex-child:orphaned-nested";
+    const genuineRootId = "thread:genuine-root";
+
+    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = previousMigrationsDirectory;
+    const previousDatabase = openDatabase({ dbPath: databasePath });
+    try {
+      const timestamp = "2026-09-03T10:00:00.000Z";
+      previousDatabase.prepare(
+        "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      ).run("workspace-codex-repair", "Codex repair", "C:/codex-repair", timestamp, timestamp);
+      const insertThread = previousDatabase.prepare(
+        "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, 'main', 'codex', 'active', ?, ?)",
+      );
+      insertThread.run(orphanedRootId, "workspace-codex-repair", "Sub-agent", timestamp, timestamp);
+      insertThread.run(nestedChildId, "workspace-codex-repair", "Sub-agent", timestamp, timestamp);
+      insertThread.run(genuineRootId, "workspace-codex-repair", "Sub-agent", timestamp, timestamp);
+      previousDatabase.prepare("UPDATE threads SET parent_thread_id = ? WHERE id = ?")
+        .run(orphanedRootId, nestedChildId);
+      const insertCanonicalThread = previousDatabase.prepare(`
+        INSERT INTO canonical_agent_threads (
+          id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
+          provider_id, provider_identities_json, activity_state, conversation_revision,
+          roster_revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'codex', '[]', 'Idle', 1, 0, ?, ?)
+      `);
+      insertCanonicalThread.run(
+        orphanedRootId,
+        "workspace-codex-repair",
+        null,
+        orphanedRootId,
+        null,
+        timestamp,
+        timestamp,
+      );
+      insertCanonicalThread.run(
+        nestedChildId,
+        "workspace-codex-repair",
+        orphanedRootId,
+        orphanedRootId,
+        orphanedRootId,
+        timestamp,
+        timestamp,
+      );
+      insertCanonicalThread.run(
+        genuineRootId,
+        "workspace-codex-repair",
+        null,
+        genuineRootId,
+        null,
+        timestamp,
+        timestamp,
+      );
+      previousDatabase.prepare(`
+        INSERT INTO canonical_agent_turns (
+          id, thread_id, execution_id, status, trigger_json, permission_mode,
+          provider_identities_json, started_at, ended_at, created_at, updated_at
+        ) VALUES ('orphaned-child-turn', ?, 'orphaned-child-execution', 'Completed', '{"kind":"child"}', 'full', '[]', ?, ?, ?, ?)
+      `).run(nestedChildId, timestamp, timestamp, timestamp, timestamp);
+      previousDatabase.prepare(`
+        INSERT INTO canonical_agent_items (
+          id, thread_id, turn_id, kind, provider_identities_json, payload_json, created_at, updated_at
+        ) VALUES ('orphaned-child-item', ?, 'orphaned-child-turn', 'message', '[]', '{"projection":"message"}', ?, ?)
+      `).run(nestedChildId, timestamp, timestamp);
+    } finally {
+      previousDatabase.close();
+    }
+
+    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
+    const upgradedDatabase = openDatabase({ dbPath: databasePath });
+    try {
+      expect(upgradedDatabase.prepare(
+        "SELECT id FROM threads WHERE id IN (?, ?, ?) ORDER BY id",
+      ).all(orphanedRootId, nestedChildId, genuineRootId)).toEqual([{ id: genuineRootId }]);
+      expect(upgradedDatabase.prepare(
+        "SELECT id FROM canonical_agent_threads WHERE id IN (?, ?, ?) ORDER BY id",
+      ).all(orphanedRootId, nestedChildId, genuineRootId)).toEqual([{ id: genuineRootId }]);
+      expect(upgradedDatabase.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns WHERE id = 'orphaned-child-turn'").get())
+        .toEqual({ count: 0 });
+      expect(upgradedDatabase.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items WHERE id = 'orphaned-child-item'").get())
+        .toEqual({ count: 0 });
+      expect(upgradedDatabase.prepare(
+        "SELECT created_at FROM __drizzle_migrations WHERE hash = ?",
+      ).all(migrationHash(currentMigrationsDirectory, CODEX_CHILD_ORPHAN_REPAIR_MIGRATION))).toEqual([{
+        created_at: migrationEntry(
+          currentMigrationsDirectory,
+          CODEX_CHILD_ORPHAN_REPAIR_MIGRATION,
+        ).when,
       }]);
     } finally {
       upgradedDatabase.close();

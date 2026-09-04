@@ -90,10 +90,19 @@ function codexExtension(
   return { providerId: "codex", kind: "codex-collaboration", ...extension };
 }
 
-function childDelegation(parentItemId = "toolCall:spawn-1") {
+function childDelegation(parentItemId = "toolCall:spawn-1", message?: string) {
   return {
     childThread: { ...parentThread(), id: "child-thread", parentThreadId: "parent-thread" },
-    parentItem: {} as never,
+    parentItem: {
+      id: parentItemId,
+      threadId: "parent-thread",
+      turnId: "parent-turn",
+      kind: "tool-call" as const,
+      providerIdentities: [],
+      payload: { projection: "codexSubagent" },
+      createdAt: "2026-08-28T00:00:00.000Z",
+      updatedAt: "2026-08-28T00:00:00.000Z",
+    },
     collaborationAction: {
       id: "action-1",
       kind: "message" as const,
@@ -101,6 +110,7 @@ function childDelegation(parentItemId = "toolCall:spawn-1") {
       target: { threadId: "child-thread" },
       status: "Dispatched" as const,
       deliveryUnknown: false,
+      ...(message ? { message } : {}),
       providerIdentities: [],
       createdAt: "2026-08-28T00:00:00.000Z",
       updatedAt: "2026-08-28T00:00:00.000Z",
@@ -110,7 +120,7 @@ function childDelegation(parentItemId = "toolCall:spawn-1") {
 
 describe("CodexCollaborationEventAdapter", () => {
   it("starts the durable child delegation and forwards a scrubbed parent Agent event", () => {
-    const store = durability();
+    const store = durability({ startCodexChildDelegation: vi.fn(() => childDelegation()) });
     const adapter = new CodexCollaborationEventAdapter(store);
 
     const projection = adapter.project(ingressEvent({
@@ -125,6 +135,7 @@ describe("CodexCollaborationEventAdapter", () => {
         kind: "spawnAgent",
         prompt: "private delegated work",
         receiverThreadIds: ["native-child"],
+        agentPath: "/root/explorer",
       },
     })));
 
@@ -135,7 +146,13 @@ describe("CodexCollaborationEventAdapter", () => {
     }));
     expect(projection).toEqual(expect.objectContaining({
       status: "forward",
-      event: expect.objectContaining({ toolInput: {} }),
+      event: expect.objectContaining({
+        toolInput: {},
+        subagentPresentation: expect.objectContaining({
+          identityKey: "native-child",
+          detail: { kind: "canonical-child", threadId: "child-thread" },
+        }),
+      }),
     }));
   });
 
@@ -153,12 +170,42 @@ describe("CodexCollaborationEventAdapter", () => {
         nativeThreadId: "native-child",
         nativeTurnId: "native-turn",
         parentCollaborationItemId: "spawn-1",
+        prompt: "Inspect the exact delegated task",
       } })));
 
     expect(projection).toEqual({ status: "consumed" });
     expect(store.startCodexChildTurn).toHaveBeenCalledWith(expect.objectContaining({
       nativeThreadId: "native-child",
       nativeTurnId: "native-turn",
+    }));
+    expect(store.startCodexChildDelegation).toHaveBeenCalledWith(expect.objectContaining({
+      description: "Inspect the exact delegated task",
+      prompt: "Inspect the exact delegated task",
+      receiverThreadIds: ["native-child"],
+    }));
+  });
+
+  it("uses the persisted V2 delegation prompt when child-turn evidence omits it", () => {
+    const store = durability({
+      loadCodexChildDelegationByReceiverThreadId: vi.fn(() => (
+        childDelegation("toolCall:spawn-1", "Read README.md, then report its purpose.")
+      )),
+    });
+    const adapter = new CodexCollaborationEventAdapter(store);
+
+    const projection = adapter.project(ingressEvent({
+      type: AgentEventType.TurnStarted,
+      threadId: "parent-thread",
+      turnExecutionId: EXECUTION_ID,
+    }, codexExtension({ child: {
+      nativeThreadId: "native-child",
+      nativeTurnId: "native-turn",
+      parentCollaborationItemId: "spawn-1",
+    } })));
+
+    expect(projection).toEqual({ status: "consumed" });
+    expect(store.startCodexChildTurn).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Read README.md, then report its purpose.",
     }));
   });
 

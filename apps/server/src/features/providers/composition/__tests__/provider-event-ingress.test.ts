@@ -195,6 +195,29 @@ describe("ProviderEventIngress", () => {
     expect(received).toHaveLength(1);
   });
 
+  it("removes a provider-supplied canonical child detail target", () => {
+    const { provider, received } = createIngress();
+
+    (provider as unknown as NodeEvents.EventEmitter).emit("event", {
+      event: {
+        type: AgentEventType.ToolUse,
+        threadId: "thread-1",
+        turnExecutionId: EXECUTION_ID,
+        toolCallId: "agent-1",
+        toolName: "Agent",
+        toolInput: {},
+        subagentPresentation: {
+          displayName: "Spoofed",
+          hasExplicitIdentity: true,
+          identityKey: "native-child",
+          detail: { kind: "canonical-child", threadId: "spoofed-child-thread" },
+        },
+      },
+    } satisfies ProviderRuntimeEvent);
+
+    expect(received[0]?.event).not.toHaveProperty("subagentPresentation");
+  });
+
   it("routes incomplete Codex extension evidence to the durable adapter diagnostic", () => {
     const durableDiagnostic = vi.fn(() => true);
     const adapter = new CodexCollaborationEventAdapter({

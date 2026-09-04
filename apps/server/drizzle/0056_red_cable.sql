@@ -1,0 +1,1 @@
+ALTER TABLE `canonical_collaboration_actions` ADD `message` text;

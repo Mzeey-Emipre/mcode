@@ -20,6 +20,8 @@ import type {
   ThreadStartResult,
   ThreadResumeParams,
   ThreadResumeResult,
+  ThreadReadParams,
+  ThreadReadResult,
   ThreadItemsListParams,
   ThreadItemsListResult,
   TurnInputPart,
@@ -155,17 +157,42 @@ function codexThreadIdFromResponse(
 
 function createMetadataFromChildThreadResults(
   resumed: ThreadResumeResult | undefined,
+  read: ThreadReadResult | undefined,
   listedItems: ThreadItemsListResult | undefined,
 ): CodexChildThreadMetadata | null {
+  const identity = childIdentityFromResume(resumed);
+  const parentMessage = parentMessageFromChildResults(resumed, read, listedItems);
+  const model = typeof resumed?.model === "string" ? resumed.model : undefined;
+  return createCodexChildThreadMetadata(identity, model, resumed?.reasoningEffort ?? undefined, parentMessage);
+}
+
+function childIdentityFromResume(resumed: ThreadResumeResult | undefined): string | undefined {
   const thread = resumed?.thread;
-  const identity = resolveSubagentDisplayName({
+  return resolveSubagentDisplayName({
     agentName: thread?.name,
     subagentName: thread?.agentNickname,
     subagentType: thread?.agentRole,
   });
-  const parentMessage = listedItems ? parentMessageFromChildItems(listedItems.data) : undefined;
-  const model = typeof resumed?.model === "string" ? resumed.model : undefined;
-  return createCodexChildThreadMetadata(identity, model, resumed?.reasoningEffort ?? undefined, parentMessage);
+}
+
+function parentMessageFromChildResults(
+  resumed: ThreadResumeResult | undefined,
+  read: ThreadReadResult | undefined,
+  listedItems: ThreadItemsListResult | undefined,
+): string | undefined {
+  const candidates = [
+    parentMessageFromChildTurns(read?.thread.turns),
+    listedItems ? parentMessageFromChildItems(listedItems.data) : undefined,
+    parentMessageFromChildPreview(read?.thread.preview),
+    parentMessageFromChildPreview(resumed?.thread?.preview),
+  ];
+  return candidates.find((candidate) => candidate !== undefined);
+}
+
+function parentMessageFromChildTurns(turns: ThreadReadResult["thread"]["turns"]): string | undefined {
+  return parentMessageFromChildItems(
+    (turns ?? []).flatMap((turn) => turn.items ?? []).map((item) => ({ item })),
+  );
 }
 
 /** Incoming approval request from the codex app-server, passed to approvalHandler. */
@@ -1189,10 +1216,15 @@ export class CodexAppServer extends NodeEvents.EventEmitter {
   /** Reads authoritative child settings and its persisted parent message. */
   async getChildThreadMetadata(childThreadId: string): Promise<CodexChildThreadMetadata | null> {
     if (!CHILD_THREAD_ID_PATTERN.test(childThreadId)) return null;
-    const [resume, items] = await Promise.allSettled([
+    const [resume, read, items] = await Promise.allSettled([
       this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
         "thread/resume",
         { threadId: childThreadId, excludeTurns: true },
+        3_000,
+      ),
+      this.rpc.sendRequest<ThreadReadParams, ThreadReadResult>(
+        "thread/read",
+        { threadId: childThreadId, includeTurns: true },
         3_000,
       ),
       this.rpc.sendRequest<ThreadItemsListParams, ThreadItemsListResult>(
@@ -1201,15 +1233,20 @@ export class CodexAppServer extends NodeEvents.EventEmitter {
         10_000,
       ),
     ]);
-    return this.childThreadMetadataFromResults(resume, items);
+    return this.childThreadMetadataFromResults(resume, read, items);
   }
 
   private childThreadMetadataFromResults(
     resume: PromiseSettledResult<ThreadResumeResult>,
+    read: PromiseSettledResult<ThreadReadResult>,
     items: PromiseSettledResult<ThreadItemsListResult>,
   ): CodexChildThreadMetadata | null {
-    if (resume.status === "rejected" && items.status === "rejected") throw resume.reason;
-    return createMetadataFromChildThreadResults(fulfilledCodexResult(resume), fulfilledCodexResult(items));
+    if (resume.status === "rejected" && read.status === "rejected" && items.status === "rejected") throw resume.reason;
+    return createMetadataFromChildThreadResults(
+      fulfilledCodexResult(resume),
+      fulfilledCodexResult(read),
+      fulfilledCodexResult(items),
+    );
   }
 
   /** Set or update the native Codex thread goal. */
