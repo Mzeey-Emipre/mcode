@@ -23,9 +23,13 @@ import {
 import { OpenCodeServerPool, type OpenCodePoolKey } from "./opencode-server-pool.js";
 import { defaultOpenCodeHttpClient, type OpenCodeHttpClient } from "./opencode-http-client.js";
 import { mapOpenCodeEnvelope, normalizeOpenCodeEnvelope } from "./opencode-event-mapper.js";
+import { formatOpenCodeResumeCursor, parseOpenCodeResumeCursor } from "./opencode-resume-cursor.js";
 import { probeOpenCodeCli } from "./opencode-cli.js";
 
 const OPENCODE_SUPPORTED_CAPABILITIES = ["build", "plan", "permissions", "session-eviction"] as const;
+
+/** Visible notice when a missing upstream session forces a fresh start. */
+const OPENCODE_SESSION_RECREATED_SUBTYPE = "opencode:session-recreated";
 
 /** Loopback hostname every pooled serve binds to. Pool keys never vary it. */
 const OPENCODE_SERVE_HOSTNAME = "127.0.0.1";
@@ -358,11 +362,7 @@ export class OpenCodeProvider extends NodeEvents.EventEmitter implements IAgentP
       req.sessionId,
       event,
     );
-    if (!state.upstreamSessionId) {
-      const created = await this.http.createSession(entry.baseUrl, req.threadId);
-      state.upstreamSessionId = created.id;
-      emit({ type: AgentEventType.System, threadId, subtype: `sdk_session_id:${created.id}` } satisfies AgentEvent);
-    }
+    await this.ensureUpstreamSession(req, state, entry, emit, retried);
     const upstreamId = state.upstreamSessionId;
     const subscribe = this.http.subscribeEvents(entry.baseUrl, state.abortController.signal, (envelope) => {
       this.handleTurnEnvelope(envelope, req, state, upstreamId, settler);
@@ -382,12 +382,53 @@ export class OpenCodeProvider extends NodeEvents.EventEmitter implements IAgentP
     } catch (error) {
       if (!retried && !state.aborted && isMissingSessionError(error)) {
         logger.info("OpenCode upstream session missing; starting fresh", { sessionId: req.sessionId });
+        emit({ type: AgentEventType.System, threadId, subtype: OPENCODE_SESSION_RECREATED_SUBTYPE } satisfies AgentEvent);
         state.upstreamSessionId = "";
         await this.promptUpstream(req, state, entry, settler, true);
         return;
       }
       throw error;
     }
+  }
+
+  /**
+   * Resolve the upstream session for one turn. Warm in-memory state wins;
+   * otherwise the durable resume cursor (`resumeFrom`) is re-adopted behind
+   * the versioned parser and verified with one bounded history page. Only a
+   * confirmed 404 starts fresh (with a visible notice); any other failure
+   * propagates so a live thread never resets to empty.
+   */
+  private async ensureUpstreamSession(
+    req: TurnRequest<"opencode">,
+    state: OpenCodeTurnState,
+    entry: { baseUrl: string },
+    emit: (event: AgentEvent) => void,
+    skipResume: boolean,
+  ): Promise<void> {
+    const threadId = this.threadIdFor(req.sessionId);
+    if (state.upstreamSessionId) return;
+    // A retried turn already proved the cursor missing; go straight to fresh
+    // so the recreated notice fires exactly once.
+    const resumed = skipResume ? undefined : parseOpenCodeResumeCursor(req.resumeFrom);
+    if (resumed) {
+      try {
+        await this.http.listSessionMessages(entry.baseUrl, resumed, {
+          limit: 1,
+          signal: state.abortController.signal,
+        });
+        state.upstreamSessionId = resumed;
+        emit({ type: AgentEventType.System, threadId, subtype: `sdk_session_id:${resumed}` } satisfies AgentEvent);
+        return;
+      } catch (error) {
+        if (!isMissingSessionError(error)) throw error;
+        logger.info("OpenCode upstream session missing; starting fresh", { sessionId: req.sessionId });
+        emit({ type: AgentEventType.System, threadId, subtype: OPENCODE_SESSION_RECREATED_SUBTYPE } satisfies AgentEvent);
+      }
+    }
+    const created = await this.http.createSession(entry.baseUrl, req.threadId);
+    // Validate the upstream id before it becomes the durable resume cursor.
+    state.upstreamSessionId = formatOpenCodeResumeCursor(created.id);
+    emit({ type: AgentEventType.System, threadId, subtype: `sdk_session_id:${created.id}` } satisfies AgentEvent);
   }
 
   private handleTurnEnvelope(
