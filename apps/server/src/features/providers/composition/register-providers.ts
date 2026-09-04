@@ -3,6 +3,7 @@ import { hostRuntime } from "@mcode/shared/node/host-runtime";
 
 import { ClaudeProvider } from "../adapters/claude/claude-provider.js";
 import { CopilotProvider } from "../adapters/copilot/copilot-provider.js";
+import { OpenCodeProvider } from "../adapters/opencode/opencode-provider.js";
 import { ProviderRegistry } from "./provider-registry.js";
 import { createProviderHostPorts } from "./provider-host-ports.js";
 import { BrowserAutomationSessionLease } from "../../browser-automation/index.js";
@@ -54,6 +55,14 @@ export function registerProviderAdapters(container: DependencyContainer): void {
   );
   container.register("IAgentProvider", {
     useFactory: (c) => c.resolve(CopilotProvider),
+  });
+  container.register(
+    OpenCodeProvider,
+    { useClass: OpenCodeProvider },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("IAgentProvider", {
+    useFactory: (c) => c.resolve(OpenCodeProvider),
   });
   container.register(
     ProviderRegistry,

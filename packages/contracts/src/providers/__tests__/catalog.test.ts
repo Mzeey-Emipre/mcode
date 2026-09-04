@@ -8,12 +8,13 @@ describe("PROVIDER_CATALOG", () => {
     ]);
   });
 
-  it("flags copilot and cursor as beta; gemini/opencode remain comingSoon", () => {
+  it("flags copilot, cursor, and opencode as beta; gemini remains comingSoon", () => {
     expect(getCatalogEntry("copilot").beta).toBe(true);
     expect(getCatalogEntry("cursor").beta).toBe(true);
+    expect(getCatalogEntry("opencode").beta).toBe(true);
     expect(getCatalogEntry("gemini").comingSoon).toBe(true);
     expect(getCatalogEntry("cursor").comingSoon).toBe(false);
-    expect(getCatalogEntry("opencode").comingSoon).toBe(true);
+    expect(getCatalogEntry("opencode").comingSoon).toBe(false);
   });
 
   it("maps each provider to its CLI binary name", () => {
