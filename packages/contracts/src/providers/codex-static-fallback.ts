@@ -7,6 +7,14 @@ import type { ProviderModelInfo } from "./models.js";
  */
 export const CODEX_STATIC_MODELS: readonly ProviderModelInfo[] = [
   {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    group: "OpenAI",
+    supportsReasoning: true,
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    supportsUltraOrchestration: true,
+  },
+  {
     id: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
     group: "OpenAI",
