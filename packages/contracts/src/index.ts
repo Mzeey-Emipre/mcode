@@ -856,10 +856,16 @@ export type {
 // Permissions
 export {
   PermissionDecisionSchema,
+  PermissionQuestionOptionSchema,
+  PermissionQuestionSchema,
+  PermissionResponseAnswersSchema,
   PermissionRequestSchema,
 } from "./models/permission.js";
 export type {
   PermissionDecision,
+  PermissionQuestionOption,
+  PermissionQuestion,
+  PermissionResponseAnswers,
   PermissionRequest,
 } from "./models/permission.js";
 

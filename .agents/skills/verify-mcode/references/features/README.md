@@ -30,7 +30,7 @@
 | Local, managed-worktree, and PR-created threads show truthful startup progress and remove it after success | [Thread startup progress](thread-startup-progress.md) | Electron public UI proof and focused startup tests |
 | A user completes a worktree thread and the app schedules its cleanup | [Completed-thread cleanup](completed-thread-cleanup.md) | `thread-lifecycle proof --confirm-cleanup` and `thread-lifecycle check` |
 | Queued composer messages continue in FIFO order after completion and stay paused after Stop | [Composer queue](composer-queue.md) | `composer-queue proof --cursor-model <id> --allow-enable-cursor --confirm-provider-calls --confirm-cleanup` |
-| An OpenCode thread streams a pooled-serve turn to completion, stops to aborted, and shares one server per worktree | [OpenCode pooled serve](opencode-pooled-serve.md) | `runtime live --provider opencode --model <provider/model-id> --scenario completion` |
+| An OpenCode thread streams a pooled-serve turn to completion, stops to aborted, shares one server per worktree, routes supervised permission and question cards through the shared request flow, and renders canonical notices once | [OpenCode pooled serve](opencode-pooled-serve.md) | `runtime live --provider opencode --model <provider/model-id> --scenario completion` and `--scenario stop` |
 | Thread Overview defaults open beside the right panel in split mode, even when the narrowed chat is below the usual threshold, and is unavailable while the panel is maximized | [Thread Overview and right panel](thread-overview-right-panel.md) | Electron public UI proof with the stable live-testing interface |
 | An existing thread title is renamed or cancelled from the Project tree | [Thread-list inline rename](thread-list-inline-rename.md) | Electron public UI proof with the stable live-testing interface |
 
@@ -52,7 +52,7 @@ Read [Multi-surface journeys](multi-surface-journeys.md) for a workflow that cro
 ## Coverage gaps
 
 - The live completion and stop matrix remains incomplete for Codex, Claude, and Cursor.
-- OpenCode live completion and stop need an authenticated `opencode` account; serve spawn, health, session create, and abort are proven without a model call.
+- OpenCode live completion, stop, resume, permission, and question proof is blocked for #1624 because the available OpenCode quota is exhausted. An authenticated account and quota are required before the primary public-path proof can run. Focused tests support component behavior only.
 - Provider discovery does not prove provider account login.
 - The public subscription RPC cannot prove a pre-create subscription without a caller-supplied thread ID or workspace subscription.
 - The selected-text-comments proof cannot show native operating-system menu rendering.

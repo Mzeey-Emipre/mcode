@@ -22,6 +22,7 @@ function testProvider(http: never, pool: OpenCodeServerPool) {
     pool,
     http: http as never,
     probeCli: async () => ({ binaryPath: "opencode", version: "test" }),
+    idleConfirm: { intervalMs: 5, requiredPolls: 2, timeoutMs: 500, maxPollErrors: 2 },
   });
   return { provider, submitted };
 }
@@ -72,6 +73,8 @@ describe("OpenCodeProvider minimal turn", () => {
       promptAsync: vi.fn(async () => {}),
       abortSession: vi.fn(async () => {}),
       listModels: vi.fn(async () => []),
+      listSessionMessages: vi.fn(async () => []),
+      getSessionStatus: vi.fn(async () => new Proxy({}, { get: () => ({ type: "idle" }) })),
       subscribeEvents: vi.fn(async (_url: string, _signal: AbortSignal, onEnvelope: (e: unknown) => void) => {
         onEnvelope({ type: "message.part.updated", properties: { sessionID: "ses_1", part: { type: "text", id: "p1" }, delta: "hi" } });
         onEnvelope({ type: "session.idle", properties: { sessionID: "ses_1" } });
@@ -109,6 +112,8 @@ describe("OpenCodeProvider minimal turn", () => {
       }),
       abortSession: vi.fn(async () => {}),
       listModels: vi.fn(async () => []),
+      listSessionMessages: vi.fn(async () => []),
+      getSessionStatus: vi.fn(async () => new Proxy({}, { get: () => ({ type: "idle" }) })),
       subscribeEvents: vi.fn(async (_url: string, signal: AbortSignal, onEnvelope: (e: unknown) => void) => {
         captured = onEnvelope;
         await new Promise<void>((resolve) => {
@@ -144,6 +149,8 @@ describe("OpenCodeProvider minimal turn", () => {
       }),
       abortSession: vi.fn(async () => {}),
       listModels: vi.fn(async () => []),
+      listSessionMessages: vi.fn(async () => []),
+      getSessionStatus: vi.fn(async () => new Proxy({}, { get: () => ({ type: "idle" }) })),
       subscribeEvents: vi.fn(async (_url: string, _signal: AbortSignal, onEnvelope: (e: unknown) => void) => {
         onEnvelope({ type: "session.idle", properties: { sessionID: `ses_fresh_${sessions}` } });
       }),
@@ -176,6 +183,8 @@ describe("OpenCodeProvider minimal turn", () => {
       promptAsync: vi.fn(async () => {}),
       abortSession: vi.fn(async () => {}),
       listModels: vi.fn(async () => []),
+      listSessionMessages: vi.fn(async () => []),
+      getSessionStatus: vi.fn(async () => new Proxy({}, { get: () => ({ type: "idle" }) })),
       subscribeEvents: vi.fn(async (_url: string, _signal: AbortSignal, onEnvelope: (e: unknown) => void) => {
         onEnvelope({ type: "session.idle", properties: { sessionID: "ses_1" } });
       }),

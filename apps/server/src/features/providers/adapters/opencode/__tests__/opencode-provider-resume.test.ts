@@ -33,6 +33,7 @@ function testProvider(http: never, pool: OpenCodeServerPool) {
     pool,
     http: http as never,
     probeCli: async () => ({ binaryPath: "opencode", version: "test" }),
+    idleConfirm: { intervalMs: 5, requiredPolls: 2, timeoutMs: 500, maxPollErrors: 2 },
   });
   return { provider, submitted };
 }
@@ -89,6 +90,7 @@ function fakeHttp(scenarios: {
     }),
     abortSession: vi.fn(async () => {}),
     listModels: vi.fn(async () => []),
+    getSessionStatus: vi.fn(async () => new Proxy({}, { get: () => ({ type: "idle" }) })),
     subscribeEvents: vi.fn(async (_url: string, _signal: AbortSignal, onEnvelope: (e: unknown) => void) => {
       onEnvelope({ type: "session.idle", properties: { sessionID: "ses_any" } });
     }),
@@ -133,7 +135,7 @@ describe("OpenCodeProvider resume cursor", () => {
     const events = submittedEvents(submitted);
     expect(events).toContainEqual(expect.objectContaining({
       type: "system",
-      subtype: expect.stringContaining("session-recreated"),
+      subtype: "sdk_session_invalidated",
     }));
     provider.shutdown();
   });
@@ -151,7 +153,7 @@ describe("OpenCodeProvider resume cursor", () => {
     const events = submittedEvents(submitted);
     expect(events).toContainEqual(expect.objectContaining({
       type: "system",
-      subtype: expect.stringContaining("session-recreated"),
+      subtype: "sdk_session_invalidated",
     }));
     provider.shutdown();
   });

@@ -106,6 +106,31 @@ describe("routeMessage Agent RPCs", () => {
     expect(response).toEqual({ id: "permission-1", result: undefined });
     expect(calls).toEqual(["thread-control", "agent"]);
   });
+
+  it("forwards exact question answers and rejects malformed answer payloads", async () => {
+    const respondToApproval = vi.fn(async () => false);
+    const respondToPermission = vi.fn();
+    const deps = {
+      threadControlService: { respondToApproval },
+      agentPermissionService: { respondToPermission },
+    } as unknown as RouterDeps;
+
+    const accepted = await routeMessage(JSON.stringify({
+      id: "question-1",
+      method: "permission.respond",
+      params: { requestId: "que_1", decision: "allow", answers: [[" staging "]] },
+    }), deps);
+    expect(accepted).toEqual({ id: "question-1", result: undefined });
+    expect(respondToPermission).toHaveBeenCalledWith("que_1", "allow", [[" staging "]]);
+
+    const rejected = await routeMessage(JSON.stringify({
+      id: "question-2",
+      method: "permission.respond",
+      params: { requestId: "que_1", decision: "allow", answers: [[" "]] },
+    }), deps);
+    expect(rejected.error).toBeDefined();
+    expect(respondToPermission).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("routeAgentRpc", () => {

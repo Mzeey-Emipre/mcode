@@ -11,7 +11,11 @@ import {
 import { cn } from "@/lib/utils";
 import { getTransport } from "@/transport";
 import { TOOL_ICONS } from "./tool-renderers/constants";
-import type { PermissionDecision } from "@mcode/contracts";
+import type {
+  PermissionDecision,
+  PermissionQuestion,
+  PermissionResponseAnswers,
+} from "@mcode/contracts";
 
 /** Props for {@link PermissionRequestCard}. */
 interface PermissionRequestCardProps {
@@ -23,6 +27,8 @@ interface PermissionRequestCardProps {
   input: unknown;
   /** Optional human-readable title for the permission request. */
   title?: string;
+  /** Questions that must be answered before the provider can continue. */
+  questions?: PermissionQuestion[];
   /** Whether this request has already been resolved. */
   settled: boolean;
   /** The user's decision, present when settled. */
@@ -135,6 +141,109 @@ function PendingPermissionRequest({
   );
 }
 
+function PendingQuestionRequest({
+  requestId,
+  icon,
+  label,
+  questions,
+  responding,
+  ready,
+  error,
+  onRespond,
+}: {
+  requestId: string;
+  icon: ReactNode;
+  label: string;
+  questions: PermissionQuestion[];
+  responding: boolean;
+  ready: boolean;
+  error: string | null;
+  onRespond: (decision: PermissionDecision, answers?: PermissionResponseAnswers) => void;
+}) {
+  const [selected, setSelected] = useState<string[][]>(() => questions.map(() => []));
+  const [custom, setCustom] = useState<string[]>(() => questions.map(() => ""));
+  const controlsDisabled = responding || !ready;
+  const answers = useMemo<PermissionResponseAnswers | undefined>(() => {
+    const next = questions.map((question, index) => {
+      const customAnswer = custom[index] ?? "";
+      if (!customAnswer.trim()) return selected[index] ?? [];
+      return question.multiple ? [...(selected[index] ?? []), customAnswer] : [customAnswer];
+    });
+    return next.every((answer) => answer.length > 0) ? next : undefined;
+  }, [custom, questions, selected]);
+
+  const selectOption = (questionIndex: number, option: string, multiple: boolean) => {
+    setSelected((current) => current.map((answer, index) => {
+      if (index !== questionIndex) return answer;
+      if (!multiple) return [option];
+      return answer.includes(option) ? answer.filter((item) => item !== option) : [...answer, option];
+    }));
+    if (!multiple) {
+      setCustom((current) => current.map((answer, index) => (index === questionIndex ? "" : answer)));
+    }
+  };
+
+  return (
+    <div className="border-l-2 border-amber-500/60 pl-3 py-2 flex flex-col gap-3">
+      <div className="flex items-center gap-2 text-xs font-medium text-amber-600 dark:text-amber-400">
+        {icon}
+        <span>Answer required: {label}</span>
+      </div>
+      {questions.map((question, questionIndex) => (
+        <fieldset key={`${question.header}-${questionIndex}`} className="flex flex-col gap-1.5">
+          <legend className="text-xs font-medium">{question.header}</legend>
+          <p className="text-sm text-foreground/90">{question.question}</p>
+          {question.options.map((option) => {
+            const checked = (selected[questionIndex] ?? []).includes(option.label);
+            return (
+              <label key={option.label} className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-sm hover:bg-muted/40">
+                <input
+                  type={question.multiple ? "checkbox" : "radio"}
+                  name={`question-${requestId}-${questionIndex}`}
+                  checked={checked}
+                  disabled={controlsDisabled}
+                  onChange={() => selectOption(questionIndex, option.label, question.multiple)}
+                />
+                <span>
+                  {option.label}
+                  {option.description && <span className="block text-xs text-muted-foreground">{option.description}</span>}
+                </span>
+              </label>
+            );
+          })}
+          {question.custom && (
+            <input
+              aria-label={`Custom answer for ${question.header}`}
+              disabled={controlsDisabled}
+              value={custom[questionIndex] ?? ""}
+              onChange={(event) => setCustom((current) => current.map((answer, index) => (
+                index === questionIndex ? event.target.value : answer
+              )))}
+              placeholder="Your answer"
+              className="h-7 rounded border bg-background px-2 text-sm"
+            />
+          )}
+        </fieldset>
+      ))}
+      <div className="flex items-center gap-2">
+        <button
+          disabled={controlsDisabled || !answers}
+          onClick={() => answers && onRespond("allow", answers)}
+          className={cn("inline-flex h-6 items-center gap-1 px-2 text-xs font-medium rounded-md", "bg-primary text-primary-foreground hover:bg-primary/90 transition-colors", "cursor-pointer disabled:pointer-events-none disabled:opacity-50")}
+        >
+          <Check size={11} />
+          Submit answers
+        </button>
+        <button disabled={controlsDisabled} onClick={() => onRespond("deny")} className={cn("inline-flex h-6 items-center gap-1 px-2 text-xs font-medium rounded-md", "text-muted-foreground/70 hover:text-destructive", "hover:bg-destructive/10 transition-colors", "cursor-pointer disabled:pointer-events-none disabled:opacity-50")}>
+          <X size={11} />
+          Deny
+        </button>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
 /**
  * Renders an inline permission request card inside the chat message list.
  *
@@ -147,6 +256,7 @@ export function PermissionRequestCard({
   toolName,
   input,
   title,
+  questions,
   settled,
   decision,
 }: PermissionRequestCardProps) {
@@ -164,11 +274,12 @@ export function PermissionRequestCard({
   }, []);
 
   const respond = useCallback(
-    async (d: PermissionDecision) => {
+    async (d: PermissionDecision, answers?: PermissionResponseAnswers) => {
       setResponding(true);
       try {
         setError(null);
-        await getTransport().respondToPermission(requestId, d);
+        if (answers === undefined) await getTransport().respondToPermission(requestId, d);
+        else await getTransport().respondToPermission(requestId, d, answers);
       } catch {
         setError("Failed to send response. Please try again.");
       } finally {
@@ -187,6 +298,9 @@ export function PermissionRequestCard({
 
   if (settled && decision) {
     return <SettledPermissionRequest icon={<Icon size={13} className="shrink-0 text-muted-foreground/50" />} label={label} decision={decision} />;
+  }
+  if (questions) {
+    return <PendingQuestionRequest requestId={requestId} icon={<Icon size={13} className="shrink-0" />} label={label} questions={questions} responding={responding} ready={ready} error={error} onRespond={respond} />;
   }
   return <PendingPermissionRequest icon={<Icon size={13} className="shrink-0" />} label={label} inputPreview={inputPreview} responding={responding} ready={ready} allowMode={allowMode} error={error} onRespond={respond} onAllowMode={setAllowMode} />;
 }

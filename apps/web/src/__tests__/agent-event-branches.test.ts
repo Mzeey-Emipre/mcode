@@ -68,13 +68,58 @@ describe("handleAgentEvent branches", () => {
     );
   });
 
-  it("shows the OpenCode recreated-session notice", () => {
-    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: "thread-1", subtype: "opencode:session-recreated" } as AgentEvent);
+  it("shows a bounded provider-neutral system notice", () => {
+    useThreadStore.getState().handleAgentEvent({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.notice.configuration",
+      message: "The provider reported a configuration update that may require attention.",
+    } as AgentEvent);
 
     expect(getTestActiveMessages()).toMatchObject([{
       role: "system",
-      content: "OpenCode session recreated. Earlier context cleared. Send again to continue.",
+      content: "The provider reported a configuration update that may require attention.",
     }]);
+  });
+
+  it("handles reroutes and provider notices through canonical contracts", () => {
+    const handle = useThreadStore.getState().handleAgentEvent;
+    handle({
+      type: "modelFallback",
+      threadId: "thread-1",
+      requestedModel: "anthropic/claude-opus-4-6",
+      actualModel: "anthropic/claude-sonnet-4-6",
+    } as AgentEvent);
+    handle({ type: "system", threadId: "thread-1", subtype: "provider.notice.warning", message: "Provider warning: disk almost full" } as AgentEvent);
+    handle({ type: "system", threadId: "thread-1", subtype: "provider.notice.authentication-required", message: "Authentication is required before the provider can continue." } as AgentEvent);
+
+    expect(getTestActiveMessages()).toMatchObject([
+      { role: "system", content: "Provider warning: disk almost full" },
+      { role: "system", content: "Authentication is required before the provider can continue." },
+    ]);
+    expect(getTestThreadLastFallback("thread-1")).toEqual({
+      requestedModel: "anthropic/claude-opus-4-6",
+      actualModel: "anthropic/claude-sonnet-4-6",
+    });
+  });
+
+  it("shows one row for an unknown provider diagnostic without touching thread state", () => {
+    useThreadStore.setState((state) => ({
+      records: patchThreadRecord(state.records, "thread-1", { runtimePhase: "running" as const }),
+    }));
+    useThreadStore.getState().handleAgentEvent({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.notice.unknown-event",
+      message: "The provider sent an update this client does not recognize. The thread continues normally.",
+    } as AgentEvent);
+
+    expect(getTestActiveMessages()).toMatchObject([{
+      role: "system",
+      content: "The provider sent an update this client does not recognize. The thread continues normally.",
+    }]);
+    expect(readThreadField("thread-1", (record) => record.runtimePhase)).toBe("running");
+    expect(useThreadStore.getState().runningThreadIds.has("thread-1")).toBe(true);
   });
 
   it("session.system with an unknown subtype appends no message", () => {

@@ -44,6 +44,7 @@ import type {
   GitRemoteUrl,
   PermissionDecision,
   PermissionRequest,
+  PermissionResponseAnswers,
   CreateAndSendResult,
   ThreadStartup,
   ThreadStartupListResult,
@@ -420,7 +421,11 @@ export interface McodeTransport {
   /** Continue an active turn after the user accepts that its remaining text will not be saved. */
   continueWithoutSaving(executionId: string): Promise<void>;
   /** Respond to a tool permission request from the agent. */
-  respondToPermission(requestId: string, decision: PermissionDecision): Promise<void>;
+  respondToPermission(
+    requestId: string,
+    decision: PermissionDecision,
+    answers?: PermissionResponseAnswers,
+  ): Promise<void>;
   /** List pending permission requests for a thread (used to re-hydrate after reconnect). */
   listPendingPermissions(threadId: string): Promise<PermissionRequest[]>;
   /** Submit answers to a plan-mode question batch and resume the agent session. */

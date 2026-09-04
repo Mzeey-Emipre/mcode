@@ -279,6 +279,7 @@ export type ChatVirtualItem =
       toolName: string;
       input: unknown;
       title?: string;
+      questions?: import("@mcode/contracts").PermissionQuestion[];
       settled: boolean;
       decision?: PermissionDecision;
     }
@@ -462,6 +463,7 @@ export function buildVolatileItems(
     toolName: string;
     input?: unknown;
     title?: string;
+    questions?: import("@mcode/contracts").PermissionQuestion[];
     settled: boolean;
     decision?: PermissionDecision;
   }[],
@@ -507,7 +509,7 @@ function narrativeIndicatorItem(toolCalls: readonly ToolCall[], isAgentRunning: 
 }
 
 function permissionRequestItems(permissions: Parameters<typeof buildVolatileItems>[4]): ChatVirtualItem[] {
-  return permissions?.map((permission) => ({ key: `permission-${permission.requestId}`, type: "permission-request" as const, requestId: permission.requestId, toolName: permission.toolName, input: permission.input, title: permission.title, settled: permission.settled, decision: permission.decision })) ?? [];
+  return permissions?.map((permission) => ({ key: `permission-${permission.requestId}`, type: "permission-request" as const, requestId: permission.requestId, toolName: permission.toolName, input: permission.input, title: permission.title, questions: permission.questions, settled: permission.settled, decision: permission.decision })) ?? [];
 }
 
 function sameArrayItems<T>(
@@ -575,7 +577,7 @@ function sameTurnChangesItem(left: ChatVirtualItem, right: ChatVirtualItem): boo
 }
 
 function samePermissionRequestItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {
-  return left.type === "permission-request" && right.type === "permission-request" && [left.requestId === right.requestId, left.toolName === right.toolName, left.input === right.input, left.title === right.title, left.settled === right.settled, left.decision === right.decision].every(Boolean);
+  return left.type === "permission-request" && right.type === "permission-request" && [left.requestId === right.requestId, left.toolName === right.toolName, left.input === right.input, left.title === right.title, left.questions === right.questions, left.settled === right.settled, left.decision === right.decision].every(Boolean);
 }
 
 function sameHookActivityItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {

@@ -34,7 +34,7 @@ describe("mapOpenCodeEnvelope", () => {
     expect(result.events[0]).toMatchObject({ type: "toolResult", toolCallId: "c1", isError: false });
   });
 
-  it("marks session.idle as completion and unknown types as bounded diagnostics", () => {
+  it("marks session.idle as completion and unknown types as bounded diagnostics in both envelopes", () => {
     const idle = mapOpenCodeEnvelope({ type: "session.idle", properties: { sessionID: "ses_1" } }, CTX);
     expect(idle.disposition).toBe("mapped");
     expect(idle.events[0]).toMatchObject({ type: "turnComplete" });
@@ -42,6 +42,13 @@ describe("mapOpenCodeEnvelope", () => {
     const unknown = mapOpenCodeEnvelope({ type: "session.frobnicate", properties: {} }, CTX);
     expect(unknown.disposition).toBe("diagnostic");
     expect(unknown.reason).toBe("unknown-event-type");
+
+    const wrappedUnknown = mapOpenCodeEnvelope({
+      type: "bus",
+      payload: { type: "session.frobnicate", properties: {} },
+    }, CTX);
+    expect(wrappedUnknown.disposition).toBe("diagnostic");
+    expect(wrappedUnknown.reason).toBe("unknown-event-type");
   });
 
   it("ignores known noise with a reason and keeps lifecycle signals state-only", () => {
@@ -135,10 +142,172 @@ describe("mapOpenCodeEnvelope", () => {
     expect(ended.events[0]).toMatchObject({ type: "turnComplete", tokensIn: 10, tokensOut: 5 });
 
     const asked = mapOpenCodeEnvelope({
-      type: "permission.asked",
-      properties: { id: "per_1", sessionID: "ses_1", permission: "edit" },
+      type: "permission.v2.asked",
+      properties: { id: "per_1", sessionID: "ses_1", action: "bash", resources: ["echo hi"] },
     }, CTX);
-    expect(asked.disposition).toBe("diagnostic");
-    expect(asked.reason).toBe("permission-asked");
+    expect(asked.disposition).toBe("mapped");
+    expect(asked.events).toHaveLength(0);
+    expect(asked.reason).toBe("permission-request");
+
+    const question = mapOpenCodeEnvelope({
+      type: "question.v2.asked",
+      properties: { id: "que_1", sessionID: "ses_1", questions: [] },
+    }, CTX);
+    expect(question.disposition).toBe("mapped");
+    expect(question.events).toHaveLength(0);
+    expect(question.reason).toBe("question-request");
+  });
+
+  it("rejects oversized envelopes with one bounded diagnostic", () => {
+    const big = mapOpenCodeEnvelope({
+      type: "message.part.updated",
+      properties: { sessionID: "ses_1", part: { type: "text", id: "p1" }, delta: "x".repeat(300_000) },
+    }, CTX);
+    expect(big.disposition).toBe("diagnostic");
+    expect(big.reason).toBe("oversized-envelope");
+    expect(big.events).toHaveLength(1);
+    expect(big.events[0]).toMatchObject({ type: "system", subtype: "provider.notice.oversized-event" });
+  });
+
+  it("classifies the HTTP boundary oversized-frame sentinel without raw payload", () => {
+    const mapped = mapOpenCodeEnvelope({ type: "mcode.adapter.oversized-sse-frame", properties: {} }, CTX);
+    expect(mapped).toMatchObject({
+      disposition: "diagnostic",
+      reason: "oversized-sse-frame",
+      events: [{ type: "system", subtype: "provider.notice.oversized-event" }],
+    });
+  });
+
+  it("measures oversized envelopes in UTF-8 bytes", () => {
+    const big = mapOpenCodeEnvelope({
+      type: "message.part.updated",
+      properties: { part: { type: "text", id: "p1" }, delta: "😀".repeat(70_000) },
+    }, CTX);
+    expect(big.disposition).toBe("diagnostic");
+    expect(big.reason).toBe("oversized-envelope");
+  });
+
+  it("bounds tool input before it reaches canonical events", () => {
+    const mapped = mapOpenCodeEnvelope({
+      type: "session.next.tool.called",
+      properties: {
+        callID: "c1",
+        tool: "bash",
+        input: {
+          command: "x".repeat(10_000),
+          nested: { one: { two: { three: { four: "untrusted" } } } },
+        },
+      },
+    }, CTX);
+    expect(mapped.events[0]).toMatchObject({
+      type: "toolUse",
+      toolInput: {
+        command: "x".repeat(4_096),
+        nested: { one: { two: { three: "[truncated]" } } },
+      },
+    });
+  });
+
+  it("keeps unknown event identities out of canonical diagnostics", () => {
+    const unknown = mapOpenCodeEnvelope({ type: `x.${"y".repeat(2_000)}`, properties: {} }, CTX);
+    expect(unknown.disposition).toBe("diagnostic");
+    expect(unknown.events[0]).toMatchObject({
+      type: "system",
+      subtype: "provider.notice.unknown-event",
+      message: "The provider sent an update this client does not recognize. The thread continues normally.",
+    });
+  });
+
+  it("maps reroute, warning, and auth signals to single bounded notices", () => {
+    const reroute = mapOpenCodeEnvelope({
+      type: "session.next.model.switched",
+      properties: { sessionID: "ses_1", model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" } },
+    }, CTX);
+    expect(reroute.disposition).toBe("mapped");
+    expect(reroute.events[0]).toMatchObject({
+      type: "modelFallback",
+      requestedModel: "requested model",
+      actualModel: "anthropic/claude-sonnet-4-6",
+    });
+
+    const warning = mapOpenCodeEnvelope({
+      type: "tui.toast.show",
+      properties: { message: "disk almost full", variant: "warning" },
+    }, CTX);
+    expect(warning.events[0]).toMatchObject({
+      type: "system",
+      subtype: "provider.notice.warning",
+      message: "Provider warning: disk almost full",
+    });
+
+    const info = mapOpenCodeEnvelope({
+      type: "tui.toast.show",
+      properties: { message: "saved", variant: "info" },
+    }, CTX);
+    expect(info.disposition).toBe("ignored");
+
+    const config = mapOpenCodeEnvelope({ type: "config.updated", properties: {} }, CTX);
+    expect(config).toMatchObject({
+      disposition: "diagnostic",
+      reason: "configuration-signal",
+      events: [{
+        type: "system",
+        subtype: "provider.notice.configuration",
+        message: "The provider reported a configuration update that may require attention.",
+      }],
+    });
+
+    const auth = mapOpenCodeEnvelope({
+      type: "session.error",
+      properties: { sessionID: "ses_1", error: { name: "ProviderAuthError", data: { providerID: "anthropic", message: "login expired" } } },
+    }, CTX);
+    expect(auth.disposition).toBe("mapped");
+    expect(auth.events).toHaveLength(2);
+    expect(auth.events[0]).toMatchObject({ type: "error", error: "login expired" });
+    expect(auth.events[1]).toMatchObject({
+      type: "system",
+      subtype: "provider.notice.authentication-required",
+      message: "Authentication is required before the provider can continue.",
+    });
+
+    const plain = mapOpenCodeEnvelope({
+      type: "session.error",
+      properties: { sessionID: "ses_1", error: { name: "UnknownError", data: { message: "boom" } } },
+    }, CTX);
+    expect(plain.events).toHaveLength(1);
+    expect(plain.events[0]).toMatchObject({ type: "error", error: "boom" });
+  });
+
+  it("maps wrapped envelopes to the same notices as flat ones", () => {
+    const wrapped = mapOpenCodeEnvelope({
+      type: "bus",
+      payload: {
+        type: "session.next.model.switched",
+        properties: { sessionID: "ses_1", model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" } },
+      },
+    }, CTX);
+    expect(wrapped.events[0]).toMatchObject({
+      type: "modelFallback",
+      actualModel: "anthropic/claude-sonnet-4-6",
+    });
+
+    const wrappedAsk = mapOpenCodeEnvelope({
+      type: "bus",
+      payload: { type: "permission.v2.asked", properties: { id: "per_9", action: "bash" } },
+    }, CTX);
+    expect(wrappedAsk.disposition).toBe("mapped");
+    expect(wrappedAsk.reason).toBe("permission-request");
+  });
+
+  it("keeps reply lifecycle signals state-only", () => {
+    for (const type of [
+      "permission.v2.replied",
+      "question.v2.replied",
+      "question.v2.rejected",
+      "question.replied",
+      "question.rejected",
+    ]) {
+      expect(mapOpenCodeEnvelope({ type, properties: {} }, CTX).disposition).toBe("state-only");
+    }
   });
 });

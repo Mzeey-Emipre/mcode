@@ -3,7 +3,11 @@ import type { InteractionMode, OrchestrationMode } from "../models/enums.js";
 import type { AttachmentMeta } from "../models/attachment.js";
 import type { MessageMention } from "../models/mention.js";
 import type { GoalLookupResult, GoalState } from "../models/goal.js";
-import type { PermissionDecision, PermissionRequest } from "../models/permission.js";
+import type {
+  PermissionDecision,
+  PermissionRequest,
+  PermissionResponseAnswers,
+} from "../models/permission.js";
 import type { ContextWindowMode, ReasoningLevel } from "../models/settings.js";
 import type { ProviderModelInfo } from "./models.js";
 import type { ProviderUsageInfo } from "./usage.js";
@@ -165,7 +169,11 @@ export interface IAgentProvider {
    * Resolve a pending permission request.
    * Returns true if the requestId was found and resolved, false otherwise.
    */
-  resolvePermission?(requestId: string, decision: PermissionDecision): boolean;
+  resolvePermission?(
+    requestId: string,
+    decision: PermissionDecision,
+    answers?: PermissionResponseAnswers,
+  ): boolean;
 
   /** Return all pending permission requests for a given thread. */
   listPendingPermissions?(threadId: string): PermissionRequest[];

@@ -25,6 +25,8 @@ export interface OpenCodeMappedOutput {
 interface MapperContext {
   threadId: string;
   turnExecutionId?: string;
+  /** Model requested by Mcode before the upstream reroute signal. */
+  requestedModel?: string;
   /** Role of the message the part belongs to, when the caller tracked it. */
   partRole?: string;
   /** Text already forwarded per message, for exactly-once streaming. */
@@ -38,6 +40,18 @@ interface NormalizedEnvelope {
 
 const MAX_TEXT_BYTES = 32_768;
 const MAX_DIAGNOSTIC_CHARS = 1_000;
+const MAX_NOTICE_MESSAGE_CHARS = 960;
+const MAX_IDENTIFIER_CHARS = 512;
+const MAX_TOOL_NAME_CHARS = 128;
+const MAX_TOOL_INPUT_STRING_CHARS = 4_096;
+const MAX_TOOL_INPUT_KEYS = 32;
+const MAX_TOOL_INPUT_ARRAY_ITEMS = 32;
+const MAX_TOOL_INPUT_DEPTH = 4;
+/**
+ * Largest accepted SSE envelope (JSON bytes). Larger frames become a bounded
+ * diagnostic so one runaway payload cannot wedge the turn or the UI.
+ */
+const MAX_ENVELOPE_BYTES = 262_144;
 
 function boundText(value: unknown): string {
   if (typeof value !== "string") return "";
@@ -48,6 +62,14 @@ function boundDiagnostic(value: string): string {
   return value.length > MAX_DIAGNOSTIC_CHARS ? value.slice(0, MAX_DIAGNOSTIC_CHARS) : value;
 }
 
+function boundedString(value: unknown, max: number): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value.slice(0, max) : undefined;
+}
+
+function boundedIdentifier(value: unknown): string | undefined {
+  return boundedString(value, MAX_IDENTIFIER_CHARS);
+}
+
 function withExecution(event: AgentEvent, ctx: MapperContext): AgentEvent {
   if (!ctx.turnExecutionId) return event;
   return { ...event, turnExecutionId: ctx.turnExecutionId } as AgentEvent;
@@ -55,6 +77,28 @@ function withExecution(event: AgentEvent, ctx: MapperContext): AgentEvent {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function boundedToolValue(value: unknown, depth: number): unknown {
+  if (typeof value === "string") return boundText(value.slice(0, MAX_TOOL_INPUT_STRING_CHARS));
+  if (typeof value === "boolean" || typeof value === "number" || value === null) return value;
+  if (depth >= MAX_TOOL_INPUT_DEPTH) return "[truncated]";
+  if (Array.isArray(value)) {
+    return value.slice(0, MAX_TOOL_INPUT_ARRAY_ITEMS).map((item) => boundedToolValue(item, depth + 1));
+  }
+  if (!isRecord(value)) return "[unsupported]";
+  const output: Record<string, unknown> = Object.create(null);
+  for (const [key, nested] of Object.entries(value).slice(0, MAX_TOOL_INPUT_KEYS)) {
+    output[key.slice(0, MAX_DIAGNOSTIC_CHARS)] = boundedToolValue(nested, depth + 1);
+  }
+  return output;
+}
+
+/** Bound tool arguments before canonical ingress so raw upstream data cannot persist or render. */
+function boundedToolInput(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  const bounded = boundedToolValue(value, 0);
+  return isRecord(bounded) ? bounded : {};
 }
 
 function propertiesOf(holder: Record<string, unknown>): Record<string, unknown> {
@@ -85,15 +129,26 @@ function partOf(props: Record<string, unknown>): Record<string, unknown> | null 
 function malformedOutput(ctx: MapperContext): OpenCodeMappedOutput {
   return {
     disposition: "diagnostic",
-    events: [withExecution({ type: "system", threadId: ctx.threadId, subtype: "opencode:malformed-envelope" } satisfies AgentEvent, ctx)],
+    events: [withExecution({
+      type: "system",
+      threadId: ctx.threadId,
+      subtype: "provider.notice.malformed-event",
+      message: "A provider event could not be processed safely.",
+    } satisfies AgentEvent, ctx)],
     reason: "malformed-envelope",
   };
 }
 
 function unknownEventOutput(type: string, ctx: MapperContext): OpenCodeMappedOutput {
+  void type;
   return {
     disposition: "diagnostic",
-    events: [withExecution({ type: "system", threadId: ctx.threadId, subtype: `opencode:unknown-event:${boundDiagnostic(type)}` } satisfies AgentEvent, ctx)],
+    events: [withExecution({
+      type: "system",
+      threadId: ctx.threadId,
+      subtype: "provider.notice.unknown-event",
+      message: "The provider sent an update this client does not recognize. The thread continues normally.",
+    } satisfies AgentEvent, ctx)],
     reason: "unknown-event-type",
   };
 }
@@ -110,19 +165,29 @@ function mapSessionIdle(ctx: MapperContext): OpenCodeMappedOutput {
 
 function mapSessionError(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
   const err = properties.error;
-  const message = isRecord(err)
-    ? boundDiagnostic(JSON.stringify(err).slice(0, MAX_DIAGNOSTIC_CHARS))
-    : "OpenCode session error";
-  return {
-    disposition: "mapped",
-    events: [withExecution({ type: "error", threadId: ctx.threadId, error: message } satisfies AgentEvent, ctx)],
-  };
+  const detail = isRecord(err) && isRecord(err.data) && typeof err.data.message === "string"
+    ? boundDiagnostic(err.data.message)
+    : isRecord(err)
+      ? boundDiagnostic(JSON.stringify(err).slice(0, MAX_DIAGNOSTIC_CHARS))
+      : "OpenCode session error";
+  const events: AgentEvent[] = [
+    withExecution({ type: "error", threadId: ctx.threadId, error: detail } satisfies AgentEvent, ctx),
+  ];
+  // Authentication failures are security-sensitive: they stay visible as a
+  // scoped recovery notice instead of a bare error string.
+  if (isRecord(err) && err.name === "ProviderAuthError") {
+    events.push(withExecution({
+      type: "system",
+      threadId: ctx.threadId,
+      subtype: "provider.notice.authentication-required",
+      message: "Authentication is required before the provider can continue.",
+    } satisfies AgentEvent, ctx));
+  }
+  return { disposition: "mapped", events };
 }
 
 function mapTextPart(part: Record<string, unknown>, properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
-  const key = typeof part.messageID === "string" && part.messageID.length > 0
-    ? part.messageID
-    : typeof part.id === "string" ? part.id : "";
+  const key = boundedIdentifier(part.messageID) ?? boundedIdentifier(part.id) ?? "";
   if (typeof properties.delta === "string") {
     return emitTextRemainder(ctx, key, properties.delta, true);
   }
@@ -141,12 +206,11 @@ function emitTextRemainder(ctx: MapperContext, key: string, text: string, isDelt
 }
 
 function toolCallIdOf(part: Record<string, unknown>): string {
-  if (typeof part.callID === "string" && part.callID.length > 0) return part.callID;
-  return typeof part.id === "string" ? part.id : "tool-unknown";
+  return boundedIdentifier(part.callID) ?? boundedIdentifier(part.id) ?? "tool-unknown";
 }
 
 function toolInputOf(state: Record<string, unknown> | undefined): Record<string, unknown> {
-  return isRecord(state?.input) ? state.input : {};
+  return boundedToolInput(state?.input);
 }
 
 function mapToolRunning(toolCallId: string, toolName: string, state: Record<string, unknown> | undefined, ctx: MapperContext): OpenCodeMappedOutput {
@@ -181,18 +245,19 @@ function mapToolPart(part: Record<string, unknown>, ctx: MapperContext): OpenCod
   const state = isRecord(part.state) ? part.state : undefined;
   const status = typeof state?.status === "string" ? state.status : "pending";
   const toolCallId = toolCallIdOf(part);
-  const toolName = typeof part.tool === "string" ? part.tool : "unknown";
+  const toolName = boundedString(part.tool, MAX_TOOL_NAME_CHARS) ?? "unknown";
   if (status === "completed") return mapToolCompleted(toolCallId, state, ctx);
   if (status !== "pending" && status !== "running") return mapToolFailed(toolCallId, state, ctx);
   return mapToolRunning(toolCallId, toolName, state, ctx);
 }
 
-function mapStepFinishPart(part: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {  const tokens = isRecord(part.tokens) ? part.tokens : {};
+function mapStepFinishPart(part: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
+  const tokens = isRecord(part.tokens) ? part.tokens : {};
   return {
     disposition: "mapped",
     events: [withExecution({
-      type: "turnComplete", threadId: ctx.threadId, reason: typeof part.reason === "string" ? part.reason : "end_turn",
-      costUsd: typeof part.cost === "number" ? part.cost : null,
+      type: "turnComplete", threadId: ctx.threadId, reason: boundedString(part.reason, MAX_DIAGNOSTIC_CHARS) ?? "end_turn",
+      costUsd: finiteNumberOrNull(part.cost),
       tokensIn: typeof tokens.input === "number" ? tokens.input : 0,
       tokensOut: typeof tokens.output === "number" ? tokens.output : 0,
     } satisfies AgentEvent, ctx)],
@@ -256,6 +321,23 @@ function numberOrZero(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function oversizedSseOutput(ctx: MapperContext): OpenCodeMappedOutput {
+  return {
+    disposition: "diagnostic",
+    events: [withExecution({
+      type: "system",
+      threadId: ctx.threadId,
+      subtype: "provider.notice.oversized-event",
+      message: "A provider event exceeded the safety limit and was not processed.",
+    } satisfies AgentEvent, ctx)],
+    reason: "oversized-sse-frame",
+  };
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function mapNextTextDelta(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
   const delta = typeof properties.delta === "string" ? properties.delta : "";
   if (!delta) return { disposition: "state-only", events: [] };
@@ -266,19 +348,19 @@ function mapNextTextDelta(properties: Record<string, unknown>, ctx: MapperContex
 }
 
 function mapNextToolCalled(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
-  const toolCallId = typeof properties.callID === "string" && properties.callID.length > 0 ? properties.callID : "tool-unknown";
-  const toolName = typeof properties.tool === "string" ? properties.tool : "unknown";
+  const toolCallId = boundedIdentifier(properties.callID) ?? "tool-unknown";
+  const toolName = boundedString(properties.tool, MAX_TOOL_NAME_CHARS) ?? "unknown";
   return {
     disposition: "mapped",
     events: [withExecution({
       type: "toolUse", threadId: ctx.threadId, toolCallId, toolName,
-      toolInput: isRecord(properties.input) ? properties.input : {},
+      toolInput: boundedToolInput(properties.input),
     } satisfies AgentEvent, ctx)],
   };
 }
 
 function mapNextToolSuccess(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
-  const toolCallId = typeof properties.callID === "string" && properties.callID.length > 0 ? properties.callID : "tool-unknown";
+  const toolCallId = boundedIdentifier(properties.callID) ?? "tool-unknown";
   return {
     disposition: "mapped",
     events: [withExecution({
@@ -289,7 +371,7 @@ function mapNextToolSuccess(properties: Record<string, unknown>, ctx: MapperCont
 }
 
 function mapNextToolFailed(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
-  const toolCallId = typeof properties.callID === "string" && properties.callID.length > 0 ? properties.callID : "tool-unknown";
+  const toolCallId = boundedIdentifier(properties.callID) ?? "tool-unknown";
   return {
     disposition: "mapped",
     events: [withExecution({
@@ -305,8 +387,8 @@ function mapNextStepEnded(properties: Record<string, unknown>, ctx: MapperContex
     disposition: "mapped",
     events: [withExecution({
       type: "turnComplete", threadId: ctx.threadId,
-      reason: typeof properties.finish === "string" ? properties.finish : "end_turn",
-      costUsd: typeof properties.cost === "number" ? properties.cost : null,
+      reason: boundedString(properties.finish, MAX_DIAGNOSTIC_CHARS) ?? "end_turn",
+      costUsd: finiteNumberOrNull(properties.cost),
       tokensIn: numberOrZero(tokens.input),
       tokensOut: numberOrZero(tokens.output),
     } satisfies AgentEvent, ctx)],
@@ -323,15 +405,64 @@ function mapNextStepFailed(properties: Record<string, unknown>, ctx: MapperConte
   };
 }
 
-function mapPermissionAsked(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
-  const permission = typeof properties.permission === "string" ? properties.permission : "unknown";
+/**
+ * Permission and question asks surface as inline cards through the existing
+ * permission flow, not as timeline events. The mapper claims them as mapped
+ * with no canonical events; the provider synthesizes the card from the same
+ * envelope and emits `permission_request`. The reply lifecycle
+ * (`permission.v2.replied`, `question.v2.replied/rejected`) is state-only.
+ */
+function mapAskRouted(reason: "permission-request" | "question-request"): OpenCodeMappedOutput {
+  return { disposition: "mapped", events: [], reason };
+}
+
+function modelRefText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (isRecord(value)) {
+    const provider = typeof value.providerID === "string" ? value.providerID : "";
+    const model = typeof value.modelID === "string" ? value.modelID : "";
+    if (provider && model) return `${provider}/${model}`;
+    return model || provider;
+  }
+  return "";
+}
+
+/** A mid-turn model change uses the existing provider-neutral fallback event. */
+function mapModelSwitched(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
+  const actualModel = boundDiagnostic(modelRefText(properties.model)) || "unknown";
+  return {
+    disposition: "mapped",
+    events: [withExecution({
+      type: "modelFallback",
+      threadId: ctx.threadId,
+      requestedModel: ctx.requestedModel ?? "requested model",
+      actualModel,
+    } satisfies AgentEvent, ctx)],
+    reason: "model-switched",
+  };
+}
+
+/**
+ * Upstream toast warnings and errors become one bounded notice each;
+ * info and success toasts are TUI chrome with no thread meaning.
+ */
+function mapToastShow(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
+  const variant = properties.variant;
+  if (variant !== "warning" && variant !== "error") {
+    return { disposition: "ignored", events: [], reason: "toast-info-not-surfaced" };
+  }
+  const message = typeof properties.message === "string" && properties.message.length > 0
+    ? properties.message.slice(0, MAX_NOTICE_MESSAGE_CHARS)
+    : variant;
   return {
     disposition: "diagnostic",
     events: [withExecution({
-      type: "system", threadId: ctx.threadId,
-      subtype: `opencode:permission-asked:${boundDiagnostic(permission)}`,
+      type: "system",
+      threadId: ctx.threadId,
+      subtype: `provider.notice.${variant}`,
+      message: `Provider ${variant}: ${message}`,
     } satisfies AgentEvent, ctx)],
-    reason: "permission-asked",
+    reason: "upstream-toast",
   };
 }
 
@@ -344,7 +475,12 @@ function mapPartByType(part: Record<string, unknown>, properties: Record<string,
   if (typeof partType === "string" && STATE_ONLY_PART_TYPES.has(partType)) return { disposition: "state-only", events: [] };
   return {
     disposition: "diagnostic",
-    events: [withExecution({ type: "system", threadId: ctx.threadId, subtype: `opencode:unknown-part:${boundDiagnostic(String(partType))}` } satisfies AgentEvent, ctx)],
+    events: [withExecution({
+      type: "system",
+      threadId: ctx.threadId,
+      subtype: "provider.notice.unknown-part",
+      message: "The provider sent an update this client does not recognize. The thread continues normally.",
+    } satisfies AgentEvent, ctx)],
     reason: "unknown-part-type",
   };
 }
@@ -361,17 +497,21 @@ function mapPartDelta(properties: Record<string, unknown>, ctx: MapperContext): 
   }
   const delta = typeof properties.delta === "string" ? properties.delta : "";
   if (!delta) return { disposition: "state-only", events: [] };
-  const key = typeof properties.messageID === "string" && properties.messageID.length > 0
-    ? properties.messageID
-    : typeof properties.partID === "string" ? properties.partID : "";
+  const key = boundedIdentifier(properties.messageID) ?? boundedIdentifier(properties.partID) ?? "";
   return emitTextRemainder(ctx, key, delta, true);
 }
 
-function mapMessagePartUpdated(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {  const part = partOf(properties);
+function mapMessagePartUpdated(properties: Record<string, unknown>, ctx: MapperContext): OpenCodeMappedOutput {
+  const part = partOf(properties);
   if (!part) {
     return {
       disposition: "diagnostic",
-      events: [withExecution({ type: "system", threadId: ctx.threadId, subtype: "opencode:part-without-body" } satisfies AgentEvent, ctx)],
+      events: [withExecution({
+        type: "system",
+        threadId: ctx.threadId,
+        subtype: "provider.notice.malformed-event",
+        message: "A provider event could not be processed safely.",
+      } satisfies AgentEvent, ctx)],
       reason: "part-without-body",
     };
   }
@@ -404,6 +544,8 @@ const STATE_ONLY_EVENT_TYPES = new Set([
 type NormalizedHandler = (properties: Record<string, unknown>, ctx: MapperContext) => OpenCodeMappedOutput;
 
 const EXACT_HANDLERS: Readonly<Record<string, NormalizedHandler>> = {
+  "mcode.adapter.malformed-sse-frame": (_properties, ctx) => malformedOutput(ctx),
+  "mcode.adapter.oversized-sse-frame": (_properties, ctx) => oversizedSseOutput(ctx),
   "session.idle": (_properties, ctx) => mapSessionIdle(ctx),
   "session.error": (properties, ctx) => mapSessionError(properties, ctx),
   "message.updated": (properties, ctx) => mapMessageUpdated(properties, ctx),
@@ -415,8 +557,12 @@ const EXACT_HANDLERS: Readonly<Record<string, NormalizedHandler>> = {
   "session.next.tool.failed": (properties, ctx) => mapNextToolFailed(properties, ctx),
   "session.next.step.ended": (properties, ctx) => mapNextStepEnded(properties, ctx),
   "session.next.step.failed": (properties, ctx) => mapNextStepFailed(properties, ctx),
-  "permission.asked": (properties, ctx) => mapPermissionAsked(properties, ctx),
-  "permission.v2.asked": (properties, ctx) => mapPermissionAsked(properties, ctx),
+  "permission.asked": () => mapAskRouted("permission-request"),
+  "permission.v2.asked": () => mapAskRouted("permission-request"),
+  "question.asked": () => mapAskRouted("question-request"),
+  "question.v2.asked": () => mapAskRouted("question-request"),
+  "session.next.model.switched": (properties, ctx) => mapModelSwitched(properties, ctx),
+  "tui.toast.show": (properties, ctx) => mapToastShow(properties, ctx),
 };
 
 const NEXT_STATE_ONLY_TYPES = new Set([
@@ -429,7 +575,6 @@ const NEXT_STATE_ONLY_TYPES = new Set([
   "session.next.shell.started",
   "session.next.shell.ended",
   "session.next.step.started",
-  "session.next.model.switched",
   "session.next.context.updated",
   "session.next.prompted",
   "session.next.prompt.admitted",
@@ -443,6 +588,10 @@ const NEXT_STATE_ONLY_TYPES = new Set([
   "session.next.compaction.delta",
   "permission.replied",
   "permission.v2.replied",
+  "question.replied",
+  "question.rejected",
+  "question.v2.replied",
+  "question.v2.rejected",
 ]);
 
 const NEXT_IGNORED_TYPES = new Set([
@@ -488,6 +637,18 @@ function mapNormalized(normalized: NormalizedEnvelope, ctx: MapperContext): Open
       } satisfies AgentEvent, ctx)],
     };
   }
+  if (type.startsWith("config.")) {
+    return {
+      disposition: "diagnostic",
+      events: [withExecution({
+        type: "system",
+        threadId: ctx.threadId,
+        subtype: "provider.notice.configuration",
+        message: "The provider reported a configuration update that may require attention.",
+      } satisfies AgentEvent, ctx)],
+      reason: "configuration-signal",
+    };
+  }
   const exact = EXACT_HANDLERS[type];
   if (exact) return exact(properties, ctx);
   if (isNoiseType(type)) return { disposition: "ignored", events: [], reason: `noise:${type}` };
@@ -498,10 +659,34 @@ function mapNormalized(normalized: NormalizedEnvelope, ctx: MapperContext): Open
  * Pure exhaustive mapper from OpenCode SSE events to canonical AgentEvents.
  * Raw upstream payload never leaves this module; unknown valid notices become
  * bounded diagnostics, lifecycle-only signals become state-only, and known
- * noise becomes ignored-with-reason.
+ * noise becomes ignored-with-reason. Permission and question asks are claimed
+ * as mapped with no timeline events: their canonical surface is the inline
+ * permission card the provider emits from the same envelope.
  */
 export function mapOpenCodeEnvelope(input: unknown, ctx: MapperContext): OpenCodeMappedOutput {
+  if (isOversizedEnvelope(input)) {
+    return {
+      disposition: "diagnostic",
+      events: [withExecution({
+        type: "system",
+        threadId: ctx.threadId,
+        subtype: "provider.notice.oversized-event",
+        message: "A provider event was too large to process safely.",
+      } satisfies AgentEvent, ctx)],
+      reason: "oversized-envelope",
+    };
+  }
   const normalized = normalizeOpenCodeEnvelope(input);
   if (!normalized) return malformedOutput(ctx);
   return mapNormalized(normalized, ctx);
+}
+
+/** True when the envelope JSON exceeds the adapter boundary budget. */
+function isOversizedEnvelope(input: unknown): boolean {
+  try {
+    const serialized = JSON.stringify(input);
+    return typeof serialized === "string" && Buffer.byteLength(serialized, "utf8") > MAX_ENVELOPE_BYTES;
+  } catch {
+    return true;
+  }
 }
