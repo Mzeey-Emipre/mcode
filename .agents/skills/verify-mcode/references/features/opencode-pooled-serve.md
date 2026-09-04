@@ -7,6 +7,9 @@
 - A sent prompt streams a live reply to completion and the thread status returns ready.
 - Stop mid-stream settles the turn as aborted with no further output while the server stays warm.
 - Idle servers close after the TTL with proven process-tree termination; unexpected exits clean up without orphans.
+- Restart resume: turns survive app restarts on the same upstream session. The durable resume cursor is re-adopted behind a versioned parser and verified with one bounded history page (limit 1); only a confirmed 404 starts fresh.
+- Deleted upstream: a session deleted outside the app starts fresh with a visible `opencode:session-recreated` notice; other threads keep their own sessions.
+- Paged history: upstream history reads always carry a bounded limit (1-200, 10s timeout, abort); heavy threads page through `conversation.page` / `message.list`. Broken history surfaces a visible error, never an endless spinner.
 
 ## How to get to it (user POV)
 
@@ -14,6 +17,9 @@
 2. Enable OpenCode in Settings > Providers.
 3. Open a thread on the OpenCode provider, send a prompt, watch the reply stream.
 4. Stop a runaway turn from the chat controls and confirm it settles.
+5. Close the app, reopen, and continue the same thread: prior context is intact with no new session created.
+6. Delete the upstream session outside the app (`DELETE /session/:id`), send again: a fresh session starts with a visible recreated notice, other threads unaffected.
+7. Open a very large thread: the latest page renders fast, older pages lazy-load; broken history shows an error, never a spinner.
 
 ## Driving it with verify-mcode
 
