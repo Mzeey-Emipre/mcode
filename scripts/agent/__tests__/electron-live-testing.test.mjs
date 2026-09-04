@@ -1,6 +1,6 @@
 import * as NodeTest from "node:test";
 import * as NodeAssertStrict from "node:assert/strict";
-import { probeCdpVersion } from "../../../.codex/skills/electorn-live-testing/scripts/start-electron.mjs";
+import { probeCdpVersion } from "../../../.agents/skills/electorn-live-testing/scripts/start-electron.mjs";
 
 const validCdpVersion = {
   Browser: "Electron/37.3.1",

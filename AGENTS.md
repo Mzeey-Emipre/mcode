@@ -126,7 +126,7 @@ Clients communicate over typed WebSockets (`packages/contracts`). `apps/server` 
 - **UI Component Registry & Rules:** [`docs/guides/ui-components.md`](docs/guides/ui-components.md)
 - **Provider Architecture:** [`docs/guides/provider-architecture.md`](docs/guides/provider-architecture.md)
 - **Database Migrations:** [`docs/guides/db-migrations.md`](docs/guides/db-migrations.md)
-- **Live Desktop Testing:** [`.codex/skills/electorn-live-testing/SKILL.md`](.codex/skills/electorn-live-testing/SKILL.md)
+- **Live Desktop Testing:** [`.agents/skills/electorn-live-testing/SKILL.md`](.agents/skills/electorn-live-testing/SKILL.md)
 
 ## Verifying
 

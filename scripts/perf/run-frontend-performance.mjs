@@ -3,9 +3,9 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { agentDown } from "../agent/agent-down.mjs";
 import { readPortsFile } from "../agent/runtime-contract.mjs";
-import { ensurePlaywright } from "../../.codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
-import { startElectron } from "../../.codex/skills/electorn-live-testing/scripts/start-electron.mjs";
-import { stopElectron } from "../../.codex/skills/electorn-live-testing/scripts/stop-electron.mjs";
+import { ensurePlaywright } from "../../.agents/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
+import { startElectron } from "../../.agents/skills/electorn-live-testing/scripts/start-electron.mjs";
+import { stopElectron } from "../../.agents/skills/electorn-live-testing/scripts/stop-electron.mjs";
 import {
   normalizeFrontendRendererRuntimes,
   normalizeFrontendRendererWorkloads,

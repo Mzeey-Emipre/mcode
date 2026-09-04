@@ -3,9 +3,9 @@ import * as NodeModule from "node:module";
 import * as NodeFS from "node:fs";
 import * as NodeFSPromises from "node:fs/promises";
 import * as NodePath from "node:path";
-import { ensurePlaywright } from "../../.codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
-import { startElectron } from "../../.codex/skills/electorn-live-testing/scripts/start-electron.mjs";
-import { stopElectron } from "../../.codex/skills/electorn-live-testing/scripts/stop-electron.mjs";
+import { ensurePlaywright } from "../../.agents/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
+import { startElectron } from "../../.agents/skills/electorn-live-testing/scripts/start-electron.mjs";
+import { stopElectron } from "../../.agents/skills/electorn-live-testing/scripts/stop-electron.mjs";
 import { seedFixtureRepo } from "../agent/fixture-repo.mjs";
 import { ensureRuntimeRoot } from "../agent/runtime-contract.mjs";
 

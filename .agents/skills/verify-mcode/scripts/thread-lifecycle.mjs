@@ -584,7 +584,7 @@ function waitForSocketOpen(ws, state, fail) {
 }
 
 export async function openDesktop(repoRoot, sessionFileName = ELECTRON_SESSION_FILE) {
-  const skillDirectory = NodePath.join(repoRoot, ".codex", "skills", "electorn-live-testing", "scripts");
+  const skillDirectory = NodePath.join(repoRoot, ".agents", "skills", "electorn-live-testing", "scripts");
   const playwright = requirePlaywright(repoRoot);
   const { startElectron } = await import(NodeURL.pathToFileURL(NodePath.join(skillDirectory, "start-electron.mjs")).href);
   const { connectElectronSession, disconnectElectronSession } = await import(
@@ -610,7 +610,7 @@ export async function closeDesktop(desktop, repoRoot) {
   try {
     await desktop.disconnectElectronSession(desktop.session);
   } finally {
-    const skillFile = NodePath.join(repoRoot, ".codex", "skills", "electorn-live-testing", "scripts", "stop-electron.mjs");
+    const skillFile = NodePath.join(repoRoot, ".agents", "skills", "electorn-live-testing", "scripts", "stop-electron.mjs");
     const { stopElectron } = await import(NodeURL.pathToFileURL(skillFile).href);
     stopElectron(repoRoot, { sessionFileName: desktop.sessionFileName ?? ELECTRON_SESSION_FILE });
   }
