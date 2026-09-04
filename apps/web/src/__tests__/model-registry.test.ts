@@ -267,10 +267,11 @@ describe("ReasoningLevelSchema", () => {
   });
 });
 
-describe("GPT-5.6 Codex catalog", () => {
-  it("lists Sol, Terra, and Luna before older Codex models", () => {
+describe("Codex model catalog", () => {
+  it("lists Astra before GPT-5.6 and older Codex models", () => {
     const codex = MODEL_PROVIDERS.find((provider) => provider.id === "codex");
-    expect(codex?.models.slice(0, 3).map((model) => model.id)).toEqual([
+    expect(codex?.models.slice(0, 4).map((model) => model.id)).toEqual([
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -278,6 +279,14 @@ describe("GPT-5.6 Codex catalog", () => {
   });
 
   it("uses the Codex model catalog reasoning levels and defaults", () => {
+    expect(getCodexReasoningLevels("gpt-6-astra")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(getCodexDefaultReasoningLevel("gpt-6-astra")).toBeNull();
     expect(getCodexReasoningLevels("gpt-5.6-sol")).toEqual([
       "low",
       "medium",
@@ -319,7 +328,7 @@ describe("GPT-5.6 Codex catalog", () => {
       },
     });
 
-    expect(getDefaultModelId()).toBe("gpt-5.6-sol");
+    expect(getDefaultModelId()).toBe("gpt-6-astra");
   });
 });
 
