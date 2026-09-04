@@ -19,7 +19,7 @@
 
 ## Driving it with Electron Playwright
 
-Use the stable `.codex/skills/electorn-live-testing` persistent Electron Playwright session. Do not add a repository harness or start the runtime from this feature proof.
+Use the stable `.agents/skills/electorn-live-testing` persistent Electron Playwright session. Do not add a repository harness or start the runtime from this feature proof.
 
 - Run `runtime health` before collecting evidence. Continue only against the healthy, matching worktree instance.
 - Drive public clicks and keyboard actions through the selectors above. Re-inspect the DOM after each layout transition.

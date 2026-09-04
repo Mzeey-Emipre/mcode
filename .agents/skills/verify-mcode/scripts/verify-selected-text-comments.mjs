@@ -577,7 +577,7 @@ async function assertSavedCommentMarkerAndCardLifecycle(
 async function run() {
   const fixture = await readFixtureState();
   const playwright = await import(PLAYWRIGHT_PATH);
-  const helper = await import("../../../../.codex/skills/electorn-live-testing/scripts/electron-session.mjs");
+  const helper = await import("../../../../.agents/skills/electorn-live-testing/scripts/electron-session.mjs");
   session = await helper.connectElectronSession({ playwright, repoRoot: ROOT });
   page = session.page;
   captureDiagnostics();
@@ -799,7 +799,7 @@ try {
   throw error;
 } finally {
   if (session) {
-    const helper = await import("../../../../.codex/skills/electorn-live-testing/scripts/electron-session.mjs");
+    const helper = await import("../../../../.agents/skills/electorn-live-testing/scripts/electron-session.mjs");
     await helper.disconnectElectronSession(session);
   }
 }

@@ -38,11 +38,11 @@ The first Electron launch initializes `.dev/electron-live-testing/runtime/db/app
 
 1. Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs runtime health`.
 2. Run `bun run --cwd apps/desktop build` when the desktop bundle is missing or older than the changed UI source.
-3. Run `bun .codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs`.
-4. Run `bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs`.
+3. Run `bun .agents/skills/electorn-live-testing/scripts/ensure-playwright.mjs`.
+4. Run `bun .agents/skills/electorn-live-testing/scripts/start-electron.mjs`.
 5. Stop Electron.
 6. Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments setup`.
-7. Run `bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs`.
+7. Run `bun .agents/skills/electorn-live-testing/scripts/start-electron.mjs`.
 8. Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments proof`.
 9. Stop Electron.
 10. Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs desktop selected-text-comments cleanup`.

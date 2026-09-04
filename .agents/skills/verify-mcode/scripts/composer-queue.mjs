@@ -14,7 +14,7 @@ import {
   verifyThreadLifecycleHealth,
 } from "./thread-lifecycle.mjs";
 import { openRuntimeVerificationSocket } from "./runtime.mjs";
-import { stopElectron } from "../../../../.codex/skills/electorn-live-testing/scripts/stop-electron.mjs";
+import { stopElectron } from "../../../../.agents/skills/electorn-live-testing/scripts/stop-electron.mjs";
 
 const EVIDENCE_DIRECTORY = ".dev/verification/composer-queue";
 const PROVIDERS = ["codex", "cursor"];

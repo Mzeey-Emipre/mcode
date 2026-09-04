@@ -55,7 +55,7 @@ async function enableOpenCodeProvider(socket) {
  * helper nothing but reaped children to choke on.
  */
 async function stopOwnedElectron(repoRoot) {
-  const skillFile = NodePath.join(repoRoot, ".codex", "skills", "electorn-live-testing", "scripts", "stop-electron.mjs");
+  const skillFile = NodePath.join(repoRoot, ".agents", "skills", "electorn-live-testing", "scripts", "stop-electron.mjs");
   const { stopElectron } = await import(NodeURL.pathToFileURL(skillFile).href);
   const result = stopElectron(repoRoot, { sessionFileName: SESSION_FILE });
   if (!["stopped", "already-stopped", "not-running"].includes(result.status)) {

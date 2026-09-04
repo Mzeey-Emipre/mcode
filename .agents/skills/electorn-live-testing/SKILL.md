@@ -14,13 +14,13 @@ Use one persistent Playwright connection to an agent-owned Electron process. Lau
 3. Make Playwright importable by the Node REPL. Prefer an existing external installation. Otherwise use the helper to create an isolated private package under `.dev/playwright-scratch`. Never add Playwright to the repository package manifest:
 
    ```powershell
-   bun .codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs
+   bun .agents/skills/electorn-live-testing/scripts/ensure-playwright.mjs
    ```
 
 4. Start or reuse the owned Electron process. The launcher selects a dynamic CDP port and records only its own PID:
 
    ```powershell
-   bun .codex/skills/electorn-live-testing/scripts/start-electron.mjs
+   bun .agents/skills/electorn-live-testing/scripts/start-electron.mjs
    ```
 
 5. Add the absolute `.dev/playwright-scratch/node_modules` directory with `mcp__node_repl__js_add_node_module_dir`.
@@ -29,7 +29,7 @@ Use one persistent Playwright connection to an agent-owned Electron process. Lau
    ```js
    var electronPlaywright = await import("playwright");
    var electronSessionHelper = await import(
-     "./.codex/skills/electorn-live-testing/scripts/electron-session.mjs"
+     "./.agents/skills/electorn-live-testing/scripts/electron-session.mjs"
    );
    var electronSession = await electronSessionHelper.connectElectronSession({
      playwright: electronPlaywright,
@@ -80,7 +80,7 @@ nodeRepl.write("Playwright disconnected");
 ```
 
 ```powershell
-bun .codex/skills/electorn-live-testing/scripts/stop-electron.mjs
+bun .agents/skills/electorn-live-testing/scripts/stop-electron.mjs
 ```
 
 Then run `bun run --shell system agent:down` only when this workflow started the runtime. The stop helper verifies the recorded executable and dynamic CDP port before stopping the PID tree. If verification fails, inspect `.dev/electron-live-testing.json` and the live command before cleanup. Never kill Electron processes by name.

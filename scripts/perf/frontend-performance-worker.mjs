@@ -171,7 +171,7 @@ async function prepareWorkerContext() {
 
 function loadElectronHelper(repoRoot) {
   return import(NodeURL.pathToFileURL(NodePath.join(
-    repoRoot, ".codex", "skills", "electorn-live-testing", "scripts", "electron-session.mjs",
+    repoRoot, ".agents", "skills", "electorn-live-testing", "scripts", "electron-session.mjs",
   )).href);
 }
 
