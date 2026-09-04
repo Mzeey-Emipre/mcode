@@ -1170,6 +1170,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     if (subtype === "sdk_session_invalidated") {
       return "Session reset. Earlier context cleared. Send again to continue.";
     }
+    if (subtype === "opencode:session-recreated") {
+      return "OpenCode session recreated. Earlier context cleared. Send again to continue.";
+    }
     return null;
   };
 

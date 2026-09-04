@@ -309,13 +309,14 @@ NodeTest.test("agentUp removes stale PID files before launching server and web p
   }
 });
 
-NodeTest.test("agentUp seeds the database after it stops the prior runtime", async () => {
+NodeTest.test("agentUp preserves the database after it stops the prior runtime", async () => {
   const repo = makeRepo();
   const events = [];
   const restoreHooks = setAgentUpTestHooks({
     stopRecordedRuntimePids: async () => { events.push("stopped"); },
-    seedDatabaseForStartup: ({ repoRoot }) => {
+    seedDatabaseForStartup: ({ repoRoot, preserveExistingTarget }) => {
       NodeAssertStrict.default.equal(repoRoot, repo);
+      NodeAssertStrict.default.equal(preserveExistingTarget, true);
       events.push("seeded");
     },
     seedFixtureRepo: () => NodePath.join(repo, ".dev", "fixture-repo"),
@@ -328,6 +329,36 @@ NodeTest.test("agentUp seeds the database after it stops the prior runtime", asy
 
   try {
     await NodeAssertStrict.default.rejects(() => agentUp(repo), /Electron binary not found/);
+  } finally {
+    restoreHooks();
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+NodeTest.test("agentUp keeps an existing local database while its first start still seeds one", async () => {
+  const repo = makeRepo();
+  const paths = getRuntimePaths(repo);
+  const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async () => {},
+    seedDatabaseForStartup: ({ repoRoot, preserveExistingTarget }) => {
+      const database = getRuntimePaths(repoRoot).dbPath;
+      NodeFS.mkdirSync(NodePath.dirname(database), { recursive: true });
+      if (!preserveExistingTarget || !NodeFS.existsSync(database)) {
+        NodeFS.writeFileSync(database, "seeded\n");
+      }
+    },
+    seedFixtureRepo: () => NodePath.join(repo, ".dev", "fixture-repo"),
+    computeAvailablePorts: async () => ({ serverPort: 41_229, webPort: 41_230 }),
+    getElectronBinary: () => null,
+  });
+
+  try {
+    await NodeAssertStrict.default.rejects(() => agentUp(repo), /Electron binary not found/);
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(paths.dbPath, "utf8"), "seeded\n");
+
+    NodeFS.writeFileSync(paths.dbPath, "existing\n");
+    await NodeAssertStrict.default.rejects(() => agentUp(repo), /Electron binary not found/);
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(paths.dbPath, "utf8"), "existing\n");
   } finally {
     restoreHooks();
     NodeFS.rmSync(repo, { recursive: true, force: true });

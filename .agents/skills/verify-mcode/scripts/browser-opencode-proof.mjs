@@ -19,20 +19,29 @@ const SESSION_FILE = "electron-opencode-proof.json";
 const MODEL_BUTTON = "GPT-5.6 Luna";
 
 function printHelp() {
-  console.log(`browser-opencode-proof.mjs [--model <fragment>] [--prompt <text>] [--expect <text>] [--keep-thread]
+  console.log(`browser-opencode-proof.mjs --confirm-provider-call [--model <fragment>] [--prompt <text>] [--expect <text>] [--keep-thread]
 
 Options default to the Muse Spark 1.3 Free model and a one-word reply prompt.`);
 }
 
 function parseArgs(argv) {
-  const args = { model: "Muse Spark 1.3", prompt: "Reply with exactly:uitest. Nothing else.", expect: "uitest", keepThread: false };
+  const args = {
+    model: "Muse Spark 1.3",
+    prompt: "Reply with exactly:uitest. Nothing else.",
+    expect: "uitest",
+    keepThread: false,
+    confirmed: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--help") { printHelp(); process.exit(0); }
     else if (argv[i] === "--model") args.model = argv[++i];
     else if (argv[i] === "--prompt") args.prompt = argv[++i];
     else if (argv[i] === "--expect") args.expect = argv[++i];
     else if (argv[i] === "--keep-thread") args.keepThread = true;
+    else if (argv[i] === "--confirm-provider-call") args.confirmed = true;
+    else throw new Error(`Unknown option: ${argv[i]}`);
   }
+  if (!args.confirmed) throw new Error("--confirm-provider-call is required before the browser proof sends an OpenCode prompt");
   return args;
 }
 
@@ -49,11 +58,7 @@ async function enableOpenCodeProvider(socket) {
   }
 }
 
-/**
- * Stop the owned Electron tree without disconnecting Playwright first:
- * closing the CDP browser tears the tree down early and leaves the stop
- * helper nothing but reaped children to choke on.
- */
+/** Stop the exact Electron tree after Playwright releases its CDP connection. */
 async function stopOwnedElectron(repoRoot) {
   const skillFile = NodePath.join(repoRoot, ".agents", "skills", "electorn-live-testing", "scripts", "stop-electron.mjs");
   const { stopElectron } = await import(NodeURL.pathToFileURL(skillFile).href);
@@ -112,8 +117,9 @@ async function main() {
     if (!args.keepThread) {
       const after = await fixtureThreads(socket, fixture.id);
       for (const id of after.filter((id) => !before.has(id))) {
-        await socket.rpc("thread.delete", { threadId: id, cleanupWorktree: false });
-        console.log(JSON.stringify({ cleanup: id }));
+        const deleted = await socket.rpc("thread.delete", { threadId: id, cleanupWorktree: false });
+        if (deleted !== true) throw new Error("The browser proof could not delete its owned thread");
+        console.log(JSON.stringify({ cleanup: "deleted" }));
       }
     }
   } catch (error) {
@@ -123,6 +129,7 @@ async function main() {
     throw error;
   } finally {
     await socket?.close().catch(() => {});
+    await desktop?.disconnectElectronSession(desktop.session).catch(() => {});
     await stopOwnedElectron(repoRoot);
   }
 }

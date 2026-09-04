@@ -7,11 +7,52 @@ export interface OpenCodeHttpClient {
   abortSession(baseUrl: string, sessionId: string): Promise<void>;
   listModels(baseUrl: string): Promise<ProviderModelInfo[]>;
   subscribeEvents(baseUrl: string, signal: AbortSignal, onEnvelope: (envelope: unknown) => void): Promise<void>;
+  /**
+   * Read one bounded page of upstream session history. The limit is always
+   * sent and clamped; there is no unbounded full-history fetch.
+   */
+  listSessionMessages(
+    baseUrl: string,
+    sessionId: string,
+    options?: { limit?: number; timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<unknown[]>;
 }
+
+/** Default page size for upstream history reads. */
+export const OPENCODE_HISTORY_DEFAULT_LIMIT = 50;
+/** Largest single upstream history page; keeps heavy sessions fast. */
+export const OPENCODE_HISTORY_MAX_LIMIT = 200;
+/** Longest wait for one upstream history page before the turn errors visibly. */
+export const OPENCODE_HISTORY_TIMEOUT_MS = 10_000;
 
 function checkStatus(res: Response, what: string): void {
   if (res.ok) return;
   throw new Error(`OpenCode ${what} failed with HTTP ${res.status}`);
+}
+
+/** Clamp a requested history page to one bounded page; never unbounded. */
+function clampHistoryLimit(limit: number | undefined): number {
+  if (!Number.isFinite(limit)) return OPENCODE_HISTORY_DEFAULT_LIMIT;
+  return Math.max(1, Math.min(OPENCODE_HISTORY_MAX_LIMIT, Math.floor(limit as number)));
+}
+
+function fetchSessionHistory(url: string, timeoutMs: number, signal: AbortSignal | undefined): Promise<Response> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abortListener: (() => void) | undefined;
+  return new Promise<Response>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("OpenCode session history timed out")), timeoutMs);
+    timer.unref?.();
+    abortListener = () => reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+    if (signal?.aborted) {
+      abortListener();
+      return;
+    }
+    signal?.addEventListener("abort", abortListener, { once: true });
+    fetch(url, { signal }).then(resolve, reject);
+  }).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+    if (abortListener) signal?.removeEventListener("abort", abortListener);
+  });
 }
 
 function emitSseBlock(block: string, onEnvelope: (envelope: unknown) => void): void {
@@ -106,5 +147,20 @@ export const defaultOpenCodeHttpClient: OpenCodeHttpClient = {
     const reader = res.body?.getReader();
     if (!reader) return;
     await drainSseStream(reader, onEnvelope);
+  },
+
+  async listSessionMessages(baseUrl, sessionId, options) {
+    const limit = clampHistoryLimit(options?.limit);
+    const timeoutMs = options?.timeoutMs ?? OPENCODE_HISTORY_TIMEOUT_MS;
+    // Race the fetch against the timeout so a stalled upstream fails visibly
+    // instead of hanging the turn behind an endless spinner. Listeners come
+    // off in the finally so repeated resumes never accumulate them.
+    const url = `${baseUrl}/session/${encodeURIComponent(sessionId)}/message?limit=${limit}`;
+    const res = await fetchSessionHistory(url, timeoutMs, options?.signal);
+    if (res.status === 404) throw new Error(`OpenCode session history failed with HTTP 404 for ${sessionId}`);
+    if (!res.ok) throw new Error(`OpenCode session history failed with HTTP ${res.status}`);
+    const data = (await res.json()) as unknown;
+    if (!Array.isArray(data)) throw new Error("OpenCode session history returned a malformed payload");
+    return data;
   },
 };

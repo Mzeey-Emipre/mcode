@@ -68,6 +68,15 @@ describe("handleAgentEvent branches", () => {
     );
   });
 
+  it("shows the OpenCode recreated-session notice", () => {
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: "thread-1", subtype: "opencode:session-recreated" } as AgentEvent);
+
+    expect(getTestActiveMessages()).toMatchObject([{
+      role: "system",
+      content: "OpenCode session recreated. Earlier context cleared. Send again to continue.",
+    }]);
+  });
+
   it("session.system with an unknown subtype appends no message", () => {
     useThreadStore.getState().handleAgentEvent({ type: "system", threadId: "thread-1", subtype: "some_other_subtype" } as AgentEvent);
 

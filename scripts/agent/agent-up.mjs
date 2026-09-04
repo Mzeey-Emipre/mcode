@@ -84,7 +84,8 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
   const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
   await stopRuntimePids(repoRoot);
   const seedRuntimeDatabase = agentUpTestHooks.seedDatabaseForStartup ?? seedDatabaseForStartup;
-  seedRuntimeDatabase({ repoRoot });
+  // agent:reset owns fresh snapshots; an ordinary restart must retain threads.
+  seedRuntimeDatabase({ repoRoot, preserveExistingTarget: true });
 
   const runtime = await prepareRuntime(repoRoot);
   const electronBin = resolveElectronBinary();
