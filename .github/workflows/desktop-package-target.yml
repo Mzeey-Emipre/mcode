@@ -228,8 +228,18 @@ jobs:
             exit 1
           fi
 
+      - name: Cache Ubuntu 22.04 verification image
+        if: inputs.target-platform == 'linux'
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/mcode-linux-artifact-ubuntu22.tar
+          key: ${{ runner.os }}-${{ runner.arch }}-linux-artifact-ubuntu22-${{ hashFiles('apps/desktop/scripts/desktop-packaging/package-validation/Dockerfile.ubuntu22') }}
+
       - name: Verify Linux artifacts on Ubuntu 22.04
         if: inputs.target-platform == 'linux'
+        env:
+          MCODE_LINUX_ARTIFACT_IMAGE_CACHE: ${{ runner.temp }}/mcode-linux-artifact-ubuntu22.tar
         run: bash apps/desktop/scripts/desktop-packaging/package-validation/verify-linux-artifacts-ubuntu22.sh
 
       - name: Stage target artifacts and evidence

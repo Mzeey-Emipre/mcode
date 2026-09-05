@@ -77,6 +77,14 @@ the helper uses the provisioned Node executable for npm, electron-builder, and
 native-module rebuild compatibility. Local development and agent workflows need
 only Bun.
 
+Linux desktop artifact verification caches the Ubuntu 22.04 image. The cache
+key uses the Dockerfile hash. Edit
+`apps/desktop/scripts/desktop-packaging/package-validation/Dockerfile.ubuntu22`
+when verification dependencies change. APT requests time out after 20 seconds.
+The image build limits package index updates to three minutes and package
+installation to five minutes. The artifact install limits itself to three
+minutes.
+
 `better-sqlite3` has one repository-managed native binding:
 `build/Release/better_sqlite3.electron.node`. Postinstall downloads and verifies
 that Electron-compatible binding when Electron is installed. Bun never loads
