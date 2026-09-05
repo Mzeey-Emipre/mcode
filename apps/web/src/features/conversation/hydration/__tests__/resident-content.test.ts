@@ -5,6 +5,7 @@ import { hasResidentContent } from "../resident-content";
 describe("hasResidentContent", () => {
   it.each([
     "messages",
+    "sessionNotices",
     "streaming",
     "streamingPreview",
     "toolCalls",

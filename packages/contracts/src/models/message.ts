@@ -30,6 +30,41 @@ export const LegacyMessageProvenanceSchema = lazySchema(() => z.object({
 /** Provenance for a retained message that originated in the legacy conversation store. */
 export type LegacyMessageProvenance = z.infer<ReturnType<typeof LegacyMessageProvenanceSchema>>;
 
+/** Typed metadata retained with a provider system notice. */
+export interface SystemNoticeMetadata {
+  kind: "diagnostic" | "warning" | "security" | "configuration" | "deprecation" | "model-rerouted" | "authentication-recovered";
+  presentation: "timeline" | "toast";
+  scope?: "turn" | "session";
+  sessionId?: string;
+  noticeKey?: string;
+  origin?: "unattributed-thread";
+  fromModel?: string;
+  toModel?: string;
+  reason?: "safety" | "availability";
+  configPath?: string;
+  configRange?: { startLine: number; startColumn: number; endLine: number; endColumn: number };
+}
+
+/** Bounded provider-neutral metadata for a persisted system notice. */
+export const SystemNoticeMetadataSchema = lazySchema<z.ZodType<SystemNoticeMetadata>>(() => z.object({
+  kind: z.enum(["diagnostic", "warning", "security", "configuration", "deprecation", "model-rerouted", "authentication-recovered"]),
+  presentation: z.enum(["timeline", "toast"]),
+  scope: z.enum(["turn", "session"]).optional(),
+  sessionId: z.string().max(64).optional(),
+  noticeKey: z.string().max(64).optional(),
+  origin: z.literal("unattributed-thread").optional(),
+  fromModel: z.string().max(128).optional(),
+  toModel: z.string().max(128).optional(),
+  reason: z.enum(["safety", "availability"]).optional(),
+  configPath: z.string().max(1_024).optional(),
+  configRange: z.object({
+    startLine: z.number().int().nonnegative().max(1_000_000),
+    startColumn: z.number().int().nonnegative().max(1_000_000),
+    endLine: z.number().int().nonnegative().max(1_000_000),
+    endColumn: z.number().int().nonnegative().max(1_000_000),
+  }).optional(),
+}).strict());
+
 /** Message schema matching the SQLite row shape. */
 export const MessageSchema = lazySchema(() =>
   z.object({
@@ -61,6 +96,8 @@ export const MessageSchema = lazySchema(() =>
     outcome: TurnOutcomeSchema.nullable().optional(),
     /** Exact execution identity needed by existing retry recovery after reload. */
     outcomeExecutionId: z.string().nullable().optional(),
+    /** Bounded provider notice metadata retained across transcript reloads. */
+    systemNotice: SystemNoticeMetadataSchema().nullable().optional(),
     /**
      * When true, mcode hides this message from the chat timeline.
      * Used for hidden handoff turns on Cursor parent threads.
@@ -73,6 +110,9 @@ export const MessageSchema = lazySchema(() =>
 );
 /** Message record from the database. */
 export type Message = z.infer<ReturnType<typeof MessageSchema>>;
+
+/** Bounded session diagnostics, separate from transcript pagination. */
+export const SessionNoticesSchema = lazySchema<z.ZodType<Message[]>>(() => z.array(MessageSchema()).max(20));
 
 /** Paginated message list with cursor metadata. */
 export const PaginatedMessagesSchema = lazySchema(() =>

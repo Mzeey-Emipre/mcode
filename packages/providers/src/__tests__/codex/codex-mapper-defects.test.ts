@@ -192,7 +192,7 @@ describe("CodexEventMapper defect regressions", () => {
       },
     });
 
-    expect(events).toEqual([]);
+    expect(events).toMatchObject([{ event: { type: "system", subtype: "provider.notice.unknown-event" } }]);
   });
 
   it("does not flush spawnAgent with empty receiverThreadIds as Sub-agent finished", () => {

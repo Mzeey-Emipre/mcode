@@ -297,11 +297,13 @@ export {
   MessageSchema,
   PaginatedMessagesSchema,
   ParentAgentMessageProvenanceSchema,
+  SystemNoticeMetadataSchema,
 } from "./models/message.js";
 export type {
   Message,
   PaginatedMessages,
   ParentAgentMessageProvenance,
+  SystemNoticeMetadata,
 } from "./models/message.js";
 
 export {

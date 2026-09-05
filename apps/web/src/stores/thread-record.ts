@@ -94,6 +94,7 @@ export interface ThreadRecord {
   /** Active assistant-text durability status. This is transient and server-authoritative. */
   savingStatus: TurnSavingStatus | null;
   messages: Message[];
+  sessionNotices: Message[];
   loading: boolean;
   oldestLoadedSequence: number;
   newestLoadedSequence: number;
@@ -194,6 +195,7 @@ export function createEmptyThreadRecord(): ThreadRecord {
     runtimePhase: "idle",
     savingStatus: null,
     messages: [],
+    sessionNotices: [],
     loading: false,
     oldestLoadedSequence: 0,
     newestLoadedSequence: 0,

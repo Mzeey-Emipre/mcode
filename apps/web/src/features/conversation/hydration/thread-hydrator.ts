@@ -100,6 +100,7 @@ interface FetchCommitContext {
   epoch: number;
   invalidationGeneration: number;
   conversationRevision: number;
+  sessionNotices: ThreadRecord["sessionNotices"];
 }
 
 interface LoadedActiveConversation {
@@ -147,15 +148,39 @@ function mergedConversationMetadata(
   };
 }
 
-/** Prefer an equally recent resident update while retaining disjoint cached history. */
+function mergeSessionNotices(
+  resident: ThreadRecord["sessionNotices"],
+  cached: ThreadRecord["sessionNotices"],
+  preferResident: boolean | undefined,
+): ThreadRecord["sessionNotices"] {
+  const preferred = preferResident === false ? cached : resident;
+  const secondary = preferResident === false ? resident : cached;
+  if (preferred.length === 0) return preferResident === undefined ? secondary : [];
+  const sessionId = preferred.at(-1)?.systemNotice?.sessionId;
+  return coalesceSessionNotices([...secondary, ...preferred], sessionId);
+}
+
+function coalesceSessionNotices(notices: ThreadRecord["sessionNotices"], sessionId: string | undefined): ThreadRecord["sessionNotices"] {
+  const byKey = new Map<string, ThreadRecord["sessionNotices"][number]>();
+  for (const notice of notices) {
+    if (notice.systemNotice?.sessionId !== sessionId) continue;
+    const key = notice.systemNotice?.noticeKey ?? notice.id;
+    byKey.delete(key);
+    byKey.set(key, notice);
+  }
+  return [...byKey.values()].slice(-20);
+}
+
+/** Merge transcript and session diagnostics using their separate freshness evidence. */
 function mergeResidentConversationCacheState(
   resident: ThreadRecord,
   cached: ConversationCacheState,
-  preferResidentAtEqualSequence = true,
+  options: { preferResidentMessages?: boolean; preferResidentNotices?: boolean } = {},
 ): ConversationCacheState {
   const residentCacheState = projectConversationCacheState(resident);
-  if (cachedConversationIsNewer(residentCacheState, cached)) return cached;
-  const messages = mergedConversationMessages(cached, residentCacheState, preferResidentAtEqualSequence);
+  const sessionNotices = mergeSessionNotices(resident.sessionNotices, cached.sessionNotices, options.preferResidentNotices);
+  if (cachedConversationIsNewer(residentCacheState, cached)) return { ...cached, sessionNotices };
+  const messages = mergedConversationMessages(cached, residentCacheState, options.preferResidentMessages ?? true);
   const retainedMessageIds = new Set(messages.map((message) => message.id));
   const metadata = mergedConversationMetadata(cached, residentCacheState, retainedMessageIds);
 
@@ -163,6 +188,7 @@ function mergeResidentConversationCacheState(
     ...cached,
     ...residentCacheState,
     messages,
+    sessionNotices,
     oldestLoadedSequence: messages[0]?.sequence ?? residentCacheState.oldestLoadedSequence,
     newestLoadedSequence: messages.at(-1)?.sequence ?? residentCacheState.newestLoadedSequence,
     hasMoreMessages: cached.hasMoreMessages || residentCacheState.hasMoreMessages,
@@ -181,6 +207,7 @@ function buildConversationPageSubset(
   const messageIds = new Set(messages.map((message) => message.id));
   return {
     messages,
+    sessionNotices: page.sessionNotices,
     hasMore,
     answeredPlanMessageIds: page.answeredPlanMessageIds?.filter((id) => messageIds.has(id)),
     narrativeByMessage: Object.fromEntries(
@@ -375,6 +402,7 @@ export class ThreadHydrator {
 
       const patch = snapshotBuilder.build({
         messages: page.messages,
+        sessionNotices: page.sessionNotices,
         hasMore: page.hasMore,
         answeredPlanMessageIds: page.answeredPlanMessageIds,
       });
@@ -390,9 +418,10 @@ export class ThreadHydrator {
           ...patch,
           narrativeByMessage: page.narrativeByMessage,
         });
-        const conversation = hasResidentContent(current)
-          ? mergeResidentConversationCacheState(current, fetchedConversation, false)
-          : fetchedConversation;
+        const conversation = mergeResidentConversationCacheState(current, fetchedConversation, {
+          preferResidentMessages: false,
+          preferResidentNotices: current.sessionNotices !== currentBeforeLoad.sessionNotices,
+        });
         const { settledFileEffectSummary, ...conversationFields } = conversation;
         return {
           records: patchThreadRecord(state.records, threadId, {
@@ -624,6 +653,7 @@ export class ThreadHydrator {
 
   /** Cache-only fetch used by sidebar hover prefetches. */
   private async fetchAndCacheBackground(threadId: string): Promise<void> {
+    const sessionNoticesBeforeFetch = this.deps.getState().records.get(threadId)?.sessionNotices;
     try {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
       const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
@@ -637,6 +667,7 @@ export class ThreadHydrator {
       const tailPage = pageResult;
       const patch = snapshotBuilder.build({
         messages: tailPage.messages,
+        sessionNotices: tailPage.sessionNotices,
         hasMore: tailPage.hasMore,
         answeredPlanMessageIds: tailPage.answeredPlanMessageIds,
         snapshots,
@@ -650,8 +681,10 @@ export class ThreadHydrator {
       };
       const cachedRecord = projectConversationCacheState(record);
       const resident = this.deps.getState().records.get(threadId);
-      if (resident && hasResidentContent(resident)) {
-        cacheRecord(threadId, mergeResidentConversationCacheState(resident, cachedRecord));
+      if (resident) {
+        cacheRecord(threadId, mergeResidentConversationCacheState(resident, cachedRecord, {
+          preferResidentNotices: resident.sessionNotices !== sessionNoticesBeforeFetch,
+        }));
         return;
       }
       if (hasCachedRecord(threadId)) return;
@@ -1152,7 +1185,7 @@ export class ThreadHydrator {
     try {
       const loaded = await this.loadActiveConversation(threadId, commitOpts);
       if (!this.fetchCommitContextMatches(threadId, context)) return this.settleDiscardedFetch(threadId, context);
-      this.commitFetchedConversation(threadId, loaded.page);
+      this.commitFetchedConversation(threadId, loaded.page, context);
       recordThreadCommit(threadId, "network-fetch");
       this.scheduleFetchedConversationAuxiliaries(threadId, opts, context.epoch);
       const tailFollowupInvalidated = loaded.usedTail && await this.hydrateTailNarrative(threadId, context);
@@ -1171,6 +1204,7 @@ export class ThreadHydrator {
       epoch: record.loadEpoch,
       invalidationGeneration: this.invalidationGenerations.get(threadId) ?? 0,
       conversationRevision: conversationRevision(record),
+      sessionNotices: record.sessionNotices,
     };
   }
 
@@ -1195,7 +1229,7 @@ export class ThreadHydrator {
     loadTail: NonNullable<ThreadHydratorTransport["loadConversationTail"]>,
   ): Promise<ConversationPage> {
     const tail = await loadTail(threadId, Math.min(requestedLimit, MESSAGE_FETCH_SIZE));
-    return { messages: normalizeTailMessages(tail), hasMore: tail.hasMore, narrativeByMessage: {} };
+    return { messages: normalizeTailMessages(tail), sessionNotices: tail.sessionNotices, hasMore: tail.hasMore, narrativeByMessage: {} };
   }
 
   private fetchCommitContextMatches(threadId: string, context: FetchCommitContext): boolean {
@@ -1215,12 +1249,15 @@ export class ThreadHydrator {
     });
   }
 
-  private commitFetchedConversation(threadId: string, page: ConversationPage): void {
-    const patch = snapshotBuilder.build({ messages: page.messages, hasMore: page.hasMore, answeredPlanMessageIds: page.answeredPlanMessageIds });
+  private commitFetchedConversation(threadId: string, page: ConversationPage, context: FetchCommitContext): void {
+    const patch = snapshotBuilder.build({ messages: page.messages, sessionNotices: page.sessionNotices, hasMore: page.hasMore, answeredPlanMessageIds: page.answeredPlanMessageIds });
     this.deps.setState((state: ThreadHydratorWriteState) => {
       const current = getThreadRecord(state.records, threadId);
       const fetchedConversation = projectConversationCacheState({ ...createEmptyThreadRecord(), ...patch, narrativeByMessage: page.narrativeByMessage });
-      const conversation = hasResidentContent(current) ? mergeResidentConversationCacheState(current, fetchedConversation, false) : fetchedConversation;
+      const conversation = mergeResidentConversationCacheState(current, fetchedConversation, {
+        preferResidentMessages: false,
+        preferResidentNotices: current.sessionNotices !== context.sessionNotices,
+      });
       const { settledFileEffectSummary, ...conversationFields } = conversation;
       return {
         records: patchThreadRecord(state.records, threadId, {
@@ -1259,7 +1296,7 @@ export class ThreadHydrator {
 
   private currentFetchCommitContext(threadId: string): FetchCommitContext {
     const record = getThreadRecord(this.deps.getState().records, threadId);
-    return { epoch: record.loadEpoch, invalidationGeneration: this.invalidationGenerations.get(threadId) ?? 0, conversationRevision: conversationRevision(record) };
+    return { epoch: record.loadEpoch, invalidationGeneration: this.invalidationGenerations.get(threadId) ?? 0, conversationRevision: conversationRevision(record), sessionNotices: record.sessionNotices };
   }
 
   private async hydrateTailNarrative(threadId: string, context: FetchCommitContext): Promise<boolean> {

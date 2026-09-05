@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MessageSchema, type Message } from "./message.js";
+import { MessageSchema, SessionNoticesSchema, type Message } from "./message.js";
 import { lazySchema } from "../utils/lazySchema.js";
 
 /** Maximum number of messages returned by the first-paint conversation tail. */
@@ -17,6 +17,7 @@ export type ConversationTailMessage = Omit<
 /** Result returned by `conversation.tail`. */
 export interface ConversationTail {
   messages: ConversationTailMessage[];
+  sessionNotices?: Message[];
   hasMore: boolean;
   nextBefore?: number;
 }
@@ -42,6 +43,7 @@ export const ConversationTailParamsSchema = lazySchema(() =>
 export const ConversationTailSchema = lazySchema<z.ZodType<ConversationTail>>(() =>
   z.object({
     messages: z.array(ConversationTailMessageSchema()).max(CONVERSATION_TAIL_MAX_MESSAGES),
+    sessionNotices: SessionNoticesSchema().optional(),
     hasMore: z.boolean(),
     nextBefore: z.number().int().nonnegative().optional(),
   }),

@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, useCallback, useRef, useEffect, useSyncExternalStore, lazy, Suspense, type ReactNode } from "react";
 import type { Message } from "@/transport";
-import { ImageIcon, RotateCcw, Copy, Check, GitFork, AlertCircle, Target } from "lucide-react";
+import { ImageIcon, RotateCcw, Copy, Check, GitFork, AlertCircle, AlertTriangle, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 const LazyMarkdownContent = lazy(() => import("@/components/chat/MarkdownContent"));
 import { stripInjectedFiles } from "@/lib/file-tags";
@@ -784,6 +784,7 @@ function UserMessageContent({
 
 /** Renders a system message, including structured handoffs and synthetic agent errors. */
 function SystemMessageContent({ message }: Pick<MessageBubbleProps, "message">) {
+  if (message.systemNotice?.scope === "session") return null;
   if (isHandoffMessage(message.role, message.content) && parseHandoffJson(message.content)) {
     return <HandoffCard content={message.content} />;
   }
@@ -793,6 +794,14 @@ function SystemMessageContent({ message }: Pick<MessageBubbleProps, "message">) 
       <div className="flex items-start gap-2.5 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm">
         <AlertCircle size={14} className="mt-0.5 shrink-0 text-destructive/60" />
         <p className="text-muted-foreground leading-relaxed">{agentError}</p>
+      </div>
+    );
+  }
+  if (message.systemNotice?.kind === "security") {
+    return (
+      <div className="flex items-start gap-2.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm" role="alert">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-destructive" />
+        <div><p className="font-medium">Security warning</p><p className="text-muted-foreground leading-relaxed">{message.content}</p></div>
       </div>
     );
   }

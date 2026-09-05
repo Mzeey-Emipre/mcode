@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SystemNoticeMetadataSchema } from "../models/message.js";
 import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderBillingModeSchema, QuotaCategorySchema } from "../providers/usage.js";
 import { StoredAttachmentSchema } from "../models/attachment.js";
@@ -144,6 +145,10 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       subtype: z.string(),
       /** Bounded provider-neutral notice text for renderer presentation. */
       message: z.string().max(1_000).optional(),
+      /** Durable system-message identity assigned by the server when applicable. */
+      messageId: z.string().uuid().optional(),
+      /** Typed metadata used when this notice is persisted in the transcript. */
+      systemNotice: SystemNoticeMetadataSchema().optional(),
     }),
     z.object({
       /** Emitted when the SDK starts or finishes compacting the context window. */

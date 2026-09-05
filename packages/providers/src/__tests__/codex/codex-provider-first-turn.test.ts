@@ -283,6 +283,7 @@ describe("CodexProvider first turn on new session", () => {
     expect(appServers.at(-1)?.isAlive).toBe(false);
     expect(sendTurnMock).not.toHaveBeenCalled();
     expect(events).toEqual([
+      { event: { type: AgentEventType.System, threadId: "browser-spawn-failure", subtype: "provider.session.started", systemNotice: { kind: "diagnostic", presentation: "timeline", scope: "session", sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/) } } },
       {
         event: {
           type: AgentEventType.Error,

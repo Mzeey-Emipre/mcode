@@ -33,6 +33,7 @@ function createTestDb(): Database.Database {
       is_internal INTEGER NOT NULL DEFAULT 0,
       outcome TEXT,
       outcome_execution_id TEXT
+      ,system_notice TEXT
     );
     CREATE TABLE tool_call_records (
       id TEXT PRIMARY KEY,
@@ -117,6 +118,31 @@ describe("MessageRepo", () => {
 
     expect(message.id).toBe(messageId);
     expect(persisted?.id).toBe(messageId);
+  });
+
+  it("round-trips typed system notice metadata with the transcript message", () => {
+    const message = repo.create(
+      "thread-1",
+      "system",
+      "Codex rerouted this turn.",
+      1,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { kind: "model-rerouted", presentation: "toast" },
+    );
+
+    expect(repo.listByThread("thread-1", 10).messages).toMatchObject([{
+      id: message.id,
+      systemNotice: { kind: "model-rerouted", presentation: "toast" },
+    }]);
   });
 
   it("keeps legacy NULL outcomes unchanged and writes terminal outcome identity explicitly", () => {
@@ -322,6 +348,14 @@ ORDER BY page.sequence ASC`,
   });
 
   describe("listByThreadForThreadControl", () => {
+    it("excludes session diagnostics from transcript rows and pagination", () => {
+      repo.create("thread-1", "assistant", "Reply", 1);
+      repo.createSystemNotice("thread-1", "Configuration warning", 2, { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: "config-1" });
+      const result = repo.listByThreadForThreadControl("thread-1", 1, 100);
+      expect(result.messages.map((message) => message.content)).toEqual(["Reply"]);
+      expect(result.hasMore).toBe(false);
+    });
+
     it("keeps newest rows in chronological order under the UTF-8 byte cap", () => {
       repo.create("thread-1", "user", "older", 1);
       repo.create("thread-1", "assistant", "éé", 2);

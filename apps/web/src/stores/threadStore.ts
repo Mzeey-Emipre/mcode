@@ -44,6 +44,7 @@ import {
   selectConversationWindow,
 } from "@/features/conversation/hydration/conversation-memory-policy";
 import {
+  evictCachedRecord,
   setActiveConversation,
   setConversationTransientTextBytes,
 } from "@/features/conversation/hydration/record-cache";
@@ -1143,8 +1144,13 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     });
   };
 
-  const createSystemMessage = (threadId: string, content: string): Message => ({
-    id: crypto.randomUUID(),
+  const createSystemMessage = (
+    threadId: string,
+    content: string,
+    messageId: string = crypto.randomUUID(),
+    systemNotice?: Message["systemNotice"],
+  ): Message => ({
+    id: messageId,
     thread_id: threadId,
     role: "system",
     content,
@@ -1155,6 +1161,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     timestamp: new Date().toISOString(),
     sequence: messageSequenceFor(threadId),
     attachments: null,
+    systemNotice,
   });
 
   const closeOpenThoughtSegment = (segments: ThreadRecord["thoughtSegments"]) => {
@@ -1181,9 +1188,52 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     patchRec(event.threadId, { goal: null });
   };
 
+  const replaceRerouteNotice = (event: Extract<AgentEvent, { type: "system" }>, notice: string): boolean => {
+    if (event.systemNotice?.kind !== "model-rerouted") return false;
+    const existing = getRec(event.threadId).messages.find((message) => message.systemNotice?.kind === "model-rerouted");
+    if (!existing) return false;
+    if (existing.content === notice && existing.systemNotice?.noticeKey === event.systemNotice.noticeKey) return true;
+    patchRec(event.threadId, (record) => ({
+      messages: record.messages.map((message) => message.id === existing.id
+        ? createSystemMessage(event.threadId, notice, event.messageId ?? existing.id, event.systemNotice)
+        : message),
+    }));
+    if (useWorkspaceStore.getState().activeThreadId === event.threadId) {
+      useToastStore.getState().show("info", "Model rerouted", notice);
+    }
+    return true;
+  };
+
   const handleSystemEvent = (event: Extract<AgentEvent, { type: "system" }>): void => {
+    if (event.subtype === "provider.session.started") {
+      evictCachedRecord(event.threadId);
+      patchRec(event.threadId, (record) => ({ sessionNotices: record.sessionNotices.filter((message) => message.systemNotice?.sessionId === event.systemNotice?.sessionId) }));
+      return;
+    }
     const notice = systemNoticeFor(event.subtype, event.message);
-    if (notice) appendMessageToThread(event.threadId, createSystemMessage(event.threadId, notice));
+    if (!notice) return;
+    if (event.systemNotice?.scope === "session") {
+      const next = createSystemMessage(event.threadId, notice, event.messageId, event.systemNotice);
+      patchRec(event.threadId, (record) => ({ sessionNotices: [
+        ...record.sessionNotices.filter((message) => message.systemNotice?.sessionId === event.systemNotice?.sessionId
+          && message.systemNotice?.noticeKey !== event.systemNotice?.noticeKey && message.id !== next.id),
+        next,
+      ].slice(-20) }));
+      return;
+    }
+    if (replaceRerouteNotice(event, notice)) return;
+    const duplicate = getRec(event.threadId).messages.some((message) =>
+      event.messageId
+        ? message.id === event.messageId
+        : event.systemNotice?.kind === "model-rerouted"
+          && message.systemNotice?.kind === "model-rerouted"
+          && message.content === notice,
+    );
+    if (duplicate) return;
+    appendMessageToThread(event.threadId, createSystemMessage(event.threadId, notice, event.messageId, event.systemNotice));
+    if (event.systemNotice?.presentation === "toast" && useWorkspaceStore.getState().activeThreadId === event.threadId) {
+      useToastStore.getState().show("info", "Model rerouted", notice);
+    }
   };
 
   const setWorkspaceThreadActive = (threadId: string): void => {

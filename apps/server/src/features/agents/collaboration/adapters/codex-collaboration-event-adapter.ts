@@ -415,6 +415,10 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
       }
       const context = this.childRoutingContext(event, evidence);
       if (!context) return this.reject(event, evidence, this.childRoutingFailure(event));
+      if (event.type === AgentEventType.System && event.systemNotice) {
+        const { turnExecutionId: _parentExecutionId, ...notice } = event;
+        return this.forward({ ...notice, threadId: this.bindChild(context, evidence).id });
+      }
       if (this.isRejectedDelivery(event, context)) {
         this.markRejectedDelivery(context, evidence);
         return { status: "consumed" };

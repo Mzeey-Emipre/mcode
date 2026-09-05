@@ -55,6 +55,42 @@ function createDeps(db: Database.Database) {
 }
 
 describe("loadConversationPage", () => {
+  it("replays session diagnostics separately and coalesces repeated notice identities", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const deps = createDeps(db);
+    const metadata = { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: "config-1", configPath: "C:/config.toml", configRange: { startLine: 2, startColumn: 3, endLine: 2, endColumn: 9 } } as const;
+    deps.messageRepo.createSystemNotice("thread-1", "Fix config", 1, metadata);
+    deps.messageRepo.createSystemNotice("thread-1", "Fix config", 2, metadata);
+    deps.messageRepo.createSystemNotice("thread-1", "Disk space low", 3, { kind: "warning", presentation: "timeline", scope: "turn", sessionId: "session-1", noticeKey: "warning-1" });
+    const page = loadConversationPage(deps, { threadId: "thread-1", limit: 20 });
+    const tail = loadConversationTail(deps, { threadId: "thread-1", limit: 20 });
+    expect(page.messages.map((message) => message.content)).toEqual(["Disk space low"]);
+    expect(tail.messages.map((message) => message.content)).toEqual(["Disk space low"]);
+    expect(page.sessionNotices).toMatchObject([{ content: "Fix config", systemNotice: metadata }]);
+    expect(tail.sessionNotices).toEqual(page.sessionNotices);
+    expect(tail.messages[0].systemNotice).toMatchObject({ kind: "warning", noticeKey: "warning-1" });
+    const history = deps.messageRepo.listByThreadUpToSequenceBudgeted("thread-1", 3, { maxBytes: 1 });
+    expect(history.messages.map((message) => message.content)).toEqual(["D"]);
+    expect(history.budget.omittedBeforeCount).toBe(0);
+    deps.messageRepo.beginNoticeSession("thread-1", "session-1");
+    expect(deps.messageRepo.listSessionNotices("thread-1")).toEqual(page.sessionNotices);
+    deps.messageRepo.beginNoticeSession("thread-1", "session-2");
+    expect(deps.messageRepo.listSessionNotices("thread-1")).toEqual([]);
+    expect(deps.messageRepo.listByThread("thread-1", 20).messages.map((message) => message.content)).toEqual(["Disk space low"]);
+    db.close();
+  });
+
+  it("retains only the newest twenty session diagnostics", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const repo = new MessageRepo(db);
+    for (let i = 0; i < 23; i++) repo.createSystemNotice("thread-1", `Config ${i}`, i, { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: `config-${i}` });
+    expect(repo.listSessionNotices("thread-1").map((message) => message.content)).toEqual(Array.from({ length: 20 }, (_, i) => `Config ${i + 3}`));
+    expect(repo.listByThread("thread-1", 20).messages).toEqual([]);
+    db.close();
+  });
+
   it("prefers canonical messages and narrative while retaining older compatibility history", () => {
     const db = openMemoryDatabase();
     seedThread(db);
@@ -283,6 +319,7 @@ describe("loadConversationTail", () => {
     });
 
     expect(tail).toEqual({
+      sessionNotices: [],
       messages: [
         expect.objectContaining({ id: "a1", sequence: 2 }),
         expect.objectContaining({ id: "u2", sequence: 4 }),
@@ -332,6 +369,7 @@ describe("loadConversationTail", () => {
 
     expect(canonicalSink.loadConversationProjection).toHaveBeenCalledWith("thread-1", 2);
     expect(tail).toEqual({
+      sessionNotices: [],
       messages: [
         expect.objectContaining({
           id: "compatibility-overlap",

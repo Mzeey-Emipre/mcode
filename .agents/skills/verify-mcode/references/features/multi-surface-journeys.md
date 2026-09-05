@@ -11,6 +11,16 @@ Read this file when a change crosses product surfaces. Use the linked feature fi
 
 Use `runtime live --scenario completion --confirm-provider-call` for server and persistence evidence. Use the desktop testing skill for UI reload evidence.
 
+## Codex protocol notices and reconnect
+
+1. Start a Codex thread from the public Composer.
+2. Trigger each available reroute, warning, configuration, deprecation, workspace-security, or authentication-recovery notice.
+3. Confirm one bounded thread notice or reroute presentation and inspect the public conversation state without provider payloads.
+4. Reconnect the public client, confirm the thread remains usable, and confirm no notice duplicates.
+5. Capture the trigger and stable state, then remove only verifier-owned thread state.
+
+Run `runtime health` before this journey. Record unavailable Codex access or notification variants as coverage gaps. The focused mapper, server, and web tests cover notification contracts that a live account cannot force.
+
 ## Stop and reconnect hydration
 
 1. Start a provider-backed thread from the Mcode composer.

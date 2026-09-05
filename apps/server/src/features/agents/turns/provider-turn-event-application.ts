@@ -484,6 +484,10 @@ export class ProviderTurnEventApplication implements TurnEventApplication {
   }
 
   private applySystem(providerId: ProviderId, event: Extract<AgentEvent, { type: "system" }>): boolean {
+    if (event.subtype === "provider.session.started") this.conversationProjection.beginNoticeSession(event);
+    if (event.subtype.startsWith("provider.notice.") && event.message) {
+      this.conversationProjection.persistSystemNotice(event);
+    }
     this.sessionCursors.apply(providerId, event, this.runtime.snapshot(event.threadId)?.turnExecutionId ?? undefined);
     return true;
   }

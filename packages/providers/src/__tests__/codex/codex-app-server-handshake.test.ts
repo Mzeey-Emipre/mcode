@@ -71,6 +71,24 @@ describe("isRecoverableCodexResumeError", () => {
   });
 });
 
+describe("CodexAppServer notification ingress", () => {
+  it("forwards the world-writable warning to the mapper boundary", () => {
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const received = vi.fn();
+    server.on("notification", received);
+
+    (server as unknown as { handleNotification: (notification: unknown) => void }).handleNotification({
+      jsonrpc: "2.0",
+      method: "windows/worldWritableWarning",
+      params: { samplePaths: ["/tmp"], extraCount: 0, failedScan: false },
+    });
+
+    expect(received).toHaveBeenCalledWith(expect.objectContaining({
+      method: "windows/worldWritableWarning",
+    }));
+  });
+});
+
 describe("performInitialize", () => {
   beforeEach(() => {
     vi.clearAllMocks();

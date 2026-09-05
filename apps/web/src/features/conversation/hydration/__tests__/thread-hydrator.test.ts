@@ -40,7 +40,7 @@ import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { coerceTaskStatus } from "@/stores/taskStore";
 import { getTransport } from "@/transport";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
-import type { GoalLookupResult, GoalState, TurnSnapshot } from "@mcode/contracts";
+import type { ConversationPage, GoalLookupResult, GoalState, TurnSnapshot } from "@mcode/contracts";
 import { CONVERSATION_OLDER_PAGE_MAX_BYTES } from "@mcode/contracts";
 import { clearScrollMemory, rememberScrollTop } from "@/components/chat/scrollPositionMemory";
 
@@ -200,6 +200,49 @@ describe("ThreadHydrator", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     resetStores();
     hydrator = createStoreHydrator();
+  });
+
+  it.each(["active", "resident", "background"] as const)("keeps a live session notice when a stale %s fetch returns newer transcript rows", async (surface) => {
+    let resolvePage!: (page: ConversationPage) => void;
+    vi.mocked(mockTransport.loadConversationPage).mockImplementationOnce(() => new Promise((resolve) => { resolvePage = resolve; }));
+    const pending = surface === "active"
+      ? hydrator.hydrate(THREAD_A, "active", { force: true })
+      : surface === "resident"
+        ? hydrator.hydrateResident(THREAD_A, { force: true, generation: 1, isCurrent: () => true })
+        : hydrator.hydrate(THREAD_A, "background");
+    await vi.waitFor(() => expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1));
+    const metadata = { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: "config-1" } as const;
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: THREAD_A, subtype: "provider.notice.configuration", message: "Live config warning", messageId: "live-notice", systemNotice: metadata });
+    resolvePage({ messages: [msgA], sessionNotices: [], hasMore: false, narrativeByMessage: {} });
+    await pending;
+    const record = surface === "background" ? getCachedRecord(THREAD_A)! : useThreadStore.getState().records.get(THREAD_A)!;
+    expect(record.messages.map((message) => message.id)).toEqual(["a1"]);
+    expect(record.sessionNotices).toMatchObject([{ content: "Live config warning", systemNotice: metadata }]);
+    if (surface !== "background") expect(useThreadStore.getState().records.get(THREAD_A)!.loading).toBe(false);
+  });
+
+  it.each(["active", "resident"] as const)("does not restore a replaced session from a stale %s response", async (surface) => {
+    const metadata = { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "old-session", noticeKey: "old-config" } as const;
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: THREAD_A, subtype: "provider.notice.configuration", message: "Old config", messageId: "old-notice", systemNotice: metadata });
+    let resolvePage!: (page: ConversationPage) => void;
+    vi.mocked(mockTransport.loadConversationPage).mockImplementationOnce(() => new Promise((resolve) => { resolvePage = resolve; }));
+    const pending = surface === "active"
+      ? hydrator.hydrate(THREAD_A, "active", { force: true })
+      : hydrator.hydrateResident(THREAD_A, { force: true, generation: 1, isCurrent: () => true });
+    await vi.waitFor(() => expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1));
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: THREAD_A, subtype: "provider.session.started", systemNotice: { kind: "diagnostic", presentation: "timeline", scope: "session", sessionId: "new-session" } });
+    resolvePage({ messages: [msgA], sessionNotices: [createMockMessage({ id: "old-notice", thread_id: THREAD_A, role: "system", content: "Old config", systemNotice: metadata })], hasMore: false, narrativeByMessage: {} });
+    await pending;
+    expect(useThreadStore.getState().records.get(THREAD_A)!.sessionNotices).toEqual([]);
+    expect(useThreadStore.getState().records.get(THREAD_A)!.messages.map((message) => message.id)).toEqual(["a1"]);
+  });
+
+  it("evicts stale cached diagnostics when a provider session starts before selection", async () => {
+    cacheRecord(THREAD_A, { ...makeCachedRecord(), sessionNotices: [createMockMessage({ id: "old-notice", thread_id: THREAD_A, role: "system", content: "Old config", systemNotice: { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "old-session", noticeKey: "old-config" } })] });
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: THREAD_A, subtype: "provider.session.started", systemNotice: { kind: "diagnostic", presentation: "timeline", scope: "session", sessionId: "new-session" } });
+    await hydrator.hydrate(THREAD_A, "active");
+    expect(useThreadStore.getState().records.get(THREAD_A)!.sessionNotices).toEqual([]);
+    expect(getTestActiveMessages()).toEqual([msgA]);
   });
 
   it("cache hit restores synchronously with loading false and skips conversation.page", async () => {

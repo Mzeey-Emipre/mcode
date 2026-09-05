@@ -5,6 +5,7 @@ import type { ThreadRecord } from "@/stores/thread-record";
 /** Raw RPC inputs used to assemble a canonical thread-record patch. */
 export interface SnapshotBuilderInput {
   messages: Message[];
+  sessionNotices?: Message[];
   hasMore: boolean;
   answeredPlanMessageIds?: string[];
   snapshots?: TurnSnapshot[];
@@ -24,6 +25,7 @@ export interface FileChangeFields {
 export type ThreadRecordPatch = Pick<
   ThreadRecord,
   | "messages"
+  | "sessionNotices"
   | "oldestLoadedSequence"
   | "newestLoadedSequence"
   | "hasMoreMessages"
@@ -59,6 +61,7 @@ export class SnapshotBuilder {
 
     return {
       messages,
+      sessionNotices: input.sessionNotices ?? [],
       oldestLoadedSequence,
       newestLoadedSequence,
       hasMoreMessages: hasMore,

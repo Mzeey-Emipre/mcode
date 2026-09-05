@@ -349,6 +349,8 @@ export const messages = sqliteTable(
     outcome: text("outcome"),
     /** Exact execution identity for retrying an interrupted or errored turn. */
     outcomeExecutionId: text("outcome_execution_id"),
+    /** Bounded typed provider notice metadata for durable system messages. */
+    systemNotice: text("system_notice"),
   },
   (table) => [
     index("idx_messages_thread").on(table.threadId),
