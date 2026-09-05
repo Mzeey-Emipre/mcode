@@ -12,5 +12,5 @@
     // typecheck pass (base tsconfig.json) that ships with the same tsBuildInfoFile.
     "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo.build"
   },
-  "exclude": ["node_modules", "dist", "dist-tsc", "src/__tests__"]
+  "exclude": ["node_modules", "dist", "dist-tsc", "src/**/__tests__/**"]
 }

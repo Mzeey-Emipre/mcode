@@ -115,7 +115,7 @@ export default defineConfig({
     port: 5173,
     hmr: true,
     watch: {
-      ignored: ["**/desktop/**", "**/.dev/**"],
+      ignored: ["**/desktop/**", "**/.dev/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*"],
     },
   },
   build: {
