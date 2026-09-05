@@ -1,3 +1,4 @@
+import type { ReviewComparison } from "@mcode/contracts";
 import type {
   McodeTransport,
   Workspace,
@@ -26,7 +27,7 @@ import type {
   WorkspaceEnvironmentSetupAttempt,
   WorkspaceEnvironmentActionRun,
 } from "./types";
-import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
+import { TurnRuntimeSnapshotSchema, WS_CHANNELS } from "@mcode/contracts";
 import { TerminalErrorCodeSchema } from "@mcode/contracts";
 import type {
   CreateAndSendResult,
@@ -286,6 +287,7 @@ export function createWsTransport(
   let ws: WebSocket;
   let idCounter = 0;
   let pending = new Map<string, PendingCall>();
+  const freshTurnDiffThreads = new Set<string>();
   let closed = false;
   let reconnectDelay = MIN_RECONNECT_MS;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -402,6 +404,10 @@ export function createWsTransport(
   function emitPushMessage(message: Record<string, unknown>): void {
     if (message.type !== "push") return;
     const channel = message.channel as string;
+    if (channel === "turn.diffChanged") {
+      const parsed = WS_CHANNELS["turn.diffChanged"].safeParse(message.data);
+      if (parsed.success) freshTurnDiffThreads.add(parsed.data.threadId);
+    }
     if (!suppressedPushChannels.has(channel)) pushEmitter.emit(channel, message.data);
   }
 
@@ -416,6 +422,7 @@ export function createWsTransport(
   }
 
   function connect(targetUrl?: string) {
+    freshTurnDiffThreads.clear();
     resetReady();
     ws = new WebSocket(targetUrl ?? url);
     ws.binaryType = "arraybuffer";
@@ -426,6 +433,7 @@ export function createWsTransport(
       setAttachmentTransportWsUrl(url);
       resolveReady();
       options?.onStatusChange?.("connected");
+      invalidateLiveTurnDiff();
       terminalSelectionPromise = selectTerminalClient();
 
       // Reconcile runningThreadIds with the server's authoritative set.
@@ -483,7 +491,9 @@ export function createWsTransport(
     ws.onmessage = (event) => handleSocketMessage(event.data);
 
     ws.onclose = (event: CloseEvent) => {
+      freshTurnDiffThreads.clear();
       rejectPending("WebSocket disconnected");
+      invalidateLiveTurnDiff();
       if (!closed) {
         const isAuthFailure = event.code === 4001;
         options?.onStatusChange?.(isAuthFailure ? "authFailed" : "reconnecting");
@@ -501,6 +511,13 @@ export function createWsTransport(
       reject(new Error(reason));
     }
     pending = new Map();
+  }
+
+  function invalidateLiveTurnDiff(): void {
+    void Promise.all([import("@/features/projects/state/workspaceStore"), import("@/stores/diffStore")]).then(([workspace, diff]) => {
+      const threadId = workspace.useWorkspaceStore.getState().activeThreadId;
+      if (threadId) diff.useDiffStore.getState().bumpDiffRevision(threadId);
+    });
   }
 
   function scheduleReconnect(immediate = false) {
@@ -1073,6 +1090,8 @@ export function createWsTransport(
     // Snapshots
     getSnapshotDiff: (snapshotId, filePath?, maxLines?) =>
       rpc<string>("snapshot.getDiff", { snapshotId, filePath, maxLines }),
+    getTurnDiffComparison: (threadId) => rpc<ReviewComparison | null>("turnDiff.getComparison", { threadId, includeLive: freshTurnDiffThreads.has(threadId) }),
+    getTurnDiffFile: (threadId, comparisonId, filePath) => rpc<string>("turnDiff.getFileDiff", { threadId, comparisonId, filePath }),
     getSnapshotDiffStats: (snapshotId) =>
       rpc<{ filePath: string; additions: number; deletions: number }[]>(
         "snapshot.getDiffStats",

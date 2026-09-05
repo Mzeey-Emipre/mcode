@@ -22,6 +22,13 @@ export const ReviewComparisonSchema = lazySchema(() =>
     files: z.array(ReviewFileChangeSchema()).max(10_000),
     additions: z.number().int().nonnegative(),
     deletions: z.number().int().nonnegative(),
+    turnDiff: z.object({
+      id: z.string(),
+      phase: z.enum(["live", "settled"]),
+      source: z.enum(["native", "git"]),
+      fidelity: z.enum(["agent", "same-file-changes-possible"]),
+      revision: z.number().int().nonnegative(),
+    }).optional(),
   }),
 );
 

@@ -79,7 +79,7 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
 
 import { BrowserAutomationSessionLease, CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
 import { AgentEventSchema, AgentEventType } from "@mcode/contracts";
-import type { ProviderRuntimeEvent } from "@mcode/contracts";
+import type { ProviderRuntimeEvent, ProviderTurnDiffUpdate } from "@mcode/contracts";
 
 const schemaValidExecutionId = "00000000-0000-4000-8000-000000000001";
 
@@ -134,6 +134,35 @@ describe("CodexProvider first turn on new session", () => {
     readConfigMock.mockResolvedValue({
       config: { mcp_servers: { mcode_internal_thread_control: {} } },
     });
+  });
+
+  it("pushes complete native aggregates with dispatch identity and rejects foreign native turns", async () => {
+    const provider = makeProvider();
+    const updates: ProviderTurnDiffUpdate[] = [];
+    const unsubscribe = provider.onTurnDiff((event) => updates.push(event));
+    await provider.sendTurn({
+      turnId: "mcode-turn", turnExecutionId: schemaValidExecutionId, deliveryAttempt: 2,
+      sessionId, workspaceId: "workspace-test", threadId, message: "edit", cwd: process.cwd(),
+      model: "gpt-5.4", interactionMode: "build", providerOptions: {}, permissionMode: "full",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const server = appServers[0]!;
+    const notify = (turnId: string, diff: string) => server.emit("notification", {
+      method: "turn/diff/updated", params: { threadId: "sdk-thread-1", turnId, diff },
+    });
+    notify("foreign-turn", "ignored");
+    notify("turn-test-id", "first aggregate");
+    notify("turn-test-id", "replacement aggregate");
+    notify("turn-test-id", "");
+    expect(updates).toEqual([
+      { turnId: "mcode-turn", turnExecutionId: schemaValidExecutionId, deliveryAttempt: 2, revision: 1, state: "snapshot", nativeFidelity: "agent", patch: "first aggregate" },
+      { turnId: "mcode-turn", turnExecutionId: schemaValidExecutionId, deliveryAttempt: 2, revision: 2, state: "snapshot", nativeFidelity: "agent", patch: "replacement aggregate" },
+      { turnId: "mcode-turn", turnExecutionId: schemaValidExecutionId, deliveryAttempt: 2, revision: 3, state: "indeterminate-empty" },
+    ]);
+    unsubscribe();
+    notify("turn-test-id", "unsubscribed");
+    expect(updates).toHaveLength(3);
+    provider.shutdown();
   });
 
   it("passes loopback browser MCP config and a child-only bearer token", async () => {

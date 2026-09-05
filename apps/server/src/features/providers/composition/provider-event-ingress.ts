@@ -1,6 +1,7 @@
 import { logger } from "@mcode/shared";
 import {
   AgentEventType,
+  isTurnDiffSource,
   CanonicalAgentEventEnvelopeSchema,
   ProviderIdSchema,
   ProviderRuntimeEventSchema,
@@ -8,6 +9,7 @@ import {
   type CanonicalAgentEventEnvelope,
   type IProviderRegistry,
   type ProviderFileMutationStart,
+  type ProviderTurnDiffUpdate,
   type ProviderId,
   type ProviderRuntimeEvent,
 } from "@mcode/contracts";
@@ -50,6 +52,7 @@ export interface ProviderEventIngressEvent {
 export interface ProviderEventIngressConsumer {
   handleProviderEvent(event: ProviderEventIngressEvent): void;
   handleProviderFileMutation(event: ProviderFileMutationStart): void;
+  handleProviderTurnDiff(event: ProviderTurnDiffUpdate): void;
 }
 
 /** Content-free diagnostic recorded when ingress rejects an event. */
@@ -113,6 +116,7 @@ export class ProviderEventIngress {
     this.consumer = consumer;
     for (const provider of providerRegistry.resolveAll()) {
       provider.on("file_mutation_start", (event) => consumer.handleProviderFileMutation(event));
+      if (isTurnDiffSource(provider)) provider.onTurnDiff((event) => consumer.handleProviderTurnDiff(event));
       provider.on("event", (event) => this.acceptProviderRuntime(provider.id, event));
     }
   }

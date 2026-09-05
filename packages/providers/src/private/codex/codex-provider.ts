@@ -40,6 +40,7 @@ import type {
   ProviderModelInfo,
   ProviderUsageInfo,
   ProviderRuntimeEvent,
+  ProviderTurnDiffUpdate,
   ProviderCapabilityName,
 } from "@mcode/contracts";
 import {
@@ -106,6 +107,12 @@ type BrowserAutomationCredentialMetadata = ProviderBrowserCredentialMetadata;
 type BrowserAutomationSessionLeaseStage = ProviderBrowserLeaseHandle;
 type MemoryPressureLevel = "normal" | "warning" | "critical";
 
+function nativeTurnDiffEvidence(patch: unknown) {
+  if (typeof patch !== "string") return { state: "invalidated" as const };
+  if (patch.length === 0) return { state: "indeterminate-empty" as const };
+  return { state: "snapshot" as const, patch, nativeFidelity: "agent" as const };
+}
+
 const CODEX_SUPPORTED_CAPABILITIES = [
   "build",
   "plan",
@@ -118,6 +125,7 @@ const CODEX_SUPPORTED_CAPABILITIES = [
   "browser-access",
   "thread-control",
   "child-cancellation",
+  "turn-diff",
 ] as const satisfies readonly ProviderCapabilityName[];
 
 const TURN_SCOPED_EVENT_TYPES = new Set<AgentEvent["type"]>([
@@ -295,6 +303,10 @@ interface CodexSessionState {
   pendingTurnId: string | null;
   /** Execution currently awaiting or owning an authoritative native turn id. */
   currentTurnExecutionId?: string;
+  /** Mcode identity retained for native diff routing after provider dispatch. */
+  turnDiffRouting?: { turnId: string; turnExecutionId: string; deliveryAttempt: number };
+  /** Per-native-turn revision sequence for complete diff aggregates. */
+  turnDiffRevision: number;
   /** Native turn id returned by `turn/start` for the current execution. */
   currentNativeTurnId?: string;
   /** Current turn binding phase; notifications cannot invent identities while unbound. */
@@ -620,6 +632,8 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
       input: string | TurnInputPart[];
       turnOptions: CodexTurnOptions;
       turnExecutionId: string;
+      turnId: string;
+      deliveryAttempt: number;
       threadControlEligible: boolean;
     }
   >();
@@ -1110,7 +1124,7 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
   private stageCodexTurn(turn: PreparedCodexTurn): void {
     const { request } = turn;
     const sessionId = request.sessionId;
-    this.pendingSpawnTurns.set(sessionId, { input: turn.input, turnOptions: turn.turnOptions, turnExecutionId: request.turnExecutionId, threadControlEligible: turn.threadControlEligible });
+    this.pendingSpawnTurns.set(sessionId, { input: turn.input, turnOptions: turn.turnOptions, turnExecutionId: request.turnExecutionId, turnId: request.turnId, deliveryAttempt: request.deliveryAttempt ?? 1, threadControlEligible: turn.threadControlEligible });
     if (!this.host.browser.isConfigured()) return;
     const stage = this.host.browser.stage({ providerId: this.id, providerSessionId: request.resumeFrom ?? sessionId, mcodeSessionId: sessionId, threadId: request.threadId, workspaceId: request.workspaceId, permissionCapability: turn.browserPermissionCapability });
     const previous = this.pendingBrowserAccess.get(sessionId);
@@ -1160,6 +1174,8 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
 
   private runReusedCodexTurn(turn: PreparedCodexTurn, state: CodexSessionState): void {
     state.lastUsedAt = Date.now();
+    state.turnDiffRouting = { turnId: turn.request.turnId, turnExecutionId: turn.request.turnExecutionId, deliveryAttempt: turn.request.deliveryAttempt ?? 1 };
+    state.turnDiffRevision = 0;
     void this.runTurnAfterGoal(turn.request.sessionId, turn.threadId, state.server, turn.input, turn.turnOptions, turn.request.turnExecutionId);
   }
 
@@ -1328,11 +1344,36 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
     const events = this.mapCodexNotificationEvents(context.threadId, notification, mapper, rawNotification);
     this.bindReceiverThreadExecution(entry, mapper, rawNotification.method, mainNotification, nativeThreadId, nativeTurnId);
     const executionId = this.codexNotificationExecutionId(entry, mainNotification, nativeThreadId, nativeTurnId);
+    this.emitCodexTurnDiff(entry, rawNotification, mainNotification, nativeTurnId, executionId);
     const startupExecutionId = rawNotification.method === "mcpServer/startupStatus/updated" ? context.stagedExecutionId : undefined;
     this.deliverCodexNotificationEvents({ entry, sessionId: context.sessionId, mapper, mappedEvents: events, mainNotification, nativeThreadId, nativeTurnId, eventExecutionId: executionId, startupEventExecutionId: startupExecutionId });
     if (entry && replayThreadId) this.replayPendingChildEvents(entry, context.sessionId, replayThreadId);
     this.fetchCompletedChildMetadata(context.sessionId, context.threadId, server, mapper, rawNotification.method, nativeThreadId, executionId);
     this.handleDiscoveredCodexChildren({ entry, sessionId: context.sessionId, threadId: context.threadId, server, mapper, notification: rawNotification, nativeThreadId, eventExecutionId: executionId });
+  }
+
+  /** Subscribe to complete native turn diffs without routing their bytes through renderer events. */
+  onTurnDiff(handler: (event: ProviderTurnDiffUpdate) => void): () => void {
+    super.on("turn_diff", handler);
+    return () => { this.removeListener("turn_diff", handler); };
+  }
+
+  /** Push a complete native aggregate only after its Mcode execution binding is authoritative. */
+  private emitCodexTurnDiff(
+    entry: CodexSessionState | undefined,
+    notification: { method?: string; params?: Record<string, unknown> },
+    mainNotification: boolean,
+    nativeTurnId: string | undefined,
+    executionId: string | undefined,
+  ): void {
+    if (notification.method !== "turn/diff/updated" || !mainNotification || !entry?.turnDiffRouting) return;
+    if (!nativeTurnId || nativeTurnId !== entry.currentNativeTurnId || executionId !== entry.turnDiffRouting.turnExecutionId) return;
+    const revision = ++entry.turnDiffRevision;
+    this.emit("turn_diff", {
+      ...entry.turnDiffRouting,
+      revision,
+      ...nativeTurnDiffEvidence(notification.params?.diff),
+    } satisfies ProviderTurnDiffUpdate);
   }
 
   private handleCodexServerFatal(
@@ -1433,7 +1474,7 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
       sessionId: context.sessionId, threadId: context.threadId, cwd: context.cwd, server, mapper,
       lastUsedAt: Date.now(), sandboxMode: context.sandbox, runTurnSeq: 0, pendingTurnId: null,
       turnBindingPhase: "idle", turnStartResponsePending: false, turnExecutionIdsByNativeTurn: new Map(),
-      nativeThreadExecutionIds: new Map(), nativeExecutionConflictKeys: new Set(), childExecutionGenerations: new Map(),
+      nativeThreadExecutionIds: new Map(), nativeExecutionConflictKeys: new Set(), childExecutionGenerations: new Map(), turnDiffRevision: 0,
       nextChildGeneration: 0, pendingChildEvents: [], deliveredChildEventKeys: new Set(),
       workspaceId: context.browserAccess?.workspaceId ?? "unknown-workspace",
       browserPermissionCapability: context.browserAccess?.permissionCapability ?? "interact",
@@ -1457,9 +1498,12 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
   private startStagedCodexTurn(
     context: CodexSpawnContext,
     server: CodexAppServer,
-    staged: { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions; turnExecutionId: string },
+    staged: { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions; turnExecutionId: string; turnId: string; deliveryAttempt: number },
   ): void {
-    if (!this.runtime.get(context.sessionId)) return;
+    const state = this.runtime.get(context.sessionId);
+    if (!state) return;
+    state.turnDiffRouting = { turnId: staged.turnId, turnExecutionId: staged.turnExecutionId, deliveryAttempt: staged.deliveryAttempt };
+    state.turnDiffRevision = 0;
     void this.runTurnAfterGoal(context.sessionId, context.threadId, server, staged.input, staged.turnOptions, staged.turnExecutionId);
   }
 

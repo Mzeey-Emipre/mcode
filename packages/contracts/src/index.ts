@@ -1375,6 +1375,7 @@ export type {
   ProviderId,
   SessionForkBehavior,
   IAgentProvider,
+  ITurnDiffSource,
   IChildTurnCancellable,
   ICompletionCapable,
   IGoalCapable,
@@ -1384,6 +1385,7 @@ export type {
   ProviderOptionsByProvider,
   CompletionOptions,
   ProviderFileMutationStart,
+  ProviderTurnDiffUpdate,
 } from "./providers/interfaces.js";
 
 export * from "./providers/catalog.js";
@@ -1400,6 +1402,7 @@ export {
 export type { ProviderModelInfo } from "./providers/models.js";
 export {
   isChildTurnCancellable,
+  isTurnDiffSource,
   isCompletionCapable,
   isGoalCapable,
   isSessionEvictable,

@@ -149,6 +149,7 @@ export const WS_CHANNELS = {
   )(),
   /** Sidebar project order changed on the server; clients should refresh `workspace.list`. */
   "workspace.orderChanged": z.object({}),
+  "turn.diffChanged": z.object({ threadId: z.string() }),
   "turn.persisted": z.object({
     threadId: z.string(),
     turnId: z.string().nullable().optional(),

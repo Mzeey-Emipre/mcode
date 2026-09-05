@@ -87,6 +87,7 @@ describe("Provider factories", () => {
         { name: "browser-access", support: "supported" },
         { name: "thread-control", support: "supported" },
         { name: "child-cancellation", support: "supported" },
+        { name: "turn-diff", support: "supported" },
       ]);
       expect(provider.descriptor.capabilities).not.toContainEqual(
         { name: "provider-continuation", support: "supported" },

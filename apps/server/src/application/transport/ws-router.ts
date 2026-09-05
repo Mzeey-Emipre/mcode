@@ -103,6 +103,8 @@ import { isAttachmentRpcMethod, routeAttachmentRpc } from "../../features/attach
 import { isMemoryRpcMethod, routeMemoryRpc } from "../../runtime/memory/transport/memory-rpc.js";
 import { isGitRpcMethod, routeGitRpc } from "../../features/projects/git/transport/git-rpc.js";
 import { isSnapshotRpcMethod, routeSnapshotRpc } from "../../features/projects/diffs/transport/snapshot-rpc.js";
+import { isTurnDiffRpcMethod, routeTurnDiffRpc } from "../../features/projects/diffs/transport/turn-diff-rpc.js";
+import type { TurnDiffService } from "../../features/agents/turns/turn-diff-service.js";
 import {
   isDiffSummaryRpcMethod,
   routeDiffSummaryRpc,
@@ -268,6 +270,7 @@ export interface RouterDeps {
   /** Canonical agent-model reader used during staged compatibility projection. */
   canonicalSink: CanonicalAgentBoundary;
   turnSnapshotRepo: TurnSnapshotRepo;
+  turnDiffs: TurnDiffService;
   snapshotService: SnapshotService;
   settingsService: SettingsService;
   /** Watcher service for tracking per-workspace HEAD file changes. */
@@ -578,6 +581,7 @@ const ROUTE_FAMILIES = [
   createRouteFamily(isAgentRpcMethod, (method, params, deps) => routeAgentRpc(method, params, deps)),
   createRouteFamily(isGitRpcMethod, (method, params, deps) => routeGitRpc(method, params, deps)),
   createRouteFamily(isSnapshotRpcMethod, (method, params, deps) => routeSnapshotRpc(method, params, deps)),
+  createRouteFamily(isTurnDiffRpcMethod, (method, params, deps) => routeTurnDiffRpc(method, params, deps)),
   createRouteFamily(isDiffSummaryRpcMethod, (method, params, deps) =>
     routeDiffSummaryRpc(method, params, deps)),
   createRouteFamily(isFileRpcMethod, (method, params, deps) => routeFileRpc(method, params, deps)),

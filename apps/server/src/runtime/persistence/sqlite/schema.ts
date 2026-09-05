@@ -556,6 +556,26 @@ export const turnSnapshots = sqliteTable(
   ],
 );
 
+/** One settled native turn-diff record per assistant message. */
+export const turnDiffSnapshots = sqliteTable(
+  "turn_diff_snapshots",
+  {
+    id: text("id").primaryKey().notNull(),
+    messageId: text("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
+    state: text("state").notNull(),
+    source: text("source").notNull(),
+    fidelity: text("fidelity").notNull(),
+    patch: text("patch"),
+    revision: integer("revision"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+  },
+  (table) => [
+    uniqueIndex("idx_turn_diff_snapshots_message").on(table.messageId),
+    index("idx_turn_diff_snapshots_thread").on(table.threadId),
+  ],
+);
+
 /** Canonical runtime-neutral thread records. */
 export const canonicalAgentThreads = sqliteTable(
   "canonical_agent_threads",

@@ -10,7 +10,7 @@ import { GitDiffView, type GitView, type ResolvedGitComparison } from "./GitDiff
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { WorktreeFilesPane } from "./WorktreeFilesPane";
-import { cumulativeReviewFiles, reviewFilesForSnapshot } from "@/lib/review-comparison";
+import { cumulativeReviewFiles } from "@/lib/review-comparison";
 
 const FILES_PANEL_MIN_WIDTH = 280;
 const FILES_PANEL_DEFAULT_WIDTH = 320;
@@ -30,9 +30,9 @@ interface SettledComparison {
   readonly identity: string;
   readonly comparison: ReviewComparison;
   readonly git: ResolvedGitComparison | null;
-  readonly snapshotId: string | null;
   readonly cacheVersion: string | number;
   readonly turnCount: number;
+  readonly liveRevision?: number;
 }
 
 interface ComparisonLoadInput {
@@ -44,7 +44,6 @@ interface ComparisonLoadInput {
   readonly selectedCommitSha: string | null;
   readonly snapshotVersion: string;
   readonly snapshots: readonly Snapshot[] | undefined;
-  readonly latestSnapshot: Snapshot | undefined;
   readonly viewMode: DiffViewMode;
 }
 
@@ -98,7 +97,6 @@ async function loadGitComparison(
       id: metadata.id,
       cacheVersion: input.mutableComparisonRevision,
     },
-    snapshotId: null,
     cacheVersion: input.mutableComparisonRevision,
     turnCount: 0,
   };
@@ -142,32 +140,18 @@ async function loadCumulativeComparison(input: ComparisonLoadInput): Promise<Loa
       deletions: sumReviewFileDeletions(stats),
     },
     git: null,
-    snapshotId: null,
     cacheVersion: input.snapshotVersion,
     turnCount: input.snapshots?.length ?? 0,
   };
 }
 
 async function loadLastTurnComparison(input: ComparisonLoadInput): Promise<LoadedComparison> {
-  if (!input.latestSnapshot) {
-    return {
-      comparison: emptyComparison(),
-      git: null,
-      snapshotId: null,
-      cacheVersion: input.snapshotVersion,
-      turnCount: input.snapshots?.length ?? 0,
-    };
-  }
-  const stats = await getTransport().getSnapshotDiffStats(input.latestSnapshot.id);
+  const comparison = await getTransport().getTurnDiffComparison(input.activeThreadId!);
   return {
-    comparison: {
-      files: reviewFilesForSnapshot(input.latestSnapshot),
-      additions: sumReviewFileAdditions(stats),
-      deletions: sumReviewFileDeletions(stats),
-    },
+    comparison: comparison ?? emptyComparison(),
     git: null,
-    snapshotId: input.latestSnapshot.id,
-    cacheVersion: `${input.latestSnapshot.id}:${input.latestSnapshot.ref_after}`,
+    cacheVersion: comparison?.turnDiff?.id ?? input.mutableComparisonRevision,
+    liveRevision: input.mutableComparisonRevision,
     turnCount: input.snapshots?.length ?? 0,
   };
 }
@@ -377,10 +361,6 @@ function useComparisonController(store: DiffPanelStore): ComparisonController {
   const comparisonIdentityRef = useRef("");
   const refreshRequestRef = useRef(0);
   const mutableComparisonRevision = getMutableComparisonRevision(store.viewMode, store.diffRevision);
-  const latestSnapshot = useMemo(
-    () => findLatestSnapshot(store.snapshots),
-    [store.snapshots],
-  );
   const branchRange = useMemo(
     () => getBranchRange(store.branchComparison),
     [store.branchComparison],
@@ -401,11 +381,9 @@ function useComparisonController(store: DiffPanelStore): ComparisonController {
     selectedCommitSha: store.selectedCommitSha,
     snapshotVersion,
     snapshots: store.snapshots,
-    latestSnapshot,
     viewMode: store.viewMode,
   }), [
     branchRange,
-    latestSnapshot,
     mutableComparisonRevision,
     snapshotVersion,
     store.activeThreadId,
@@ -415,7 +393,8 @@ function useComparisonController(store: DiffPanelStore): ComparisonController {
     store.snapshots,
     store.viewMode,
   ]);
-  const visibleSettled = getVisibleSettledComparison(settled, comparisonIdentity);
+  const currentSettled = settled?.comparison.turnDiff?.phase === "live" && settled.liveRevision !== mutableComparisonRevision ? null : settled;
+  const visibleSettled = getVisibleSettledComparison(currentSettled, comparisonIdentity);
   const visibleComparison = useMemo(
     () => projectVisibleComparison(visibleSettled, store.subagentScope, store.viewMode),
     [store.subagentScope, store.viewMode, visibleSettled],
@@ -516,11 +495,7 @@ function useComparisonController(store: DiffPanelStore): ComparisonController {
 }
 
 function getMutableComparisonRevision(viewMode: DiffViewMode, diffRevision: number): number {
-  return isGitView(viewMode) && viewMode !== "commit" ? diffRevision : 0;
-}
-
-function findLatestSnapshot(snapshots: readonly Snapshot[] | undefined): Snapshot | undefined {
-  return [...(snapshots ?? [])].reverse().find((snapshot) => snapshot.files_changed.length > 0);
+  return viewMode === "last-turn" || (isGitView(viewMode) && viewMode !== "commit") ? diffRevision : 0;
 }
 
 function getBranchRange(
@@ -662,8 +637,6 @@ function useInitialSnapshots(
       if (!cancelled) setSnapshots(activeThreadId, result);
     }).catch(() => {
       if (!cancelled) setSnapshots(activeThreadId, []);
-    }).finally(() => {
-      if (!cancelled) setSnapshotsLoading(activeThreadId, false);
     });
     return () => { cancelled = true; };
   }, [activeThreadId, setSnapshots, setSnapshotsLoading, snapshots]);
@@ -1069,7 +1042,6 @@ function LastTurnComparisonView({
     <LastTurnView
       threadId={threadId}
       comparison={visibleComparison}
-      snapshotId={visibleSettled?.snapshotId ?? null}
       cacheVersion={visibleSettled?.cacheVersion ?? ""}
       refreshing={comparisonLoading}
       onRefresh={onRefreshComparison}

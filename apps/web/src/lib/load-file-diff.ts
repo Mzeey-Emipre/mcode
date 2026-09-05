@@ -43,6 +43,8 @@ export async function loadFileDiff(
   threadId?: string,
 ): Promise<string> {
   switch (source) {
+    case "turn-diff":
+      return threadId ? transport.getTurnDiffFile(threadId, id, filePath) : "";
     case "snapshot":
       return transport.getSnapshotDiff(id, filePath);
     case "cumulative":

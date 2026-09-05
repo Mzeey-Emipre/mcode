@@ -84,6 +84,8 @@ Use the selected-text-comments Electron proof for real transcript pointer input,
 
 ## Coverage gaps
 
+For native Last turn changes, run the [Last turn native diff](turn-diff-review.md) journey through the composer, Review, external same-file edit, completion, reopen, reconnect, and Stop. Retain rendered screenshots and exact public comparison responses. This crosses the Codex adapter, orchestration, persistence, and shared web/Electron Review UI.
+
 - The provider workflows need an available model and a logged-in provider CLI. Record missing access as a blocked provider path.
 - The public subscription begins after thread creation. It cannot show lossless events before creation.
 - The completed-thread proof does not wait one day. Its focused integration checks use a controlled clock for the retention path.
