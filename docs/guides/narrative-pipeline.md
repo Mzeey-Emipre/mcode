@@ -90,6 +90,25 @@ projects validated `AgentEvent` values into each resident Thread record. This
 split preserves the volatile Turn layer through `turn.persisted`; persistence
 confirms durable narrative data but does not end the live timeline.
 
+### Residency certification
+
+Run this command from the repository root:
+
+```sh
+bun run certify:conversation --output .dev/verification/conversation-certification.json
+```
+
+The certification checks the production byte policy with 100-message and
+1,000-message histories. It reports active and inactive conversation records,
+prefetched history, narrative metadata, and process memory diagnostics.
+
+The active conversation budget is 13 MiB: message rows may use 8 MiB, while
+narrative metadata has 4 MiB and the remainder covers record metadata. The
+inactive record budget is 16 MiB and prefetched history is limited to 4 MiB.
+Under pressure, remove prefetched history first, then inactive records. Reduce
+active message rows to 4 MiB only after those classes are empty, while keeping
+the visible message anchor and both page boundaries.
+
 ---
 
 ## Thought vs final response classification
