@@ -1,3 +1,4 @@
+import { logger as fileLogger } from "@mcode/shared";
 import { installServerAuthCookie } from "./connection/auth-cookie.js";
 import { registerServerConnectionHandlers } from "./connection/handlers.js";
 import { startIpcRelay } from "./connection/ipc-relay.js";
@@ -140,14 +141,18 @@ export class ServerRuntime {
       notifyRecovered: (code) =>
         this.serverNotifications.showRecoveredNotification(code),
       showError: (code) => this.serverNotifications.showCrashDialog(code),
+      logger: {
+        log: (...args) => fileLogger.info(args.map(String).join(" ")),
+        error: (...args) => fileLogger.error(args.map(String).join(" ")),
+      },
     });
     this.serverHealthRecovery = new ServerHealthRecovery({
       isHealthy: () => this.serverManager.isHealthy(),
       restart: () => this.serverManager.restart(),
       showError: () => this.serverNotifications.showCrashDialog(null),
       logger: {
-        log: (...args) => console.log(...args),
-        error: (...args) => console.error(...args),
+        log: (...args) => fileLogger.info(args.map(String).join(" ")),
+        error: (...args) => fileLogger.error(args.map(String).join(" ")),
       },
     });
     this.serverBusyBlocker = new BusyBlocker({
