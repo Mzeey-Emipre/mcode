@@ -12,6 +12,9 @@ const STATE_PATH = NodePath.join(REPO_ROOT, ".dev", "verification", "selected-te
 const FIXTURE_THREAD_ID = "mcode-verification-selected-text-thread";
 const FIXTURE_MESSAGE_ID = "mcode-verification-selected-text-message";
 const FIXTURE_TITLE = "Selected text comments verification";
+const CHILD_THREAD_ID = "mcode-verification-selected-text-child";
+const CHILD_MESSAGE_ID = "mcode-verification-selected-text-child-message";
+const CHILD_TITLE = "Comment scope verification child";
 const FIXTURE_MESSAGE_CONTENT = [
   ...Array.from({ length: 24 }, (_, index) => `Verification context before the selected phrase ${index + 1}.`),
   [
@@ -184,6 +187,15 @@ function insertFixtureRows(database, state) {
     database.query(
       "INSERT INTO messages (id, thread_id, role, content, sequence, outcome) VALUES (?, ?, 'assistant', ?, 1, 'completed')",
     ).run(state.messageId, state.threadId, FIXTURE_MESSAGE_CONTENT);
+    database.query(
+      "INSERT INTO threads (id, workspace_id, title, status, mode, branch, provider, parent_thread_id) VALUES (?, ?, ?, 'active', 'direct', 'main', 'claude', ?)",
+    ).run(CHILD_THREAD_ID, state.workspaceId, CHILD_TITLE, state.threadId);
+    database.query(
+      "INSERT INTO messages (id, thread_id, role, content, sequence, outcome) VALUES (?, ?, 'assistant', ?, 1, 'completed')",
+    ).run(CHILD_MESSAGE_ID, CHILD_THREAD_ID, "Select this verification phrase in the subagent details.");
+    const insertPrompt = database.query("INSERT INTO messages (id, thread_id, role, content, sequence) VALUES (?, ?, 'user', ?, 0)");
+    insertPrompt.run(`${state.messageId}-prompt`, state.threadId, "Check comment selection in the main agent view.");
+    insertPrompt.run(`${CHILD_MESSAGE_ID}-prompt`, CHILD_THREAD_ID, "Check comment selection in the subagent view.");
   })();
 }
 
@@ -218,9 +230,19 @@ function deleteCreatedThread(database, state) {
   ).get(state.threadId);
   assertCleanupIdentity(state, thread, undefined);
   if (!thread) return;
+  deleteCreatedChild(database, state);
   database.query(
     "DELETE FROM threads WHERE id = ? AND workspace_id = ? AND title = ?",
   ).run(state.threadId, state.workspaceId, FIXTURE_TITLE);
+}
+
+function deleteCreatedChild(database, state) {
+  const child = database.query("SELECT workspace_id, parent_thread_id, title FROM threads WHERE id = ?").get(CHILD_THREAD_ID);
+  if (!child) return;
+  if (child.workspace_id !== state.workspaceId || child.parent_thread_id !== state.threadId || child.title !== CHILD_TITLE) {
+    throw new Error("Comment scope child does not match the owned fixture");
+  }
+  database.query("DELETE FROM threads WHERE id = ?").run(CHILD_THREAD_ID);
 }
 
 function rollBackCreatedThread(database, state) {
@@ -271,6 +293,7 @@ function removeFixtureRows(database, state) {
       "SELECT id, thread_id FROM messages WHERE id = ?",
     ).get(state.messageId);
     assertCleanupIdentity(state, thread, message);
+    deleteCreatedChild(database, state);
     if (message) database.query("DELETE FROM messages WHERE id = ? AND thread_id = ?").run(state.messageId, state.threadId);
     if (thread) {
       database.query(

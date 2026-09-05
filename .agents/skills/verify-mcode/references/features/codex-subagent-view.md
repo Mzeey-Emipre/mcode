@@ -8,6 +8,7 @@
 - Chat and detail use the same stable selection key for the identity color.
 - The canonical roster moves the child from Active to Done with the exact terminal outcome.
 - The child transcript contains the full message from the parent and the child's assistant message after restart.
+- Child detail text remains selectable, but has no `Add comment` action. Run the [selected-text comments proof](selected-text-comments.md) for this shared renderer behavior.
 
 ## User workflow
 

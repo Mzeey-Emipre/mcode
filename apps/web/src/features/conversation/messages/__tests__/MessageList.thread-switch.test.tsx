@@ -445,6 +445,7 @@ describe("MessageList thread switch", () => {
     ];
     const { container } = render(
       <MessageList
+        onSelectedTextComment={vi.fn()}
         selectedTextCommentEditor={{
           source: {
             threadId: "thread-A",
@@ -466,6 +467,29 @@ describe("MessageList thread switch", () => {
 
     await waitFor(() => expect(screen.getByRole("dialog", { name: "Comment on selected text" })).toBeVisible());
     expect(scrollToIndexSpy).toHaveBeenCalledWith(1, { align: "center", behavior: "smooth" });
+  });
+
+  it("does not offer selected-text comments without a comment handler", () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { container, getByText, queryByRole } = render(<MessageList />);
+    mockSelectedTextViewport(container);
+    const content = getByText("Select this phrase");
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
+
+    expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
   });
 
   it("keeps selected-text actions open through the selection click sequence", async () => {
@@ -518,7 +542,7 @@ describe("MessageList thread switch", () => {
       role: "assistant",
       content: "Select this phrase",
     }];
-    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList onSelectedTextComment={vi.fn()} />);
     const viewport = mockSelectedTextViewport(container);
     const content = getByText("Select this phrase");
     const range = document.createRange();
@@ -589,7 +613,7 @@ describe("MessageList thread switch", () => {
     });
 
     try {
-      const { container, getByRole, getByText } = render(<MessageList />);
+      const { container, getByRole, getByText } = render(<MessageList onSelectedTextComment={vi.fn()} />);
       const viewport = mockSelectedTextViewport(container);
       const content = getByText("Select this phrase");
       const text = content.firstChild!;
@@ -685,7 +709,7 @@ describe("MessageList thread switch", () => {
       content: "Select this phrase",
     }];
     const { container, getByRole, getByText, queryByRole, rerender } = render(
-      <MessageList displayThreadId="thread-A" />,
+      <MessageList displayThreadId="thread-A" onSelectedTextComment={vi.fn()} />,
     );
     mockSelectedTextViewport(container);
     const content = getByText("Select this phrase");
@@ -699,7 +723,7 @@ describe("MessageList thread switch", () => {
     fireEvent.mouseUp(content, { button: 0, clientX: 900, clientY: 700 });
     expect(getByRole("button", { name: "Add comment" })).toBeInTheDocument();
 
-    rerender(<MessageList displayThreadId="thread-B" />);
+    rerender(<MessageList displayThreadId="thread-B" onSelectedTextComment={vi.fn()} />);
 
     await vi.waitFor(() => {
       expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
@@ -714,7 +738,7 @@ describe("MessageList thread switch", () => {
       role: "assistant",
       content: "Select this phrase",
     }];
-    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList onSelectedTextComment={vi.fn()} />);
     mockSelectedTextViewport(container);
     const content = getByText("Select this phrase");
     const selection = document.getSelection()!;
@@ -747,7 +771,7 @@ describe("MessageList thread switch", () => {
       role: "assistant",
       content: "Select this phrase",
     }];
-    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList onSelectedTextComment={vi.fn()} />);
     mockSelectedTextViewport(container);
     const content = getByText("Select this phrase");
     const selection = document.getSelection()!;
@@ -774,7 +798,7 @@ describe("MessageList thread switch", () => {
       role: "assistant",
       content: "Select this phrase",
     }];
-    const { getByText, queryByRole } = render(<MessageList />);
+    const { getByText, queryByRole } = render(<MessageList onSelectedTextComment={vi.fn()} />);
     const content = getByText("Select this phrase");
     const selection = document.getSelection()!;
     const range = document.createRange();
@@ -796,7 +820,7 @@ describe("MessageList thread switch", () => {
       role: "assistant",
       content: "Select this phrase",
     }];
-    const { getByText, queryByRole } = render(<MessageList />);
+    const { getByText, queryByRole } = render(<MessageList onSelectedTextComment={vi.fn()} />);
     const content = getByText("Select this phrase");
     const selection = document.getSelection()!;
     const range = document.createRange();
@@ -818,7 +842,7 @@ describe("MessageList thread switch", () => {
       role: "assistant",
       content: "Select this phrase",
     }];
-    const { container, getByRole, getByText, queryByRole } = render(<MessageList />);
+    const { container, getByRole, getByText, queryByRole } = render(<MessageList onSelectedTextComment={vi.fn()} />);
     mockSelectedTextViewport(container);
     const content = getByText("Select this phrase");
     const range = document.createRange();
@@ -862,7 +886,7 @@ describe("MessageList thread switch", () => {
         eligible: false,
       },
     ];
-    const { getByText, queryByRole } = render(<MessageList />);
+    const { getByText, queryByRole } = render(<MessageList onSelectedTextComment={vi.fn()} />);
     const first = getByText("First message");
     const streaming = getByText("Streaming message");
     const selection = document.getSelection()!;
