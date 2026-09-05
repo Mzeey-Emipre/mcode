@@ -21,6 +21,7 @@
 
 | User-visible area | Feature file | Primary proof |
 | --- | --- | --- |
+| Last turn shows native agent changes, settles durably, and identifies Git fallback | [Last turn native diff](turn-diff-review.md) | Codex composer and Review Electron proof, plus focused Git/RPC and migration checks |
 | A thread starts, runs, stops, clears active state, and retains a cancelled reconnect snapshot | [Thread lifecycle](thread-lifecycle.md) | `runtime live --scenario stop` |
 | Provider events become durable assistant conversation data | [Provider events and durability](provider-events-and-durability.md) | `runtime live --scenario completion` |
 | Codex subagents retain task, state, transcript, navigation, and identity color across both protocol shapes | [Codex subagent view](codex-subagent-view.md) | `runtime check`, Terra `runtime live --scenario subagent`, and Electron UI proof |

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentThreadIdSchema } from "../compat/agent-model.js";
 import { WorkspaceSchema, WorkspaceEnrichmentSchema } from "../models/workspace.js";
 import {
   WorkspaceEnvironmentReadResultSchema,
@@ -230,6 +231,9 @@ export const MAX_THREAD_SUBSCRIPTIONS = 100;
 
 /** Thread identifier schema shared by atomic push subscription updates. */
 const ThreadSubscriptionIdSchema = z.string().trim().min(1).max(CONVERSATION_TAIL_THREAD_ID_MAX_LENGTH);
+
+/** Maximum identity length for a settled UUID or native Live comparison. */
+const TURN_DIFF_COMPARISON_ID_MAX_LENGTH = 512;
 
 /** Cursor identity for one server-process event stream. */
 const AgentEventCursorSchema = z.object({
@@ -1360,6 +1364,14 @@ export const WS_METHODS = lazySchema(() => ({
         group: z.string().optional(),
       }))
       .nullable(),
+  },
+  "turnDiff.getComparison": {
+    params: z.object({ threadId: AgentThreadIdSchema, includeLive: z.boolean().optional() }),
+    result: ReviewComparisonSchema().nullable(),
+  },
+  "turnDiff.getFileDiff": {
+    params: z.object({ threadId: AgentThreadIdSchema, comparisonId: z.string().min(1).max(TURN_DIFF_COMPARISON_ID_MAX_LENGTH), filePath: z.string().min(1).max(4096) }),
+    result: z.string(),
   },
   "snapshot.getDiff": {
     params: z.object({

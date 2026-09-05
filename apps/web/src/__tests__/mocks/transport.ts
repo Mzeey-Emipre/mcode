@@ -342,6 +342,8 @@ export const mockTransport: McodeTransport = {
   getThreadTasks: vi.fn().mockResolvedValue(null),
   getThreadPlans: vi.fn().mockResolvedValue([]),
   getSnapshotDiff: vi.fn().mockResolvedValue(""),
+  getTurnDiffComparison: vi.fn().mockResolvedValue(null),
+  getTurnDiffFile: vi.fn().mockResolvedValue(""),
   getSnapshotDiffStats: vi.fn().mockResolvedValue([]),
   cleanupSnapshots: vi.fn().mockResolvedValue({ removed: 0 }),
   listSnapshots: vi.fn().mockResolvedValue([]),

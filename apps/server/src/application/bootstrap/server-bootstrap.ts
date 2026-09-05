@@ -92,6 +92,7 @@ import { ToolCallRecordRepo } from "../../features/agents/tools/persistence/tool
 import { ThoughtSegmentRepo } from "../../features/agents/conversation/narrative/persistence/thought-segment-repo.js";
 import { HookExecutionRepo } from "../../features/agents/events/persistence/hook-execution-repo.js";
 import { TurnSnapshotRepo } from "../../features/agents/turns/persistence/turn-snapshot-repo.js";
+import { TurnDiffService } from "../../features/agents/turns/turn-diff-service.js";
 import { TaskRepo } from "../../features/agents/orchestration/persistence/task-repo.js";
 import { PlanQuestionAnswersRepo } from "../../features/agents/planning/persistence/plan-question-answers-repo.js";
 import { PlanRepo } from "../../features/agents/planning/persistence/plan-repo.js";
@@ -730,6 +731,7 @@ const { httpServer, wss } = createWsServer({
   narrativeStore,
   canonicalSink,
   turnSnapshotRepo,
+  turnDiffs: container.resolve(TurnDiffService),
   snapshotService,
   settingsService,
   gitWatcherService,
