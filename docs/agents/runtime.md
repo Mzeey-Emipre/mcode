@@ -9,19 +9,20 @@ Read it before starting any work. Run `bun run doctor` to verify your environmen
 
 | Command | What it starts |
 |---------|---------------|
-| `bun run --shell system agent:up` | Worktree-local agent runtime under `.dev/`, with startup JSON printed to stdout |
+| `bun run --shell system agent:up` | Default agent runtime under `.dev/`; starts server and web background children, waits for readiness, then returns with startup JSON |
 | `bun run --shell system agent:down` | Stops only PIDs recorded under `.dev/pids/` |
 | `bun run --shell system agent:reset` | Stops the runtime, deletes `.dev/db`, then starts a fresh seeded runtime |
-| `bun run dev:web` | Vite frontend + bundled backend under Electron's Node (no Electron window) |
-| `bun run dev:desktop` | Full Electron desktop app |
-| `bun run dev:server` | Backend server only (no frontend): `bun src/index.ts` |
+| `bun run dev:web` | Foreground Vite frontend + bundled backend under Electron's Node (no Electron window) |
+| `bun run dev:desktop` | Foreground full Electron desktop app |
+| `bun run dev:server` | Foreground bundled backend under Electron's Node (no frontend) |
 
-For agent-driven work, prefer `bun run --shell system agent:up`. It creates
-`.dev/`, starts the server and web app with per-worktree ports and database
-paths, writes `.dev/ports.json`, and prints that JSON as the final line after
-`/health` returns 200. Consumers should read `ports.json`; do not recompute
-ports. On Windows, plain `bun run agent:up` still starts the runtime, but Bun
-Shell can drop the final stdout line.
+For agent-driven work, use `bun run --shell system agent:up` by default. It
+creates `.dev/`, starts the server and web app as background children with
+per-worktree ports and database paths, waits for server health and web HTTP
+readiness, writes `.dev/ports.json`, prints that JSON as the final line, then
+returns control. Consumers should read `ports.json`; do not recompute ports. On
+Windows, plain `bun run agent:up` still starts the runtime, but Bun Shell can
+drop the final stdout line.
 
 On its first start, `agent:up` snapshots the production database into
 `.dev/db/app.sqlite`. It first checks `~/.mcode/mcode.db`. It then checks
@@ -29,11 +30,19 @@ On its first start, `agent:up` snapshots the production database into
 `agent:reset` creates a fresh snapshot. If the first snapshot fails, the command
 prints a warning and starts with the local database.
 
+`bun run dev` (an alias for `bun run dev:web`), `bun run dev:web`, `bun run
+dev:server`, and `bun run dev:desktop` are foreground, long-lived commands. In
+a synchronous harness, use background execution only when a specific web,
+server, or desktop need requires one.
+
 Use `bun run dev:web` only when the task needs the live web runtime. It builds
 the server bundle and runs it with Electron's Node.js. It also starts Vite.
 When `bun run dev` or `bun run dev:web` starts without `.dev/db/app.sqlite`, it
 creates the same snapshot. It keeps an existing local database. Run `bun run
 db:seed` after you stop the runtime to replace it.
+
+Use `bun run dev:server` only when the task needs the backend without the
+frontend. It runs the bundled backend with Electron's Node.js.
 
 Use `bun run dev:desktop` only when testing Electron-specific behavior (native IPC,
 tray, window management).
@@ -282,8 +291,9 @@ Slash commands are first-class in Claude Code. Other harnesses (Cursor, Codex, O
 
 | Workflow | Claude command | Equivalent shell |
 |----------|----------------|------------------|
-| Start web runtime | Shared agent guidance | `bun run dev:web` |
-| Launch desktop runtime | Shared agent guidance | `bun run dev:desktop` |
+| Start agent runtime | Shared agent guidance | `bun run --shell system agent:up` |
+| Start web runtime when specifically needed | Shared agent guidance | Run `bun run dev:web` in the background |
+| Launch desktop runtime when specifically needed | Shared agent guidance | Run `bun run dev:desktop` in the background |
 
 ## Live verification
 
@@ -302,6 +312,6 @@ bun run setup       # Copy .env.example → .env, configure git hooks
 bun install         # Install dependencies (also builds Electron ABI binding)
 bun run doctor      # Verify all prerequisites pass
 bun run --shell system agent:up  # Start isolated agent runtime
-# or
-bun run dev:web     # Start web development server
+# For web-specific work, start this foreground command in the background
+bun run dev:web
 ```
