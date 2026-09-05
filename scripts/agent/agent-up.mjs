@@ -20,8 +20,9 @@ import {
 } from "./runtime-contract.mjs";
 import { seedFixtureRepo } from "./fixture-repo.mjs";
 import { stopRecordedPidFile } from "./runtime-processes.mjs";
-import { stopRecordedRuntimePids } from "./agent-down.mjs";
+import { stopRecordedDesktopPidFile, stopRecordedRuntimePids } from "./agent-down.mjs";
 import { ensureDependencies } from "./ensure-dependencies.mjs";
+import { startManagedDesktop } from "./managed-desktop.mjs";
 import { seedDatabaseForStartup } from "../db-seed.mjs";
 import {
   prepareRuntimeDirectories as prepareSharedRuntimeDirectories,
@@ -62,6 +63,8 @@ export function buildWebAutomationEnv(env = process.env) {
  *   getElectronBinary: typeof getElectronBinary,
  *   rebuildServerDevBundle: () => Promise<void>,
  *   spawnLogged: typeof spawnLogged,
+ *   startManagedDesktop: typeof startManagedDesktop,
+ *   waitForDesktopPage: typeof waitForDesktopPage,
  * }>} hooks
  * @returns {() => void}
  */
@@ -76,9 +79,10 @@ export function setAgentUpTestHooks(hooks) {
  * Starts the server and Vite web app for the current worktree.
  *
  * @param {string} [repoRoot]
+ * @param {{ desktop?: boolean }} [options]
  * @returns {Promise<import("./runtime-contract.mjs").AgentRuntimePorts>}
  */
-export async function agentUp(repoRoot = resolveRepoRoot()) {
+export async function agentUp(repoRoot = resolveRepoRoot(), { desktop = false } = {}) {
   const paths = ensureRuntimeRoot(repoRoot);
   prepareSharedRuntimeDirectories(paths);
   const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
@@ -105,12 +109,28 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
     startedPidFiles.push(writePid(paths, "web", web.pid));
     await waitForHttpOk(runtime.contract.appUrl, "web app");
 
+    if (desktop) {
+      const desktopProcess = await startRuntimeDesktop(repoRoot, electronBin);
+      startedPidFiles.push(writePid(paths, "desktop", desktopProcess.pid));
+      await waitForRuntimeDesktopPage(desktopProcess.endpoint, runtime.contract.appUrl);
+    }
+
     await writeRuntimeContract(runtime.contract);
     return runtime.contract;
   } catch (error) {
     await cleanupStartedProcesses(startedPidFiles, repoRoot);
     throw error;
   }
+}
+
+async function startRuntimeDesktop(repoRoot, electronBin) {
+  const startDesktop = agentUpTestHooks.startManagedDesktop ?? startManagedDesktop;
+  return startDesktop(repoRoot, electronBin);
+}
+
+async function waitForRuntimeDesktopPage(endpoint, appUrl) {
+  const waitForPage = agentUpTestHooks.waitForDesktopPage ?? waitForDesktopPage;
+  return waitForPage(endpoint, appUrl);
 }
 
 async function prepareRuntime(repoRoot) {
@@ -306,6 +326,44 @@ async function waitForHttpOk(url, label, timeoutMs = 30_000) {
   return waitForSharedHttpOk(url, label, timeoutMs);
 }
 
+/** Waits until Electron opens the exact managed worktree app page. */
+export async function waitForDesktopPage(
+  endpoint,
+  appUrl,
+  { fetchImpl = globalThis.fetch, intervalMs = 200, probeTimeoutMs = 1_000, timeoutMs = 30_000 } = {},
+) {
+  const expectedUrl = new URL(appUrl);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const controller = new AbortController();
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const probeTimer = setTimeout(() => controller.abort(), Math.min(probeTimeoutMs, remainingMs));
+    try {
+      const response = await fetchImpl(`${endpoint}/json/list`, { signal: controller.signal });
+      const targets = await response.json();
+      if (Array.isArray(targets) && targets.some((target) => isManagedAppPage(target, expectedUrl))) {
+        return;
+      }
+    } catch {
+      // Electron may expose CDP before the BrowserWindow finishes loading.
+    } finally {
+      clearTimeout(probeTimer);
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, intervalMs));
+  }
+  throw new Error(`Electron did not open the managed app URL within ${timeoutMs}ms`);
+}
+
+function isManagedAppPage(target, expectedUrl) {
+  if (target?.type !== "page" || typeof target.url !== "string") return false;
+  try {
+    const targetUrl = new URL(target.url);
+    return targetUrl.origin === expectedUrl.origin && targetUrl.pathname === expectedUrl.pathname;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Stops only processes started by the current failed `agent:up` attempt.
  *
@@ -317,7 +375,11 @@ async function cleanupStartedProcesses(pidFiles, repoRoot) {
   NodeFS.rmSync(paths.portsFile, { force: true });
   for (const pidFile of [...pidFiles].reverse()) {
     try {
-      await stopRecordedPidFile(pidFile, { repoRoot });
+      if (NodePath.basename(pidFile) === "desktop.pid") {
+        await stopRecordedDesktopPidFile(pidFile, repoRoot);
+      } else {
+        await stopRecordedPidFile(pidFile, { repoRoot });
+      }
     } catch {
       // Startup is already failing; preserve the original error.
     }
@@ -346,5 +408,5 @@ if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]
   const repoArg = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
   const repoRoot = repoArg ? NodePath.resolve(repoArg) : resolveRepoRoot();
   ensureDependencies({ repoRoot });
-  await agentUp(repoRoot);
+  await agentUp(repoRoot, { desktop: process.argv.includes("--desktop") });
 }

@@ -1127,9 +1127,6 @@ state the condition; supporting copy explains the next useful move.
   is comparative research, not an authority on the referenced brands. Its
   useful lesson is document completeness: tokens, component recipes, and
   explicit rules must appear together.
-- [Mcode design-system benchmark](docs/research/design-system-benchmark.md)
-  records the source comparison and separates observed facts from Mcode-specific
-  inference.
 
 ### Before an agent changes UI
 

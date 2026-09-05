@@ -10,7 +10,7 @@ import * as NodePath from "node:path";
 import * as NodeEvents from "node:events";
 
 import { agentDown } from "../agent-down.mjs";
-import { agentUp, setAgentUpTestHooks } from "../agent-up.mjs";
+import { agentUp, setAgentUpTestHooks, waitForDesktopPage } from "../agent-up.mjs";
 import { agentReset } from "../agent-reset.mjs";
 import {
   buildPortsContract,
@@ -408,6 +408,133 @@ NodeTest.test("agentUp prepares fresh runtime directories before recording child
     process.argv.pop();
     globalThis.fetch = originalFetch;
     restoreHooks();
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+NodeTest.test("agentUp --desktop waits for the managed Electron app and records its owned PID", async () => {
+  const repo = makeRepo();
+  const paths = getRuntimePaths(repo);
+  const originalFetch = globalThis.fetch;
+  let desktopStarted = false;
+  let desktopPageProbes = 0;
+  const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async () => {},
+    seedDatabaseForStartup: () => {},
+    seedFixtureRepo: () => NodePath.join(repo, ".dev", "fixture-repo"),
+    computeAvailablePorts: async () => ({ serverPort: 41_251, webPort: 41_252 }),
+    getElectronBinary: () => process.execPath,
+    rebuildServerDevBundle: async () => {},
+    spawnLogged: () => ({ pid: 81_000 }),
+    startManagedDesktop: (receivedRepo, electronBin) => {
+      NodeAssertStrict.default.equal(receivedRepo, repo);
+      NodeAssertStrict.default.equal(electronBin, process.execPath);
+      desktopStarted = true;
+      return { endpoint: "http://127.0.0.1:43001", pid: 81_001 };
+    },
+  });
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/json/list")) {
+      desktopPageProbes += 1;
+      return new Response(JSON.stringify([
+        {
+          type: "page",
+          url: desktopPageProbes < 3
+            ? "http://127.0.0.1:41252-not-the-app/"
+            : "http://127.0.0.1:41252/?ready=1",
+        },
+      ]));
+    }
+    return new Response("", { status: 200 });
+  };
+  process.argv.push("--quiet");
+
+  try {
+    await agentUp(repo, { desktop: true });
+
+    NodeAssertStrict.default.equal(desktopStarted, true);
+    NodeAssertStrict.default.equal(desktopPageProbes, 3);
+    NodeAssertStrict.default.equal(
+      NodeFS.readFileSync(NodePath.join(paths.pidsDir, "desktop.pid"), "utf8"),
+      "81001\n",
+    );
+  } finally {
+    process.argv.pop();
+    globalThis.fetch = originalFetch;
+    restoreHooks();
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+NodeTest.test("waitForDesktopPage bounds stalled CDP probes and rejects a different app path", async () => {
+  let aborts = 0;
+  const fetchImpl = async (_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener("abort", () => {
+      aborts += 1;
+      reject(new DOMException("aborted", "AbortError"));
+    }, { once: true });
+  });
+
+  await NodeAssertStrict.default.rejects(
+    () => waitForDesktopPage("http://127.0.0.1:43001", "http://127.0.0.1:41252/app", {
+      fetchImpl,
+      intervalMs: 1,
+      probeTimeoutMs: 10,
+      timeoutMs: 40,
+    }),
+    /Electron did not open the managed app URL within 40ms/,
+  );
+  NodeAssertStrict.default.ok(aborts >= 1);
+
+  await waitForDesktopPage("http://127.0.0.1:43001", "http://127.0.0.1:41252/app", {
+    fetchImpl: async () => new Response(JSON.stringify([
+      { type: "page", url: "http://127.0.0.1:41252/app-preview" },
+      { type: "page", url: "http://127.0.0.1:41252/app?ready=1" },
+    ])),
+    timeoutMs: 40,
+  });
+});
+
+NodeTest.test("agentUp removes the desktop PID after managed page readiness fails", { timeout: 10_000 }, async () => {
+  const repo = makeRepo();
+  const paths = getRuntimePaths(repo);
+  const originalFetch = globalThis.fetch;
+  const children = [];
+  const spawnChild = () => {
+    const child = NodeChildProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    children.push(child);
+    return { pid: child.pid };
+  };
+  const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async () => {},
+    seedDatabaseForStartup: () => {},
+    seedFixtureRepo: () => NodePath.join(repo, ".dev", "fixture-repo"),
+    computeAvailablePorts: async () => ({ serverPort: 41_253, webPort: 41_254 }),
+    getElectronBinary: () => process.execPath,
+    rebuildServerDevBundle: async () => {},
+    spawnLogged: spawnChild,
+    startManagedDesktop: () => ({ ...spawnChild(), endpoint: "http://127.0.0.1:43002" }),
+    waitForDesktopPage: async () => { throw new Error("managed app page did not load"); },
+  });
+  globalThis.fetch = async () => new Response("", { status: 200 });
+  process.argv.push("--quiet");
+
+  try {
+    await NodeAssertStrict.default.rejects(
+      () => agentUp(repo, { desktop: true }),
+      /managed app page did not load/,
+    );
+    NodeAssertStrict.default.equal(NodeFS.existsSync(NodePath.join(paths.pidsDir, "desktop.pid")), false);
+  } finally {
+    process.argv.pop();
+    globalThis.fetch = originalFetch;
+    restoreHooks();
+    for (const child of children) {
+      if (child.exitCode === null) child.kill("SIGTERM");
+    }
     NodeFS.rmSync(repo, { recursive: true, force: true });
   }
 });

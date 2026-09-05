@@ -9,11 +9,11 @@
 
 Mcode should let an agent control the same Browser tab the user sees. The agent must share the page's cookies, navigation state, active tab, and rendered DOM. Human input must take control immediately, and every provider must receive the feature through one secure, typed interface.
 
-T3 Code proves this model works without launching a second headless browser. Its server exposes high-level browser tools over Model Context Protocol (MCP), routes each call to the live desktop that owns the page, and executes the action through Electron and Chrome DevTools Protocol (CDP). Mcode already owns most of the difficult browser substrate: renderer-hosted webviews, tab persistence, warm and cold tabs, CDP access, capture redaction, console and failed-request diagnostics, and a typed Browser v2 gateway.
+Mcode already owns the browser substrate for this work: renderer-hosted webviews, tab persistence, warm and cold tabs, CDP access, capture redaction, console and failed-request diagnostics, and a typed Browser v2 gateway.
 
 The recommended change is therefore an integration project, not a browser rewrite. Add a provider-neutral Browser Automation Gateway in the server, a sticky request broker, and a serialized Electron control kernel. Reuse the existing Browser UI and capture pipeline. Browser v2 is now the only provider path.
 
-This document interprets the requested HMM plan as a holistic Mcode migration plan.
+This document defines an Mcode migration plan.
 
 ## Decision
 
@@ -22,30 +22,6 @@ Build one loopback-only MCP server named `mcode-browser`. Give each active provi
 Use the Browser v2 tools `browser_open`, `browser_inspect`, `browser_act`, and `browser_tabs`. Do not expose raw CDP over MCP. Restrict arbitrary page evaluation to Full Build sessions, execute it in an isolated world, and bound its input, output, and runtime.
 
 Connect Codex, Claude, Cursor, and GitHub Copilot to the same Browser v2 contract through each provider's supported MCP configuration.
-
-## Evidence from T3 Code
-
-The analysis uses T3 Code commit [`5ca32661`](https://github.com/pingdotgg/t3code/tree/5ca32661b7dc8d512305c3bb9237d994a41a1af5), dated 2026-07-17, as the fixed source point. The feature entered through [PR #3053](https://github.com/pingdotgg/t3code/pull/3053) and was hardened in later changes for ownership, live stream routing, automation edge cases, recording, and remote localhost resolution.
-
-T3 Code divides responsibility across five layers:
-
-| Layer | Responsibility | Primary source |
-|---|---|---|
-| Shared contracts | Operation schemas, request and response envelopes, limits, errors, and result types | [`previewAutomation.ts`](https://github.com/pingdotgg/t3code/blob/5ca32661b7dc8d512305c3bb9237d994a41a1af5/packages/contracts/src/previewAutomation.ts) |
-| MCP boundary | Tool definitions, HTTP transport, bearer authentication, provider-session credentials | [`McpHttpServer.ts`](https://github.com/pingdotgg/t3code/blob/5ca32661b7dc8d512305c3bb9237d994a41a1af5/apps/server/src/mcp/McpHttpServer.ts), [`McpSessionRegistry.ts`](https://github.com/pingdotgg/t3code/blob/5ca32661b7dc8d512305c3bb9237d994a41a1af5/apps/server/src/mcp/McpSessionRegistry.ts) |
-| Request broker | Live-host discovery, sticky assignment, operation negotiation, pending calls, timeout and disconnect handling | [`PreviewAutomationBroker.ts`](https://github.com/pingdotgg/t3code/blob/5ca32661b7dc8d512305c3bb9237d994a41a1af5/apps/server/src/mcp/PreviewAutomationBroker.ts) |
-| Live owner | Receives routed requests, opens the visible panel when needed, maps URLs, and returns desktop results | [`PreviewAutomationHosts.tsx`](https://github.com/pingdotgg/t3code/blob/5ca32661b7dc8d512305c3bb9237d994a41a1af5/apps/web/src/components/preview/PreviewAutomationHosts.tsx) |
-| Electron executor | Adopts the visible guest, attaches CDP, serializes actions, detects human input, builds snapshots, and records | [`Manager.ts`](https://github.com/pingdotgg/t3code/blob/5ca32661b7dc8d512305c3bb9237d994a41a1af5/apps/desktop/src/preview/Manager.ts), [`PlaywrightInjectedRuntime.ts`](https://github.com/pingdotgg/t3code/blob/5ca32661b7dc8d512305c3bb9237d994a41a1af5/apps/desktop/src/preview/PlaywrightInjectedRuntime.ts) |
-
-Three design choices matter most for Mcode:
-
-1. The agent acts in the visible Electron guest. There is no separate Playwright browser with different cookies or page state.
-2. A provider session stays assigned to one live owner and tab for a sequence of actions. That prevents `snapshot`, `click`, and `type` from landing on different pages.
-3. Real user input advances a control epoch and interrupts the active agent action. Synthetic events are tagged briefly so the executor does not interrupt itself.
-
-The Browser v2 tool set covers open, inspect, ordered actions, tab lifecycle, privileged evaluation, and typed recovery. Its inspection combines visible text, semantic interactive elements, accessibility data, console messages, failed requests, action history, and a PNG image. Inputs and outputs have explicit limits.
-
-The implementation is strong, but Mcode should not copy two policies unchanged. T3 Code's guest permission handler is broader than Mcode needs, and raw page evaluation or unredacted accessibility output can expose sensitive page content. Mcode should deny guest permissions by default, preserve its capture redaction, and treat evaluation as a privileged operation.
 
 ## Mcode Current State
 
@@ -504,13 +480,3 @@ The feature is done only when:
 - Focused tests, typecheck, and lint pass from the monorepo root.
 - Browser v2 diagnostics remain bounded and content-free.
 - Architecture, provider, settings, and runtime documentation match the shipped behavior.
-
-## Source Notes
-
-- T3 Code fixed source point: [`5ca32661`](https://github.com/pingdotgg/t3code/commit/5ca32661b7dc8d512305c3bb9237d994a41a1af5)
-- Original integrated browser automation PR: [pingdotgg/t3code#3053](https://github.com/pingdotgg/t3code/pull/3053)
-- Ownership and secret hardening: [pingdotgg/t3code#3172](https://github.com/pingdotgg/t3code/pull/3172)
-- Live-owner stream routing: [pingdotgg/t3code#3548](https://github.com/pingdotgg/t3code/pull/3548)
-- Automation edge-case fixes: [pingdotgg/t3code#3561](https://github.com/pingdotgg/t3code/pull/3561)
-- Browser, automation, and recording stabilization: [pingdotgg/t3code#3565](https://github.com/pingdotgg/t3code/pull/3565)
-- Remote localhost resolution: [pingdotgg/t3code#4011](https://github.com/pingdotgg/t3code/pull/4011)
