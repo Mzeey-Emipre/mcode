@@ -1,11 +1,8 @@
+import { consoleRecoveryLogger, type RecoveryLogger } from "./logger.js";
+
 const SERVER_CRASH_BACKOFF_MS = [1_000, 5_000, 15_000] as const;
 
 const SERVER_CRASH_WINDOW_MS = 5 * 60_000;
-
-interface ServerCrashRecoveryLogger {
-  log: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-}
 
 interface ServerCrashRecoveryDeps {
   restart: () => Promise<void>;
@@ -13,13 +10,8 @@ interface ServerCrashRecoveryDeps {
   showError: (code: number | null) => Promise<void> | void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
-  logger?: ServerCrashRecoveryLogger;
+  logger?: RecoveryLogger;
 }
-
-const defaultLogger: ServerCrashRecoveryLogger = {
-  log: (...args) => console.log(...args),
-  error: (...args) => console.error(...args),
-};
 
 /** Handles bounded backend restart attempts after abnormal server exits. */
 export class ServerCrashRecovery {
@@ -28,7 +20,7 @@ export class ServerCrashRecovery {
   private readonly showError: (code: number | null) => Promise<void> | void;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
-  private readonly logger: ServerCrashRecoveryLogger;
+  private readonly logger: RecoveryLogger;
   private crashTimestamps: number[] = [];
   private inFlight: Promise<void> | null = null;
 
@@ -43,7 +35,7 @@ export class ServerCrashRecovery {
         new Promise((resolve) => {
           setTimeout(resolve, ms);
         }));
-    this.logger = deps.logger ?? defaultLogger;
+    this.logger = deps.logger ?? consoleRecoveryLogger;
   }
 
   handleUnexpectedExit(code: number | null): Promise<void> {
