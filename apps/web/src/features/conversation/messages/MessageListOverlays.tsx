@@ -79,17 +79,19 @@ export function MessageListOverlays({
       )}
       {isLoadingMore && <PaginationIndicator placement="top" />}
       {isLoadingNewer && <PaginationIndicator placement="bottom" />}
-      <SelectedTextCommentControls
-        key={renderedThreadId ?? "no-rendered-thread"}
-        onSelectedTextComment={onSelectedTextComment}
-        onDeleteSelectedTextComment={onDeleteSelectedTextComment}
-        editor={selectedTextCommentEditor}
-        onSelectedTextCommentEditorChange={onSelectedTextCommentEditorChange}
-        selectedTextCommentEditorScope={selectedTextCommentEditorScope}
-        viewportRef={viewportRef}
-        renderedThreadId={renderedThreadId}
-        messageIds={messageIds}
-      />
+      {onSelectedTextComment && (
+        <SelectedTextCommentControls
+          key={renderedThreadId ?? "no-rendered-thread"}
+          onSelectedTextComment={onSelectedTextComment}
+          onDeleteSelectedTextComment={onDeleteSelectedTextComment}
+          editor={selectedTextCommentEditor}
+          onSelectedTextCommentEditorChange={onSelectedTextCommentEditorChange}
+          selectedTextCommentEditorScope={selectedTextCommentEditorScope}
+          viewportRef={viewportRef}
+          renderedThreadId={renderedThreadId}
+          messageIds={messageIds}
+        />
+      )}
       {onOpenSelectedTextCommentEditor && (
         <SelectedTextCommentMarkers
           viewportRef={viewportRef}

@@ -20,6 +20,7 @@ const ACTION_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-ac
 const EDITOR_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-editor.png");
 const RESULT_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-result.png");
 const RESULTS = NodePath.join(EVIDENCE_DIR, "selected-text-comments.json");
+const SUBAGENT_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-subagent.png");
 
 if (process.argv.includes("--help")) {
   console.log("Usage: bun verify-selected-text-comments.mjs");
@@ -95,12 +96,12 @@ async function phrasePointerCoordinates(content) {
   }, PHRASE);
 }
 
-async function dragSelectPhrase(content) {
+async function dragSelectPhrase(content, releaseInWhitespace = true) {
   const coordinates = await phrasePointerCoordinates(content);
   await page.mouse.move(coordinates.start.x, coordinates.start.y);
   await page.mouse.down();
   await page.mouse.move(coordinates.end.x, coordinates.end.y, { steps: 8 });
-  await page.mouse.move(coordinates.release.x, coordinates.release.y, { steps: 4 });
+  if (releaseInWhitespace) await page.mouse.move(coordinates.release.x, coordinates.release.y, { steps: 4 });
   await page.mouse.up();
   const selection = await page.evaluate(() => window.getSelection()?.toString() ?? "");
   mark("pointer_drag_selects_phrase", selection === PHRASE, selection);
@@ -775,6 +776,7 @@ async function run() {
   await commentAttachment.waitFor({ state: "hidden" });
   const composer = page.getByRole("textbox", { name: "Message Mcode", exact: true });
   mark("final_marker_delete_returns_focus_to_composer", await composer.evaluate((element) => document.activeElement === element));
+  await assertSubagentCommentScope(content);
 
   await NodeFSPromises.writeFile(RESULTS, JSON.stringify({
     passed: true,
@@ -788,6 +790,24 @@ async function run() {
       resultScreenshot: NodePath.basename(RESULT_SCREENSHOT),
     },
   }, null, 2));
+}
+
+async function assertSubagentCommentScope(mainContent) {
+  await page.getByRole("button", { name: "Toggle panel", exact: true }).click();
+  await page.getByRole("button", { name: "Open Subagents", exact: true }).click();
+  await page.locator('[data-subagent-id="mcode-verification-selected-text-child"]').click();
+  const details = page.getByRole("region", { name: "Subagent subagent details", exact: true });
+  const childContent = details.locator("[data-selected-text-content]").filter({ hasText: "Select this verification phrase in the subagent details." });
+  await childContent.waitFor({ state: "visible" });
+  await dragSelectPhrase(childContent, false);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  mark("subagent_selection_has_no_comment_action", await page.getByRole("button", { name: "Add comment", exact: true }).count() === 0);
+  mark("subagent_selection_has_no_comment_editor", await page.getByRole("button", { name: "Close comment editor", exact: true }).count() === 0);
+  await page.screenshot({ path: SUBAGENT_SCREENSHOT, fullPage: true });
+  await page.getByRole("button", { name: "Back to subagents", exact: true }).click();
+  await page.getByRole("button", { name: "Toggle panel", exact: true }).click();
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await mainContent.waitFor({ state: "visible" });
 }
 
 try {
