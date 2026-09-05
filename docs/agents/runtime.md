@@ -9,7 +9,7 @@ Read it before starting any work. Run `bun run doctor` to verify your environmen
 
 | Command | What it starts |
 |---------|---------------|
-| `bun run --shell system agent:up` | Default agent runtime under `.dev/`; starts server and web background children, waits for readiness, then returns with startup JSON |
+| `bun run --shell system agent:up [--desktop]` | Default agent runtime under `.dev/`; starts server and web background children, and Electron when requested, then returns with startup JSON |
 | `bun run --shell system agent:down` | Stops only PIDs recorded under `.dev/pids/` |
 | `bun run --shell system agent:reset` | Stops the runtime, deletes `.dev/db`, then starts a fresh seeded runtime |
 | `bun run dev:web` | Foreground Vite frontend + bundled backend under Electron's Node (no Electron window) |
@@ -20,9 +20,11 @@ For agent-driven work, use `bun run --shell system agent:up` by default. It
 creates `.dev/`, starts the server and web app as background children with
 per-worktree ports and database paths, waits for server health and web HTTP
 readiness, writes `.dev/ports.json`, prints that JSON as the final line, then
-returns control. Consumers should read `ports.json`; do not recompute ports. On
-Windows, plain `bun run agent:up` still starts the runtime, but Bun Shell can
-drop the final stdout line.
+returns control. Pass `--desktop` to also start Electron as an owned background
+child; the launcher returns only after Electron opens the managed app page.
+Consumers should read `ports.json`; do not recompute ports. On Windows, plain
+`bun run agent:up` still starts the runtime, but Bun Shell can drop the final
+stdout line.
 
 On its first start, `agent:up` snapshots the production database into
 `.dev/db/app.sqlite`. It first checks `~/.mcode/mcode.db`. It then checks
@@ -44,8 +46,9 @@ db:seed` after you stop the runtime to replace it.
 Use `bun run dev:server` only when the task needs the backend without the
 frontend. It runs the bundled backend with Electron's Node.js.
 
-Use `bun run dev:desktop` only when testing Electron-specific behavior (native IPC,
-tray, window management).
+Use `bun run --shell system agent:up --desktop` for Electron-specific behavior
+(native IPC, tray, window management). Use `bun run dev:desktop` only when a
+direct foreground desktop process is specifically needed.
 
 ---
 
@@ -231,7 +234,7 @@ not return `authToken` and does not set `mcode-auth`. Set
 | `bun run logs:tail` | Stream and follow today's log file (Ctrl+C to exit) |
 | `bun run state:reset` | Wipe `MCODE_DATA_DIR` safely (dev-only, prompts for confirmation) |
 | `bun run db:info` | Print DB path, schema version, and row counts for key tables |
-| `bun run --shell system agent:up` | Start the worktree-local agent runtime and print `.dev/ports.json` |
+| `bun run --shell system agent:up [--desktop]` | Start the worktree-local agent runtime, optionally including Electron, and print `.dev/ports.json` |
 | `bun run --shell system agent:down` | Stop only PIDs recorded in `.dev/pids/` |
 | `bun run --shell system agent:reset` | Stop, delete `.dev/db`, remigrate, reseed, and restart |
 
@@ -292,6 +295,7 @@ Slash commands are first-class in Claude Code. Other harnesses (Cursor, Codex, O
 | Workflow | Claude command | Equivalent shell |
 |----------|----------------|------------------|
 | Start agent runtime | Shared agent guidance | `bun run --shell system agent:up` |
+| Start managed desktop runtime | Shared agent guidance | `bun run --shell system agent:up --desktop` |
 | Start web runtime when specifically needed | Shared agent guidance | Run `bun run dev:web` in the background |
 | Launch desktop runtime when specifically needed | Shared agent guidance | Run `bun run dev:desktop` in the background |
 
@@ -312,6 +316,6 @@ bun run setup       # Copy .env.example → .env, configure git hooks
 bun install         # Install dependencies (also builds Electron ABI binding)
 bun run doctor      # Verify all prerequisites pass
 bun run --shell system agent:up  # Start isolated agent runtime
-# For web-specific work, start this foreground command in the background
-bun run dev:web
+# Or start the isolated runtime with Electron
+bun run --shell system agent:up --desktop
 ```

@@ -12,6 +12,7 @@ import {
   resolveRepoRoot,
 } from "./runtime-contract.mjs";
 import { parsePidFile, stopRecordedPidFile } from "./runtime-processes.mjs";
+import { stopManagedDesktop } from "./managed-desktop.mjs";
 
 /**
  * Stops the agent runtime processes recorded under `.dev/pids`.
@@ -106,17 +107,32 @@ export async function stopRecordedRuntimePids(repoRoot = resolveRepoRoot(), opti
   for (const name of pidFiles) {
     const pidFile = NodePath.join(paths.pidsDir, name);
     try {
-      if (name === "server.pid") {
-        await stopRecordedServerPidFile(pidFile, repoRoot, options);
-      } else {
-        await stopRecordedPidFile(pidFile, { repoRoot, stop: options.stop });
-      }
+      await stopRuntimePidFile(name, pidFile, repoRoot, options);
     } catch (error) {
       if (error?.code !== "ENOENT") {
         console.warn(`[agent:down] ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
+}
+
+async function stopRuntimePidFile(name, pidFile, repoRoot, options) {
+  if (name === "server.pid") {
+    return stopRecordedServerPidFile(pidFile, repoRoot, options);
+  }
+  if (name === "desktop.pid") {
+    return stopRecordedDesktopPidFile(pidFile, repoRoot, options);
+  }
+  return stopRecordedPidFile(pidFile, { repoRoot, stop: options.stop });
+}
+
+/** Stops the validated managed desktop tree before removing its PID file. */
+export async function stopRecordedDesktopPidFile(pidFile, repoRoot, options = {}) {
+  const result = stopManagedDesktop(repoRoot);
+  if (result.status === "not-running") {
+    return stopRecordedPidFile(pidFile, { repoRoot, stop: options.stop });
+  }
+  NodeFS.rmSync(pidFile);
 }
 
 /**
