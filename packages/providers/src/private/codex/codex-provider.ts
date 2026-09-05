@@ -107,8 +107,9 @@ type BrowserAutomationCredentialMetadata = ProviderBrowserCredentialMetadata;
 type BrowserAutomationSessionLeaseStage = ProviderBrowserLeaseHandle;
 type MemoryPressureLevel = "normal" | "warning" | "critical";
 
-function nativeTurnDiffEvidence(patch: unknown) {
-  if (typeof patch !== "string") return { state: "invalidated" as const };
+/** Translate a Codex aggregate into the provider-neutral evidence states. */
+export function nativeTurnDiffEvidence(patch: unknown) {
+  if (typeof patch !== "string") return { state: "rejected" as const };
   if (patch.length === 0) return { state: "indeterminate-empty" as const };
   return { state: "snapshot" as const, patch, nativeFidelity: "agent" as const };
 }

@@ -339,7 +339,7 @@ export class TurnFinalizer {
     );
     const fileEffects = await this.finalizeFileEffects(threadId, turnRef);
     const filesChanged = await this.captureSnapshot(threadId, materialized.id, turnRef, fileEffects);
-    settleDiff?.(materialized.id, fileEffects);
+    settleDiff?.(materialized.id, fileEffects, await this.reconstructionPatch(threadId, turnRef));
     broadcast("turn.persisted", {
       threadId,
       turnId: turnRef?.fileTrackerGeneration !== undefined ? String(turnRef.fileTrackerGeneration) : null,
@@ -360,6 +360,10 @@ export class TurnFinalizer {
     return this.turnFileTracker
       ? this.turnFileTracker.finalizeTurn(threadId, turnRef?.fileTrackerGeneration)
       : undefined;
+  }
+
+  private reconstructionPatch(threadId: string, turnRef: TurnRef | undefined): Promise<string | undefined> {
+    return this.turnFileTracker?.reconstructionPatch(threadId, turnRef?.fileTrackerGeneration) ?? Promise.resolve(undefined);
   }
 
   /** Persist one canonical parent turn and its compatibility projection in one transaction. */
@@ -517,7 +521,7 @@ export class TurnFinalizer {
     this.broadcastMaterializedAssistant(threadId, materialized);
     const fileEffects = await this.finalizeFileEffects(threadId, turnRef);
     const filesChanged = await this.captureSnapshot(threadId, materialized.id, turnRef, fileEffects, replayedTerminal);
-    settleDiff?.(materialized.id, fileEffects);
+    settleDiff?.(materialized.id, fileEffects, await this.reconstructionPatch(threadId, turnRef));
     broadcast("turn.persisted", {
       threadId,
       turnId,

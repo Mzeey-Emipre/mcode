@@ -25,7 +25,7 @@ export const ReviewComparisonSchema = lazySchema(() =>
     turnDiff: z.object({
       id: z.string(),
       phase: z.enum(["live", "settled"]),
-      source: z.enum(["native", "git"]),
+      source: z.enum(["native", "tracked", "git"]),
       fidelity: z.enum(["agent", "same-file-changes-possible"]),
       revision: z.number().int().nonnegative(),
     }).optional(),

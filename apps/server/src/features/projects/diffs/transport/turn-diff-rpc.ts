@@ -32,7 +32,7 @@ async function comparison(deps: TurnDiffRouterDeps, threadId: string, includeLiv
   const live = includeLive ? deps.turnDiffs.liveComparison(threadId) : null;
   if (live) return live;
   const record = deps.turnDiffs.latest(threadId);
-  if (record?.source === "native") return nativeComparison(record);
+  if (record && record.source !== "git") return nativeComparison(record);
   const snapshot = selectedSnapshot(deps, threadId, record?.message_id);
   if (!snapshot) return null;
   return gitComparison(deps, snapshot, record?.id ?? `git:${snapshot.id}`);
@@ -42,7 +42,7 @@ function nativeComparison(record: StoredTurnDiff): ReviewComparison {
   const parsed = record.patch ? parseTurnDiff(record.patch) : { files: [], additions: 0, deletions: 0 };
   if (!parsed) throw new Error("Invalid stored turn diff");
   return { files: parsed.files, additions: parsed.additions, deletions: parsed.deletions,
-    turnDiff: { id: record.id, phase: "settled", source: "native", fidelity: "agent", revision: record.revision } };
+    turnDiff: { id: record.id, phase: "settled", source: record.source, fidelity: "agent", revision: record.revision } };
 }
 
 function selectedSnapshot(deps: TurnDiffRouterDeps, threadId: string, messageId: string | undefined): TurnSnapshot | undefined {
@@ -76,7 +76,7 @@ async function fileDiff(deps: TurnDiffRouterDeps, params: TurnDiffParams["turnDi
   const live = deps.turnDiffs.liveFileDiff(params.threadId, params.comparisonId, params.filePath);
   if (live !== undefined) return live;
   const record = deps.turnDiffs.find(params.threadId, params.comparisonId);
-  if (record?.source === "native") return record.patch ? parseTurnDiff(record.patch)?.filePatches.get(params.filePath) ?? "" : "";
+  if (record && record.source !== "git") return record.patch ? parseTurnDiff(record.patch)?.filePatches.get(params.filePath) ?? "" : "";
   const snapshots = deps.turnSnapshotRepo.listByThread(params.threadId);
   const snapshot = record ? snapshots.find((entry) => entry.message_id === record.message_id)
     : snapshots.find((entry) => `git:${entry.id}` === params.comparisonId);

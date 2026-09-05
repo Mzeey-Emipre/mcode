@@ -34,12 +34,14 @@ import type {
   PermissionRequest,
   ProviderModelInfo,
   Settings,
+  ProviderTurnDiffUpdate,
 } from "@mcode/contracts";
 import { fetchCursorCliModels } from "./models/cursor-cli-models.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 import { AcpSessionRuntime, SessionRecoveryFailedError } from "../protocols/acp/acp-session-runtime.js";
 import { CursorAcpClientBridge } from "./acp/cursor-acp-client-bridge.js";
 import { createCursorAcpTurnState } from "./acp/cursor-acp-event-mapper.js";
+import { CursorNativeTurnDiff } from "./acp/cursor-native-turn-diff.js";
 import { cursorAcpProcessIdentity } from "./acp/cursor-acp-process-identity.js";
 import { cursorSessionRecoveryErrorMessage } from "./acp/cursor-session-recovery-error.js";
 import { CursorAcpProcessSpawner } from "./runtime/cursor-acp-process-spawner.js";
@@ -160,6 +162,8 @@ export class CursorProvider
   private sdkSessionIds = new Map<string, string>();
   /** Binds each ACP prompt state to its immutable Mcode routing. */
   private readonly turnRoutingByState = new WeakMap<object, CursorCanonicalEventRouting>();
+  private readonly nativeDiffByTurnState = new WeakMap<object, { diff: CursorNativeTurnDiff; revision: number }>();
+  private readonly turnDiffListeners = new Set<(event: ProviderTurnDiffUpdate) => void>();
   /** Binds a request that is still opening to its Mcode routing for stop teardown. */
   private readonly pendingTurnRoutings = new Map<string, CursorCanonicalEventRouting>();
   /** Serializes canonical sink delivery for each Cursor execution. */
@@ -244,6 +248,7 @@ export class CursorProvider
           event,
           this.acpSessionIdentities(entry),
         ),
+        publishNativeTurnDiff: (entry, diffs) => this.publishNativeTurnDiff(entry, diffs),
         emitPermissionRequest: (request) => {
           try {
             this.emit("permission_request", request);
@@ -424,6 +429,32 @@ export class CursorProvider
       return;
     }
     this.canonicalEventPublisher.publish(routing, providerRuntimeEvent(event), sourceIdentities);
+  }
+
+  /** Subscribe to full Cursor ACP before-and-after evidence for the active Mcode turn. */
+  onTurnDiff(handler: (event: ProviderTurnDiffUpdate) => void): () => void {
+    this.turnDiffListeners.add(handler);
+    return () => this.turnDiffListeners.delete(handler);
+  }
+
+  private publishNativeTurnDiff(entry: CursorAcpSessionEntry, update: import("@agentclientprotocol/sdk").SessionNotification["update"]): void {
+    const routing = this.turnRoutingForEntry(entry);
+    const state = entry.activeTurnState;
+    if (!routing || !state) return;
+    const current = this.nativeDiffByTurnState.get(state) ?? { diff: new CursorNativeTurnDiff(), revision: 0 };
+    this.nativeDiffByTurnState.set(state, current);
+    const result = current.diff.observe(entry.cwd, update);
+    if (result === null) return;
+    const identity = {
+      turnId: routing.turnId,
+      turnExecutionId: routing.executionId,
+      deliveryAttempt: routing.deliveryAttempt,
+      revision: ++current.revision,
+    };
+    const event: ProviderTurnDiffUpdate = result.state === "snapshot"
+      ? { ...identity, ...result, nativeFidelity: "agent" }
+      : { ...identity, ...result };
+    for (const listener of this.turnDiffListeners) listener(event);
   }
 
   private releaseMismatchedPendingBrowserGrant(context: CursorTurnContext): void {

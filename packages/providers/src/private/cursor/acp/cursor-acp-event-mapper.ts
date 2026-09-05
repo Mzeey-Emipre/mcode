@@ -228,7 +228,7 @@ function resolveAcpToolName(update: {
   return toolNameFromDiscriminator(update.rawInput) ?? (title || "Tool");
 }
 
-function extractContentDiffs(update: Record<string, unknown>): AcpDiffBlock[] {
+export function extractContentDiffs(update: { content?: unknown }): AcpDiffBlock[] {
   const content = update.content;
   if (!Array.isArray(content)) return [];
   return content.filter(
@@ -236,7 +236,9 @@ function extractContentDiffs(update: Record<string, unknown>): AcpDiffBlock[] {
       c != null &&
       typeof c === "object" &&
       (c as Record<string, unknown>).type === "diff" &&
-      typeof (c as Record<string, unknown>).path === "string",
+      typeof (c as Record<string, unknown>).path === "string" &&
+      ((c as Record<string, unknown>).oldText == null || typeof (c as Record<string, unknown>).oldText === "string") &&
+      typeof (c as Record<string, unknown>).newText === "string",
   );
 }
 
