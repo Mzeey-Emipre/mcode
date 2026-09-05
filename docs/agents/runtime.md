@@ -46,6 +46,14 @@ Copy database data into the worktree. Do not symlink or write back to live data.
 
 Write in the repository working tree and this worktree's runtime paths. Do not edit `.env` files unless the task explicitly requires it.
 
+Linux desktop artifact verification caches the Ubuntu 22.04 image. The cache
+key uses the Dockerfile hash. Edit
+`apps/desktop/scripts/desktop-packaging/package-validation/Dockerfile.ubuntu22`
+when verification dependencies change. APT requests time out after 20 seconds.
+The image build limits package index updates to three minutes and package
+installation to five minutes. The artifact install limits itself to three
+minutes.
+
 ## Focused verification
 
 Run the smallest test that covers the changed behavior. Follow the repository [verification rules](../../AGENTS.md#verifying) and the [agent workflow](../guides/agent-workflow.md#focused-checks). For desktop-only behavior, use the [live Electron workflow](../../.agents/skills/electorn-live-testing/SKILL.md).

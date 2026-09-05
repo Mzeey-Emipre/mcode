@@ -2,6 +2,9 @@
 set -euo pipefail
 
 RELEASE_DIR="${1:-apps/desktop/release}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE="mcode-linux-artifact-smoke:ubuntu22"
+IMAGE_CACHE="${MCODE_LINUX_ARTIFACT_IMAGE_CACHE:-}"
 
 if [ ! -d "$RELEASE_DIR" ]; then
   echo "[linux-artifact-smoke] ERROR: release directory not found: $RELEASE_DIR" >&2
@@ -19,35 +22,21 @@ fi
 
 abs_release_dir="$(cd "$RELEASE_DIR" && pwd)"
 
+if [ -n "$IMAGE_CACHE" ] && [ -f "$IMAGE_CACHE" ]; then
+  docker load --input "$IMAGE_CACHE"
+else
+  docker build --tag "$IMAGE" --file "$SCRIPT_DIR/Dockerfile.ubuntu22" "$SCRIPT_DIR"
+  if [ -n "$IMAGE_CACHE" ]; then
+    mkdir -p "$(dirname "$IMAGE_CACHE")"
+    docker save --output "$IMAGE_CACHE" "$IMAGE"
+  fi
+fi
+
 docker run --rm \
   --volume "$abs_release_dir:/release:ro" \
-  ubuntu:22.04 \
+  "$IMAGE" \
   bash -lc '
     set -euo pipefail
-    export DEBIAN_FRONTEND=noninteractive
-
-    apt-get update
-    apt-get install -y --no-install-recommends \
-      ca-certificates \
-      file \
-      fuse \
-      libasound2 \
-      libatk-bridge2.0-0 \
-      libatk1.0-0 \
-      libcups2 \
-      libdrm2 \
-      libgbm1 \
-      libgtk-3-0 \
-      libnss3 \
-      libx11-xcb1 \
-      libxcb-dri3-0 \
-      libxcomposite1 \
-      libxdamage1 \
-      libxfixes3 \
-      libxkbcommon0 \
-      libxrandr2 \
-      libxshmfence1 \
-      xvfb
 
     appimage="$(find /release -maxdepth 1 -type f -name "*.AppImage" | head -n 1)"
     deb="$(find /release -maxdepth 1 -type f -name "*.deb" | head -n 1)"
@@ -76,7 +65,7 @@ docker run --rm \
       | sort -Vu \
       | tail -n 10 || true
 
-    apt-get install -y --no-install-recommends "$deb"
+    timeout 3m apt-get install -y --no-install-recommends "$deb"
     installed_bin="$(command -v mcode-desktop || command -v mcode || true)"
     if [ -z "$installed_bin" ]; then
       echo "[linux-artifact-smoke] ERROR: installed desktop binary not found on PATH" >&2

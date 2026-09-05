@@ -687,7 +687,9 @@ describe("CanonicalAgentEventSink", () => {
         (rows, event) => rows + (event.payload.type === "item.recorded" ? 2 : 1),
         0,
       ));
-      if (interruptPublication && !interrupted) {
+      if (interruptPublication && !interrupted && events.some(
+        (event) => event.payload.type === "item.recorded" && event.payload.item.id === "toolCall:tool-0",
+      )) {
         interrupted = true;
         throw new Error("simulated interruption");
       }
@@ -749,6 +751,9 @@ describe("CanonicalAgentEventSink", () => {
 
     await expect(sink.finishParentTurnBatched(input)).rejects.toThrow("simulated interruption");
     expect(sink.loadCheckpoint(EXECUTION_ID)?.terminalOutcome).toBeNull();
+    expect(sink.loadItem("toolCall:tool-0")?.payload).toMatchObject({
+      record: { output_summary: "partial" },
+    });
     expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(1);
     expect(sink.loadConversationProjection(THREAD_ID, 10).messages).toHaveLength(1);
 
