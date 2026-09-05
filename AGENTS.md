@@ -65,11 +65,12 @@ export OPENSRC_HOME="$(git rev-parse --show-toplevel)/.opensrc"
 bunx --no-install opensrc path <package-or-owner/repo>
 ```
 
-## The three ways to hurt yourself
+## The four ways to hurt yourself
 
 1. **Killing processes by pattern.** Never `pkill -f`, `killall`, or kill PIDs found by matching names or paths. Your own agent process and sibling dev servers share this host. Kill only PIDs captured at spawn or port owners confirmed to belong to your worktree.
 2. **Mutating shared state across worktrees.** Never write to `.dev/` in other worktrees or global config directories. All runtime state belongs in your worktree-local `.dev/`.
 3. **Bypassing type and complexity checks.** Never suppress TypeScript errors with unsafe casts or ignore complexity warnings. Keep functions small and modular.
+4. **Running the app with `bun run dev` or `bun run dev:*` in the foreground.** These commands hold synchronous harnesses until shutdown. Use `bun run --shell system agent:up` by default; for a specific desktop or dev need, run the long-lived command in the background.
 
 ## Hit every surface
 
@@ -85,7 +86,7 @@ Before calling frontend or feature work done, verify all applicable dimensions:
 ## Dev servers & Runtime contract
 
 - `bun run setup` runs `scripts/setup-env.mjs` to configure the environment; `bun install` installs dependencies.
-- `bun run --shell system agent:up` starts the server and web app, writes `.dev/ports.json`, and prints port configuration after `/health` returns 200.
+- Use `bun run --shell system agent:up` to start the server and web app in the background. It waits for server health and web HTTP readiness, writes `.dev/ports.json`, prints the port configuration, then returns control. Use regular dev commands only for a specific need; run long-lived commands in the background and use `bun run dev:desktop` when Electron is required.
 - Read `.dev/ports.json` instead of recomputing ports. Authenticate HTTP and WebSocket requests with `seedLogin.authHeader` or the `mcode-auth` cookie. `instanceToken` and `worktreeIdentity` identify and pair the worktree runtime.
 - `bun run --shell system agent:down` stops the runtime cleanly.
 - `bun run --shell system agent:reset` deletes only `.dev/db` and restarts with a fresh seeded database.
