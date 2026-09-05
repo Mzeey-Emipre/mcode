@@ -66,6 +66,7 @@ await Promise.all([
 
 console.log("Build complete: main, renderer preload, and fixed preview guest preload");
 
+if (!process.argv.includes("--main-only")) {
 // Step 2: Bundle the server into dist/server/server.cjs
 // Phase 2a: swc compiles TypeScript to ESM JS, preserving decorator metadata
 // for tsyringe DI (esbuild cannot emit it; swc's `decoratorMetadata` matches
@@ -116,3 +117,4 @@ NodeChildProcess.execFileSync("bun", ["run", "build", "--", "--outDir", renderer
 });
 
 console.log(`Renderer build complete: ${rendererOutDir}`);
+}

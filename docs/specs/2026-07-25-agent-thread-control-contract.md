@@ -4,7 +4,6 @@
 **Status:** Specification
 **Epic:** [#958](https://github.com/Mzeey-Empire/mcode/issues/958)
 **Related ADR:** [0021](../adr/0021-thread-control-authority-and-lifecycle.md)
-**Research:** [Agent-created threads](../research/agent-created-threads.md)
 
 ## Purpose
 
