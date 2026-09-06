@@ -1,4 +1,5 @@
 import { supportsCodexUltraOrchestration } from "@mcode/contracts";
+import type { ProviderCapability } from "@mcode/contracts";
 import { isXhighEffortModel } from "@/lib/model-registry";
 
 /** Stable IDs for capabilities that can be attached to the composer. */
@@ -30,6 +31,13 @@ export interface ResolveComposerCapabilitiesOptions {
   providerId?: string;
   /** Active model ID used for model-specific orchestration support. */
   modelId?: string;
+}
+
+/** Resolves the review selector from a provider descriptor when one is available. */
+export function supportsApprovalReview(capabilities: readonly ProviderCapability[]): boolean {
+  return capabilities.some((capability) => (
+    capability.name === "approval-review" && capability.support === "supported"
+ ));
 }
 
 const PLAN_CAPABILITY: ResolvedComposerCapability = {

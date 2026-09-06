@@ -4144,4 +4144,45 @@ describe("CodexEventMapper", () => {
       params: { threadId: "child-native", message: "Unsafe action blocked" },
     })).toMatchObject([{ event: { type: "system", message: "Unsafe action blocked", systemNotice: { kind: "security", scope: "session", origin: "unattributed-thread" } } }]);
   });
+
+  it("maps bounded approval-review outcomes and rejects malformed, stale, and duplicate events", () => {
+    mapper.mapNotification({ jsonrpc: "2.0", method: "turn/started", params: { turn: { id: "turn-current" } } });
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/started",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 1, reviewId: "review-1", targetItemId: "item-1", review: { status: "inProgress" } },
+    });
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/completed",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 1, completedAtMs: 2, reviewId: "review-1", targetItemId: "item-1", review: { status: "approved" } },
+    });
+    const duplicate = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/completed",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 1, completedAtMs: 3, reviewId: "review-1", review: { status: "denied" } },
+    });
+    const stale = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/started",
+      params: { threadId: "codex-thread", turnId: "turn-old", startedAtMs: 1, reviewId: "review-old", review: { status: "inProgress" } },
+    });
+    const deniedStarted = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/started",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 4, reviewId: "review-2", review: { status: "inProgress" } },
+    });
+    const denied = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/completed",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 4, completedAtMs: 5, reviewId: "review-2", review: { status: "denied", rationale: "sensitive native rationale" } },
+    });
+    const malformed = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/completed",
+      params: { threadId: "codex-thread", turnId: "turn-current", reviewId: "review-3" },
+    });
+
+    expect(started.map((mapped) => mapped.event)).toMatchObject([{ type: "toolUse", toolCallId: "approval-review:review-1" }]);
+    expect(completed.map((mapped) => mapped.event)).toMatchObject([{ type: "toolResult", toolCallId: "approval-review:review-1", output: "Approved" }]);
+    expect(duplicate).toEqual([]);
+    expect(stale).toEqual([]);
+    expect(deniedStarted.map((mapped) => mapped.event)).toMatchObject([{ type: "toolUse", toolCallId: "approval-review:review-2" }]);
+    expect(denied.map((mapped) => mapped.event)).toMatchObject([{ type: "toolResult", toolCallId: "approval-review:review-2", output: "Denied", isError: true }]);
+    expect(denied.map((mapped) => mapped.event).at(0)).not.toHaveProperty("toolInput.rationale");
+    expect(malformed.map((mapped) => mapped.event)).toMatchObject([{ type: "system", systemNotice: { kind: "diagnostic" } }]);
+  });
 });

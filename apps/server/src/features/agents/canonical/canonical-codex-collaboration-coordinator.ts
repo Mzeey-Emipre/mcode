@@ -1413,6 +1413,8 @@ function newChildTurn(
       sourceItemId: action.source.itemId,
     },
     permissionMode: "full",
+    approvalReviewMode: "manual",
+    approvalReviewReason: "manual-requested",
     providerIdentities: [...providerIdentities],
     startedAt: null,
     endedAt: null,

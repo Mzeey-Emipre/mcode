@@ -1,5 +1,5 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
-import type { ContextWindowMode, OrchestrationMode, ReasoningLevel } from "@mcode/contracts";
+import type { ApprovalReviewMode, ContextWindowMode, OrchestrationMode, ReasoningLevel } from "@mcode/contracts";
 import { ORCHESTRATION_MODES } from "@mcode/contracts";
 import { INTERACTION_MODES, PERMISSION_MODES, type InteractionMode, type PermissionMode } from "@/transport";
 import {
@@ -15,6 +15,7 @@ export interface ComposerAgentSelection {
   reasoning: ReasoningLevel;
   interactionMode: InteractionMode;
   permissionMode: PermissionMode;
+  approvalReviewMode: ApprovalReviewMode;
   orchestrationMode: OrchestrationMode;
   copilotAgent: string | null;
   contextWindow: ContextWindowMode | null;
@@ -57,6 +58,7 @@ function hasSameComposerAgentSelection(
     && current.reasoning === next.reasoning
     && current.interactionMode === next.interactionMode
     && current.permissionMode === next.permissionMode
+    && current.approvalReviewMode === next.approvalReviewMode
     && current.orchestrationMode === next.orchestrationMode
     && current.copilotAgent === next.copilotAgent
     && current.contextWindow === next.contextWindow
@@ -72,6 +74,7 @@ export function createDefaultComposerAgentSelection(): ComposerAgentSelection {
     reasoning: getDefaultReasoningLevel(),
     interactionMode: INTERACTION_MODES.BUILD,
     permissionMode: PERMISSION_MODES.FULL,
+    approvalReviewMode: "manual",
     orchestrationMode: ORCHESTRATION_MODES.STANDARD,
     copilotAgent: null,
     contextWindow: null,
@@ -91,6 +94,7 @@ export function mergeComposerAgentSelection(
     reasoning: retainCurrentWhenUndefined(current.reasoning, patch.reasoning),
     interactionMode: retainCurrentWhenUndefined(current.interactionMode, patch.interactionMode),
     permissionMode: retainCurrentWhenUndefined(current.permissionMode, patch.permissionMode),
+    approvalReviewMode: retainCurrentWhenUndefined(current.approvalReviewMode, patch.approvalReviewMode),
     orchestrationMode: retainCurrentWhenUndefined(
       current.orchestrationMode,
       patch.orchestrationMode,

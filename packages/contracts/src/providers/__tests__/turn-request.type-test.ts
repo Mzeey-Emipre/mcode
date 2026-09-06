@@ -18,6 +18,7 @@ describe("TurnRequest providerOptions discrimination", () => {
       cwd: "/tmp",
       model: "claude-sonnet-4-6",
       permissionMode: "full",
+      approvalReviewMode: "manual",
       interactionMode: "build",
       providerOptions: { contextWindowMode: "1m", thinking: true },
     };
@@ -34,7 +35,8 @@ describe("TurnRequest providerOptions discrimination", () => {
       message: "hi",
       cwd: "/tmp",
       model: "cursor-default",
-      permissionMode: "default",
+      permissionMode: "supervised",
+      approvalReviewMode: "manual",
       interactionMode: "plan",
       providerOptions: {},
     };
@@ -52,6 +54,7 @@ describe("TurnRequest providerOptions discrimination", () => {
       cwd: "/tmp",
       model: "claude-sonnet-4-6",
       permissionMode: "full",
+      approvalReviewMode: "manual",
       interactionMode: "build",
       // @ts-expect-error fastMode is a Codex knob, not valid on a Claude request
       providerOptions: { fastMode: true },

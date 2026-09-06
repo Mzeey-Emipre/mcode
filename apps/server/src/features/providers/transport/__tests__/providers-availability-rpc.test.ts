@@ -105,12 +105,12 @@ describe("providers.listAvailability RPC", () => {
   it("returns six entries in catalog order", async () => {
     /** Canned response that mirrors PROVIDER_CATALOG order. */
     const fakeAvailability: ProviderAvailability[] = [
-      { id: "claude",   enabled: true,  hasAdapter: true,  beta: false, comingSoon: false, cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
-      { id: "codex",    enabled: true,  hasAdapter: true,  beta: false, comingSoon: false, cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
-      { id: "copilot",  enabled: false, hasAdapter: true,  beta: true,  comingSoon: false, cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
-      { id: "gemini",   enabled: false, hasAdapter: false, beta: false, comingSoon: true,  cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
-      { id: "cursor",   enabled: false, hasAdapter: false, beta: false, comingSoon: true,  cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
-      { id: "opencode", enabled: false, hasAdapter: false, beta: false, comingSoon: true,  cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "claude",   enabled: true,  hasAdapter: true,  beta: false, comingSoon: false, capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "codex",    enabled: true,  hasAdapter: true,  beta: false, comingSoon: false, capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "copilot",  enabled: false, hasAdapter: true,  beta: true,  comingSoon: false, capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "gemini",   enabled: false, hasAdapter: false, beta: false, comingSoon: true,  capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "cursor",   enabled: false, hasAdapter: false, beta: false, comingSoon: true,  capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "opencode", enabled: false, hasAdapter: false, beta: false, comingSoon: true,  capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
     ];
 
     const deps = makeMinimalDeps({

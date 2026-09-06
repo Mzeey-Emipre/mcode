@@ -803,7 +803,9 @@ function seedCheckpointProfileExecution(
     },
     turnId,
     executionId,
-    permissionMode: "supervised",
+      permissionMode: "supervised",
+      approvalReviewMode: "manual",
+      approvalReviewReason: "manual-requested",
     providerIdentities: [],
     projectUserMessage: () => messages.create(threadId, "user", CONTENT, 1),
   });
@@ -903,7 +905,9 @@ async function writeActiveTurn(db: Database.Database): Promise<NonNullable<SQLit
     },
     turnId,
     executionId,
-    permissionMode: "supervised",
+      permissionMode: "supervised",
+      approvalReviewMode: "manual",
+      approvalReviewReason: "manual-requested",
     providerIdentities: [],
     projectUserMessage: () => messageRepo.create(THREAD_ID, "user", CONTENT, 1),
   });

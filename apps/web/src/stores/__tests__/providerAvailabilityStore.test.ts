@@ -9,6 +9,7 @@ function row(partial: Partial<ProviderAvailability>): ProviderAvailability {
     hasAdapter: true,
     beta: false,
     comingSoon: false,
+    capabilities: [],
     cli: { status: "found", resolvedPath: "/usr/local/bin/claude", configuredPath: "" },
     ...partial,
   };

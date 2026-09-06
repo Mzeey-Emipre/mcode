@@ -711,6 +711,7 @@ export function Composer({
               capabilities: agentControls.capabilities,
               attachedCapabilityIds: agentControls.attachedCapabilityIds,
               permissionLocked: agentControls.permissionLocked,
+              approvalReviewSupported: agentControls.approvalReviewSupported,
             },
             activeGoal,
             isModelFullyLocked: surfaceState.isModelFullyLocked,

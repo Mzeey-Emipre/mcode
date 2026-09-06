@@ -1,5 +1,5 @@
 import { formatDurationMs } from "@/lib/time";
-import type { TurnOutcome } from "@mcode/contracts";
+import type { ApprovalReviewMode, TurnOutcome } from "@mcode/contracts";
 import type { NarrativeCounts } from "./types";
 
 /** Props for {@link TurnFooter}. */
@@ -9,6 +9,8 @@ export interface TurnFooterProps {
   durationMs: number | null;
   /** Explicit terminal outcome. Missing outcomes stay visually unlabeled. */
   outcome?: TurnOutcome | null;
+  /** Frozen review decision that applied to this turn. */
+  approvalReview?: { mode: ApprovalReviewMode; reason: string };
 }
 
 function outcomeLabel(outcome: TurnOutcome | null | undefined): string | undefined {
@@ -35,8 +37,9 @@ function hasFooterContent(
   labels: readonly string[],
   durationMs: number | null,
   label: string | undefined,
+  approvalReview: TurnFooterProps["approvalReview"],
 ): boolean {
-  return labels.length > 0 || durationMs != null || label !== undefined;
+  return labels.length > 0 || durationMs != null || label !== undefined || approvalReview !== undefined;
 }
 
 function TurnFooterStatus({ label }: { label: string | undefined }) {
@@ -47,6 +50,21 @@ function TurnFooterStatus({ label }: { label: string | undefined }) {
       {label}
     </span>
   );
+}
+
+function ApprovalReviewStatus({ approvalReview }: { approvalReview: TurnFooterProps["approvalReview"] }) {
+  if (!approvalReview) return null;
+  return <span data-testid="approval-review">{approvalReviewLabel(approvalReview)}</span>;
+}
+
+function approvalReviewLabel({ mode, reason }: NonNullable<TurnFooterProps["approvalReview"]>): string {
+  if (reason === "provider-version-unavailable" || reason === "provider-version-unsupported") {
+    return "Automatic review unavailable. Manual approval applies.";
+  }
+  if (reason === "full-access-bypasses-approval-review") return "Approval review is unavailable in Full Access.";
+  if (reason === "experimental-api-enabled") return "Automatic approval review selected.";
+  if (reason === "manual-requested") return "Manual approval selected.";
+  return mode === "automatic" ? "Automatic approval review selected." : "Manual approval selected.";
 }
 
 function TurnFooterCounts({ labels }: { labels: readonly string[] }) {
@@ -73,14 +91,16 @@ export function TurnFooter({
   counts,
   durationMs,
   outcome,
+  approvalReview,
 }: TurnFooterProps) {
   const label = outcomeLabel(outcome);
   const labels = countLabels(counts);
-  if (!hasFooterContent(labels, durationMs, label)) return null;
+  if (!hasFooterContent(labels, durationMs, label, approvalReview)) return null;
 
   return (
     <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 pl-4 font-mono uppercase text-xs tracking-[0.08em] text-muted-foreground/45">
       <TurnFooterStatus label={label} />
+      <ApprovalReviewStatus approvalReview={approvalReview} />
       <TurnFooterCounts labels={labels} />
       <span className="flex-1 h-px bg-border/40" aria-hidden="true" />
       <span className="tabular-nums">{formatDurationMs(durationMs)}</span>

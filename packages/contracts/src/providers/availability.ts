@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderCapabilitySchema } from "../compat/agent-model.js";
 import { lazySchema } from "../utils/lazySchema.js";
 
 /** CLI verification status for a provider binary. */
@@ -28,6 +29,8 @@ export const ProviderAvailabilitySchema = lazySchema(() =>
     hasAdapter: z.boolean(),
     beta: z.boolean(),
     comingSoon: z.boolean(),
+    /** Static capabilities declared by the registered adapter. */
+    capabilities: z.array(ProviderCapabilitySchema).max(32),
     cli: ProviderCliInfoSchema(),
   }),
 );

@@ -2,6 +2,7 @@ import { inject, injectable } from "tsyringe";
 import type {
   ContextWindowMode,
   CreateAndSendInput,
+  ApprovalReviewMode,
   InteractionMode,
   OrchestrationMode,
   PermissionMode,
@@ -48,6 +49,7 @@ export interface CreateThreadForTurnInput {
   provider: ProviderId;
   model: string;
   permissionMode: PermissionMode | "default";
+  approvalReviewMode?: ApprovalReviewMode;
   reasoningLevel?: ReasoningLevel;
   interactionMode?: InteractionMode;
   orchestrationMode?: OrchestrationMode;
@@ -62,6 +64,7 @@ interface BranchedInitialTurnParams {
   content: string;
   model: string;
   permissionMode: PermissionMode | "default";
+  approvalReviewMode?: ApprovalReviewMode;
   mode: "direct" | "worktree";
   branch: string;
   worktreeBranchMode?: "branchless" | "named";
@@ -170,6 +173,7 @@ export class ThreadCreationCoordinator {
       content,
       model = "claude-sonnet-4-6",
       permissionMode = "default",
+      approvalReviewMode,
       mode = "direct",
       branch = "main",
       worktreeBranchMode = "branchless",
@@ -195,7 +199,7 @@ export class ThreadCreationCoordinator {
       orchestrationMode,
     } = command;
     const params: BranchedInitialTurnParams = {
-      workspaceId, content, model, permissionMode, mode, branch, worktreeBranchMode,
+      workspaceId, content, model, permissionMode, approvalReviewMode, mode, branch, worktreeBranchMode,
       existingWorktreePath, existingWorktreeBaseBranch, attachments, reasoningLevel,
       provider, interactionMode, parentThreadId, forkedFromMessageId,
       title: titleFrom(displayContent ?? content), maxBudgetUsd, maxTurns, copilotAgent,
@@ -318,6 +322,7 @@ export class ThreadCreationCoordinator {
         threadId: thread.id,
         content: params.content,
         permissionMode: params.permissionMode,
+        approvalReviewMode: params.approvalReviewMode,
         model: params.model,
         attachments: automatic.kind === "ready" ? [] : params.attachments,
         provider: params.provider,
@@ -516,6 +521,7 @@ export class ThreadCreationCoordinator {
         threadId: provisioned.thread.id,
         content: params.content,
         permissionMode: params.permissionMode,
+        approvalReviewMode: params.approvalReviewMode,
         model: params.model,
         attachments: params.attachments,
         reasoningLevel: params.reasoningLevel,

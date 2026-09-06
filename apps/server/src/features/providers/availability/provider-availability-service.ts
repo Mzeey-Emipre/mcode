@@ -71,7 +71,7 @@ export class ProviderAvailabilityService {
   /** Build the full availability list from catalog + settings + cached CLI state. */
   listAvailability(): ProviderAvailability[] {
     const s = this.settings.get();
-    const registered = new Set(this.registry.resolveAll().map((p) => p.id));
+    const registered = new Map(this.registry.resolveAll().map((provider) => [provider.id, provider]));
 
     return PROVIDER_CATALOG.map((entry): ProviderAvailability => {
       const cliRuntime: CliRuntime = this.cliCache.get(entry.id) ?? {
@@ -85,6 +85,7 @@ export class ProviderAvailabilityService {
         hasAdapter: registered.has(entry.id),
         beta: entry.beta,
         comingSoon: entry.comingSoon,
+        capabilities: [...(registered.get(entry.id)?.descriptor.capabilities ?? [])],
         cli: {
           status: cliRuntime.status,
           resolvedPath: cliRuntime.resolvedPath,

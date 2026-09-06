@@ -111,6 +111,7 @@ async function dispatchNewThread(
     selection.orchestrationMode,
     savedCommentsForTransport(snapshot.selectedTextComments),
     composerDraftForPendingCreation(submission),
+    selection.approvalReviewMode,
   );
   notifyThreadPreparing(onThreadPreparing);
   await completeNewThreadCreation(creatingThread, onThreadCreated, onThreadCreationFailed);
@@ -201,6 +202,7 @@ function branchThreadAgentOptions(selection: ComposerAgentSelection) {
     model: selection.modelId,
     provider: selection.provider,
     permissionMode: selection.permissionMode,
+    approvalReviewMode: selection.approvalReviewMode,
     reasoningLevel: selection.reasoning,
     copilotAgent: selection.provider === "copilot" ? selection.copilotAgent ?? undefined : undefined,
     contextWindow: selection.contextWindow ?? undefined,

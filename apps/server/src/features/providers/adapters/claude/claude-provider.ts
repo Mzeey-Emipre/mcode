@@ -488,6 +488,7 @@ export class ClaudeProvider
     ProtocolAdapter<ClaudeSessionState>
 {
   readonly id: ProviderId = "claude";
+  readonly descriptor = Object.freeze({ id: "claude" as const, capabilities: [] });
   /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;

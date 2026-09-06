@@ -4,6 +4,7 @@ export {
   ThreadModeSchema,
   MessageRoleSchema,
   PermissionModeSchema,
+  ApprovalReviewModeSchema,
   PERMISSION_MODES,
   InteractionModeSchema,
   INTERACTION_MODES,
@@ -17,6 +18,7 @@ export type {
   ThreadMode,
   MessageRole,
   PermissionMode,
+  ApprovalReviewMode,
   InteractionMode,
   OrchestrationMode,
   CopilotSubagentSource,
@@ -1377,6 +1379,7 @@ export type {
   ProviderId,
   SessionForkBehavior,
   IAgentProvider,
+  IApprovalReviewCapable,
   ITurnDiffSource,
   IChildTurnCancellable,
   ICompletionCapable,
@@ -1388,6 +1391,7 @@ export type {
   CompletionOptions,
   ProviderFileMutationStart,
   ProviderTurnDiffUpdate,
+  ApprovalReviewSupport,
 } from "./providers/interfaces.js";
 
 export * from "./providers/catalog.js";
@@ -1405,6 +1409,7 @@ export type { ProviderModelInfo } from "./providers/models.js";
 export {
   isChildTurnCancellable,
   isTurnDiffSource,
+  isApprovalReviewCapable,
   isCompletionCapable,
   isGoalCapable,
   isSessionEvictable,

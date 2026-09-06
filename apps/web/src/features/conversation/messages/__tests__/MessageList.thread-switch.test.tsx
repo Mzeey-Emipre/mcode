@@ -139,6 +139,8 @@ function canonicalChildState(content: string, status: "Running" | "Completed") {
     status,
     trigger: { kind: "child", sourceThreadId: "parent-thread", sourceTurnId: "parent-turn" },
     permissionMode: "full",
+    approvalReviewMode: "manual",
+    approvalReviewReason: "manual-requested",
     providerIdentities: [],
     startedAt: timestamp,
     endedAt: status === "Completed" ? timestamp : null,

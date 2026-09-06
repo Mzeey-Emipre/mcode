@@ -198,6 +198,8 @@ export class CanonicalParentTurnLifecycle {
         sourceItemId: context.action.source.itemId,
       },
       permissionMode: input.permissionMode,
+      approvalReviewMode: "manual",
+      approvalReviewReason: "manual-requested",
       providerIdentities: context.sourceIdentities,
       startedAt: null,
       endedAt: null,

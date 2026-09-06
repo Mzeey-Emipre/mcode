@@ -131,6 +131,8 @@ export class CodexEventMapper {
   private readonly threadId: string;
   /** Codex app-server's own main thread id. Distinct from Mcode's persisted thread UUID. */
   private mainCodexThreadId: string | undefined;
+  /** Native turn identity that owns direct approval-review notifications. */
+  private activeMainTurnId: string | undefined;
   /** Per-item streaming command output buffers, keyed by itemId. */
   private readonly commandOutputBuffers = new Map<string, BoundedToolOutputBuffer>();
   /** Start-time ToolUse signatures, so completion enrichment only emits when details changed. */
@@ -211,6 +213,10 @@ export class CodexEventMapper {
    * thinking timeline scrolling after the turn footer says "done".
    */
   private turnEnded = false;
+  /** Stable native review identities may repeat after reconnect; publish one terminal outcome. */
+  private readonly completedApprovalReviewIds = new Set<string>();
+  /** A completion without this matching start belongs to an old dispatch attempt. */
+  private readonly startedApprovalReviewIds = new Set<string>();
 
   constructor(
     threadId: string,
@@ -1652,8 +1658,34 @@ export class CodexEventMapper {
     if (notice) return [notice];
     const handlers: Record<string, () => CodexMappedEvent[]> = {
       "thread/settings/updated": () => this.mapThreadSettingsUpdated(notification.params),
+      "item/autoApprovalReview/started": () => this.mapApprovalReviewStarted(notification),
+      "item/autoApprovalReview/completed": () => this.mapApprovalReviewCompleted(notification),
     };
     return dispatchNativeHandler<CodexMappedEvent[]>(handlers, notification.method);
+  }
+
+  private mapApprovalReviewStarted(notification: CodexNotification): CodexMappedEvent[] {
+    const params = notification.params as { reviewId: string; turnId: string; targetItemId?: string | null };
+    if (params.turnId !== this.activeMainTurnId) return [];
+    if (this.completedApprovalReviewIds.has(params.reviewId)) return [];
+    this.startedApprovalReviewIds.add(params.reviewId);
+    const toolCallId = `approval-review:${params.reviewId}`;
+    return [{ type: AgentEventType.ToolUse, threadId: this.threadId, toolCallId, toolName: "Approval review", toolInput: {
+      reviewId: params.reviewId, status: "reviewing", targetItemId: params.targetItemId ?? null,
+    } }];
+  }
+
+  private mapApprovalReviewCompleted(notification: CodexNotification): CodexMappedEvent[] {
+    const params = notification.params as { reviewId: string; turnId: string; review: { status: string } };
+    if (params.turnId !== this.activeMainTurnId) return [];
+    if (!this.startedApprovalReviewIds.has(params.reviewId) || this.completedApprovalReviewIds.has(params.reviewId)) return [];
+    const status = params.review.status;
+    if (status === "inProgress") return [];
+    this.completedApprovalReviewIds.add(params.reviewId);
+    const outcome = status === "approved" ? "Approved" : status === "denied" ? "Denied" : status === "timedOut" ? "Review timed out" : "Review aborted";
+    return [this.toolResultEvent({ toolCallId: `approval-review:${params.reviewId}`, output: outcome, isError: status !== "approved", toolInput: {
+      reviewId: params.reviewId, status,
+    } })];
   }
 
   private boundedText(value: unknown, fallback: string): string {
@@ -1739,7 +1771,13 @@ export class CodexEventMapper {
       "thread/goal/updated": () => this.mapGoalUpdated(notification),
       "thread/goal/cleared": () => this.mapGoalCleared(notification),
       "mcpServer/startupStatus/updated": () => this.mapMcpStartupStatus(notification),
-      "turn/started": () => { this.turnEnded = false; logger.debug("Codex lifecycle notification", { method: notification.method }); return []; },
+      "turn/started": () => {
+        const turnId = (notification.params as { turn?: { id?: unknown } }).turn?.id;
+        this.activeMainTurnId = typeof turnId === "string" ? turnId : undefined;
+        this.turnEnded = false;
+        logger.debug("Codex lifecycle notification", { method: notification.method });
+        return [];
+      },
     };
     return dispatchNativeHandler<CodexMappedEvent[]>(handlers, notification.method);
   }
@@ -1954,6 +1992,8 @@ export class CodexEventMapper {
 
   private completeMainTurnState(): void {
     this.reset();
+    // A later notification from this completed native turn cannot belong to a new dispatch.
+    this.activeMainTurnId = undefined;
     this.turnEnded = true;
   }
 

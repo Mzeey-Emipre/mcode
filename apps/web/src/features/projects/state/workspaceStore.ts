@@ -31,7 +31,7 @@ import {
   releaseBrowserAutomationThreadScope,
   releaseBrowserAutomationWorkspaceScopes,
 } from "@/features/preview/automation/browserAutomationStore";
-import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode, OrchestrationMode } from "@mcode/contracts";
+import type { ApprovalReviewMode, ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode, OrchestrationMode } from "@mcode/contracts";
 import { sanitizeCustomBranchInput } from "@/lib/branch-name";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
 import { readRememberedComposerMode } from "@/lib/composer-mode-preference";
@@ -220,6 +220,7 @@ interface PendingThreadCreation {
   composerDraft?: ComposerDraft;
   model: string;
   permissionMode?: PermissionMode;
+  approvalReviewMode?: ApprovalReviewMode;
   transportMode: "direct" | "worktree";
   branch: string;
   worktreeBranchMode?: "branchless" | "named";
@@ -264,6 +265,7 @@ interface BranchThreadParams {
   existingWorktreeBaseBranch?: string;
   forkedFromMessageId?: string;
   permissionMode?: PermissionMode;
+  approvalReviewMode?: ApprovalReviewMode;
   reasoningLevel?: ReasoningLevel;
   attachments?: AttachmentMeta[];
   interactionMode?: InteractionMode;
@@ -427,6 +429,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     content: pending.content,
     model: pending.model,
     permissionMode: pending.permissionMode,
+    approvalReviewMode: pending.approvalReviewMode,
     mode: pending.transportMode,
     branch: pending.branch,
     worktreeBranchMode: pending.worktreeBranchMode,
@@ -589,6 +592,7 @@ interface WorkspaceState {
     orchestrationMode?: OrchestrationMode,
     selectedTextComments?: SelectedTextComment[],
     composerDraft?: ComposerDraft,
+    approvalReviewMode?: ApprovalReviewMode,
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: BranchThreadParams) => Promise<Thread>;
@@ -1270,6 +1274,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     orchestrationMode,
     selectedTextComments,
     composerDraft,
+    approvalReviewMode,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -1286,6 +1291,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       displayContent,
       model,
       permissionMode,
+      approvalReviewMode,
       ...target,
       attachments,
       reasoningLevel,
@@ -1316,6 +1322,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       displayContent: params.displayContent,
       model: params.model,
       permissionMode: params.permissionMode,
+      approvalReviewMode: params.approvalReviewMode,
       ...target,
       attachments: params.attachments,
       reasoningLevel: params.reasoningLevel,

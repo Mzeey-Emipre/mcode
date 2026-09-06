@@ -1,22 +1,114 @@
-import type { PermissionMode } from "@/transport";
-import { PERMISSION_MODES } from "@/transport";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePlanStore } from "@/stores/planStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { hideRightPanelAdaptive, showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { cn } from "@/lib/utils";
-import { ListChecks, Lock, MoreHorizontal, Unlock } from "lucide-react";
+import { Check, Eye, KeyRound, ListChecks, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+
+export type ComposerAccessMode = "supervised" | "automatic" | "full";
 
 /** Props shared by Composer's compact and inline option controls. */
 export interface ComposerOptionControlsProps {
   threadId?: string;
-  access: PermissionMode;
+  accessMode: ComposerAccessMode;
   /** True when the provider requires Full access and cannot offer the supervised mode. */
   permissionLocked: boolean;
-  onAccessChange: (next: PermissionMode) => void;
+  approvalReviewSupported: boolean;
+  onAccessModeChange: (next: ComposerAccessMode) => void;
+}
+
+const ACCESS_MODES: ReadonlyArray<{
+  id: ComposerAccessMode;
+  label: "Supervised" | "Auto" | "Full access";
+  description: string;
+}> = [
+  { id: "supervised", label: "Supervised", description: "Ask you to approve actions" },
+  { id: "automatic", label: "Auto", description: "Review actions automatically" },
+  { id: "full", label: "Full access", description: "Run without approval prompts" },
+];
+
+const ACCESS_MODE_LABELS: Record<ComposerAccessMode, (typeof ACCESS_MODES)[number]["label"]> = {
+  supervised: "Supervised",
+  automatic: "Auto",
+  full: "Full access",
+};
+
+function accessIcon(accessMode: ComposerAccessMode) {
+  if (accessMode === "automatic") return ShieldCheck;
+  return accessMode === "full" ? KeyRound : Eye;
+}
+
+function isAccessModeDisabled(
+  accessMode: ComposerAccessMode,
+  permissionLocked: boolean,
+  approvalReviewSupported: boolean,
+): boolean {
+  if (permissionLocked) return accessMode !== "full";
+  return accessMode === "automatic" && !approvalReviewSupported;
+}
+
+function AccessModeSelector({
+  accessMode,
+  permissionLocked,
+  approvalReviewSupported,
+  onAccessModeChange,
+}: Omit<ComposerOptionControlsProps, "threadId">) {
+  const [open, setOpen] = useState(false);
+  const Icon = accessIcon(accessMode);
+  const selectedLabel = ACCESS_MODE_LABELS[accessMode];
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-label={`Access mode: ${selectedLabel}`}
+            className="gap-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+          >
+            <Icon size={14} />
+            <span className="text-sm">{selectedLabel}</span>
+          </Button>
+        }
+      />
+      <PopoverContent align="start" sideOffset={8} className="w-60 p-2">
+        <div className="px-1.5 pt-1 pb-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+          Access mode
+        </div>
+        <div className="space-y-0.5">
+          {ACCESS_MODES.map((mode) => {
+            const ModeIcon = accessIcon(mode.id);
+            const disabled = isAccessModeDisabled(mode.id, permissionLocked, approvalReviewSupported);
+            return (
+              <Button
+                key={mode.id}
+                variant="ghost"
+                size="xs"
+                disabled={disabled}
+                aria-pressed={accessMode === mode.id}
+                onClick={() => {
+                  onAccessModeChange(mode.id);
+                  setOpen(false);
+                }}
+                className="h-auto w-full justify-start gap-2 rounded-md px-2 py-1.5 text-xs font-normal whitespace-normal"
+              >
+                <ModeIcon size={13} className="text-muted-foreground" />
+                <span className="min-w-0 flex-1 text-left">
+                  <span className="block text-foreground">{mode.label}</span>
+                  <span className="block text-muted-foreground">{mode.description}</span>
+                </span>
+                {accessMode === mode.id && <Check size={13} className="text-primary" />}
+              </Button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function useComposerPlanPanel(threadId: string | undefined) {
@@ -46,185 +138,56 @@ function useComposerPlanPanel(threadId: string | undefined) {
   return { hasPlans, panelVisible, togglePlanPanel };
 }
 
-/** Compact overflow menu for Composer permission and plan-panel controls. */
+/** Renders the shared access selector and optional plan-panel control. */
 export function ComposerOptionsMenu({
   threadId,
-  access,
+  accessMode,
   permissionLocked,
-  onAccessChange,
+  approvalReviewSupported,
+  onAccessModeChange,
 }: ComposerOptionControlsProps) {
   const { hasPlans, panelVisible, togglePlanPanel } = useComposerPlanPanel(threadId);
 
   return (
-    <Popover>
-      <PopoverTrigger
-        aria-label="Composer options"
-        title="Composer options"
-        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground data-[popup-open]:bg-muted/40 data-[popup-open]:text-foreground"
-      >
-        <MoreHorizontal size={14} />
-      </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={8} className="w-60 p-2">
-        <div className="px-1.5 pt-1 pb-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
-          Permissions
-        </div>
-        {permissionLocked ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <div
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md bg-muted/40 px-2 py-1.5 text-xs font-medium text-muted-foreground",
-                    hasPlans && "mb-2",
-                  )}
-                >
-                  <Unlock size={12} />
-                  Full access (Cursor on Windows)
-                </div>
-              }
-            />
-            <TooltipContent>
-              Cursor on Windows runs in full access. Supervised mode is unavailable because cursor-agent's OS sandbox requires macOS or Linux.
-            </TooltipContent>
-          </Tooltip>
-        ) : (
-          <div className={cn("flex rounded-md bg-muted/40 p-0.5", hasPlans && "mb-2")}>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => onAccessChange(PERMISSION_MODES.FULL)}
-              aria-pressed={access === PERMISSION_MODES.FULL}
-              className={cn(
-                "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
-                access === PERMISSION_MODES.FULL
-                  ? "bg-background text-foreground shadow-sm hover:bg-background"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Unlock size={12} />
-              Full
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => onAccessChange(PERMISSION_MODES.SUPERVISED)}
-              aria-pressed={access === PERMISSION_MODES.SUPERVISED}
-              className={cn(
-                "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
-                access === PERMISSION_MODES.SUPERVISED
-                  ? "bg-background text-foreground shadow-sm hover:bg-background"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Lock size={12} />
-              Supervised
-            </Button>
-          </div>
-        )}
-
-        {hasPlans && (
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={togglePlanPanel}
-            aria-pressed={panelVisible}
-            className="h-auto w-full justify-between rounded-md px-2 py-1.5 text-xs font-normal text-foreground hover:bg-muted/40"
-          >
-            <span className="flex items-center gap-2">
-              <ListChecks size={13} className={panelVisible ? "text-primary" : "text-muted-foreground"} />
-              Plan panel
-            </span>
-            <span className={cn("text-xs font-medium uppercase tracking-[0.1em]", panelVisible ? "text-primary" : "text-muted-foreground/60")}>
-              {panelVisible ? "On" : "Off"}
-            </span>
-          </Button>
-        )}
-      </PopoverContent>
-    </Popover>
+    <>
+      <AccessModeSelector
+        accessMode={accessMode}
+        permissionLocked={permissionLocked}
+        approvalReviewSupported={approvalReviewSupported}
+        onAccessModeChange={onAccessModeChange}
+      />
+      {hasPlans && (
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={togglePlanPanel}
+          aria-pressed={panelVisible}
+          className={cn(
+            "gap-1.5 transition-colors hover:bg-muted/40",
+            panelVisible ? "text-primary hover:text-primary" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <ListChecks size={14} />
+          <span className="text-sm">Plan</span>
+        </Button>
+      )}
+    </>
   );
 }
 
 /** Inline Composer controls for wide layouts. */
 export function InlineComposerOptions({
   threadId,
-  access,
+  accessMode,
   permissionLocked,
-  onAccessChange,
+  approvalReviewSupported,
+  onAccessModeChange,
 }: ComposerOptionControlsProps) {
-  const { hasPlans, panelVisible, togglePlanPanel } = useComposerPlanPanel(threadId);
-
-  return (
-    <>
-      {permissionLocked ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-sm text-muted-foreground"
-                aria-label="Permission mode locked to Full access"
-              >
-                <Unlock size={14} />
-                <span className="text-sm">Full access</span>
-              </span>
-            }
-          />
-          <TooltipContent>
-            Cursor on Windows runs in full access — supervised mode is unavailable because cursor-agent's OS sandbox requires macOS or Linux.
-          </TooltipContent>
-        </Tooltip>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() =>
-                  onAccessChange(
-                    access === PERMISSION_MODES.FULL
-                      ? PERMISSION_MODES.SUPERVISED
-                      : PERMISSION_MODES.FULL,
-                  )
-                }
-                className="gap-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-              >
-                {access === PERMISSION_MODES.FULL ? <Unlock size={14} /> : <Lock size={14} />}
-                <span className="text-sm">
-                  {access === PERMISSION_MODES.FULL ? "Full access" : "Supervised"}
-                </span>
-              </Button>
-            }
-          />
-          <TooltipContent>
-            {access === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode"}
-          </TooltipContent>
-        </Tooltip>
-      )}
-
-      {hasPlans && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={togglePlanPanel}
-                aria-pressed={panelVisible}
-                className={cn(
-                  "gap-1.5 transition-colors hover:bg-muted/40",
-                  panelVisible
-                    ? "text-primary hover:text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <ListChecks size={14} />
-                <span className="text-sm">Plan</span>
-              </Button>
-            }
-          />
-          <TooltipContent>{panelVisible ? "Hide Plan panel" : "Show Plan panel"}</TooltipContent>
-        </Tooltip>
-      )}
-    </>
-  );
+  return <ComposerOptionsMenu
+    threadId={threadId}
+    accessMode={accessMode}
+    permissionLocked={permissionLocked}
+    approvalReviewSupported={approvalReviewSupported}
+    onAccessModeChange={onAccessModeChange}
+  />;
 }

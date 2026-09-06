@@ -66,14 +66,28 @@ function StatusBadge({ status }: StatusBadgeProps) {
   );
 }
 
+function ApprovalReviewDetailRow({ toolCall }: { toolCall: ToolCall }) {
+  const detail = toolCall.isComplete ? toolCall.output || "Review complete" : "Reviewing";
+  const status = getCallStatus(toolCall);
+
+  return (
+    <li className="flex min-w-0 max-w-full flex-col gap-1 py-1">
+      <div className={`${NARRATIVE_TOOL_ROW} text-sm`}>
+        <DEFAULT_ICON className="size-3.5 shrink-0 text-muted-foreground/75" />
+        <span className={narrativeToolDetailClass("md")}>{detail}</span>
+        {status !== "completed" ? <StatusBadge status={status} /> : null}
+      </div>
+    </li>
+  );
+}
+
 function ToolCallDetailRow({ toolCall: tc }: { toolCall: ToolCall }) {
-  if (isShellTool(tc.toolName)) {
-    return (
-      <li className="min-w-0 max-w-full">
-        <ShellToolCallRow toolCall={tc} />
-      </li>
-    );
-  }
+  if (tc.toolName === "Approval review") return <ApprovalReviewDetailRow toolCall={tc} />;
+  if (isShellTool(tc.toolName)) return (
+    <li className="min-w-0 max-w-full">
+      <ShellToolCallRow toolCall={tc} />
+    </li>
+  );
 
   const canonicalName = resolveToolName(tc.toolName);
   const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;

@@ -62,12 +62,12 @@ beforeEach(() => {
   useSettingsStore.setState({ settings: getDefaultSettings(), update: async () => {} });
   useProviderAvailabilityStore.setState({
     providers: [
-      { id: "claude",   enabled: true,  hasAdapter: true,  beta: false, comingSoon: false, cli: { status: "found",     resolvedPath: "/a", configuredPath: "" } },
-      { id: "codex",    enabled: true,  hasAdapter: true,  beta: false, comingSoon: false, cli: { status: "not_found", resolvedPath: null, configuredPath: "" } },
-      { id: "copilot",  enabled: false, hasAdapter: true,  beta: true,  comingSoon: false, cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
-      { id: "gemini",   enabled: false, hasAdapter: false, beta: false, comingSoon: true,  cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
-      { id: "cursor",   enabled: false, hasAdapter: false, beta: false, comingSoon: true,  cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
-      { id: "opencode", enabled: false, hasAdapter: false, beta: false, comingSoon: true,  cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "claude",   enabled: true,  hasAdapter: true,  beta: false, comingSoon: false, capabilities: [], cli: { status: "found",     resolvedPath: "/a", configuredPath: "" } },
+      { id: "codex",    enabled: true,  hasAdapter: true,  beta: false, comingSoon: false, capabilities: [], cli: { status: "not_found", resolvedPath: null, configuredPath: "" } },
+      { id: "copilot",  enabled: false, hasAdapter: true,  beta: true,  comingSoon: false, capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "gemini",   enabled: false, hasAdapter: false, beta: false, comingSoon: true,  capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "cursor",   enabled: false, hasAdapter: false, beta: false, comingSoon: true,  capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
+      { id: "opencode", enabled: false, hasAdapter: false, beta: false, comingSoon: true,  capabilities: [], cli: { status: "unchecked", resolvedPath: null, configuredPath: "" } },
     ],
   });
 });

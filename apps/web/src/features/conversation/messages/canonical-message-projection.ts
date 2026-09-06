@@ -129,6 +129,7 @@ function canonicalTurnSummary(turn: AgentTurn, items: readonly AgentItem[]): Tur
     durationMs: canonicalTurnDuration(turn, activityItems),
     ...(outcome !== undefined && outcome !== "completed" ? { outcome } : {}),
     ...(outcomeExecutionId !== undefined ? { outcomeExecutionId } : {}),
+    approvalReview: { mode: turn.approvalReviewMode, reason: turn.approvalReviewReason },
   };
 }
 

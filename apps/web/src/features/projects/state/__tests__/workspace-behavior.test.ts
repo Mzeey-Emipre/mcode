@@ -519,6 +519,8 @@ describe("Workspace Behavior", () => {
       undefined,
       "standard",
       selectedTextComments,
+      undefined,
+      "automatic",
     );
     useWorkspaceStore.setState({ threads: [parent], activeThreadId: parent.id });
     await useWorkspaceStore.getState().branchThread({
@@ -533,6 +535,7 @@ describe("Workspace Behavior", () => {
     expect(newThreadCommand?.[0]).toEqual(expect.objectContaining({
       content: "",
       selectedTextComments,
+      approvalReviewMode: "automatic",
     }));
     expect(branchCommand?.[0]).toEqual(expect.objectContaining({
       content: "Continue from this point.",

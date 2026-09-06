@@ -155,7 +155,7 @@ export class CanonicalAgentReadRepository {
       FROM canonical_agent_events
       WHERE thread_id = ?
         AND (durable_revision > ? OR COALESCE(roster_revision, 0) > ?)
-      ORDER BY durable_revision ASC, persisted_at ASC, event_id ASC
+      ORDER BY durable_revision ASC, persisted_at ASC, accepted_sequence ASC, event_id ASC
       LIMIT ?
     `).all(
       threadId,

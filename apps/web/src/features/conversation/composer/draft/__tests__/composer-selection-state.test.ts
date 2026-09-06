@@ -10,6 +10,7 @@ const selection: ComposerAgentSelection = {
   reasoning: "high",
   interactionMode: "build",
   permissionMode: "full",
+  approvalReviewMode: "manual",
   orchestrationMode: "standard",
   copilotAgent: null,
   contextWindow: null,
@@ -26,5 +27,10 @@ describe("mergeComposerAgentSelection", () => {
       interactionMode: selection.interactionMode,
       permissionMode: selection.permissionMode,
     })).toBe(selection);
+  });
+
+  it("retains an automatic review selection through the Composer draft path", () => {
+    expect(mergeComposerAgentSelection(selection, { approvalReviewMode: "automatic" }))
+      .toMatchObject({ approvalReviewMode: "automatic" });
   });
 });

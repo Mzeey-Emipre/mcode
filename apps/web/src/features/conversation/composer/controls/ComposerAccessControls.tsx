@@ -2,7 +2,11 @@ import { Lock, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CopilotAgentSelector } from "@/components/chat/CopilotAgentSelector";
-import { InlineComposerOptions, ComposerOptionsMenu } from "../ComposerOptionControls";
+import {
+  InlineComposerOptions,
+  ComposerOptionsMenu,
+  type ComposerAccessMode,
+} from "../ComposerOptionControls";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
 import type { PermissionMode } from "@/transport";
 import { PERMISSION_MODES } from "@/transport";
@@ -16,6 +20,7 @@ export interface ComposerAccessControlsProps {
   selection: ComposerAgentSelection;
   isModelLocked: boolean;
   permissionLocked: boolean;
+  approvalReviewSupported: boolean;
   showInlineOptions: boolean;
   onSelectionChange(patch: Partial<ComposerAgentSelection>): void;
   onSelectionTouched(): void;
@@ -95,6 +100,7 @@ function ComposerPermissionControls({
   selection,
   permissionLocked,
   showInlineOptions,
+  approvalReviewSupported,
   onSelectionChange,
   onSelectionTouched,
 }: Pick<
@@ -103,34 +109,42 @@ function ComposerPermissionControls({
   | "selection"
   | "permissionLocked"
   | "showInlineOptions"
+  | "approvalReviewSupported"
   | "onSelectionChange"
   | "onSelectionTouched"
 >) {
-  const updatePermission = (permissionMode: PermissionMode) => {
-    onSelectionChange({ permissionMode });
+  const accessMode: ComposerAccessMode = selection.permissionMode === PERMISSION_MODES.FULL
+    ? "full"
+    : selection.approvalReviewMode === "automatic" && approvalReviewSupported
+      ? "automatic"
+      : "supervised";
+  const updateAccessMode = (next: ComposerAccessMode) => {
+    if (permissionLocked && next !== "full") return;
+    if (next === "automatic" && !approvalReviewSupported) return;
+    const permissionMode = next === "full" ? PERMISSION_MODES.FULL : PERMISSION_MODES.SUPERVISED;
+    const approvalReviewMode = next === "automatic" ? "automatic" : "manual";
+    onSelectionChange({ permissionMode, approvalReviewMode });
     onSelectionTouched();
     persistPermissionMode(threadId, permissionMode);
   };
 
   if (showInlineOptions) {
-    return (
-      <InlineComposerOptions
-        threadId={threadId}
-        access={selection.permissionMode}
-        permissionLocked={permissionLocked}
-        onAccessChange={updatePermission}
-      />
-    );
+    return <InlineComposerOptions
+      threadId={threadId}
+      accessMode={accessMode}
+      permissionLocked={permissionLocked}
+      approvalReviewSupported={approvalReviewSupported}
+      onAccessModeChange={updateAccessMode}
+    />;
   }
 
-  return (
-    <ComposerOptionsMenu
-      threadId={threadId}
-      access={selection.permissionMode}
-      permissionLocked={permissionLocked}
-      onAccessChange={updatePermission}
-    />
-  );
+  return <ComposerOptionsMenu
+    threadId={threadId}
+    accessMode={accessMode}
+    permissionLocked={permissionLocked}
+    approvalReviewSupported={approvalReviewSupported}
+    onAccessModeChange={updateAccessMode}
+  />;
 }
 
 /** Renders Copilot selection and the permission control for the current provider. */
