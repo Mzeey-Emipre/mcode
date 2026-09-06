@@ -123,8 +123,8 @@ duplicate authentication recovery.
 - `conversation.tail` with limit 2 returned configuration, security, warning,
   model-rerouted, and authentication-recovered notices.
 - Expanding and cycling notices revealed guardian, warning, reroute, and
-  configuration-location details. Close hid the whole surface, and Review
-  notices reopened it.
+  configuration-location details. In this historical observation, Close hid
+  the whole surface and Review notices reopened it.
 - Real `/` and `@` pickers hid the notice surface. Escape restored it and kept
   the exact draft.
 
