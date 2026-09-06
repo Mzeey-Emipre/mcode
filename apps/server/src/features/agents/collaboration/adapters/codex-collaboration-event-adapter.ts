@@ -510,7 +510,7 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
         this.startChildTurn(evidence, context);
         return { status: "consumed" };
       case AgentEventType.TextDelta:
-        this.recordChildReasoning(event, evidence, context);
+        this.recordChildAssistantText(event, evidence, context);
         return { status: "consumed" };
       case AgentEventType.ToolUse:
         this.recordChildToolUse(event, evidence, context);
@@ -557,7 +557,7 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
     });
   }
 
-  private recordChildReasoning(
+  private recordChildAssistantText(
     event: Extract<AgentEvent, { type: typeof AgentEventType.TextDelta }>,
     evidence: CodexChildEvidence,
     context: ChildRoutingContext,
@@ -568,9 +568,9 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
       childThreadId: child.id,
       nativeTurnId: evidence.nativeTurnId,
       nativeItemId: evidence.nativeItemId,
-      eventKey: evidence.itemEventKey ?? "completed",
-      kind: "reasoning",
-      payload: { projection: "codexChildReasoning", content: event.delta },
+      eventKey: evidence.itemEventKey ?? "stream",
+      kind: "message",
+      payload: this.childAssistantMessage(evidence.nativeItemId, event.delta),
     });
   }
 
@@ -693,11 +693,11 @@ export class CodexCollaborationEventAdapter implements ProviderEventAdapter {
     });
   }
 
-  private childAssistantMessage(nativeTurnId: string, content: string): Record<string, unknown> {
+  private childAssistantMessage(nativeItemId: string, content: string): Record<string, unknown> {
     return {
       projection: "message",
       message: {
-        id: `codex-child-message:${nativeTurnId}`,
+        id: `codex-child-message:${nativeItemId}`,
         role: "assistant",
         content,
         timestamp: new Date().toISOString(),

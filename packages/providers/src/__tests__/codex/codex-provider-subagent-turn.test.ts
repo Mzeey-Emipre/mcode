@@ -387,6 +387,73 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     expect(state.pendingChildEvents).toHaveLength(128);
   });
 
+  it("delivers every child assistant delta and its completed message once", async () => {
+    const provider = makeProvider();
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-child-assistant-stream", "child-assistant-stream");
+    const state = entry as PoolEntry & {
+      currentTurnExecutionId?: string;
+      activeParentTurnExecutionId?: string;
+      turnBindingPhase: "idle" | "awaiting" | "bound";
+      currentNativeTurnId?: string;
+      turnExecutionIdsByNativeTurn: Map<string, string>;
+      childExecutionGenerations: Map<string, { executionId: string; generation: number }>;
+      nativeThreadExecutionIds: Map<string, string>;
+    };
+    entry.mapper.prepareForTurn();
+    state.currentTurnExecutionId = "exec-child-assistant-stream";
+    state.activeParentTurnExecutionId = "exec-child-assistant-stream";
+    state.turnBindingPhase = "bound";
+    state.currentNativeTurnId = "main-native-turn";
+    state.turnExecutionIdsByNativeTurn.set("main-native-turn", state.currentTurnExecutionId);
+
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "main-native-turn",
+        item: {
+          type: "collabAgentToolCall",
+          id: "agent-assistant-stream",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-assistant-stream"],
+        },
+      },
+    });
+    state.childExecutionGenerations.set("child-assistant-stream", { executionId: state.currentTurnExecutionId, generation: 1 });
+    state.nativeThreadExecutionIds.set("child-assistant-stream", state.currentTurnExecutionId);
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-assistant-stream", turn: { id: "child-native-turn" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-assistant-stream", turnId: "child-native-turn", itemId: "child-message", delta: "A" },
+    });
+    entry.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-assistant-stream", turnId: "child-native-turn", itemId: "child-message", delta: "A" },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "child-assistant-stream",
+        turnId: "child-native-turn",
+        item: { type: "agentMessage", id: "child-message", content: [{ type: "output_text", text: "AA" }] },
+      },
+    });
+
+    const childEvents = events.filter((event) => event.extension?.child?.nativeThreadId === "child-assistant-stream");
+    const deltas = childEvents.filter((event) => event.event.type === AgentEventType.TextDelta);
+    expect(deltas.map((event) => event.event.delta)).toEqual(["A", "A"]);
+    expect(new Set(deltas.map((event) => event.extension?.child?.nativeEventId)).size).toBe(2);
+    expect(childEvents).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({ type: AgentEventType.Message, content: "AA" }),
+      extension: expect.objectContaining({ child: expect.objectContaining({ itemEventKey: "stream-complete" }) }),
+    }));
+  });
+
   it("replays mapper and provider child buffers in structural order exactly once", async () => {
     const provider = makeProvider();
     const events: ProviderRuntimeEvent[] = [];

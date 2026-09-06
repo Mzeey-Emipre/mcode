@@ -166,7 +166,7 @@ describe("projectCanonicalMessageList", () => {
     });
   });
 
-  it("does not summarize a child turn until it completes", () => {
+  it("projects an active child answer without summarizing its turn", () => {
     const state = createAgentModelState();
     state.turns[TURN_ID] = turn("Running");
     const answer = message({
@@ -191,7 +191,8 @@ describe("projectCanonicalMessageList", () => {
       thoughtSegments: [],
     });
 
-    expect(projection?.messages.map((entry) => entry.id)).toEqual(["child-prompt"]);
+    expect(projection?.messages.map((entry) => entry.id)).toEqual(["child-prompt", "child-answer"]);
+    expect(projection?.messages.at(-1)?.content).toBe("Still working");
     expect(projection?.turnSummariesByMessageId).toEqual({});
   });
 

@@ -10,10 +10,12 @@ import {
   SUBAGENT_METADATA_MAX_LENGTH,
   ThoughtSegmentRecordSchema,
   ToolCallRecordSchema,
+  AgentEventType,
   type ParentNarrativeRecoveryItem,
   type CanonicalAgentEventEnvelope,
   MAX_TURN_RECOVERIES,
   type ProviderIdentity,
+  type ProviderRuntimeExtension,
 } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
@@ -25,6 +27,8 @@ import {
   CanonicalAgentEventSink,
   type CanonicalAgentEventDraft,
 } from "../canonical-agent-event-sink.js";
+import { CodexCollaborationEventAdapter } from "../../collaboration/adapters/codex-collaboration-event-adapter.js";
+import type { CodexCollaborationDurability } from "../../collaboration/codex-collaboration-durability.js";
 
 const THREAD_ID = "thread-1";
 const TURN_ID = "turn-1";
@@ -2389,6 +2393,150 @@ describe("CanonicalAgentEventSink", () => {
       status: "action-required",
       recovery: "retry-child-routing",
       reason: "identity conflict",
+    });
+  });
+
+  it("updates one child assistant item as streamed content grows", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-stream",
+      receiverThreadIds: ["native-child-stream"],
+      prompt: "stream child output",
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(input);
+    sink.startCodexChildTurn({ ...input, nativeThreadId: "native-child-stream", nativeTurnId: "native-turn-stream" });
+    const first = sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-stream",
+      nativeItemId: "native-message-stream",
+      eventKey: "stream",
+      kind: "message",
+      payload: { projection: "message", content: "A" },
+    });
+    const second = sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-stream",
+      nativeItemId: "native-message-stream",
+      eventKey: "stream",
+      kind: "message",
+      payload: { projection: "message", content: "A" },
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(sink.loadItem(first.id)?.payload).toMatchObject({
+      projection: "message",
+      message: { content: "AA" },
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items WHERE thread_id = ? AND kind = 'message'")
+      .get(delegation.childThread.id)).toEqual({ count: 2 });
+
+    const completed = sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-stream",
+      nativeItemId: "native-message-stream",
+      eventKey: "stream-complete",
+      kind: "message",
+      payload: { projection: "message", content: "AA" },
+    });
+
+    expect(completed.id).toBe(first.id);
+    expect(sink.loadItem(first.id)?.payload).toMatchObject({
+      projection: "message",
+      message: { content: "AA" },
+    });
+
+    sink.finishCodexChildTurn({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-stream",
+      outcome: "completed",
+    });
+    const lateReplay = sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-stream",
+      nativeItemId: "native-message-stream",
+      eventKey: "stream",
+      kind: "message",
+      payload: { projection: "message", content: " Late replay." },
+    });
+
+    expect(lateReplay.id).toBe(first.id);
+    expect(sink.loadItem(first.id)?.payload).toMatchObject({
+      message: { content: "AA" },
+    });
+  });
+
+  it("persists repeated child text deltas through the Codex adapter into one canonical item", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-adapter-stream",
+      receiverThreadIds: ["native-child-adapter-stream"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(input);
+    sink.startCodexChildTurn({
+      ...input,
+      nativeThreadId: "native-child-adapter-stream",
+      nativeTurnId: "native-turn-adapter-stream",
+    });
+    const durability = {
+      loadCodexChildDelegationByReceiverThreadId: () => delegation,
+      loadThread: (threadId: string) => sink.loadThread(threadId),
+      loadTurn: (turnId: string) => sink.loadTurn(turnId),
+      loadTurnByExecution: (executionId: string) => sink.loadTurnByExecution(executionId),
+      loadExecutionIdForTurn: () => EXECUTION_ID,
+      registerCodexReceiverThreadIds: (value: Parameters<typeof sink.registerCodexReceiverThreadIds>[0]) => (
+        sink.registerCodexReceiverThreadIds(value)
+      ),
+      bindCodexChildIdentity: (value: Parameters<typeof sink.bindCodexChildIdentity>[0]) => (
+        sink.bindCodexChildIdentity(value)
+      ),
+      recordCodexChildItem: (value: Parameters<typeof sink.recordCodexChildItem>[0]) => (
+        sink.recordCodexChildItem(value)
+      ),
+    } as CodexCollaborationDurability;
+    const adapter = new CodexCollaborationEventAdapter(durability);
+    const extension: ProviderRuntimeExtension = {
+      providerId: "codex",
+      kind: "codex-collaboration",
+      child: {
+        nativeThreadId: "native-child-adapter-stream",
+        nativeTurnId: "native-turn-adapter-stream",
+        nativeItemId: "native-message-adapter-stream",
+        itemEventKey: "stream",
+        parentCollaborationItemId: "spawn-adapter-stream",
+      },
+    };
+    for (const delta of ["A", "A"]) {
+      expect(adapter.project({
+        providerId: "codex",
+        sourceKind: "provider-runtime",
+        event: {
+          type: AgentEventType.TextDelta,
+          threadId: THREAD_ID,
+          turnExecutionId: EXECUTION_ID,
+          delta,
+        },
+        runtimeExtension: extension,
+      })).toEqual({ status: "consumed" });
+    }
+
+    const childMessages = db.prepare(`
+      SELECT payload_json
+      FROM canonical_agent_items
+      WHERE thread_id = ? AND kind = 'message'
+      ORDER BY created_at, id
+    `).all(delegation.childThread.id) as Array<{ payload_json: string }>;
+    expect(childMessages).toHaveLength(1);
+    expect(JSON.parse(childMessages.at(-1)!.payload_json)).toMatchObject({
+      projection: "message",
+      message: { content: "AA" },
     });
   });
 

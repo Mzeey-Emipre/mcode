@@ -7,6 +7,7 @@
 - A chat row opens the exact canonical child in the Subagents panel.
 - Chat and detail use the same stable selection key for the identity color.
 - The canonical roster moves the child from Active to Done with the exact terminal outcome.
+- While the child is Active, its assistant message is shown in child detail as it streams.
 - The child transcript contains the full message from the parent and the child's assistant message after restart.
 - Child detail text remains selectable, but has no `Add comment` action. Run the [selected-text comments proof](selected-text-comments.md) for this shared renderer behavior.
 
@@ -17,9 +18,10 @@
 3. Ask the parent to delegate one task to one subagent and return a unique final marker.
 4. While it runs, open Subagents and confirm that the child is Active.
 5. Select the subagent from chat. Confirm that the panel opens that child, converts an underscored parent task such as `verify_ui_child` to `Verify ui child`, and uses the same glyph color.
-6. Confirm that the parent's full delegated message and the child's reply appear in the transcript.
-7. Wait for completion. Confirm that the child moves to Done and shows Completed.
-8. Stop and restart Electron, reopen the same parent thread, and repeat steps 5 to 7.
+6. While the child is Active, confirm that its assistant text appears and grows in detail before the child moves to Done. The detail must not stay blank while the main chat streams text.
+7. Confirm that the parent's full delegated message and the child's reply appear in the transcript.
+8. Wait for completion. Confirm that the child moves to Done and shows Completed.
+9. Stop and restart Electron, reopen the same parent thread, and confirm that the child's final text appears once and remains Done with Completed.
 
 ## Automated proof
 
@@ -32,7 +34,7 @@ bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs runtime live --provider
 
 `runtime check` covers the legacy and V2 protocol mappers, a fresh canonical reader after persistence, provider-neutral presentation, navigation, transcript mounting, sentence-style task labels, and the shared palette key. The live scenario uses the worktree-owned disposable fixture workspace. It requires an Active-to-Completed roster transition, the full parent message, the retained task, and the child's assistant marker through `conversation.page`. The detail view uses the same durable source. The verifier deletes the generated parent thread and its owned descendants unless `--keep-thread` is present.
 
-Use the Electron workflow for visual proof. The runtime receipt does not contain provider text or screenshots.
+Use the Electron workflow for visual proof. The runtime receipt does not prove that an open child detail displayed a delta before completion; it contains no detail-view observation or screenshot.
 
 ## Failure rules
 
@@ -41,9 +43,11 @@ Use the Electron workflow for visual proof. The runtime receipt does not contain
 - Fail if the canonical roster omits a descriptive parent task, repeats only the provider identity, or displays raw underscore separators.
 - Fail if the child thread omits the child's assistant marker.
 - Fail if the child thread omits the full message that the parent sent.
+- Fail visual proof if the child detail stays blank until completion after the child starts streaming text.
 - Fail visual proof if chat does not open the exact child or the glyph palette differs between chat and detail.
 
 ## Coverage gaps
 
 - Terra is the live V2 proof model. The legacy event shape is deterministic mapper coverage because current Codex decides which protocol item it emits.
 - The public runtime receipt proves persisted data and state. Electron is required for click, color, and application-restart evidence.
+- The automated checks do not bind child `textDelta` events to an open detail view. Electron proof must observe growing child text before completion.

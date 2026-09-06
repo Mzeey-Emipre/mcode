@@ -21,7 +21,7 @@
 import { render, act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { SelectedTextComment } from "@mcode/contracts";
+import { createAgentModelState, type AgentItem, type AgentTurn, type Message, type SelectedTextComment } from "@mcode/contracts";
 
 const measureSpy = vi.fn();
 const scrollToIndexSpy = vi.fn();
@@ -114,6 +114,51 @@ function buildMockRecord(threadId = currentThreadIdValue) {
     ...(handoffStatusByThread[threadId] ? { handoffMeta: { status: handoffStatusByThread[threadId] } } : {}),
     ...recordOverridesByThread[threadId],
   };
+}
+
+function canonicalChildState(content: string, status: "Running" | "Completed") {
+  const threadId = "child-thread";
+  const turnId = "child-turn";
+  const timestamp = "2026-09-06T00:00:00.000Z";
+  const answer: Message = {
+    id: "child-answer",
+    thread_id: threadId,
+    role: "assistant",
+    content,
+    tool_calls: null,
+    files_changed: null,
+    cost_usd: null,
+    tokens_used: null,
+    timestamp,
+    sequence: 1,
+    attachments: null,
+  };
+  const turn: AgentTurn = {
+    id: turnId,
+    threadId,
+    status,
+    trigger: { kind: "child", sourceThreadId: "parent-thread", sourceTurnId: "parent-turn" },
+    permissionMode: "full",
+    providerIdentities: [],
+    startedAt: timestamp,
+    endedAt: status === "Completed" ? timestamp : null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  const item: AgentItem = {
+    id: "child-answer-item",
+    threadId,
+    turnId,
+    kind: "message",
+    providerIdentities: [],
+    payload: { projection: "message", message: answer },
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  const state = createAgentModelState();
+  state.turns[turnId] = turn;
+  state.items[item.id] = item;
+  return state;
 }
 
 vi.mock("@/stores/threadStore", () => ({
@@ -248,6 +293,48 @@ describe("MessageList thread switch", () => {
 
     expect(rail).toHaveClass("overflow-x-clip");
     expect(rail).not.toHaveClass("overflow-x-hidden");
+  });
+
+  it("renders growing canonical child text before completion without duplicating its bubble", () => {
+    activeThreadIdValue = "parent-thread";
+    currentThreadIdValue = "parent-thread";
+    messagesValue = [];
+    recordOverridesByThread["child-thread"] = {
+      messages: [],
+      canonicalAgent: {
+        state: canonicalChildState("First chunk", "Running"),
+        revision: { conversationRevision: 1, rosterRevision: 0 },
+        recoveryRequired: false,
+      },
+    };
+
+    const { rerender } = render(<MessageList displayThreadId="child-thread" />);
+    expect(screen.getByText("First chunk")).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-message-id="child-answer"]')).toHaveLength(1);
+
+    recordOverridesByThread["child-thread"] = {
+      messages: [],
+      canonicalAgent: {
+        state: canonicalChildState("First chunk, second chunk", "Running"),
+        revision: { conversationRevision: 2, rosterRevision: 0 },
+        recoveryRequired: false,
+      },
+    };
+    rerender(<MessageList displayThreadId="child-thread" />);
+    expect(screen.getByText("First chunk, second chunk")).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-message-id="child-answer"]')).toHaveLength(1);
+
+    recordOverridesByThread["child-thread"] = {
+      messages: [],
+      canonicalAgent: {
+        state: canonicalChildState("First chunk, second chunk", "Completed"),
+        revision: { conversationRevision: 3, rosterRevision: 0 },
+        recoveryRequired: false,
+      },
+    };
+    rerender(<MessageList displayThreadId="child-thread" />);
+    expect(screen.getByText("First chunk, second chunk")).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-message-id="child-answer"]')).toHaveLength(1);
   });
 
   it("loads and scrolls a virtualized source before it reconstructs the saved range", async () => {

@@ -157,10 +157,10 @@ function latestAssistantMessage(items: readonly AgentItem[]): Message | undefine
     .find((message) => message?.role === "assistant");
 }
 
-function projectedMessages(items: readonly AgentItem[], terminal: boolean): Message[] {
+function projectedMessages(items: readonly AgentItem[]): Message[] {
   return items.flatMap((item) => {
     const message = canonicalMessage(item.payload);
-    return !message || (message.role === "assistant" && !terminal) ? [] : [message];
+    return message ? [message] : [];
   });
 }
 
@@ -263,7 +263,7 @@ export function projectCanonicalMessageList({
     .filter((item) => item.turnId === latestTurn.id)
     .sort(compareItems);
 
-  const projected = projectedMessages(items, terminal);
+  const projected = projectedMessages(items);
   const projectedCalls = projectedToolCalls(items);
   const projectedThoughts = projectedThoughtSegments(items, terminal);
   const toolCallById = new Map(toolCalls.map((toolCall) => [toolCall.id, toolCall]));

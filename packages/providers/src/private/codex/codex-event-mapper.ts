@@ -163,6 +163,8 @@ export class CodexEventMapper {
   private childAssistantTextByThreadId = new Map<string, BoundedToolOutputBuffer>();
   /** Native assistant item ids used to give completed child messages structural identity. */
   private childAssistantItemIdByThreadId = new Map<string, string>();
+  /** Ordinal event identity for child deltas because Codex notifications have no notification id. */
+  private childAssistantTextEventCountByItemId = new Map<string, number>();
   /** Parent follow-up prompts waiting for the next turn on an existing child thread. */
   private pendingChildPromptByThreadId = new Map<string, string>();
   /** Native child turn ids learned from exact turn-start evidence. */
@@ -251,6 +253,25 @@ export class CodexEventMapper {
     return buffer;
   }
 
+  private nextChildAssistantTextEventId(childThreadId: string, itemId: string, parentCollaborationItemId: string): string {
+    const key = `${childThreadId}:${itemId}`;
+    const ordinal = (this.childAssistantTextEventCountByItemId.get(key) ?? 0) + 1;
+    this.childAssistantTextEventCountByItemId.set(key, ordinal);
+    return this.childNativeEventId(AgentEventType.TextDelta, {
+      nativeThreadId: childThreadId,
+      parentCollaborationItemId,
+      nativeItemId: itemId,
+      itemEventKey: String(ordinal),
+    });
+  }
+
+  private clearChildAssistantItemBuffers(childThreadId: string | undefined): void {
+    if (!childThreadId) return;
+    for (const key of this.childAssistantTextEventCountByItemId.keys()) {
+      if (key.startsWith(`${childThreadId}:`)) this.childAssistantTextEventCountByItemId.delete(key);
+    }
+  }
+
   private childAssistantBuffer(childThreadId: string): BoundedToolOutputBuffer {
     let buffer = this.childAssistantTextByThreadId.get(childThreadId);
     if (!buffer) {
@@ -335,7 +356,7 @@ export class CodexEventMapper {
       ...event,
       codexChild: {
         ...evidence,
-        nativeEventId: this.childNativeEventId(event.type, evidence),
+        nativeEventId: evidence.nativeEventId ?? this.childNativeEventId(event.type, evidence),
       },
     } as CodexMappedEvent));
     for (const event of attributed) {
@@ -401,7 +422,7 @@ export class CodexEventMapper {
   private dedupeChildEvents(events: CodexMappedEvent[]): CodexMappedEvent[] {
     const deduped: CodexMappedEvent[] = [];
     for (const event of events) {
-      if (!("codexChild" in event) || !event.codexChild?.nativeEventId) {
+      if (event.type === AgentEventType.TextDelta || !("codexChild" in event) || !event.codexChild?.nativeEventId) {
         deduped.push(event);
         continue;
       }
@@ -530,7 +551,7 @@ export class CodexEventMapper {
     return EARLY_CHILD_FILE_TOOL_NAMES.has(item.name.toLowerCase());
   }
 
-  /** Child receiver threads contribute tool rows only; text and lifecycle stay private to Codex. */
+  /** Child receiver threads project assistant text and tool rows into their own canonical timeline. */
   private mapChildThreadNotification(notification: CodexNotification): CodexMappedEvent[] {
     const childThreadId = this.notificationThreadId(notification);
     this.rememberChildTurnId(notification, childThreadId);
@@ -540,7 +561,7 @@ export class CodexEventMapper {
     const handlers: Record<string, () => CodexMappedEvent[]> = {
       "turn/started": () => this.mapChildTurnStarted(context),
       "item/commandExecution/outputDelta": () => this.mapChildCommandOutputDelta(notification),
-      "item/agentMessage/delta": () => this.mapChildAssistantDelta(notification, context.childThreadId),
+      "item/agentMessage/delta": () => this.mapChildAssistantDelta(notification, context),
       "item/reasoning/textDelta": () => [],
       "item/reasoning/summaryTextDelta": () => [],
       error: () => this.mapChildError(notification, context),
@@ -582,6 +603,7 @@ export class CodexEventMapper {
     this.emittedChildTurnStarts.add(startKey);
     this.childAssistantTextByThreadId.delete(childThreadId);
     this.childAssistantItemIdByThreadId.delete(childThreadId);
+    this.clearChildAssistantItemBuffers(childThreadId);
     const prompt = this.childTurnPrompt(childThreadId, parentCollaborationItemId);
     const evidence = { nativeThreadId: childThreadId, nativeTurnId, parentCollaborationItemId };
     const turnStarted: CodexMappedEvent = { type: AgentEventType.TurnStarted, threadId: this.threadId, codexChild: { ...evidence, ...(prompt ? { prompt } : {}), nativeEventId: this.childNativeEventId("turnStarted", evidence) } };
@@ -600,12 +622,23 @@ export class CodexEventMapper {
     return [];
   }
 
-  private mapChildAssistantDelta(notification: CodexNotification, childThreadId: string | undefined): CodexMappedEvent[] {
+  private mapChildAssistantDelta(notification: CodexNotification, context: ChildNotificationContext): CodexMappedEvent[] {
     const params = notification.params as { itemId?: unknown; delta?: string };
     const itemId = typeof params.itemId === "string" ? params.itemId : undefined;
-    if (childThreadId && itemId) this.childAssistantItemIdByThreadId.set(childThreadId, itemId);
-    this.appendChildAssistantText(childThreadId, params.delta ?? "");
-    return [];
+    const delta = params.delta ?? "";
+    if (context.childThreadId && itemId) this.childAssistantItemIdByThreadId.set(context.childThreadId, itemId);
+    this.appendChildAssistantText(context.childThreadId, delta);
+    if (!context.childThreadId || !context.parentCollaborationItemId || !itemId || !delta) return [];
+    return this.withChildEvidence([
+      { type: AgentEventType.TextDelta, threadId: this.threadId, delta, isFinalResponse: false },
+    ], {
+      nativeThreadId: context.childThreadId,
+      ...(context.nativeTurnId ? { nativeTurnId: context.nativeTurnId } : {}),
+      parentCollaborationItemId: context.parentCollaborationItemId,
+      nativeItemId: itemId,
+      itemEventKey: "stream",
+      nativeEventId: this.nextChildAssistantTextEventId(context.childThreadId, itemId, context.parentCollaborationItemId),
+    });
   }
 
   private mapChildError(notification: CodexNotification, context: ChildNotificationContext): CodexMappedEvent[] {
@@ -656,7 +689,7 @@ export class CodexEventMapper {
     if (!item) return this.consumeChildItemNotification(notification.method, undefined);
     if (item.type === "subAgentActivity" && itemId) return this.withChildNotificationEvidence(this.mapSubAgentActivityStart(item, itemId, false, notification), context, itemId, "completed");
     if (this.childCompletedItemMaps(item.type)) return this.withChildNotificationEvidence(this.mapItemCompleted(item, notification, "child"), context, itemId, "completed");
-    if (item.type === "agentMessage" || item.type === "message") return this.mergeChildCompletedMessage(item, itemId, context.childThreadId);
+    if (item.type === "agentMessage" || item.type === "message") return this.mergeChildCompletedMessage(item, itemId, context);
     return this.consumeChildItemNotification(notification.method, item.type);
   }
 
@@ -664,10 +697,17 @@ export class CodexEventMapper {
     return new Set(["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "function_call", "reasoning", "collabAgentToolCall"]).has(itemType);
   }
 
-  private mergeChildCompletedMessage(item: CompletedItem, itemId: string | undefined, childThreadId: string | undefined): CodexMappedEvent[] {
-    if (childThreadId && itemId) this.childAssistantItemIdByThreadId.set(childThreadId, itemId);
-    this.mergeChildAssistantFullText(childThreadId, this.completedMessageText(item));
-    return [];
+  private mergeChildCompletedMessage(item: CompletedItem, itemId: string | undefined, context: ChildNotificationContext): CodexMappedEvent[] {
+    if (context.childThreadId && itemId) this.childAssistantItemIdByThreadId.set(context.childThreadId, itemId);
+    const content = this.completedMessageText(item);
+    this.mergeChildAssistantFullText(context.childThreadId, content);
+    const streamed = context.childThreadId && itemId
+      ? this.childAssistantTextEventCountByItemId.has(`${context.childThreadId}:${itemId}`)
+      : false;
+    if (!itemId || !content) return [];
+    return this.withChildNotificationEvidence([
+      { type: AgentEventType.Message, threadId: this.threadId, content, tokens: null },
+    ], context, itemId, streamed ? "stream-complete" : "completed");
   }
 
   private withChildNotificationEvidence(events: CodexMappedEvent[], context: ChildNotificationContext, nativeItemId: string | undefined, itemEventKey: string): CodexMappedEvent[] {
@@ -688,6 +728,7 @@ export class CodexEventMapper {
     const output = this.childTurnOutput(childThreadId, turn?.error?.message);
     const completion = this.completeSpawnAgent(collabId, output, turn?.status === "failed");
     if (collabId) this.childSpawnEvidenceByCollabId.delete(collabId);
+    this.clearChildAssistantItemBuffers(childThreadId);
     return [...this.childTurnCompletionEvents(context, output, turn?.status), ...completion];
   }
 
@@ -700,8 +741,11 @@ export class CodexEventMapper {
     const { childThreadId, parentCollaborationItemId, nativeTurnId } = context;
     if (!childThreadId || !parentCollaborationItemId || !nativeTurnId) return [];
     const childOutput = output instanceof BoundedToolOutputBuffer ? output.retainedText() : output;
-    const evidence = { nativeThreadId: childThreadId, nativeTurnId, parentCollaborationItemId, outcome: this.childTurnOutcome(status), nativeItemId: this.childAssistantItemIdByThreadId.get(childThreadId) ?? nativeTurnId, itemEventKey: "completed" } as const;
-    const events = childOutput ? this.withChildEvidence([{ type: AgentEventType.Message, threadId: this.threadId, content: childOutput, tokens: null }], evidence) : [];
+    const streamedItemId = this.childAssistantItemIdByThreadId.get(childThreadId);
+    const evidence = { nativeThreadId: childThreadId, nativeTurnId, parentCollaborationItemId, outcome: this.childTurnOutcome(status), nativeItemId: streamedItemId ?? nativeTurnId, itemEventKey: streamedItemId ? "stream" : "completed" } as const;
+    const events = childOutput && !streamedItemId
+      ? this.withChildEvidence([{ type: AgentEventType.Message, threadId: this.threadId, content: childOutput, tokens: null }], evidence)
+      : [];
     return [...events, ...this.withChildEvidence([{ type: AgentEventType.TurnComplete, threadId: this.threadId, reason: this.childTurnReason(status), costUsd: null, tokensIn: 0, tokensOut: 0 }], evidence)];
   }
 
@@ -801,6 +845,7 @@ export class CodexEventMapper {
       this.strictChildTurnThreads.delete(oldest);
       this.childAssistantTextByThreadId.delete(oldest);
       this.childAssistantItemIdByThreadId.delete(oldest);
+      this.clearChildAssistantItemBuffers(oldest);
       this.pendingChildPromptByThreadId.delete(oldest);
       this.childThreadMetadataById.delete(oldest);
       const early = this.earlyChildNotificationsByThread.get(oldest);
@@ -1943,6 +1988,7 @@ export class CodexEventMapper {
     this.childSpawnEvidenceByCollabId.clear();
     this.childAssistantTextByThreadId.clear();
     this.childAssistantItemIdByThreadId.clear();
+    this.childAssistantTextEventCountByItemId.clear();
     this.pendingChildPromptByThreadId.clear();
     this.emittedChildTurnStarts.clear();
     this.pendingLegacyCollabPops.clear();
