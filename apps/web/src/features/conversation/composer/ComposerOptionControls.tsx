@@ -22,16 +22,16 @@ export interface ComposerOptionControlsProps {
 
 const ACCESS_MODES: ReadonlyArray<{
   id: ComposerAccessMode;
-  label: "Supervised" | "Auto" | "Full access";
+  label: "Manual" | "Auto" | "Full access";
   description: string;
 }> = [
-  { id: "supervised", label: "Supervised", description: "Ask you to approve actions" },
+  { id: "supervised", label: "Manual", description: "Ask you to approve actions" },
   { id: "automatic", label: "Auto", description: "Review actions automatically" },
   { id: "full", label: "Full access", description: "Run without approval prompts" },
 ];
 
 const ACCESS_MODE_LABELS: Record<ComposerAccessMode, (typeof ACCESS_MODES)[number]["label"]> = {
-  supervised: "Supervised",
+  supervised: "Manual",
   automatic: "Auto",
   full: "Full access",
 };
@@ -41,13 +41,8 @@ function accessIcon(accessMode: ComposerAccessMode) {
   return accessMode === "full" ? KeyRound : Eye;
 }
 
-function isAccessModeDisabled(
-  accessMode: ComposerAccessMode,
-  permissionLocked: boolean,
-  approvalReviewSupported: boolean,
-): boolean {
-  if (permissionLocked) return accessMode !== "full";
-  return accessMode === "automatic" && !approvalReviewSupported;
+function isAccessModeDisabled(accessMode: ComposerAccessMode, permissionLocked: boolean): boolean {
+  return permissionLocked && accessMode !== "full";
 }
 
 function AccessModeSelector({
@@ -80,9 +75,9 @@ function AccessModeSelector({
           Access mode
         </div>
         <div className="space-y-0.5">
-          {ACCESS_MODES.map((mode) => {
+          {ACCESS_MODES.filter((mode) => approvalReviewSupported || mode.id !== "automatic").map((mode) => {
             const ModeIcon = accessIcon(mode.id);
-            const disabled = isAccessModeDisabled(mode.id, permissionLocked, approvalReviewSupported);
+            const disabled = isAccessModeDisabled(mode.id, permissionLocked);
             return (
               <Button
                 key={mode.id}

@@ -4147,6 +4147,7 @@ describe("CodexEventMapper", () => {
 
   it("maps bounded approval-review outcomes and rejects malformed, stale, and duplicate events", () => {
     mapper.mapNotification({ jsonrpc: "2.0", method: "turn/started", params: { turn: { id: "turn-current" } } });
+    mapper.setApprovalReviewVisible(true);
     const started = mapper.mapNotification({
       jsonrpc: "2.0", method: "item/autoApprovalReview/started",
       params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 1, reviewId: "review-1", targetItemId: "item-1", review: { status: "inProgress" } },
@@ -4169,7 +4170,15 @@ describe("CodexEventMapper", () => {
     });
     const denied = mapper.mapNotification({
       jsonrpc: "2.0", method: "item/autoApprovalReview/completed",
-      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 4, completedAtMs: 5, reviewId: "review-2", review: { status: "denied", rationale: "sensitive native rationale" } },
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 4, completedAtMs: 5, reviewId: "review-2", review: { status: "denied", rationale: "sensitive native rationale", action: "native action", risk: "native risk" } },
+    });
+    const timedOutStarted = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/started",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 6, reviewId: "review-timeout", review: { status: "inProgress" } },
+    });
+    const timedOut = mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/completed",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 6, completedAtMs: 7, reviewId: "review-timeout", review: { status: "timedOut" } },
     });
     const malformed = mapper.mapNotification({
       jsonrpc: "2.0", method: "item/autoApprovalReview/completed",
@@ -4182,7 +4191,86 @@ describe("CodexEventMapper", () => {
     expect(stale).toEqual([]);
     expect(deniedStarted.map((mapped) => mapped.event)).toMatchObject([{ type: "toolUse", toolCallId: "approval-review:review-2" }]);
     expect(denied.map((mapped) => mapped.event)).toMatchObject([{ type: "toolResult", toolCallId: "approval-review:review-2", output: "Denied", isError: true }]);
+    expect(timedOutStarted.map((mapped) => mapped.event)).toMatchObject([{ type: "toolUse", toolCallId: "approval-review:review-timeout" }]);
+    expect(timedOut.map((mapped) => mapped.event)).toMatchObject([{ type: "toolResult", toolCallId: "approval-review:review-timeout", output: "Review timed out", isError: true }]);
     expect(denied.map((mapped) => mapped.event).at(0)).not.toHaveProperty("toolInput.rationale");
+    expect(denied.map((mapped) => mapped.event).at(0)).not.toHaveProperty("toolInput.action");
+    expect(denied.map((mapped) => mapped.event).at(0)).not.toHaveProperty("toolInput.risk");
+    expect(JSON.stringify([...started, ...completed, ...denied])).not.toContain("sensitive native rationale");
+    expect(JSON.stringify([...started, ...completed, ...denied])).not.toContain("native action");
+    expect(JSON.stringify([...started, ...completed, ...denied])).not.toContain("native risk");
     expect(malformed.map((mapped) => mapped.event)).toMatchObject([{ type: "system", systemNotice: { kind: "diagnostic" } }]);
+  });
+
+  it.each([
+    ["completed", "Review aborted"],
+    ["failed", "Review failed"],
+    ["interrupted", "Review aborted"],
+  ] as const)("closes an active review once when a native turn is %s", (status, expectedOutput) => {
+    mapper.mapNotification({ jsonrpc: "2.0", method: "turn/started", params: { turn: { id: "turn-current" } } });
+    mapper.setApprovalReviewVisible(true);
+    mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/started",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 1, reviewId: `review-${status}`, review: { status: "inProgress" } },
+    });
+
+    const terminal = mapper.mapNotification({
+      jsonrpc: "2.0", method: "turn/completed",
+      params: { threadId: "codex-thread", turn: { status } },
+    });
+    const repeatedTerminal = mapper.mapNotification({
+      jsonrpc: "2.0", method: "turn/completed",
+      params: { threadId: "codex-thread", turn: { status } },
+    });
+
+    expect(terminal.filter((mapped) => mapped.event.type === "toolResult").map((mapped) => mapped.event)).toMatchObject([{
+      toolCallId: `approval-review:review-${status}`,
+      output: expectedOutput,
+      isError: true,
+    }]);
+    expect(repeatedTerminal).toEqual([]);
+  });
+
+  it("shows strict review routing only for a frozen automatic supervised dispatch", () => {
+    mapper.mapNotification({ jsonrpc: "2.0", method: "turn/started", params: { turn: { id: "turn-current" } } });
+
+    const current = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "autoApprovalReview/strictReviewRequired",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 1, nativeDetail: "do not expose" },
+    });
+    expect(current).toEqual([]);
+    mapper.setApprovalReviewVisible(true);
+    const automatic = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "autoApprovalReview/strictReviewRequired",
+      params: { threadId: "codex-thread", turnId: "turn-current", startedAtMs: 2, nativeDetail: "do not expose" },
+    });
+    expect(automatic.map((mapped) => mapped.event)).toEqual([expect.objectContaining({
+      type: "system",
+      subtype: "approval.review.manual-required",
+      message: "Manual approval is required before Codex can continue.",
+    })]);
+    expect(automatic.map((mapped) => mapped.event).at(0)).not.toHaveProperty("permissionRequest");
+    expect(automatic.map((mapped) => mapped.event).at(0)).not.toHaveProperty("nativeDetail");
+    const stale = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "autoApprovalReview/strictReviewRequired",
+      params: { threadId: "codex-thread", turnId: "turn-old", startedAtMs: 3 },
+    });
+    expect(stale).toEqual([]);
+  });
+
+  it("suppresses native review events for a frozen Full Access dispatch", () => {
+    mapper.mapNotification({ jsonrpc: "2.0", method: "turn/started", params: { turn: { id: "turn-full" } } });
+
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0", method: "item/autoApprovalReview/started",
+      params: { threadId: "codex-thread", turnId: "turn-full", startedAtMs: 1, reviewId: "review-full", review: { status: "inProgress" } },
+    })).toEqual([]);
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0", method: "autoApprovalReview/strictReviewRequired",
+      params: { threadId: "codex-thread", turnId: "turn-full", startedAtMs: 1 },
+    })).toEqual([]);
   });
 });

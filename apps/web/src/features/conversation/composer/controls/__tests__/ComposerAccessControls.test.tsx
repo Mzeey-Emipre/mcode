@@ -36,26 +36,57 @@ function renderControls(overrides: Partial<React.ComponentProps<typeof ComposerA
 
 describe("ComposerAccessControls", () => {
   it.each([
-    ["Supervised", { permissionMode: "supervised", approvalReviewMode: "manual" }],
+    ["Manual", { permissionMode: "supervised", approvalReviewMode: "manual" }],
     ["Auto", { permissionMode: "supervised", approvalReviewMode: "automatic" }],
     ["Full access", { permissionMode: "full", approvalReviewMode: "manual" }],
   ] as const)("maps %s to one atomic turn selection", (label, patch) => {
     const onSelectionChange = renderControls();
 
-    fireEvent.click(screen.getByRole("button", { name: /Access mode: Supervised/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Access mode: Manual/ }));
     fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}`) }));
 
     expect(onSelectionChange).toHaveBeenCalledWith(patch);
     expect(screen.queryByText("Access mode")).not.toBeInTheDocument();
   });
 
-  it("shows Auto but prevents selecting it when the provider does not support approval review", () => {
-    const onSelectionChange = renderControls({ approvalReviewSupported: false });
+  it.each([["inline", true], ["menu", false]] as const)("shows only Manual and Full access in the %s control when the provider does not support approval review", (_surface, showInlineOptions) => {
+    renderControls({ approvalReviewSupported: false, showInlineOptions });
 
-    fireEvent.click(screen.getByRole("button", { name: /Access mode: Supervised/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Access mode: Manual/ }));
 
-    expect(screen.getByRole("button", { name: /^Auto/ })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /^Auto/ }));
-    expect(onSelectionChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /^Manual/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Full access/ })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Auto/ })).not.toBeInTheDocument();
+  });
+
+  it("updates the picker when switching from an Auto provider to a provider without Auto", () => {
+    const onSelectionChange = vi.fn();
+    const { rerender } = render(
+      <ComposerAccessControls
+        selection={{ ...selection, approvalReviewMode: "automatic" }}
+        isModelLocked={false}
+        permissionLocked={false}
+        approvalReviewSupported
+        showInlineOptions={false}
+        onSelectionChange={onSelectionChange}
+        onSelectionTouched={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Access mode: Auto/ })).toBeInTheDocument();
+    rerender(
+      <ComposerAccessControls
+        selection={{ ...selection, approvalReviewMode: "automatic" }}
+        isModelLocked={false}
+        permissionLocked={false}
+        approvalReviewSupported={false}
+        showInlineOptions={false}
+        onSelectionChange={onSelectionChange}
+        onSelectionTouched={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Access mode: Manual/ }));
+
+    expect(screen.queryByRole("button", { name: /^Auto/ })).not.toBeInTheDocument();
   });
 });

@@ -186,17 +186,20 @@ Evidence: `.dev/verification/codex-notices/checks.json`,
 
 Verify approval review through the public Composer and public conversation APIs.
 
-1. Register a verifier-owned workspace. Select Auto in Composer's Access mode control, then capture the selected control.
-2. Send one verifier-owned Codex turn. Record the public dispatch receipt and the review tool-call narration when the native app-server emits it.
-3. Confirm one settled review result only. Check the public canonical turn includes the resolved `approvalReviewMode` and its stable reason.
-4. Reopen the thread or reconnect the public socket. Read the same canonical turn and confirm the review result does not duplicate.
-5. Delete only the verifier-owned workspace and thread after recording screenshots and the public receipt.
+1. Register a verifier-owned workspace. In both Composer layouts, select a provider without Auto and capture Manual and Full access with Auto absent. Switch to a supported provider and capture all three choices, then switch back and confirm Auto disappears.
+2. Select Auto and send one verifier-owned Codex turn. Record the public dispatch receipt and the review tool-call narration when the native app-server emits it.
+3. When strict review routing arrives, capture its manual-required notice. Confirm that no waiting state or permission control appears until the provider emits a real permission request.
+4. Confirm one settled review result only. Check the public canonical turn includes the resolved `approvalReviewMode` and its stable reason. Repeat with Full access and confirm that no review label or lifecycle appears.
+5. Reopen the thread or reconnect the public socket. Read the same canonical turn and confirm the review result does not duplicate.
+6. Persist Auto, switch to an unsupported provider before dispatch, and confirm the dispatch resolves to Manual with a provider-unavailable reason. For a managed-required provider, confirm Full access and incompatible review modes are blocked before dispatch.
+7. Stop, fail, and time out an Auto turn where the provider exposes each path. Confirm each active review has one terminal result, then replay a stale review event and confirm it cannot add another result to the replacement attempt.
+8. Delete only the verifier-owned workspace and thread after recording screenshots and the public receipt.
 
 Run the Composer selection and durable footer check in both the web client and
 Electron when both surfaces are available. Record an unavailable surface as a
 verification gap rather than using the other surface as its substitute.
 
-An unavailable native review capability is a verification gap. Do not record ordinary turn completion as approval-review proof.
+An unavailable native review capability, permission request, terminal path, or managed policy is a verification gap. Do not record ordinary turn completion as approval-review proof.
 
 - The approved prototype's Sign in button was simulated. The current notice contract reports authentication recovery, not an active sign-in requirement. Do not claim a real sign-in action from this fixture.
 - Migration backfill uses the newest persisted notice session as an upgrade approximation because older databases have no durable notice-session boundary. New session-start events select the authoritative session, including an empty one.
