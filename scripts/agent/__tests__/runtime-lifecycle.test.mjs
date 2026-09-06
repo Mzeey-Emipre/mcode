@@ -18,6 +18,7 @@ import { markRuntimeDatabase } from "../runtime-database.mjs";
 import {
   buildPortsContract,
   getRuntimePaths,
+  readPortsFile,
   writePortsFile,
 } from "../runtime-contract.mjs";
 import { resolveDevSingleInstanceFlag } from "../single-instance-flag.mjs";
@@ -377,6 +378,53 @@ NodeTest.test("agentUp defaults to returning without health checks", async () =>
   } finally {
     process.argv.pop();
     globalThis.fetch = originalFetch;
+    restoreHooks();
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+NodeTest.test("agentUp prints a redacted startup summary and persists credentials", async () => {
+  const repo = makeRepo();
+  const originalWrite = process.stdout.write;
+  let output = "";
+  let quiet = false;
+  const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async () => {},
+    computeAvailablePorts: async () => ({ serverPort: 41_241, webPort: 41_242 }),
+    getElectronBinary: () => process.execPath,
+    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
+    spawnLogged: () => ({ pid: 80_101 }),
+  });
+  process.stdout.write = (chunk, callback) => {
+    output += String(chunk);
+    callback?.();
+    return true;
+  };
+
+  try {
+    provisionRuntime(repo);
+    const contract = await agentUp(repo);
+    const summary = JSON.parse(output);
+    const persisted = readPortsFile(repo);
+
+    NodeAssertStrict.default.deepEqual(summary, {
+      healthUrl: contract.healthUrl,
+      appUrl: contract.appUrl,
+      worktreeIdentity: contract.worktreeIdentity,
+      contractPath: ".dev/ports.json",
+    });
+    NodeAssertStrict.default.doesNotMatch(output, /token|authHeader|instanceToken/i);
+    NodeAssertStrict.default.match(persisted.seedLogin.authHeader, /^Bearer /);
+    NodeAssertStrict.default.equal(persisted.instanceToken, contract.instanceToken);
+
+    output = "";
+    process.argv.push("--quiet");
+    quiet = true;
+    await agentUp(repo);
+    NodeAssertStrict.default.equal(output, "");
+  } finally {
+    if (quiet) process.argv.pop();
+    process.stdout.write = originalWrite;
     restoreHooks();
     NodeFS.rmSync(repo, { recursive: true, force: true });
   }

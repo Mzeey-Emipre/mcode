@@ -19,7 +19,7 @@ Provisioning and lifecycle are separate commands:
 | `bun run agent:ready` | Read `.dev/ports.json` and wait for every started runtime surface. |
 | `bun run --shell system agent:down` | Stop all owned server, web, and Electron components from either startup mode. |
 
-Both startup commands spawn detached processes, write `.dev/ports.json`, print the contract, and return. Use `--wait` only when a caller needs startup checks before it continues.
+Both startup commands spawn detached processes, write `.dev/ports.json`, print a redacted summary with endpoint URLs, worktree identity, and the contract path, and return. Use `--wait` only when a caller needs startup checks before it continues.
 
 ```powershell
 # Windows PowerShell
