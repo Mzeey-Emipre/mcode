@@ -23,10 +23,34 @@ export function discoverAgentTestFiles(directory) {
   return testFiles;
 }
 
+/** Selects maintained agent tests, rejecting paths outside the test directory. */
+export function selectAgentTestFiles(directory, requestedFiles) {
+  if (requestedFiles.length === 0) {
+    return discoverAgentTestFiles(directory).map((file) => NodePath.join(directory, file));
+  }
+
+  return requestedFiles.map((requestedFile) => {
+    const testFile = NodePath.resolve(process.cwd(), requestedFile);
+    const relativePath = NodePath.relative(directory, testFile);
+    if (
+      !testFile.endsWith(".test.mjs")
+      || relativePath === ""
+      || relativePath.startsWith(`..${NodePath.sep}`)
+      || NodePath.isAbsolute(relativePath)
+      || NodePath.dirname(relativePath) !== "."
+      || !NodeFS.existsSync(testFile)
+      || !NodeFS.lstatSync(testFile).isFile()
+    ) {
+      throw new Error(`Expected a maintained agent test file: ${requestedFile}`);
+    }
+    return testFile;
+  });
+}
+
 const invokedScript = process.argv[1] ? NodePath.resolve(process.argv[1]) : null;
 if (invokedScript === NodePath.resolve(NodeURL.fileURLToPath(import.meta.url))) {
-  for (const file of discoverAgentTestFiles(testDirectory)) {
-    const testFile = NodePath.resolve(testDirectory, file);
+  for (const testFile of selectAgentTestFiles(testDirectory, process.argv.slice(2))) {
+    const file = NodePath.basename(testFile);
     // Bun cannot read the skill module under this worktree's Windows ACLs.
     const command = NODE_RUNTIME_TEST_FILES.has(file) ? "node" : process.execPath;
     const argumentsForCommand = NODE_RUNTIME_TEST_FILES.has(file)
