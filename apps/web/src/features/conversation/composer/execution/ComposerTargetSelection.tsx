@@ -40,7 +40,7 @@ export function ComposerTargetSelection(props: ComposerTargetSelectionProps) {
         pullRequests={target.openPrs}
         prsLoading={target.openPrsLoading}
         fetchingBranch={target.fetchingBranch}
-        onFetchAndSelect={target.fetchAndSelectPullRequest}
+        onSelectPullRequest={target.selectPullRequest}
         triggerClassName={target.triggerClassName}
         iconSize={target.iconSize}
       />

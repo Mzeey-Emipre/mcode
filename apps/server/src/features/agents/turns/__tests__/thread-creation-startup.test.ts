@@ -25,15 +25,17 @@ function harness() {
   const admissions = {
     admitInitialAutomaticTurn: vi.fn(async () => ({ kind: "not-managed" as const })),
   };
+  const gitRepository = { fetchBranch: vi.fn() };
   const coordinator = new ThreadCreationCoordinator(
     threads,
     () => threadService,
     admissions as never,
+    gitRepository,
     undefined,
     undefined,
     () => startups,
   );
-  return { db, workspace, threads, startups, threadService, admissions, coordinator };
+  return { db, workspace, threads, startups, threadService, admissions, gitRepository, coordinator };
 }
 
 describe("ThreadCreationCoordinator startup lifecycle", () => {
@@ -107,6 +109,79 @@ describe("ThreadCreationCoordinator startup lifecycle", () => {
         { phase: "agent", state: "pending" },
       ],
     });
+    db.close();
+  });
+
+  it("fetches a selected pull request before creating its managed worktree", async () => {
+    const { db, workspace, threads, threadService, gitRepository, coordinator } = harness();
+    const order: string[] = [];
+    const thread = threads.create(workspace.id, "Review", "worktree", "contributor/review", true, "claude");
+    vi.mocked(gitRepository.fetchBranch).mockImplementation(async () => {
+      order.push("fetch");
+    });
+    vi.mocked(threadService.create).mockImplementation(async (_workspaceId, _title, _mode, _branch, options) => {
+      order.push("create");
+      options.lifecycle?.onThreadPersisted(thread);
+      return thread;
+    });
+
+    await coordinator.createInitialTurn({
+      workspaceId: workspace.id,
+      content: "Review this PR",
+      mode: "worktree",
+      branch: "contributor/review",
+      pullRequestNumber: 42,
+    });
+
+    expect(gitRepository.fetchBranch).toHaveBeenCalledWith(workspace.id, "contributor/review", 42);
+    expect(order).toEqual(["fetch", "create"]);
+    db.close();
+  });
+
+  it("keeps the startup retryable when the selected pull request cannot be fetched", async () => {
+    const { db, workspace, startups, threadService, gitRepository, coordinator } = harness();
+    vi.mocked(gitRepository.fetchBranch).mockRejectedValue(new Error("pull request is unavailable"));
+
+    await expect(coordinator.createInitialTurn({
+      workspaceId: workspace.id,
+      content: "Review this PR",
+      mode: "worktree",
+      branch: "contributor/review",
+      pullRequestNumber: 42,
+      startupId: managedStartupId,
+    })).rejects.toThrow("pull request is unavailable");
+
+    expect(threadService.create).not.toHaveBeenCalled();
+    expect(startups.get(managedStartupId)).toMatchObject({
+      state: "failed",
+      phase: "thread",
+      error: { code: "THREAD_CREATE_FAILED", retryable: true },
+    });
+    db.close();
+  });
+
+  it("does not create a worktree when cancellation arrives while fetching a pull request", async () => {
+    const { db, workspace, startups, threadService, gitRepository, coordinator } = harness();
+    let finishFetch: (() => void) | undefined;
+    vi.mocked(gitRepository.fetchBranch).mockImplementation(() => new Promise<void>((resolve) => {
+      finishFetch = resolve;
+    }));
+
+    const creating = coordinator.createInitialTurn({
+      workspaceId: workspace.id,
+      content: "Cancel PR checkout",
+      mode: "worktree",
+      branch: "contributor/review",
+      pullRequestNumber: 42,
+      startupId: managedStartupId,
+    });
+    await vi.waitFor(() => expect(finishFetch).toBeDefined());
+    startups.cancel(managedStartupId);
+    finishFetch?.();
+
+    await expect(creating).rejects.toThrow("Thread startup was cancelled");
+    expect(threadService.create).not.toHaveBeenCalled();
+    expect(startups.get(managedStartupId)).toMatchObject({ state: "cancelled", phase: "thread" });
     db.close();
   });
 

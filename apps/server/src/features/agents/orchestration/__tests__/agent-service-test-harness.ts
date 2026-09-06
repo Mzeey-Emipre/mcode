@@ -12,6 +12,7 @@ import type * as NodeEvents from "node:events";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import { WorkspaceEnvironmentService } from "../../../projects/index.js";
 import { GitWorktreeService } from "../../../projects/git/git-worktree-service.js";
+import { GitRepositoryService } from "../../../projects/git/git-repository-service.js";
 import { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
@@ -286,6 +287,7 @@ export function createAgentServiceForTest(
     threadRepo,
     () => threadService,
     admissions,
+    testContainer.resolve(GitRepositoryService),
     () => threadBranching,
     () => planTurns,
     () => threadStartups,

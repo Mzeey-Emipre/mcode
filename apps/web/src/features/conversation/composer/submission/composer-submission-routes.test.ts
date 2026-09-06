@@ -155,4 +155,26 @@ describe("dispatchComposerTarget selected-text comments", () => {
       }),
     }));
   });
+
+  it("retains a direct pull request target before dispatch", async () => {
+    workspaceActions.createAndSendMessage.mockResolvedValue({ id: "thread-2" });
+    const target = {
+      kind: "new-thread" as const,
+      mode: "direct" as const,
+      branch: "contributor/review",
+      branchSource: "pr" as const,
+      pullRequestNumber: 42,
+      hasWorktree: false,
+    };
+    const controller = execution(target);
+
+    await dispatchComposerTarget({
+      workspaceId: "workspace-1",
+      target,
+      execution: controller,
+      submission: submission("Review this pull request.", []),
+    });
+
+    expect(controller.setNewThreadBranchFromPullRequest).toHaveBeenCalledWith("contributor/review", 42);
+  });
 });

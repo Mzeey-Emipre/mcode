@@ -74,6 +74,27 @@ describe("GitRepositoryService.push", () => {
   });
 });
 
+describe("GitRepositoryService.fetchBranchAt", () => {
+  it("does not accept a stale local branch when fetching a pull request fails", async () => {
+    const mock = createMockGitExecutor();
+    const gitService = new GitRepositoryService({} as WorkspaceRepo, mock.executor);
+    vi.mocked(validateBranchName).mockImplementation(() => undefined);
+    mock.execFn.mockRejectedValue(new Error("pull request is unavailable"));
+
+    await expect(gitService.fetchBranchAt("/repo", "contributor/review", 42)).rejects.toThrow(
+      "pull request is unavailable",
+    );
+    expect(mock.execFn).toHaveBeenCalledTimes(1);
+    expect(mock.execFn).toHaveBeenCalledWith([
+      "-C",
+      "/repo",
+      "fetch",
+      "origin",
+      "+pull/42/head:contributor/review",
+    ]);
+  });
+});
+
 describe("GitRepositoryService and GitWorktreeService branch creation", () => {
   let gitRepository: GitRepositoryService;
   let gitWorktrees: GitWorktreeService;

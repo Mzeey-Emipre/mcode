@@ -301,7 +301,7 @@ export function PullRequestForkDialog({
       if (nextTarget.mode === "existing-worktree" && nextTarget.worktree) {
         workspace.setSelectedWorktree(nextTarget.worktree);
       } else {
-        workspace.setNewThreadBranchFromPr(nextTarget.branch);
+        workspace.setNewThreadBranchFromPr(nextTarget.branch, detail.identity.number);
       }
       useComposerDraftStore
         .getState()
