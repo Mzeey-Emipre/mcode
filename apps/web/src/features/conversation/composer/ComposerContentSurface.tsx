@@ -3,7 +3,6 @@ import { ArrowUp, X } from "lucide-react";
 import { AttachmentPreview } from "@/components/chat/AttachmentPreview";
 import { ComposerAddMenu } from "@/components/chat/ComposerAddMenu";
 import { ComposerBranchBar } from "@/components/chat/ComposerBranchBar";
-import { ComposerQueueList } from "@/components/chat/ComposerQueueList";
 import { CompactingBanner } from "@/components/chat/CompactingBanner";
 import { ContextTracker } from "@/components/chat/ContextTracker";
 import { FileTagPopup, type useFileTagPopup } from "@/components/chat/FileTagPopup";
@@ -119,9 +118,6 @@ interface ComposerContentSurfaceProps {
   readonly actions: {
     readonly onBranchModeExit?: () => void;
     readonly onComposerModeChange: (mode: ComponentProps<typeof ComposerNewThreadContext>["mode"]) => void;
-    readonly onLoadIntoComposer: ComponentProps<typeof ComposerQueueList>["onLoadIntoComposer"];
-    readonly onResumeQueuedMessage: () => Promise<void>;
-    readonly onSendQueuedMessageNow: NonNullable<ComponentProps<typeof ComposerQueueList>["onSendNow"]>;
     readonly onDragEnter: DragEventHandler<HTMLDivElement>;
     readonly onDragLeave: DragEventHandler<HTMLDivElement>;
     readonly onDragOver: DragEventHandler<HTMLDivElement>;
@@ -186,32 +182,6 @@ function ComposerTaskBubble({ model }: Pick<ComposerContentSurfaceProps, "model"
     <div className="mb-2 flex justify-center">
       <TaskBubble tasks={model.taskBubbleTasks} fileEffects={model.fileEffectSummary} />
     </div>
-  );
-}
-
-function ComposerQueueSurface({
-  model,
-  actions,
-}: Pick<ComposerContentSurfaceProps, "model" | "actions">) {
-  const canShowQueue = Boolean(
-    model.threadId && !model.branchFromMessageId && !model.isNewThread,
-  );
-
-  if (!canShowQueue) return null;
-
-  return (
-    <ComposerQueueList
-      threadId={model.threadId!}
-      isAgentRunning={model.isAgentRunning}
-      provider={model.provider}
-      isEditing={Boolean(model.editingFromQueue)}
-      isPaused={model.planPending}
-      onLoadIntoComposer={actions.onLoadIntoComposer}
-      onResume={() => model.planPending ? Promise.resolve() : actions.onResumeQueuedMessage()}
-      onSendNow={(message) =>
-        model.planPending ? Promise.resolve() : actions.onSendQueuedMessageNow(message)
-      }
-    />
   );
 }
 
@@ -682,7 +652,6 @@ export function ComposerContentSurface(props: ComposerContentSurfaceProps) {
     <>
       <ComposerPlanPreview {...props} />
       <ComposerTaskBubble {...props} />
-      <ComposerQueueSurface {...props} />
       <ComposerNewThreadSurface {...props} />
       <ComposerInputSurface {...props} />
       {props.model.queuedSend && (

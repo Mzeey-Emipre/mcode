@@ -7,9 +7,9 @@
 - A target-thread error or terminal stopped status fails the completion proof.
 - Assistant data becomes durable before the public conversation query returns it.
 - Runtime inspection exposes active count and authoritative runtime snapshots without provider payloads.
-- Codex protocol notices use bounded canonical events. Reroutes, warnings, configuration, deprecation, workspace-security, recovery, and unknown notices never expose raw protocol payloads.
+- Codex protocol notices use bounded canonical events. Reroutes, warnings, configuration, deprecation, workspace-security, and recovery notices never expose raw protocol payloads. Unknown notifications remain in diagnostics only.
 - Codex automatic approval review renders one reviewing tool call and one durable terminal result for each native review identity.
-- Current provider notices use one expandable surface above Composer. Configuration and deprecation notices remain quiet until requested.
+- Current provider notices use one expandable surface above Composer. When queued messages exist, they share that surface above the notice. Configuration and deprecation notices remain quiet until requested.
 - Public conversation page and first-paint tail queries restore the bounded current-session notice collection separately from transcript messages.
 
 ## How to get to it (user POV)
@@ -45,6 +45,8 @@ app-server protocol; Mcode has no notice-trigger button.
 | `deprecationNotice` | Codex reports a deprecation diagnostic | Review notices |
 | `model/rerouted` | Codex supplies the source model, destination model, and `highRiskCyberActivity` reason | One Composer notice without a duplicate toast |
 | `modelProvider/authRecoveryCompleted` | Codex confirms provider authentication recovery | A system notice in chat |
+| `item/started` and `item/completed` for `sleep` | Codex records a sleep lifecycle item | No timeline notice |
+| Unrecognized item lifecycle | Codex sends an item type that Mcode does not map | No timeline notice; retain a bounded diagnostic log receipt |
 
 1. Start an owned Codex thread from the desktop Composer. Record the actual
    provider condition and notification method without credentials or raw payloads.
@@ -70,7 +72,8 @@ Set the returned path as the owned Electron runtime's Codex CLI path. Start a
 fresh direct Codex thread and send one message. One fixture process supports one
 turn. It drives the native app-server boundary, then emits duplicate
 configuration and reroute deliveries plus one guardian security warning, plain
-warning, authentication-recovery notice, and terminal answer. The duplicate
+warning, authentication-recovery notice, silent sleep lifecycle, unknown item
+lifecycle, and terminal answer. The duplicate
 deliveries prove the existing deduplication path. It does not recreate a real
 upstream condition. It does not cover deprecation notices or Windows
 writable-path scans. Restore the prior CLI path before you run `desktop
@@ -113,6 +116,26 @@ and notice surfaces at `40` and `30`; and a Command palette dialog at `50` that
 covered the notice coordinate. The associated screenshots are `slash.png`,
 `mention.png`, `add-menu.png`, and `dialog.png` in the same directory.
 
+### Composer notice alignment
+
+The owned Electron alignment journey uses an actual `Toggle sidebar` control at a
+2200 px viewport. The composer remained 960 px wide while its left edge moved
+from 764.5 px to 620 px. The notice remained 932 px wide and moved from
+778.5 px to 634 px, preserving the intentional 14 px inset on both sides.
+The machine-readable receipt and screenshot are
+`.dev/verification/notice-alignment/position-only-live-receipt.json` and
+`.dev/verification/notice-alignment/position-only-live.png`.
+
+### Composer queue and notice surface
+
+The controlled fixture accepts `QUEUE_OVERLAY_VERIFICATION` to keep one owned
+turn active after it emits its notices. Queue several follow-ups through the
+Composer. Confirm that the queue is above the current warning in the shared
+attached surface, that a long queue scrolls, and that expanding, closing, and
+reopening the warning preserves the expected visible content. The queue action
+proof is `.dev/verification/composer-queue-overlay-receipt.json`; overflow and
+alignment receipts are `.dev/verification/composer-queue-overlay-overflow.json`
+and `.dev/verification/composer-queue-overlay-alignment.json`.
 ### Controlled Electron proof
 
 Observed in the production Electron app, PID 16396 on app port 41112, with the

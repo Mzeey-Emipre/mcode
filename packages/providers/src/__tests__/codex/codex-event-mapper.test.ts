@@ -1212,22 +1212,66 @@ describe("CodexEventMapper", () => {
   });
 
   it("returns empty array for item/completed with unrecognized item type", () => {
-    const events = mapper.mapNotification({
+    const { events, disposition } = mapper.mapNotificationWithDisposition({
       jsonrpc: "2.0",
       method: "item/completed",
       params: { item: { type: "unknown_item_type" } },
     });
-    expect(events.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{ type: "system", subtype: "provider.notice.unknown-event", systemNotice: { kind: "diagnostic" } }]);
+    expect(events).toEqual([]);
+    expect(disposition).toEqual({ kind: "diagnostic", reason: "unknown-notification" });
   });
 
   it.each(["__proto__", "constructor", "toString"])("treats prototype item type %s as unknown", (type) => {
-    const events = mapper.mapNotification({
+    const { events, disposition } = mapper.mapNotificationWithDisposition({
       jsonrpc: "2.0",
       method: "item/completed",
       params: { item: { type } },
     } as never);
 
-    expect(events.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{ type: "system", subtype: "provider.notice.unknown-event", systemNotice: { kind: "diagnostic" } }]);
+    expect(events).toEqual([]);
+    expect(disposition).toEqual({ kind: "diagnostic", reason: "unknown-notification" });
+  });
+
+  it("silently consumes sleep lifecycle items on the main thread", () => {
+    const started = mapper.mapNotificationWithDisposition({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { item: { type: "sleep", id: "sleep-main" } },
+    });
+    const completed = mapper.mapNotificationWithDisposition({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { item: { type: "sleep", id: "sleep-main" } },
+    });
+
+    expect(started).toEqual({ events: [], disposition: { kind: "ignored-with-reason", reason: "item-start-has-no-transcript-projection" } });
+    expect(completed).toEqual({ events: [], disposition: { kind: "ignored-with-reason", reason: "item-has-no-transcript-projection" } });
+  });
+
+  it("silently consumes sleep lifecycle items on a known child thread", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: { type: "subAgentActivity", id: "child-agent", agentThreadId: "child-thread", agentPath: "/root/child", kind: "started" },
+      },
+    });
+
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { threadId: "child-thread", item: { type: "sleep", id: "sleep-child" } },
+    });
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { threadId: "child-thread", item: { type: "sleep", id: "sleep-child" } },
+    });
+
+    expect(started).toEqual([]);
+    expect(completed).toEqual([]);
   });
 
   // ---------------------------------------------------------------------------
@@ -4014,30 +4058,45 @@ describe("CodexEventMapper", () => {
   // Unrecognized notification method
   // ---------------------------------------------------------------------------
 
-  it("turns an unknown notification into a bounded diagnostic without blocking later terminal events", async () => {
+  it("retains an unknown notification in diagnostics without adding a timeline notice", async () => {
     const { logger } = await import("@mcode/shared");
-    const events = mapper.mapNotification({
+    const { events, disposition } = mapper.mapNotificationWithDisposition({
       jsonrpc: "2.0",
       method: "unknown/method",
       params: {},
     } as never);
 
-    expect(events.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{
-      type: "system",
-      threadId: "test-thread",
-      subtype: "provider.notice.unknown-event",
-      message: "Codex sent an update this client does not recognize (unknown/method). The thread continues normally.",
-      systemNotice: { kind: "diagnostic", presentation: "timeline", scope: "turn" },
-    }]);
+    expect(events).toEqual([]);
+    expect(disposition).toEqual({ kind: "diagnostic", reason: "unknown-notification" });
     expect(logger.warn).toHaveBeenCalledWith(
       "CodexEventMapper: unrecognized notification",
       expect.objectContaining({ method: "unknown/method" }),
     );
   });
 
+  it("keeps an unknown diagnostic disposition when an assistant boundary drains", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "main-thread", itemId: "assistant-item", delta: "Pending assistant text" },
+    });
+
+    const result = mapper.mapNotificationWithDisposition({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { threadId: "main-thread", item: { id: "unknown-item", type: "futureItem" } },
+    });
+
+    expect(result.events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
+      { type: "assistantMessageBoundary", threadId: "test-thread", isFinalResponse: false },
+    ]);
+    expect(result.disposition).toEqual({ kind: "diagnostic", reason: "unknown-notification" });
+  });
+
   it.each(["__proto__", "constructor", "toString"])("treats prototype method %s as unknown without blocking the terminal event", (method) => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
-    const unknown = mapper.mapNotification({
+    const unknown = mapper.mapNotificationWithDisposition({
       jsonrpc: "2.0",
       method,
       params: { threadId: "main-thread" },
@@ -4048,10 +4107,7 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-thread", turn: { status: "completed" } },
     });
 
-    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{
-      type: "system",
-      subtype: "provider.notice.unknown-event",
-    }]);
+    expect(unknown).toEqual({ events: [], disposition: { kind: "diagnostic", reason: "unknown-notification" } });
     expect(terminal.map((runtimeEvent) => runtimeEvent.event.type)).toEqual(["turnComplete"]);
   });
 

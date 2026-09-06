@@ -2,6 +2,7 @@
 
 ## Sub-features
 
+- Queued messages and a current provider notice share one attached Composer surface. Queue rows appear above the notice, and the notice remains nearest the Composer.
 - An authoritative, non-guardrail `turnComplete` sends exactly one queued message, then leaves later messages in FIFO order. Persistence alone leaves the queue paused until Continue.
 - Stop starts a pending-stop barrier and suppresses automatic drain until every concurrent Stop RPC settles. Late completion, persistence, or guardrail events cannot bypass that barrier.
 - Continue sends one queued message only after Stop settles and the thread is idle.
@@ -15,6 +16,7 @@
 3. Let the turn complete, then confirm that the first follow-up starts and the second stays queued.
 4. Stop a running follow-up and confirm that all remaining messages stay queued, even after its terminal events arrive.
 5. Select Continue and confirm that it starts only the next queued message.
+6. When a provider notice is current, confirm queue rows remain above its expandable header. Clear the queue and confirm the notice remains available.
 
 ## Driving it with verify-mcode
 

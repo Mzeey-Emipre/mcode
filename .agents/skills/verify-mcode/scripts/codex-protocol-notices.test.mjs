@@ -6,6 +6,7 @@ import * as NodeURL from "node:url";
 import * as NodeTest from "node:test";
 
 import { parseCodexProtocolNoticeArguments, renderFixtureWrapper } from "./codex-protocol-notices.mjs";
+import { FIXTURE_QUEUE_PROMPT_MARKER } from "./codex-protocol-notices-fixture.mjs";
 
 const scriptDirectory = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const fixturePath = NodePath.join(scriptDirectory, "codex-protocol-notices-fixture.mjs");
@@ -21,7 +22,7 @@ NodeTest.test("fixture emits the exact bounded native notice sequence for one tu
     await delay(250);
     NodeAssertStrict.equal(server.notificationCount(), 0);
 
-    const notices = await server.notifications(10);
+    const notices = await server.notifications(14);
     NodeAssertStrict.deepEqual(notices, [
       { method: "turn/started", params: { threadId: "fixture-native-thread", turn: { id: "fixture-native-turn", items: [], status: "inProgress", error: null } } },
       { method: "configWarning", params: { summary: "Fixture configuration diagnostic.", details: "Fixture configuration detail.", path: "C:/mcode-fixture/config.toml", range: { start: { line: 4, column: 2 }, end: { line: 4, column: 9 } } } },
@@ -31,6 +32,10 @@ NodeTest.test("fixture emits the exact bounded native notice sequence for one tu
       { method: "model/rerouted", params: { threadId: "fixture-native-thread", turnId: "fixture-native-turn", fromModel: "fixture-source", toModel: "fixture-safe", reason: "highRiskCyberActivity" } },
       { method: "model/rerouted", params: { threadId: "fixture-native-thread", turnId: "fixture-native-turn", fromModel: "fixture-source", toModel: "fixture-safe", reason: "highRiskCyberActivity" } },
       { method: "modelProvider/authRecoveryCompleted", params: { threadId: "fixture-native-thread", turnId: "fixture-native-turn", provider: "fixture-provider", message: "Fixture authentication recovered." } },
+      { method: "item/started", params: { threadId: "fixture-native-thread", turnId: "fixture-native-turn", item: { id: "fixture-sleep", type: "sleep" } } },
+      { method: "item/completed", params: { threadId: "fixture-native-thread", turnId: "fixture-native-turn", item: { id: "fixture-sleep", type: "sleep" } } },
+      { method: "item/started", params: { threadId: "fixture-native-thread", turnId: "fixture-native-turn", item: { id: "fixture-unknown", type: "fixtureUnknownItem" } } },
+      { method: "item/completed", params: { threadId: "fixture-native-thread", turnId: "fixture-native-turn", item: { id: "fixture-unknown", type: "fixtureUnknownItem" } } },
       { method: "item/completed", params: { threadId: "fixture-native-thread", turnId: "fixture-native-turn", item: { id: "fixture-assistant-message", type: "agentMessage", text: "Fixture notice turn completed.", phase: "final_answer", memoryCitation: null } } },
       { method: "turn/completed", params: { threadId: "fixture-native-thread", turn: { id: "fixture-native-turn", items: [], status: "completed", error: null } } },
     ]);
@@ -38,6 +43,23 @@ NodeTest.test("fixture emits the exact bounded native notice sequence for one tu
       server.request(5, "turn/start", { threadId: "fixture-native-thread", input: [] }),
       (error) => error instanceof Error && error.code === -32000,
     );
+  } finally {
+    server.stop();
+  }
+});
+
+NodeTest.test("fixture keeps the queue-overlay verification turn running after its notices arrive", async () => {
+  const server = startFixture(["app-server"]);
+  try {
+    await server.request(1, "initialize", {});
+    await server.request(2, "thread/start", {});
+    await server.request(3, "turn/start", {
+      threadId: "fixture-native-thread",
+      input: [{ type: "text", text: FIXTURE_QUEUE_PROMPT_MARKER }],
+    });
+    const notices = await server.notifications(12);
+    NodeAssertStrict.equal(notices.at(-1)?.method, "item/completed");
+    NodeAssertStrict.equal(server.notificationCount(), 12);
   } finally {
     server.stop();
   }

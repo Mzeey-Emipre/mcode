@@ -9,6 +9,8 @@ export const FIXTURE_NATIVE_THREAD_ID = "fixture-native-thread";
 export const FIXTURE_NATIVE_TURN_ID = "fixture-native-turn";
 export const FIXTURE_ASSISTANT_TEXT = "Fixture notice turn completed.";
 export const FIXTURE_TURN_DELAY_MS = 500;
+export const FIXTURE_QUEUE_HOLD_MS = 180_000;
+export const FIXTURE_QUEUE_PROMPT_MARKER = "QUEUE_OVERLAY_VERIFICATION";
 
 export const FIXTURE_NOTICES = Object.freeze([
   {
@@ -91,11 +93,31 @@ export function runFixtureAppServer({ input = process.stdin, output = process.st
     }
     turnStarted = true;
     respond(message.id, { turn: { id: FIXTURE_NATIVE_TURN_ID } });
-    setTimeout(() => emitFixtureTurn(notify), FIXTURE_TURN_DELAY_MS);
+    scheduleFixtureTurn(notify, message.params?.input);
   });
 }
 
+function scheduleFixtureTurn(notify, input) {
+  if (isQueueOverlayTurn(input)) {
+    setTimeout(() => emitFixtureTurnStart(notify), FIXTURE_TURN_DELAY_MS);
+    setTimeout(() => emitFixtureTurnCompletion(notify), FIXTURE_QUEUE_HOLD_MS);
+    return;
+  }
+  setTimeout(() => emitFixtureTurn(notify), FIXTURE_TURN_DELAY_MS);
+}
+
+function isQueueOverlayTurn(input) {
+  return Array.isArray(input) && input.some(
+    (part) => typeof part?.text === "string" && part.text.includes(FIXTURE_QUEUE_PROMPT_MARKER),
+  );
+}
+
 function emitFixtureTurn(notify) {
+  emitFixtureTurnStart(notify);
+  emitFixtureTurnCompletion(notify);
+}
+
+function emitFixtureTurnStart(notify) {
   notify("turn/started", {
     threadId: FIXTURE_NATIVE_THREAD_ID,
     turn: { id: FIXTURE_NATIVE_TURN_ID, items: [], status: "inProgress", error: null },
@@ -106,6 +128,29 @@ function emitFixtureTurn(notify) {
       notify(notice.method, notice.params);
     }
   }
+  notify("item/started", {
+    threadId: FIXTURE_NATIVE_THREAD_ID,
+    turnId: FIXTURE_NATIVE_TURN_ID,
+    item: { id: "fixture-sleep", type: "sleep" },
+  });
+  notify("item/completed", {
+    threadId: FIXTURE_NATIVE_THREAD_ID,
+    turnId: FIXTURE_NATIVE_TURN_ID,
+    item: { id: "fixture-sleep", type: "sleep" },
+  });
+  notify("item/started", {
+    threadId: FIXTURE_NATIVE_THREAD_ID,
+    turnId: FIXTURE_NATIVE_TURN_ID,
+    item: { id: "fixture-unknown", type: "fixtureUnknownItem" },
+  });
+  notify("item/completed", {
+    threadId: FIXTURE_NATIVE_THREAD_ID,
+    turnId: FIXTURE_NATIVE_TURN_ID,
+    item: { id: "fixture-unknown", type: "fixtureUnknownItem" },
+  });
+}
+
+function emitFixtureTurnCompletion(notify) {
   notify("item/completed", {
     threadId: FIXTURE_NATIVE_THREAD_ID,
     turnId: FIXTURE_NATIVE_TURN_ID,
