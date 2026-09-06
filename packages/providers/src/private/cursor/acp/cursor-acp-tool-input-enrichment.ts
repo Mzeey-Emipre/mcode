@@ -10,7 +10,7 @@ import { normalizeMcodeCursorToolInput } from "../events/cursor-tool-input-norma
 export interface AcpDiffBlock {
   type: "diff";
   path: string;
-  oldText: string;
+  oldText?: string | null;
   newText: string;
 }
 
@@ -54,13 +54,13 @@ function toolInputFromDiffs(diffs: readonly AcpDiffBlock[]): Record<string, unkn
   if (!diff) return undefined;
   return {
     file_path: diff.path,
-    old_string: diff.oldText,
+    old_string: diff.oldText ?? "",
     new_string: diff.newText,
     _mcodeFileMutations: diffs.slice(0, 256).map((item) => ({
       path: item.path,
-      kind: item.oldText.length === 0 ? "add" : item.newText.length === 0 ? "remove" : "edit",
+      kind: item.oldText == null ? "add" : "edit",
       fullFileContent: true,
-      beforeText: item.oldText,
+      beforeText: item.oldText ?? "",
       afterText: item.newText,
     })),
   };

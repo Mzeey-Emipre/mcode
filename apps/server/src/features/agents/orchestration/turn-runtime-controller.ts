@@ -37,6 +37,7 @@ import {
   type TurnLifecycleControl,
 } from "../turns/turn-event-pipeline.js";
 import { ProviderTurnEventApplication } from "../turns/provider-turn-event-application.js";
+import { TurnDiffService } from "../turns/turn-diff-service.js";
 import { TURN_FEATURE_EFFECTS, TurnFeatureEffects } from "../turns/turn-feature-effects.js";
 import { TURN_RUNTIME_PERSISTENCE, type TurnRuntimePersistence } from "../turns/turn-runtime-persistence.js";
 import {
@@ -104,6 +105,7 @@ export type { CreateAndSendCommand } from "../turns/thread-creation-coordinator.
 export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeEventControl {
   /** Canonical per-thread execution identity and lifecycle authority. */
   private readonly turnRuntime = new TurnRuntimeRegistry();
+  private readonly turnDiffs: TurnDiffService;
   private readonly activeSessionIds = new Set<string>();
   private initialized = false;
   /**
@@ -209,8 +211,10 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
     private readonly eventPublication: AgentEventPublicationRegistry,
     @inject(delay(() => ProviderTurnEventApplication))
     private readonly eventApplication: ProviderTurnEventApplication,
+    @inject(TurnDiffService) turnDiffs: TurnDiffService,
   ) {
-    this.turnEventPipeline = new TurnEventPipeline(this, eventApplication);
+    this.turnDiffs = turnDiffs;
+    this.turnEventPipeline = new TurnEventPipeline(this, eventApplication, turnDiffs);
     runtimeCommands.bind({
       sendMessage: (command) => this.sendMessage(command),
       runtimeSnapshots: () => this.runtimeSnapshots(),
@@ -293,6 +297,7 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
     if (event.outcome === undefined) {
       if (event.reason !== "provider_lost" || !event.turnExecutionId) return false;
       if (!this.turnRuntime.release(event.threadId, event.turnExecutionId)) return false;
+      this.turnDiffs.clearExecution(event.threadId, event.turnExecutionId);
       this.trackSessionEnded(event.threadId, event.turnExecutionId);
       this.disarmTurnRetryWindow(event.threadId);
       this.clearTurnEndedState(event.threadId);
@@ -599,6 +604,7 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
       "activeTurn",
       () => {
         dispatch.dispatchStarted = true;
+        this.turnDiffs.begin({ ...dispatch.turnRequest, deliveryAttempt: dispatch.turnRequest.deliveryAttempt ?? 1 });
         return dispatch.resolvedProvider.sendTurn(dispatch.turnRequest);
       },
     );
@@ -1071,6 +1077,7 @@ export class TurnRuntimeController implements TurnLifecycleControl, TurnRuntimeE
         "activeTurn",
         () => {
           dispatch.dispatchStarted = true;
+          this.turnDiffs.begin({ ...dispatch.turnRequest, deliveryAttempt: dispatch.turnRequest.deliveryAttempt ?? 1 });
           return dispatch.resolvedProvider.sendTurn(dispatch.turnRequest);
         },
       );

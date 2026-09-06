@@ -18,6 +18,7 @@ const QUEUED_TURNS_FIFO_MIGRATION = "0046_queued_turns_fifo";
 const PROJECT_ACTION_RUNS_MIGRATION = "0047_conscious_tusk";
 const PREVIOUS_MIGRATION = "0054_wise_supernaut";
 const CODEX_CHILD_ORPHAN_REPAIR_MIGRATION = "0055_codex_child_orphan_repair";
+const TURN_DIFF_MIGRATION = "0057_stiff_zaladane";
 const SYSTEM_NOTICE_SESSION_MIGRATION = "0058_fine_rafael_vega";
 
 type JournalEntry = {
@@ -573,13 +574,13 @@ describe("successful database migration recovery", () => {
     }
   });
 
-  it("backfills the current notice session from the newest persisted notice", () => {
+  it("adds notice metadata and the session lookup index", () => {
     const currentMigrationsDirectory = NodePath.join(process.cwd(), "drizzle");
     const previousMigrationsDirectory = NodePath.join(directory, "drizzle-through-0057");
     copyMigrationsThrough(
       currentMigrationsDirectory,
       previousMigrationsDirectory,
-      "0057_system_notice_metadata",
+      TURN_DIFF_MIGRATION,
     );
 
     const previousDatabase = new Database(databasePath, {
@@ -589,18 +590,6 @@ describe("successful database migration recovery", () => {
       migrate(drizzle(previousDatabase), {
         migrationsFolder: migrationsFolderForDrizzle(previousMigrationsDirectory),
       });
-      const timestamp = "2026-09-05T12:00:00.000Z";
-      previousDatabase.prepare(
-        "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-      ).run("workspace-notices", "Notices", "C:/notices", timestamp, timestamp);
-      previousDatabase.prepare(
-        "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      ).run("thread-notices", "workspace-notices", "Notices", "main", "codex", "active", timestamp, timestamp);
-      const insertNotice = previousDatabase.prepare(
-        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, system_notice) VALUES (?, ?, 'system', ?, ?, ?, ?)",
-      );
-      insertNotice.run("notice-old", "thread-notices", "Old", timestamp, 1, '{"sessionId":"old-session"}');
-      insertNotice.run("notice-current", "thread-notices", "Current", timestamp, 2, '{"sessionId":"current-session"}');
     } finally {
       previousDatabase.close();
     }
@@ -608,9 +597,8 @@ describe("successful database migration recovery", () => {
     process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
     const upgradedDatabase = openDatabase({ dbPath: databasePath });
     try {
-      expect(upgradedDatabase.prepare(
-        "SELECT current_notice_session_id FROM threads WHERE id = ?",
-      ).get("thread-notices")).toEqual({ current_notice_session_id: "current-session" });
+      expect(columnNames(upgradedDatabase, "messages")).toContain("system_notice");
+      expect(columnNames(upgradedDatabase, "threads")).toContain("current_notice_session_id");
       expect(upgradedDatabase.prepare("PRAGMA index_list(messages)").all()).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: "idx_messages_notice_session_sequence", unique: 0 }),
       ]));

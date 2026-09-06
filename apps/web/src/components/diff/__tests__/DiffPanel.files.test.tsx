@@ -11,6 +11,7 @@ const transport = vi.hoisted(() => ({
   listWorkspaceFiles: vi.fn().mockResolvedValue(["src/App.tsx", "README.md"]),
   listSnapshots: vi.fn().mockResolvedValue([]),
   getSnapshotDiffStats: vi.fn().mockResolvedValue([]),
+  getTurnDiffComparison: vi.fn().mockResolvedValue(null),
   getCumulativeDiffStats: vi.fn().mockResolvedValue([]),
   getReviewComparison: vi.fn().mockResolvedValue({ files: [], additions: 0, deletions: 0 }),
 }));
@@ -48,14 +49,13 @@ vi.mock("../WorktreeFilesPane", () => ({
 }));
 
 vi.mock("../LastTurnView", () => ({
-  LastTurnView: ({ comparison, snapshotId, cacheVersion, refreshing, onRefresh }: {
+  LastTurnView: ({ comparison, cacheVersion, refreshing, onRefresh }: {
     comparison: ReviewComparison | null;
-    snapshotId: string | null;
     cacheVersion: string | number;
     refreshing: boolean;
     onRefresh: () => void;
   }) => (
-    <section data-testid="snapshot-diff" data-snapshot-id={snapshotId ?? ""} data-cache-version={cacheVersion}>
+    <section data-testid="snapshot-diff" data-snapshot-id={comparison?.turnDiff?.id ?? ""} data-cache-version={cacheVersion}>
       {comparison?.files.map((file) => file.path).join(",")}
       <button type="button" onClick={onRefresh} disabled={refreshing}>Refresh snapshot</button>
       {refreshing ? <span>Refreshing snapshot comparison</span> : null}
@@ -109,11 +109,16 @@ describe("DiffPanel worktree files", () => {
   function stats(path: string) {
     return [{ filePath: path, additions: 1, deletions: 0 }];
   }
+  function comparison(id: string, path: string): ReviewComparison {
+    return { files: [{ path, previousPath: null, changeType: "modified", binary: false }], additions: 1, deletions: 0,
+      turnDiff: { id, phase: "settled", source: "native", fidelity: "agent", revision: 1 } };
+  }
   beforeEach(() => {
     measuredWidth = 900;
     vi.clearAllMocks();
     transport.listSnapshots.mockReset().mockResolvedValue([]);
     transport.getSnapshotDiffStats.mockReset().mockResolvedValue([]);
+    transport.getTurnDiffComparison.mockReset().mockResolvedValue(null);
     transport.getCumulativeDiffStats.mockReset().mockResolvedValue([]);
     transport.getReviewComparison.mockReset().mockResolvedValue({ files: [], additions: 0, deletions: 0 });
     useWorkspaceStore.setState({
@@ -141,6 +146,36 @@ describe("DiffPanel worktree files", () => {
       "aria-pressed",
       "false",
     );
+  });
+
+  it.each([false, true])("finishes the first snapshot load so native Last turn can render, failed=%s", async (failed) => {
+    useDiffStore.setState({ snapshotsByThread: {} });
+    const firstLoad = deferred<TurnSnapshot[]>();
+    transport.listSnapshots.mockReturnValueOnce(firstLoad.promise);
+    transport.getTurnDiffComparison.mockResolvedValue(comparison("native-1", "agent.ts"));
+    render(<DiffPanel />);
+    expect(useDiffStore.getState().snapshotsLoadingByThread["thread-1"]).toBe(true);
+    if (failed) firstLoad.reject(new Error("Snapshot list unavailable"));
+    else firstLoad.resolve([]);
+    await waitFor(() => expect(useDiffStore.getState().snapshotsLoadingByThread["thread-1"]).toBe(false));
+    await waitFor(() => expect(screen.getByTestId("snapshot-diff")).toHaveTextContent("agent.ts"));
+    transport.getTurnDiffComparison.mockResolvedValue(comparison("native-2", "refreshed.ts"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Refresh snapshot" }));
+    await waitFor(() => expect(screen.getByTestId("snapshot-diff")).toHaveTextContent("refreshed.ts"));
+  });
+
+  it("hides invalidated Live files until the fresh comparison request settles", async () => {
+    const live: ReviewComparison = { ...comparison("live-1", "live.ts"),
+      turnDiff: { id: "live-1", phase: "live", source: "native", fidelity: "agent", revision: 1 } };
+    const reconnect = deferred<ReviewComparison>();
+    transport.getTurnDiffComparison.mockResolvedValueOnce(live).mockReturnValueOnce(reconnect.promise);
+    render(<DiffPanel />);
+    await waitFor(() => expect(screen.getByTestId("snapshot-diff")).toHaveTextContent("live.ts"));
+    act(() => { useDiffStore.getState().bumpDiffRevision("thread-1"); });
+    expect(screen.queryByText("live.ts")).not.toBeInTheDocument();
+    reconnect.resolve(comparison("settled-1", "settled.ts"));
+    await waitFor(() => expect(screen.getByTestId("snapshot-diff")).toHaveTextContent("settled.ts"));
+    expect(screen.getByTestId("snapshot-diff")).not.toHaveTextContent("live.ts");
   });
 
   it("starts closed in a compact diff and opens from the same toggle", async () => {
@@ -185,16 +220,16 @@ describe("DiffPanel worktree files", () => {
     expect(transport.listWorkspaceFiles).not.toHaveBeenCalled();
   });
 
-  it("keeps Last turn snapshot identity, diff, and Files atomic through refresh success and stats failure", async () => {
+  it("keeps Last turn identity, diff, and Files atomic through refresh success and comparison failure", async () => {
     const oldSnapshot = snapshot("snapshot-old", "old.ts");
     const nextSnapshot = snapshot("snapshot-next", "next.ts");
     const failedSnapshot = snapshot("snapshot-failed", "failed.ts");
-    const initialStats = deferred<ReturnType<typeof stats>>();
+    const initialStats = deferred<ReviewComparison>();
     const nextList = deferred<TurnSnapshot[]>();
-    const nextStats = deferred<ReturnType<typeof stats>>();
+    const nextStats = deferred<ReviewComparison>();
     const failedList = deferred<TurnSnapshot[]>();
-    const failedStats = deferred<ReturnType<typeof stats>>();
-    transport.getSnapshotDiffStats.mockReset()
+    const failedStats = deferred<ReviewComparison>();
+    transport.getTurnDiffComparison.mockReset()
       .mockReturnValueOnce(initialStats.promise)
       .mockReturnValueOnce(nextStats.promise)
       .mockReturnValueOnce(failedStats.promise);
@@ -208,7 +243,7 @@ describe("DiffPanel worktree files", () => {
     const user = userEvent.setup();
 
     render(<DiffPanel />);
-    initialStats.resolve(stats("old.ts"));
+    initialStats.resolve(comparison("snapshot-old", "old.ts"));
     await waitFor(() => expect(screen.getByTestId("snapshot-diff")).toHaveAttribute("data-snapshot-id", "snapshot-old"));
     await user.click(screen.getByRole("button", { name: "Files" }));
     expect(screen.getByTestId("snapshot-diff")).toHaveTextContent("old.ts");
@@ -216,19 +251,19 @@ describe("DiffPanel worktree files", () => {
 
     await user.click(screen.getByRole("button", { name: "Refresh snapshot" }));
     nextList.resolve([nextSnapshot]);
-    await waitFor(() => expect(transport.getSnapshotDiffStats).toHaveBeenCalledWith("snapshot-next"));
+    await waitFor(() => expect(transport.getTurnDiffComparison).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId("snapshot-diff")).toHaveAttribute("data-snapshot-id", "snapshot-old");
     expect(screen.getByTestId("snapshot-diff")).toHaveTextContent("old.ts");
     expect(screen.getByTestId("worktree-files")).toHaveTextContent("old.ts");
 
-    nextStats.resolve(stats("next.ts"));
+    nextStats.resolve(comparison("snapshot-next", "next.ts"));
     await waitFor(() => expect(screen.getByTestId("snapshot-diff")).toHaveAttribute("data-snapshot-id", "snapshot-next"));
     expect(screen.getByTestId("snapshot-diff")).toHaveTextContent("next.ts");
     expect(screen.getByTestId("worktree-files")).toHaveTextContent("next.ts");
 
     await user.click(screen.getByRole("button", { name: "Refresh snapshot" }));
     failedList.resolve([failedSnapshot]);
-    await waitFor(() => expect(transport.getSnapshotDiffStats).toHaveBeenCalledWith("snapshot-failed"));
+    await waitFor(() => expect(transport.getTurnDiffComparison).toHaveBeenCalledTimes(3));
     failedStats.reject(new Error("stats failed"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Refresh snapshot" })).toBeEnabled());
     expect(screen.getByTestId("snapshot-diff")).toHaveAttribute("data-snapshot-id", "snapshot-next");
@@ -286,6 +321,7 @@ describe("DiffPanel worktree files", () => {
   });
 
   it("ignores an unresolved snapshot refresh after the active scope changes", async () => {
+    transport.getTurnDiffComparison.mockResolvedValueOnce(comparison("snapshot-old", "old.ts"));
     const oldSnapshot = snapshot("snapshot-old", "old.ts");
     const staleList = deferred<TurnSnapshot[]>();
     transport.listSnapshots.mockReset().mockReturnValueOnce(staleList.promise);

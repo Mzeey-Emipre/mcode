@@ -1,24 +1,16 @@
+import { consoleRecoveryLogger, type RecoveryLogger } from "./logger.js";
+
 const SERVER_HEALTH_RESTART_WINDOW_MS = 60_000;
 
 const SERVER_HEALTH_RESTART_LIMIT = 3;
-
-interface ServerHealthRecoveryLogger {
-  log: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-}
 
 interface ServerHealthRecoveryDeps {
   isHealthy: () => Promise<boolean>;
   restart: () => Promise<void>;
   showError: () => Promise<void> | void;
   now?: () => number;
-  logger?: ServerHealthRecoveryLogger;
+  logger?: RecoveryLogger;
 }
-
-const defaultLogger: ServerHealthRecoveryLogger = {
-  log: (...args) => console.log(...args),
-  error: (...args) => console.error(...args),
-};
 
 /** Coalesces health checks and performs bounded silent server recovery. */
 export class ServerHealthRecovery {
@@ -26,7 +18,7 @@ export class ServerHealthRecovery {
   private readonly restart: () => Promise<void>;
   private readonly showError: () => Promise<void> | void;
   private readonly now: () => number;
-  private readonly logger: ServerHealthRecoveryLogger;
+  private readonly logger: RecoveryLogger;
   private silentRestartTimestamps: number[] = [];
   private inFlight: Promise<void> | null = null;
 
@@ -35,7 +27,7 @@ export class ServerHealthRecovery {
     this.restart = deps.restart;
     this.showError = deps.showError;
     this.now = deps.now ?? Date.now;
-    this.logger = deps.logger ?? defaultLogger;
+    this.logger = deps.logger ?? consoleRecoveryLogger;
   }
 
   ensureServerRunning(): Promise<void> {

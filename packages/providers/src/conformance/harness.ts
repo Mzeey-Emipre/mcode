@@ -177,6 +177,7 @@ function createCursorAcpTraceReplay(trace: CursorAcpTraceFixture): CursorAcpTrac
   const bridge = new CursorAcpClientBridge({
     settings: { get: () => ({ provider: { cursor: {} } }) as never },
     publishEvent: (_entry, event) => emittedEvents.push(event),
+    publishNativeTurnDiff: () => undefined,
     emitPermissionRequest: () => undefined,
     emitPermissionResolved: () => undefined,
     emitExitPlanMode: (args) => planExits.push(args),

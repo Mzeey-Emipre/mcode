@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSPromises from "node:fs/promises";
 import * as NodePath from "node:path";
+import { createTextPatch } from "@mcode/shared";
 import type { FileEffect, TurnFileEffectSummary } from "@mcode/contracts";
 import { MAX_TURN_FILE_EFFECTS } from "@mcode/contracts";
 import { normalizeFilesystemPath } from "../../../shared/filesystem/path-identity.js";
@@ -63,10 +64,14 @@ interface TrackedPath {
   current: FileState;
   effectCandidate?: EffectCandidate | null;
   providerConfirmed: boolean;
+  evidenceBefore?: string;
+  evidenceAfter?: string;
+  evidenceRejected?: boolean;
   toolCallIds: Set<string>;
 }
 
 interface TurnState {
+  reconstructionRejected?: boolean;
   generation: number;
   cwd: string;
   canonicalRoot: string;
@@ -207,6 +212,19 @@ export class TurnFileTracker {
     return turn.summary;
   }
 
+  /** Reconstruct a bounded patch only from complete explicit file-tool evidence. */
+  async reconstructionPatch(threadId: string, generation?: number): Promise<string | undefined> {
+    const turn = this.getTurn(threadId, generation);
+    if (!turn || turn.reconstructionRejected) return undefined;
+    await turn.chain;
+    const tracked = [...turn.tracked.values()].filter((entry) => entry.scope === "workspace" && entry.effectCandidate);
+    if (tracked.length !== turn.summary.fileCount || tracked.some((entry) => entry.evidenceRejected || entry.evidenceBefore === undefined || entry.evidenceAfter === undefined || entry.oldPath !== undefined)) return undefined;
+    const patches = tracked.map((entry) => createTextPatch(entry.displayPath.replaceAll("\\", "/"), entry.evidenceBefore!, entry.evidenceAfter!, entry.effectCandidate!.effect.kind === "added" ? "added" : entry.effectCandidate!.effect.kind === "removed" ? "removed" : "edited"));
+    if (patches.some((patch) => patch === undefined)) return undefined;
+    const patch = patches.join("");
+    return Buffer.byteLength(patch) <= 2_097_152 ? patch || undefined : undefined;
+  }
+
   /** Clear a completed turn after its summary has been persisted. */
   clearTurn(threadId: string, generation?: number): void {
     const target = generation ?? this.currentGeneration.get(threadId);
@@ -305,8 +323,9 @@ export class TurnFileTracker {
     const paths = await this.candidatePaths(turn, candidate, observation);
     if (!paths) return;
     const existing = turn.tracked.get(paths.resolvedPath.path);
-    if (existing) return this.updateTrackedCandidate(turn, existing, toolCallId, candidate, observation, paths.validOldPath);
-    await this.trackCandidate(turn, toolCallId, candidate, observation, paths.resolvedPath, paths.validOldPath);
+    if (existing) await this.updateTrackedCandidate(turn, existing, toolCallId, candidate, observation, paths.validOldPath);
+    else await this.trackCandidate(turn, toolCallId, candidate, observation, paths.resolvedPath, paths.validOldPath);
+    boundReconstructionEvidence(turn);
   }
 
   private async candidatePaths(
@@ -349,6 +368,7 @@ export class TurnFileTracker {
   ): Promise<void> {
     existing.toolCallIds.add(toolCallId);
     existing.providerConfirmed ||= candidate.providerConfirmed === true;
+    updateTrackedEvidence(existing, candidate);
     existing.effectCandidate = undefined;
     if (existing.operationHint !== "rename" || candidate.operationHint === "rename") {
       existing.operationHint = candidate.operationHint;
@@ -389,6 +409,7 @@ export class TurnFileTracker {
       baseline,
       current: baseline,
       providerConfirmed: candidate.providerConfirmed === true,
+      ...(candidate.beforeText !== undefined && candidate.afterText !== undefined ? { evidenceBefore: candidate.beforeText, evidenceAfter: candidate.afterText } : { evidenceRejected: true }),
       toolCallIds: new Set([toolCallId]),
     });
   }
@@ -401,7 +422,9 @@ export class TurnFileTracker {
     observedBaseline: FileState | null | undefined,
     acceptsEvidence: boolean,
   ): Promise<FileState> {
-    if (acceptsEvidence && candidate.beforeText !== undefined) return stateFromEvidenceText(candidate.beforeText);
+    if (acceptsEvidence && candidate.beforeText !== undefined) {
+      return operationHint === "add" && candidate.beforeText === "" ? missingState() : stateFromEvidenceText(candidate.beforeText);
+    }
     if (candidate.providerConfirmed === true) {
       return this.readProviderConfirmedBaseline(turn, resolvedPath, operationHint, observedBaseline ?? undefined);
     }
@@ -470,6 +493,37 @@ export class TurnFileTracker {
   }
 }
 
+function boundReconstructionEvidence(turn: TurnState): void {
+  const bytes = [...turn.tracked.values()].reduce((total, entry) => total
+    + Buffer.byteLength(entry.evidenceBefore ?? "") + Buffer.byteLength(entry.evidenceAfter ?? ""), 0);
+  if (bytes <= 2_097_152 && !turn.reconstructionRejected) return;
+  turn.reconstructionRejected = true;
+  for (const entry of turn.tracked.values()) {
+    entry.evidenceBefore = undefined;
+    entry.evidenceAfter = undefined;
+    entry.evidenceRejected = true;
+  }
+}
+
+function updateTrackedEvidence(existing: TrackedPath, candidate: MutationCandidate): void {
+  if (existing.evidenceBefore === candidate.beforeText && existing.evidenceAfter === candidate.afterText) return;
+  if (existing.evidenceRejected || candidate.beforeText === undefined || candidate.afterText === undefined) {
+    existing.evidenceRejected = true;
+    existing.evidenceBefore = undefined;
+    existing.evidenceAfter = undefined;
+    return;
+  }
+  if (existing.evidenceAfter !== undefined && existing.evidenceAfter !== candidate.beforeText) {
+    existing.evidenceBefore = undefined;
+    existing.evidenceAfter = undefined;
+    existing.evidenceRejected = true;
+    return;
+  }
+  existing.evidenceBefore ??= candidate.beforeText;
+  existing.evidenceAfter = candidate.afterText;
+}
+
+
 function toolGenerationKey(threadId: string, toolCallId: string): string {
   return `${threadId}\0${toolCallId}`;
 }
@@ -530,11 +584,15 @@ function collectMutationCandidates(
   const seenPaths = new Set<string>();
   for (const value of values) {
     if (candidates.length >= MAX_TURN_FILE_EFFECTS) break;
-    const candidate = candidateFor(value);
-    if (!candidate) continue;
-    const identity = `${candidate.path}\0${candidate.oldPath ?? ""}`;
+    const record = mutationRecord(value);
+    const rawPath = record?.path;
+    if (!record || typeof rawPath !== "string") continue;
+    const rawOldPath = pickString(record, ["oldPath", "old_path", "sourcePath", "source_path", "from"]);
+    const identity = `${rawPath}\0${rawOldPath ?? ""}`;
     if (seenPaths.has(identity)) continue;
     seenPaths.add(identity);
+    const candidate = candidateFor(value);
+    if (!candidate) continue;
     candidates.push(candidate);
   }
   return candidates;

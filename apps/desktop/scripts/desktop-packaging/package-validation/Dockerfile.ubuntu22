@@ -1,0 +1,39 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN printf '%s\n' \
+      'Acquire::Retries "2";' \
+      'Acquire::http::Timeout "20";' \
+      'Acquire::https::Timeout "20";' \
+      > /etc/apt/apt.conf.d/99mcode-network-timeouts \
+    && timeout 3m apt-get update \
+    && timeout 5m apt-get install -y --no-install-recommends \
+      ca-certificates \
+      file \
+      fuse \
+      libasound2 \
+      libatk-bridge2.0-0 \
+      libatk1.0-0 \
+      libatspi2.0-0 \
+      libcups2 \
+      libdrm2 \
+      libgbm1 \
+      libgtk-3-0 \
+      libnss3 \
+      libnotify4 \
+      libsecret-1-0 \
+      libuuid1 \
+      libx11-xcb1 \
+      libxcb-dri3-0 \
+      libxcomposite1 \
+      libxdamage1 \
+      libxfixes3 \
+      libxkbcommon0 \
+      libxrandr2 \
+      libxss1 \
+      libxtst6 \
+      libxshmfence1 \
+      xauth \
+      xdg-utils \
+      xvfb

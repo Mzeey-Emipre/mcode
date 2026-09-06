@@ -36,6 +36,19 @@ export interface ProviderFileMutationStart {
   toolInput: Record<string, unknown>;
 }
 
+/** Complete provider-native patch update, bound to Mcode's dispatched turn identity. */
+export type ProviderTurnDiffUpdate = {
+  turnId: string;
+  turnExecutionId: string;
+  deliveryAttempt: number;
+  revision: number;
+} & ({ state: "snapshot"; patch: string; nativeFidelity: "agent" } | { state: "indeterminate-empty" } | { state: "invalidated" } | { state: "rejected" });
+
+/** Optional provider capability that pushes complete native turn-diff updates. */
+export interface ITurnDiffSource {
+  onTurnDiff(handler: (event: ProviderTurnDiffUpdate) => void): () => void;
+}
+
 /**
  * Per-Provider knobs that ride on a {@link TurnRequest}, keyed by {@link ProviderId}.
  * Generic call sites cannot reach into the wrong Provider's knobs because the
@@ -212,6 +225,11 @@ export function isChildTurnCancellable(provider: IAgentProvider): provider is IC
     && candidate.descriptor?.capabilities.some((capability) => (
       capability.name === "child-cancellation" && capability.support === "supported"
     )) === true;
+}
+
+/** Narrow a provider that exposes native turn-diff updates. */
+export function isTurnDiffSource(provider: IAgentProvider): provider is IAgentProvider & ITurnDiffSource {
+  return typeof (provider as Partial<ITurnDiffSource>).onTurnDiff === "function";
 }
 
 /**

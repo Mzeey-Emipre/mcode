@@ -117,7 +117,7 @@ export function maxPanelWidthInSplit(
 
 /** Currently selected file for diff viewing. */
 export interface SelectedFile {
-  source: "snapshot" | "cumulative" | "commit" | "unstaged" | "staged" | "branch";
+  source: "snapshot" | "turn-diff" | "cumulative" | "commit" | "unstaged" | "staged" | "branch";
   /**
    * Identifier resolving the diff for {@link source}: the snapshot ID for
    * `"snapshot"`, the thread ID for `"cumulative"`, the commit SHA for
@@ -1037,6 +1037,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete nextPending[threadId];
       return {
         snapshotsByThread: { ...s.snapshotsByThread, [threadId]: snapshots },
+        snapshotsLoadingByThread: { ...s.snapshotsLoadingByThread, [threadId]: false },
         snapshotsPendingByThread: nextPending,
         inlineDiffCache: omitInlineDiffCacheByPrefix(
           s.inlineDiffCache,

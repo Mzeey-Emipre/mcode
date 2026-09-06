@@ -1,3 +1,4 @@
+ALTER TABLE `messages` ADD `system_notice` text;--> statement-breakpoint
 ALTER TABLE `threads` ADD `current_notice_session_id` text;--> statement-breakpoint
 UPDATE `threads`
 SET `current_notice_session_id` = (

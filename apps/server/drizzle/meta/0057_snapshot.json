@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "f12f9322-8ca2-4d61-bdae-e80ebd6762a0",
+  "id": "e9f8acfa-0049-4372-a088-af0ea20acc55",
   "prevId": "56c6518d-ac9d-4841-b991-d68051996155",
   "tables": {
     "canonical_agent_events": {
@@ -1584,13 +1584,6 @@
         },
         "outcome_execution_id": {
           "name": "outcome_execution_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "system_notice": {
-          "name": "system_notice",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -3718,6 +3711,122 @@
           "tableTo": "messages",
           "columnsFrom": [
             "message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "turn_diff_snapshots": {
+      "name": "turn_diff_snapshots",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fidelity": {
+          "name": "fidelity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patch": {
+          "name": "patch",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+        }
+      },
+      "indexes": {
+        "idx_turn_diff_snapshots_message": {
+          "name": "idx_turn_diff_snapshots_message",
+          "columns": [
+            "message_id"
+          ],
+          "isUnique": true
+        },
+        "idx_turn_diff_snapshots_thread": {
+          "name": "idx_turn_diff_snapshots_thread",
+          "columns": [
+            "thread_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "turn_diff_snapshots_message_id_messages_id_fk": {
+          "name": "turn_diff_snapshots_message_id_messages_id_fk",
+          "tableFrom": "turn_diff_snapshots",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "turn_diff_snapshots_thread_id_threads_id_fk": {
+          "name": "turn_diff_snapshots_thread_id_threads_id_fk",
+          "tableFrom": "turn_diff_snapshots",
+          "tableTo": "threads",
+          "columnsFrom": [
+            "thread_id"
           ],
           "columnsTo": [
             "id"

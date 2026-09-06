@@ -1,5 +1,9 @@
 # Multi-surface journeys
 
+## Cross-provider Last turn Review
+
+Use the [turn-diff Review feature](turn-diff-review.md) for selectors and evidence requirements. Run equivalent Composer edits in one owned fixture workspace with Codex, Cursor, and Claude. Open Last turn Review through the same controls, capture the selected source and patch, and compare them with the resulting file and public comparison response. Reload each completed thread and confirm that its source and patch persist. Record unavailable providers as coverage gaps. Remove only owned threads and fixture state.
+
 Read this file when a change crosses product surfaces. Use the linked feature files for selectors and surface-specific proof.
 
 ## Provider completion and durable conversation
@@ -101,6 +105,8 @@ Use `thread-lifecycle proof --confirm-cleanup` for the desktop action and receip
 Use the selected-text-comments Electron proof for real transcript pointer input, provider catalog, file list, aggregate cards, source markers, marker deletion, and direct card actions. Use focused composer-session tests for thread-switch editor restoration. The proof does not send a provider turn. Focused server and web tests cover existing-thread text plus comments, comment-only provider input, durable user and assistant source metadata, and sent read-only chips.
 
 ## Coverage gaps
+
+For native Last turn changes, run the [Last turn native diff](turn-diff-review.md) journey through the composer, Review, external same-file edit, completion, reopen, reconnect, and Stop. Retain rendered screenshots and exact public comparison responses. This crosses the Codex adapter, orchestration, persistence, and shared web/Electron Review UI.
 
 - The provider workflows need an available model and a logged-in provider CLI. Record missing access as a blocked provider path.
 - The public subscription begins after thread creation. It cannot show lossless events before creation.

@@ -33,6 +33,7 @@ import type { TurnFileEffectSummary } from "@mcode/contracts";
 import type { ParentTurnDurability } from "./parent-turn-durability.js";
 import type { ParentAssistantTextCheckpointService } from "./parent-assistant-text-checkpoint-service.js";
 import { deriveTurnAssistantMessageId } from "./turn-assistant-message-id.js";
+import type { TurnDiffService, SettleTurnDiff } from "./turn-diff-service.js";
 
 /** Pre-turn git ref captured at send time, used to diff the turn's file changes. */
 interface TurnRef {
@@ -94,6 +95,7 @@ export class TurnFinalizer {
   private readonly materializedThreads = new Set<string>();
   /** Serializes finalize calls per thread so a slow git snapshot cannot drop a later turn. */
   private readonly finalizeChainByThread = new Map<string, Promise<void>>();
+  private readonly pendingDiffSettlement = new Map<string, { executionId: string | undefined; settle: SettleTurnDiff }>();
 
   constructor(
     private readonly messageRepo: MessageRepo,
@@ -105,6 +107,7 @@ export class TurnFinalizer {
     private readonly turnFileTracker?: TurnFileTracker,
     private readonly canonicalSink?: ParentTurnDurability,
     private readonly parentAssistantTextCheckpoints?: ParentAssistantTextCheckpointService,
+    private readonly turnDiffs?: TurnDiffService,
   ) {}
 
   /** Append a streaming assistant-text delta for the current turn. */
@@ -243,10 +246,12 @@ export class TurnFinalizer {
     executionId?: string,
   ): Promise<void> {
     const turnRef = this.turnRefBefore.get(threadId);
+    const settleDiff = this.prepareDiffSettlement(threadId, executionId, outcome);
     const tail = this.finalizeChainByThread.get(threadId) ?? Promise.resolve();
     const next = tail.then(async () => {
       await prerequisite;
-      await this.runFinalizeOnce(threadId, executionId, outcome, turnRef);
+      await this.runFinalizeOnce(threadId, executionId, outcome, turnRef, settleDiff);
+      if (this.pendingDiffSettlement.get(threadId)?.settle === settleDiff) this.pendingDiffSettlement.delete(threadId);
     });
     this.finalizeChainByThread.set(threadId, next);
     try {
@@ -258,22 +263,31 @@ export class TurnFinalizer {
     }
   }
 
+  private prepareDiffSettlement(threadId: string, executionId: string | undefined, outcome: TurnOutcome): SettleTurnDiff | undefined {
+    const pending = this.pendingDiffSettlement.get(threadId);
+    if (pending && pending.executionId === executionId) return pending.settle;
+    const settle = this.turnDiffs?.prepareFinalization(threadId, executionId, outcome);
+    if (settle) this.pendingDiffSettlement.set(threadId, { executionId, settle });
+    return settle;
+  }
+
   /** Runs one finalize pass; concurrent calls for the same thread are queued by {@link finalize}. */
   private async runFinalizeOnce(
     threadId: string,
     executionId: string | undefined,
     outcome: TurnOutcome,
     turnRef: TurnRef | undefined,
+    settleDiff: SettleTurnDiff | undefined,
   ): Promise<void> {
     if (this.persistingThreads.has(threadId)) return;
     this.persistingThreads.add(threadId);
     try {
       const canonicalTurnId = this.canonicalTurnId(executionId);
       if (canonicalTurnId && executionId) {
-        await this.runCanonicalFinalize(threadId, executionId, canonicalTurnId, outcome, turnRef);
+        await this.runCanonicalFinalize(threadId, executionId, canonicalTurnId, outcome, turnRef, settleDiff);
         return;
       }
-      await this.runCompatibilityFinalize(threadId, executionId, outcome, turnRef);
+      await this.runCompatibilityFinalize(threadId, executionId, outcome, turnRef, settleDiff);
     } finally {
       this.persistingThreads.delete(threadId);
     }
@@ -288,6 +302,7 @@ export class TurnFinalizer {
     executionId: string | undefined,
     outcome: TurnOutcome,
     turnRef: TurnRef | undefined,
+    settleDiff: SettleTurnDiff | undefined,
   ): Promise<void> {
     if (!this.hasRecordableActivity(threadId)) {
       this.discardUnmaterializedTurn(threadId, turnRef);
@@ -298,7 +313,7 @@ export class TurnFinalizer {
       this.discardUnmaterializedTurn(threadId, turnRef);
       return;
     }
-    await this.persistCompatibilityFinalize(threadId, executionId, outcome, turnRef, materialized);
+    await this.persistCompatibilityFinalize(threadId, executionId, outcome, turnRef, materialized, settleDiff);
   }
 
   private discardUnmaterializedTurn(threadId: string, turnRef: TurnRef | undefined): void {
@@ -312,6 +327,7 @@ export class TurnFinalizer {
     outcome: TurnOutcome,
     turnRef: TurnRef | undefined,
     materialized: MaterializedAssistantRow,
+    settleDiff: SettleTurnDiff | undefined,
   ): Promise<void> {
     this.messageRepo.setAssistantOutcome(materialized.id, outcome, executionId);
     this.lastPersistedMessageIdByThread.set(threadId, materialized.id);
@@ -323,6 +339,7 @@ export class TurnFinalizer {
     );
     const fileEffects = await this.finalizeFileEffects(threadId, turnRef);
     const filesChanged = await this.captureSnapshot(threadId, materialized.id, turnRef, fileEffects);
+    settleDiff?.(materialized.id, fileEffects, await this.reconstructionPatch(threadId, turnRef));
     broadcast("turn.persisted", {
       threadId,
       turnId: turnRef?.fileTrackerGeneration !== undefined ? String(turnRef.fileTrackerGeneration) : null,
@@ -345,6 +362,10 @@ export class TurnFinalizer {
       : undefined;
   }
 
+  private reconstructionPatch(threadId: string, turnRef: TurnRef | undefined): Promise<string | undefined> {
+    return this.turnFileTracker?.reconstructionPatch(threadId, turnRef?.fileTrackerGeneration) ?? Promise.resolve(undefined);
+  }
+
   /** Persist one canonical parent turn and its compatibility projection in one transaction. */
   private async runCanonicalFinalize(
     threadId: string,
@@ -352,6 +373,7 @@ export class TurnFinalizer {
     turnId: string,
     outcome: TurnOutcome,
     turnRef: TurnRef | undefined,
+    settleDiff: SettleTurnDiff | undefined,
   ): Promise<void> {
     const canonical = this.requireCanonicalThread(threadId, executionId);
     const projection = await this.createCanonicalProjection(threadId, executionId, outcome);
@@ -377,7 +399,7 @@ export class TurnFinalizer {
       return;
     }
     await this.completeCanonicalFinalize(
-      threadId, executionId, turnId, outcome, turnRef, projection, materialized, !projection.materialized,
+      threadId, executionId, turnId, outcome, turnRef, projection, materialized, !projection.materialized, settleDiff,
     );
   }
 
@@ -491,6 +513,7 @@ export class TurnFinalizer {
     projection: CanonicalProjection,
     materialized: MaterializedAssistantRow,
     replayedTerminal: boolean,
+    settleDiff: SettleTurnDiff | undefined,
   ): Promise<void> {
     this.parentAssistantTextCheckpoints?.retire(executionId);
     this.commitAssistantMaterialization(threadId);
@@ -498,6 +521,7 @@ export class TurnFinalizer {
     this.broadcastMaterializedAssistant(threadId, materialized);
     const fileEffects = await this.finalizeFileEffects(threadId, turnRef);
     const filesChanged = await this.captureSnapshot(threadId, materialized.id, turnRef, fileEffects, replayedTerminal);
+    settleDiff?.(materialized.id, fileEffects, await this.reconstructionPatch(threadId, turnRef));
     broadcast("turn.persisted", {
       threadId,
       turnId,

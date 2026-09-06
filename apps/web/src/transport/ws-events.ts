@@ -428,6 +428,11 @@ export function startPushListeners(): void {
   );
 
   // turn.persisted: server has persisted tool calls for a completed turn
+  unsubs.push(pushEmitter.on("turn.diffChanged", (data) => {
+    const parsed = WS_CHANNELS["turn.diffChanged"].safeParse(data);
+    if (parsed.success) useDiffStore.getState().bumpDiffRevision(parsed.data.threadId);
+  }));
+
   unsubs.push(
     pushEmitter.on("turn.fileEffectsUpdated", (data) => {
       const payload = data as { threadId: string; turnId: string; summary: TurnFileEffectSummary };

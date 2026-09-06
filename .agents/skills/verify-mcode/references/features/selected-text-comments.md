@@ -3,6 +3,7 @@
 ## Sub-features
 
 - A pointer drag across selected assistant text exposes an `Add comment` action.
+- Subagent details retain text selection but expose no `Add comment` action or comment editor. Main agent comments remain available.
 - A pointer drag across text in several assistant list items exposes the same action.
 - The action and compact editor prefer an 8px gap from the last visible selected-range rect, not the pointer release point, and flip or clamp at viewport edges.
 - An open editor docks 8px from the nearest transcript edge after its source scrolls out. It reconstructs the current source range and reanchors when the source returns.
@@ -49,6 +50,8 @@ The first Electron launch initializes `.dev/electron-live-testing/runtime/db/app
 11. Run `bun run --shell system agent:down`.
 
 The verifier writes `.dev/verification/selected-text-comments-action.png`, `.dev/verification/selected-text-comments-editor.png`, `.dev/verification/selected-text-comments-result.png`, and `.dev/verification/selected-text-comments.json`. The proof first selects the full list and checks that the action appears with the preferred 8px source-range gap. It then runs the editor workflow from one list item. It validates source docking and reconstructed-range reanchoring after scroll, two multiline saves, persistent highlights, numbered markers, marker keyboard editing and deletion, aggregate card navigation and deletion, aggregate removal, and dirty dismissal states. It also checks compact-editor text alignment and popup paint order over a source highlight. It covers a real secondary pointer click that the app does not prevent, editor focus and control boundaries, and typed skill and file chips.
+
+The proof also opens the owned child through the Subagents panel and selects its assistant text with a pointer drag. It checks that no comment action or editor appears and captures `.dev/verification/selected-text-comments-subagent.png`. Setup creates this child and its prompt/reply pair; cleanup removes it with the parent fixture.
 
 ## Provider input and sent records
 

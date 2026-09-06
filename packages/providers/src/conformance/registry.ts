@@ -45,6 +45,7 @@ export const ENABLED_PROVIDER_CONFORMANCE: readonly ProviderConformanceRegistrat
       "browser-access",
       "thread-control",
       "child-cancellation",
+      "turn-diff",
     ],
     fixtureFiles: [
       fixtureFile("codex"),

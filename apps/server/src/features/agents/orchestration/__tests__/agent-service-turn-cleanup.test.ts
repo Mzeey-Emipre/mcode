@@ -18,6 +18,8 @@ import type {
   ProviderId,
   PreviewAnnotationBundle,
   Thread,
+  TurnRequest,
+  ProviderTurnDiffUpdate,
 } from "@mcode/contracts";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -31,6 +33,7 @@ import { AgentService } from "../agent-service.js";
 import { PlanTurnService } from "../../planning/plan-turn-service.js";
 import {
   createAgentServiceForTest,
+  turnDiffsForAgentServiceTest,
   fileTrackerForAgentServiceTest,
   startAgentServiceIngressForTest,
   startProviderTurnForTest,
@@ -1254,6 +1257,7 @@ describe("AgentService turn cleanup", () => {
 });
 
 describe("AgentService Ended finalization", () => {
+  let lastTurnRequest: TurnRequest | undefined;
   let db: Database.Database;
   let threadRepo: RealThreadRepo;
   let workspaceRepo: RealWorkspaceRepo;
@@ -1270,6 +1274,7 @@ describe("AgentService Ended finalization", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    lastTurnRequest = undefined;
     db = openMemoryDatabase();
     canonicalEvents = [];
     threadRepo = new RealThreadRepo(db);
@@ -1283,7 +1288,11 @@ describe("AgentService Ended finalization", () => {
       descriptor: {
         capabilities: [{ name: "child-cancellation", support: "supported" }],
       },
-      sendTurn: vi.fn(() => Promise.resolve()),
+      sendTurn: vi.fn((request: TurnRequest) => { lastTurnRequest = request; return Promise.resolve(); }),
+      onTurnDiff: (listener: (update: ProviderTurnDiffUpdate) => void) => {
+        providerEmitter.on("turn-diff", listener);
+        return () => { providerEmitter.off("turn-diff", listener); };
+      },
       stopSession: vi.fn(),
       interruptChildTurn: vi.fn(() => Promise.resolve()),
       shutdown: vi.fn(),
@@ -1898,6 +1907,15 @@ describe("AgentService Ended finalization", () => {
       provider: "codex",
     });
     const executionId = activeExecutionId(service, thread.id);
+    if (!lastTurnRequest) throw new Error("Expected dispatched provider request");
+    const update: ProviderTurnDiffUpdate = {
+      turnId: lastTurnRequest.turnId, turnExecutionId: executionId,
+      deliveryAttempt: lastTurnRequest.deliveryAttempt ?? 1, revision: 1, state: "snapshot", nativeFidelity: "agent",
+      patch: "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n",
+    };
+    providerEmitter.emit("turn-diff", update);
+    const turnDiffs = turnDiffsForAgentServiceTest(service);
+    expect(turnDiffs.liveComparison(thread.id)?.files.map((file) => file.path)).toEqual(["a.txt"]);
 
     providerEmitter.emit("event", {
       type: AgentEventType.Ended,
@@ -1914,6 +1932,10 @@ describe("AgentService Ended finalization", () => {
     });
     expect(threadRepo.findById(thread.id)?.status).toBe("active");
     expect(service.runtimeAccess().activeThreadIds()).not.toContain(thread.id);
+    expect(turnDiffs.liveComparison(thread.id)).toBeNull();
+    expect(turnDiffs.latest(thread.id)).toBeUndefined();
+    providerEmitter.emit("turn-diff", { ...update, revision: 2 });
+    expect(turnDiffs.liveComparison(thread.id)).toBeNull();
   });
 
   it("maps provider-cancelled Ended to the recoverable interrupted outcome", async () => {

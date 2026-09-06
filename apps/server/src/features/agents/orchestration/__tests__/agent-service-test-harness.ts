@@ -1,4 +1,6 @@
 import type Database from "better-sqlite3";
+import { TurnDiffService } from "../../turns/turn-diff-service.js";
+import { TurnDiffRepo } from "../../turns/persistence/turn-diff-repo.js";
 import { container, Lifecycle } from "tsyringe";
 import type {
   AgentEvent,
@@ -63,6 +65,14 @@ const testProviderTurnStarts = new WeakMap<AgentService, (threadId: string) => s
 const testFinalizers = new WeakMap<AgentService, TurnFinalizer>();
 const testMessageRepos = new WeakMap<AgentService, MessageRepo>();
 const testTrackers = new WeakMap<AgentService, TurnFileTracker>();
+const testTurnDiffs = new WeakMap<AgentService, TurnDiffService>();
+
+/** Read the real native evidence service wired through the test runtime and ingress. */
+export function turnDiffsForAgentServiceTest(service: AgentService): TurnDiffService {
+  const turnDiffs = testTurnDiffs.get(service);
+  if (!turnDiffs) throw new Error("Agent service was not created by this harness");
+  return turnDiffs;
+}
 const testGoalLifecycles = new WeakMap<AgentService, GoalLifecycleService>();
 
 /** Wrap test provider events at the same runtime boundary as real providers. */
@@ -182,6 +192,7 @@ export function createAgentServiceForTest(
   threadStartups?: ThreadStartupService,
 ): AgentService {
   if (!parentDurability) throw new Error("Parent turn durability is required by the test harness");
+  const turnDiffs = new TurnDiffService(new TurnDiffRepo(db));
   const tracker = new TurnFileTracker(
     (cwd, ref, path) => snapshotService.getFileAtRef(cwd, ref, path),
     () => undefined,
@@ -197,6 +208,7 @@ export function createAgentServiceForTest(
     tracker,
     parentDurability,
     parentAssistantTextCheckpoints,
+    turnDiffs,
   );
   const fileEffects = new TurnFileEffects(
     threadRepo,
@@ -297,6 +309,7 @@ export function createAgentServiceForTest(
   testContainer.registerInstance(NarrativeStore, narrativeStore);
   testContainer.registerInstance(ParentAssistantTextCheckpointService, parentAssistantTextCheckpoints);
   testContainer.registerInstance("Database", db);
+  testContainer.registerInstance(TurnDiffService, turnDiffs);
   testContainer.register<TurnRuntimeEventControl>(TURN_RUNTIME_EVENT_CONTROL, {
     useFactory: (c) => c.resolve(TurnRuntimeController),
   });
@@ -312,6 +325,7 @@ export function createAgentServiceForTest(
   testContinuations.set(service, continuation);
   testProviderTurnStarts.set(service, (threadId) => runtimeController.beginProviderTurn(threadId));
   testTrackers.set(service, tracker);
+  testTurnDiffs.set(service, turnDiffs);
   testGoalLifecycles.set(service, resolvedGoals);
   return service;
 }

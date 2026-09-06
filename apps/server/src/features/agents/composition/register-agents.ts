@@ -16,6 +16,8 @@ import { NarrativeStore } from "../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../planning/plan-question-service.js";
 import { PlanQuestionAnswersRepo } from "../planning/persistence/plan-question-answers-repo.js";
 import { TurnSnapshotRepo } from "../turns/persistence/turn-snapshot-repo.js";
+import { TurnDiffService } from "../turns/turn-diff-service.js";
+import { TurnDiffRepo } from "../turns/persistence/turn-diff-repo.js";
 import {
   CODEX_COLLABORATION_DURABILITY,
   type CodexCollaborationDurability,
@@ -80,6 +82,12 @@ import { TurnRuntimeController } from "../orchestration/turn-runtime-controller.
 
 /** Register agent orchestration, event, recovery, and planning services. */
 export function registerAgentServices(container: DependencyContainer): void {
+  container.register(TurnDiffService, {
+    useFactory: instanceCachingFactory((c) => new TurnDiffService(
+      new TurnDiffRepo(c.resolve("Database")),
+      (threadId) => broadcast("turn.diffChanged", { threadId }),
+    )),
+  });
   container.register(
     NarrativeStore,
     { useClass: NarrativeStore },
@@ -184,6 +192,7 @@ export function registerAgentServices(container: DependencyContainer): void {
       c.resolve<TurnFileTracker>(TURN_FILE_TRACKER),
       c.resolve(PARENT_TURN_DURABILITY),
       c.resolve(ParentAssistantTextCheckpointService),
+      c.resolve(TurnDiffService),
     )),
   });
   container.register<TurnFileEffects>(TURN_FILE_EFFECTS, {

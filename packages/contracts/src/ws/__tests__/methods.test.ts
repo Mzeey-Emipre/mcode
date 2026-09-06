@@ -8,6 +8,15 @@ void automaticSetupMethod;
 void unknownMethod;
 
 describe("thread switching WebSocket contracts", () => {
+  it("bounds Last turn identities and preserves the settled-only request", () => {
+    const comparison = WS_METHODS()["turnDiff.getComparison"].params;
+    expect(comparison.parse({ threadId: "t".repeat(256), includeLive: false })).toEqual({ threadId: "t".repeat(256), includeLive: false });
+    const file = WS_METHODS()["turnDiff.getFileDiff"].params;
+    const valid = { threadId: "thread-1", comparisonId: "c".repeat(512), filePath: "a.txt" };
+    expect(file.parse(valid)).toEqual(valid);
+    for (const threadId of ["", "t".repeat(257)]) expect(comparison.safeParse({ threadId }).success).toBe(false);
+    for (const comparisonId of ["", "c".repeat(513)]) expect(file.safeParse({ ...valid, comparisonId }).success).toBe(false);
+  });
   it("keeps WebSocket methods closed at runtime", () => {
     expect(WS_METHODS()).toHaveProperty("workspace.environment.automaticSetup.get");
     expect(WS_METHODS()).not.toHaveProperty("workspace.environment.automaticSetup.unknown");

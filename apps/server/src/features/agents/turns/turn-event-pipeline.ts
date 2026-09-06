@@ -1,4 +1,5 @@
-import type { AgentEvent, ProviderFileMutationStart } from "@mcode/contracts";
+import type { AgentEvent, ProviderFileMutationStart, ProviderTurnDiffUpdate } from "@mcode/contracts";
+import type { TurnDiffService } from "./turn-diff-service.js";
 
 import type {
   ProviderEventIngressConsumer,
@@ -76,6 +77,7 @@ export class TurnEventPipeline implements ProviderEventIngressConsumer {
   constructor(
     private readonly lifecycle: TurnLifecycleControl,
     private readonly application: TurnEventApplication,
+    private readonly turnDiffs?: Pick<TurnDiffService, "push">,
   ) {}
 
   /** Accept an ingress envelope and preserve its source receipt through the turn queue. */
@@ -90,6 +92,11 @@ export class TurnEventPipeline implements ProviderEventIngressConsumer {
   /** Observe one provider file mutation before public event attribution is available. */
   handleProviderFileMutation(event: ProviderFileMutationStart): void {
     this.application.observeFileMutation(event);
+  }
+
+  /** Forward non-renderer native evidence through the dedicated bounded source. */
+  handleProviderTurnDiff(event: ProviderTurnDiffUpdate): void {
+    this.turnDiffs?.push(event);
   }
 
   /** Materialize a terminal turn once, after every earlier event in its turn queue. */

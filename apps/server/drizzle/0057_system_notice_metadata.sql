@@ -1,1 +1,0 @@
-ALTER TABLE `messages` ADD `system_notice` text;

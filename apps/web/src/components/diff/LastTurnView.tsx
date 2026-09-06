@@ -1,15 +1,11 @@
-import { useEffect } from "react";
 import type { ReviewComparison } from "@mcode/contracts";
-import { useThreadStore } from "@/stores/threadStore";
-import { getThreadRecord } from "@/stores/thread-record";
-import { refreshTurnSnapshotsAfterPersist } from "@/lib/turn-snapshot-refresh";
 import { FileList } from "./FileList";
+import { Badge } from "@/components/ui/badge";
 
 /** Props for LastTurnView. */
 interface LastTurnViewProps {
   threadId: string;
   comparison?: ReviewComparison | null;
-  snapshotId?: string | null;
   cacheVersion?: string | number;
   refreshing?: boolean;
   onRefresh?: () => void;
@@ -21,39 +17,9 @@ interface LastTurnViewProps {
  * one turn's diff — never the whole timeline — so the panel stays fast on long
  * threads. See CONTEXT.md → "Review tab".
  */
-export function LastTurnView({ threadId, comparison = null, snapshotId = null, cacheVersion = "", refreshing = false, onRefresh = () => {} }: LastTurnViewProps) {
-  /** Files the chat banner already knows about for the latest turn with edits. */
-  const pendingReviewFiles = useThreadStore((s) => {
-    const rec = getThreadRecord(s.records, threadId);
-    const msgId = rec.latestTurnWithChanges;
-    if (!msgId) return null;
-    const files = rec.persistedFilesChanged[msgId];
-    return files && files.length > 0 ? files : null;
-  });
-
-  // Chat (`threadStore`) learns about file changes on `turn.persisted` immediately;
-  // Review reads `diffStore` snapshots, which can lag or stay empty if the panel
-  // loaded before the turn finished. Self-heal when the two stores disagree.
-  useEffect(() => {
-    if (!pendingReviewFiles) return;
-    if (snapshotId) return;
-    refreshTurnSnapshotsAfterPersist(threadId, pendingReviewFiles);
-  }, [threadId, pendingReviewFiles, snapshotId]);
-
-  if (!snapshotId || !comparison) {
-    if (pendingReviewFiles) {
-      return (
-        <div className="flex items-center justify-center gap-1.5 py-10">
-          {[0, 150, 300].map((delay) => (
-            <div
-              key={delay}
-              className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse"
-              style={{ animationDelay: `${delay}ms` }}
-            />
-          ))}
-        </div>
-      );
-    }
+export function LastTurnView({ threadId, comparison, cacheVersion, refreshing, onRefresh }: LastTurnViewProps) {
+  const comparisonId = comparison?.turnDiff?.id;
+  if (!comparisonId || !comparison) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-14">
         <span aria-hidden="true" className="font-mono text-2xl leading-none text-muted-foreground/15">
@@ -73,13 +39,14 @@ export function LastTurnView({ threadId, comparison = null, snapshotId = null, c
           {comparison.files.length}
         </span>
         <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
-          file{comparison.files.length !== 1 ? "s" : ""} · last turn
+          {turnLabel(comparison)}
         </span>
+        <TurnDiffSource comparison={comparison} />
       </div>
       <FileList
         files={comparison.files.map((file) => file.path)}
-        source="snapshot"
-        id={snapshotId}
+        source="turn-diff"
+        id={comparisonId}
         threadId={threadId}
         cacheVersion={cacheVersion}
         defaultFilesExpanded
@@ -89,4 +56,17 @@ export function LastTurnView({ threadId, comparison = null, snapshotId = null, c
       />
     </div>
   );
+}
+
+function turnLabel(comparison: ReviewComparison): string {
+  const files = comparison.files.length === 1 ? "file" : "files";
+  const phase = comparison.turnDiff?.phase === "live" ? "Live" : "last turn";
+  return `${files} · ${phase}`;
+}
+
+function TurnDiffSource({ comparison }: { comparison: ReviewComparison }) {
+  if (!comparison.turnDiff) return null;
+  return <Badge variant="secondary">
+    {comparison.turnDiff.source === "git" ? "Git fallback: same-file edits may appear" : comparison.turnDiff.source === "tracked" ? "Tracked file evidence" : "Agent changes"}
+  </Badge>;
 }

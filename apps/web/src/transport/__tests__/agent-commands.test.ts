@@ -50,6 +50,33 @@ afterEach(() => {
 });
 
 describe("agent command transport", () => {
+  it("requests settled diffs after reconnect and admits Live only after a fresh push for that thread", async () => {
+    const transport = createWsTransport("ws://localhost:1234");
+    mockWs.simulateOpen();
+    async function expectLiveAdmission(threadId: string, includeLive: boolean) {
+      const before = mockWs.sent.length;
+      const result = transport.getTurnDiffComparison(threadId);
+      await vi.waitFor(() => expect(mockWs.sent.slice(before).some((row) => JSON.parse(row).method === "turnDiff.getComparison")).toBe(true));
+      const request = mockWs.sent.slice(before).map((row) => JSON.parse(row) as { id: string; method: string; params: unknown })
+        .find((row) => row.method === "turnDiff.getComparison");
+      expect(request?.params).toEqual({ threadId, includeLive });
+      mockWs.respond(request!.id, null);
+      await expect(result).resolves.toBeNull();
+    }
+    await expectLiveAdmission("thread-1", false);
+    mockWs.onmessage?.({ data: JSON.stringify({ type: "push", channel: "turn.diffChanged", data: { threadId: "thread-1" } }) });
+    await expectLiveAdmission("thread-1", true);
+    await expectLiveAdmission("thread-2", false);
+    const previous = mockWs;
+    previous.close();
+    await vi.waitFor(() => expect(mockWs === previous).toBe(false), { timeout: 3000 });
+    mockWs.simulateOpen();
+    await expectLiveAdmission("thread-1", false);
+    mockWs.onmessage?.({ data: JSON.stringify({ type: "push", channel: "turn.diffChanged", data: { threadId: "thread-1" } }) });
+    await expectLiveAdmission("thread-1", true);
+    transport.close();
+  });
+
   it("sends bounded Project Action stop and restart commands through their typed RPC methods", async () => {
     const transport = createWsTransport("ws://localhost:1234");
     mockWs.simulateOpen();
