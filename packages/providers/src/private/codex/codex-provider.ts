@@ -1095,7 +1095,13 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
     const orchestrationMode = request.orchestrationMode === "proactive" && supportsCodexUltraOrchestration(request.model)
       ? "proactive"
       : "standard";
-    return { model: request.model || undefined, effort: toCodexEffort(request.reasoningLevel, orchestrationMode), approvalsReviewer: request.approvalReviewMode === "automatic" ? "auto_review" : "user", ...(fastMode ? { serviceTier: "priority" } : {}) };
+    const effort = toCodexEffort(request.reasoningLevel, orchestrationMode);
+    return {
+      model: request.model || undefined,
+      approvalsReviewer: request.approvalReviewMode === "automatic" ? "auto_review" : "user",
+      ...(effort ? { effort } : {}),
+      ...(fastMode ? { serviceTier: "priority" } : {}),
+    };
   }
 
   private async reconcileCodexSession(turn: PreparedCodexTurn): Promise<CodexSessionState | undefined> {
