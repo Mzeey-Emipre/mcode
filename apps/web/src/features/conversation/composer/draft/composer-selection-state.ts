@@ -49,7 +49,7 @@ function readNullableSelectionPatch<Field extends NullableSelectionField>(
   return patch[field] ?? null;
 }
 
-function hasSameComposerAgentSelection(
+function hasSameCoreComposerAgentSelection(
   current: ComposerAgentSelection,
   next: ComposerAgentSelection,
 ): boolean {
@@ -59,7 +59,14 @@ function hasSameComposerAgentSelection(
     && current.interactionMode === next.interactionMode
     && current.permissionMode === next.permissionMode
     && current.approvalReviewMode === next.approvalReviewMode
-    && current.orchestrationMode === next.orchestrationMode
+    && current.orchestrationMode === next.orchestrationMode;
+}
+
+function hasSameComposerAgentSelection(
+  current: ComposerAgentSelection,
+  next: ComposerAgentSelection,
+): boolean {
+  return hasSameCoreComposerAgentSelection(current, next)
     && current.copilotAgent === next.copilotAgent
     && current.contextWindow === next.contextWindow
     && current.thinking === next.thinking
