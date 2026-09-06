@@ -28,8 +28,8 @@ Use `runtime live --scenario completion --confirm-provider-call` for server and 
 
 1. Start an owned Codex thread from the Electron Composer with the [desktop live-testing skill](../../../electorn-live-testing/SKILL.md).
 2. Trigger each available reroute, warning, configuration, deprecation, workspace-security, or authentication-recovery notice.
-3. Confirm the current warning above Composer before any history scroll. Expand its details, hide it, then reopen it with Review notices. Inspect the public conversation state without provider payloads.
-4. Type `/` and `@` in the real Composer. Each picker takes precedence. Escape restores the notice and preserves the draft. Reload the Electron conversation and check the warning before any history scroll. Confirm that no duplicate toast or diagnostics entry appears.
+3. Confirm the current warning above Composer before any history scroll. Expand its details, then type `/` and `@` in the real Composer. Each picker takes precedence. Escape restores the notice and preserves the draft.
+4. Close the notice, then confirm that Review notices does not show it. Treat reload as a separate observation because dismissal is local component state. Confirm that no duplicate toast or diagnostics entry appears.
 5. Capture the trigger and stable state, then remove only verifier-owned thread state.
 
 Run `runtime health` before this journey. Use the trigger table and proof limits

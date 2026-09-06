@@ -93,11 +93,10 @@ const EMPTY_NOTICE_PRESENTATION: ThreadNoticePresentation = {
 function selectNotices(
   notices: readonly ComposerProviderNotice[],
   dismissed: readonly string[],
-  isManuallyOpen: boolean,
   selectedKey: string | undefined,
 ) {
-  const automaticNotices = notices.filter((notice) => !dismissed.includes(notice.key));
-  const rankedNotices = [...(isManuallyOpen ? notices : automaticNotices)]
+  const rankedNotices = notices
+    .filter((notice) => !dismissed.includes(notice.key))
     .sort((left, right) => noticeRank(left) - noticeRank(right));
   return {
     rankedNotices,
@@ -117,7 +116,6 @@ function useNoticeSurfaceState(
   const { rankedNotices, selectedNotice } = selectNotices(
     notices,
     presentation.dismissedKeys,
-    isManuallyOpen,
     presentation.selectedKey,
   );
 
@@ -126,7 +124,10 @@ function useNoticeSurfaceState(
     setPresentations((current) => ({
       ...current,
       [threadId]: {
-        dismissedKeys: notices.map((notice) => notice.key),
+        dismissedKeys: [...new Set([
+          ...(current[threadId]?.dismissedKeys ?? []),
+          ...notices.map((notice) => notice.key),
+        ])],
         manualSessionIdentity: undefined,
         selectedKey: undefined,
       },
@@ -347,7 +348,7 @@ export function ComposerProviderNoticeSurface({
     <>
       {children(
         <ComposerNoticeTrigger
-          hasNotices={notices.length > 0 && sessionIdentity !== undefined}
+          hasNotices={noticeState.rankedNotices.length > 0 && sessionIdentity !== undefined}
           showOverlay={showOverlay}
           onOpen={open}
         />,

@@ -98,21 +98,31 @@ describe("ComposerProviderNoticeSurface", () => {
     else Reflect.deleteProperty(globalThis, "ResizeObserver");
   });
 
-  it("dismisses a notice, keeps repeated evidence hidden, and reopens it on demand", async () => {
+  it("removes dismissed notices instead of offering them for review", () => {
     const first = providerNotice("warning-1", THREAD_A, "warning", "same-warning");
+    const configuration = providerNotice("config-1", THREAD_A, "configuration", "configuration-warning");
     seedThread(THREAD_A, [first]);
     render(<NoticeHarness />);
 
     expect(screen.getByTestId("composer-provider-notice")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss notice" }));
     expect(screen.queryByTestId("composer-provider-notice")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Review provider notices" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review provider notices" })).not.toBeInTheDocument();
 
     act(() => seedThread(THREAD_A, [first, providerNotice("warning-2", THREAD_A, "warning", "same-warning")]));
     expect(screen.queryByTestId("composer-provider-notice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review provider notices" })).not.toBeInTheDocument();
 
+    act(() => seedThread(THREAD_A, [configuration]));
     fireEvent.click(screen.getByRole("button", { name: "Review provider notices" }));
-    expect(screen.getByTestId("composer-provider-notice")).toBeInTheDocument();
+    expect(screen.getByText("configuration evidence config-1")).toBeInTheDocument();
+    expect(screen.queryByText("warning evidence warning-1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Other notice" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notice" }));
+    expect(screen.queryByRole("button", { name: "Review provider notices" })).not.toBeInTheDocument();
+    act(() => seedThread(THREAD_A, [first, configuration]));
+    expect(screen.queryByRole("button", { name: "Review provider notices" })).not.toBeInTheDocument();
   });
 
   it("surfaces a new issue after dismissal and keeps dismissed state isolated by thread", () => {
