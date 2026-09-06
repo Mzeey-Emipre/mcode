@@ -13,6 +13,7 @@ import type {
 
 import { ThreadService } from "../../thread-control/index.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
+import { GitRepositoryService } from "../../projects/git/git-repository-service.js";
 import { ThreadBranchingService } from "../../projects/worktrees/thread-branching-service.js";
 import { PlanTurnService } from "../planning/plan-turn-service.js";
 import { ThreadStartupService } from "../../thread-startup/thread-startup-service.js";
@@ -45,6 +46,7 @@ export interface CreateThreadForTurnInput {
   title: string;
   mode: "direct" | "worktree";
   branch: string;
+  pullRequestNumber?: number;
   worktreeBranchMode?: "branchless" | "named";
   provider: ProviderId;
   model: string;
@@ -67,6 +69,7 @@ interface BranchedInitialTurnParams {
   approvalReviewMode?: ApprovalReviewMode;
   mode: "direct" | "worktree";
   branch: string;
+  pullRequestNumber?: number;
   worktreeBranchMode?: "branchless" | "named";
   existingWorktreePath?: string;
   existingWorktreeBaseBranch?: string;
@@ -104,6 +107,7 @@ export class ThreadCreationCoordinator {
     @inject(ThreadRepo) private readonly threads: ThreadRepo,
     private readonly threadService: () => ThreadService,
     @inject(TURN_ADMISSION_DISPATCH_COORDINATOR) private readonly admissions: TurnAdmissionDispatchCoordinator,
+    private readonly gitRepository: Pick<GitRepositoryService, "fetchBranch">,
     private readonly branching?: () => ThreadBranchingService | undefined,
     private readonly plans: () => PlanTurnService | undefined = () => undefined,
     private readonly startups: () => ThreadStartupService | undefined = () => undefined,
@@ -176,6 +180,7 @@ export class ThreadCreationCoordinator {
       approvalReviewMode,
       mode = "direct",
       branch = "main",
+      pullRequestNumber,
       worktreeBranchMode = "branchless",
       existingWorktreePath,
       existingWorktreeBaseBranch,
@@ -199,7 +204,7 @@ export class ThreadCreationCoordinator {
       orchestrationMode,
     } = command;
     const params: BranchedInitialTurnParams = {
-      workspaceId, content, model, permissionMode, approvalReviewMode, mode, branch, worktreeBranchMode,
+      workspaceId, content, model, permissionMode, approvalReviewMode, mode, branch, pullRequestNumber, worktreeBranchMode,
       existingWorktreePath, existingWorktreeBaseBranch, attachments, reasoningLevel,
       provider, interactionMode, parentThreadId, forkedFromMessageId,
       title: titleFrom(displayContent ?? content), maxBudgetUsd, maxTurns, copilotAgent,
@@ -219,6 +224,7 @@ export class ThreadCreationCoordinator {
       title: params.title,
       mode: params.mode,
       branch: params.branch,
+      pullRequestNumber: params.pullRequestNumber,
       worktreeBranchMode: params.worktreeBranchMode,
       provider: params.provider,
       model: params.model,
@@ -245,6 +251,10 @@ export class ThreadCreationCoordinator {
 
   /** Create and configure a thread without starting a provider runtime. */
   async create(input: CreateThreadForTurnInput, startupId?: string): Promise<Thread & { warnings?: string[] }> {
+    if (input.pullRequestNumber !== undefined) {
+      await this.gitRepository.fetchBranch(input.workspaceId, input.branch, input.pullRequestNumber);
+      this.cancelIfRequested(startupId);
+    }
     const created = input.mode === "worktree"
       ? await this.createManagedThread(input, startupId)
       : this.threads.create(input.workspaceId, input.title, "direct", input.branch, true, input.provider);

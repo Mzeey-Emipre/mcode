@@ -148,8 +148,11 @@ function synchronizeNewThreadTarget(
   target: Extract<ComposerExecutionTarget, { kind: "new-thread" }>,
 ): void {
   execution.setNewThreadMode(target.mode);
-  if (target.mode === "worktree" && target.branchSource === "pr") {
-    execution.setNewThreadBranchFromPullRequest(target.branch);
+  if (target.branchSource === "pr") {
+    if (target.pullRequestNumber === undefined) {
+      throw new Error("Pull request selection is missing its number");
+    }
+    execution.setNewThreadBranchFromPullRequest(target.branch, target.pullRequestNumber);
     return;
   }
   execution.setNewThreadBranch(target.branch);

@@ -50,6 +50,7 @@ import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../conversation/persistence/message-repo.js";
 import { GitWorktreeService } from "../../projects/git/git-worktree-service.js";
+import { GitRepositoryService } from "../../projects/git/git-repository-service.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import { SnapshotService } from "../../projects/diffs/snapshots/snapshot-service.js";
 import { FileService } from "../../projects/files/file-service.js";
@@ -232,6 +233,7 @@ export function registerAgentServices(container: DependencyContainer): void {
       c.resolve(ThreadRepo),
       () => c.resolve(ThreadService),
       c.resolve(TURN_ADMISSION_DISPATCH_COORDINATOR),
+      c.resolve(GitRepositoryService),
       () => c.resolve(ThreadBranchingService),
       () => c.resolve(PlanTurnService),
       () => c.resolve(ThreadStartupService),

@@ -374,6 +374,8 @@ export const CreateAndSendSchema = lazySchema(() =>
     approvalReviewMode: ApprovalReviewModeSchema.optional(),
     mode: ThreadModeSchema.optional(),
     branch: z.string().optional(),
+    /** Pull request identity used to fetch its head before the thread prepares. */
+    pullRequestNumber: z.number().int().positive().optional(),
     worktreeBranchMode: z.enum(["branchless", "named"]).optional(),
     existingWorktreePath: z.string().optional(),
     existingWorktreeBaseBranch: GitBranchNameSchema.optional(),

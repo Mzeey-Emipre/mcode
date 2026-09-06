@@ -1329,7 +1329,7 @@ describe("Workspace Behavior", () => {
         activeWorkspaceId: ws.id,
         newThreadMode: "worktree",
       });
-      useWorkspaceStore.getState().setNewThreadBranchFromPr("contributor/pr-branch");
+      useWorkspaceStore.getState().setNewThreadBranchFromPr("contributor/pr-branch", 42);
       (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockReturnValue(rpcPromise);
 
       const done = useWorkspaceStore.getState().createAndSendMessage("Review this", "gpt-5.5");
@@ -1351,6 +1351,7 @@ describe("Workspace Behavior", () => {
         permissionMode: undefined,
         mode: "worktree",
         branch: "contributor/pr-branch",
+        pullRequestNumber: 42,
         worktreeBranchMode: "named",
         existingWorktreePath: undefined,
         existingWorktreeBaseBranch: undefined,
@@ -1371,6 +1372,7 @@ describe("Workspace Behavior", () => {
         orchestrationMode: undefined,
       });
       expect(useWorkspaceStore.getState().newThreadBranchSource).toBe("branch");
+      expect(useWorkspaceStore.getState().newThreadPullRequestNumber).toBeUndefined();
 
       resolveRpc(createMockCreateAndSendResult({
         id: "pr-branch-thread",

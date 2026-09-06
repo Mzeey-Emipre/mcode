@@ -14,6 +14,7 @@ export type ComposerExecutionTarget =
     mode: ComposerMode;
     branch: string;
     branchSource: "branch" | "pr";
+    pullRequestNumber?: number;
     hasWorktree: boolean;
   }
   | {
@@ -62,7 +63,7 @@ export interface ComposerExecutionTargetController {
   reviewDetectedPullRequest(): Promise<string | null>;
   setNewThreadMode(mode: ComposerMode): void;
   setNewThreadBranch(branch: string): void;
-  setNewThreadBranchFromPullRequest(branch: string): void;
+  setNewThreadBranchFromPullRequest(branch: string, pullRequestNumber: number): void;
 }
 
 /** Owns the Composer execution target selection and its workspace data lifecycle. */
@@ -80,6 +81,7 @@ export function useComposerExecutionTarget({
   const newThreadMode = useWorkspaceStore((state) => state.newThreadMode);
   const newThreadBranch = useWorkspaceStore((state) => state.newThreadBranch);
   const newThreadBranchSource = useWorkspaceStore((state) => state.newThreadBranchSource);
+  const newThreadPullRequestNumber = useWorkspaceStore((state) => state.newThreadPullRequestNumber);
   const selectedWorktree = useWorkspaceStore((state) => state.selectedWorktree);
   const branchExecMode = useWorkspaceStore((state) => state.branchExecMode);
   const branchTargetBranch = useWorkspaceStore((state) => state.branchTargetBranch);
@@ -91,7 +93,6 @@ export function useComposerExecutionTarget({
   const loadOpenPrs = useWorkspaceStore((state) => state.loadOpenPrs);
   const loadWorktrees = useWorkspaceStore((state) => state.loadWorktrees);
   const initBranchMode = useWorkspaceStore((state) => state.initBranchMode);
-  const fetchBranch = useWorkspaceStore((state) => state.fetchBranch);
   const setBranchExecMode = useWorkspaceStore((state) => state.setBranchExecMode);
   const setNewThreadMode = useWorkspaceStore((state) => state.setNewThreadMode);
   const setNewThreadBranch = useWorkspaceStore((state) => state.setNewThreadBranch);
@@ -162,11 +163,10 @@ export function useComposerExecutionTarget({
   const reviewDetectedPullRequest = useCallback(async (): Promise<string | null> => {
     if (!detectedPr || !workspaceId) return null;
     setMode("worktree");
-    await fetchBranch(workspaceId, detectedPr.branch, detectedPr.number);
-    setNewThreadBranchFromPr(detectedPr.branch);
+    setNewThreadBranchFromPr(detectedPr.branch, detectedPr.number);
     resetDetectedPullRequest();
     return `Review PR #${detectedPr.number}: ${detectedPr.title}`;
-  }, [detectedPr, fetchBranch, resetDetectedPullRequest, setMode, setNewThreadBranchFromPr, workspaceId]);
+  }, [detectedPr, resetDetectedPullRequest, setMode, setNewThreadBranchFromPr, workspaceId]);
 
   const target = useMemo<ComposerExecutionTarget>(() => {
     if (isNewThread) {
@@ -175,6 +175,7 @@ export function useComposerExecutionTarget({
         mode: composerMode,
         branch: newThreadBranch,
         branchSource: newThreadBranchSource,
+        pullRequestNumber: newThreadPullRequestNumber,
         hasWorktree: selectedWorktree !== null,
       };
     }
@@ -188,7 +189,7 @@ export function useComposerExecutionTarget({
       };
     }
     return { kind: "existing-thread", mode: composerMode };
-  }, [branchExecMode, branchFromMessageId, branchTargetBranch, branchWorktreeIsDetached, branchWorktreePath, composerMode, isNewThread, newThreadBranch, newThreadBranchSource, selectedWorktree]);
+  }, [branchExecMode, branchFromMessageId, branchTargetBranch, branchWorktreeIsDetached, branchWorktreePath, composerMode, isNewThread, newThreadBranch, newThreadBranchSource, newThreadPullRequestNumber, selectedWorktree]);
 
   return {
     target,

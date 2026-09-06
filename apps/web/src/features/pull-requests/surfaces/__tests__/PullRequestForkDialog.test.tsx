@@ -216,6 +216,7 @@ describe("PullRequestForkDialog", () => {
     expect(workspaceState.setNewThreadMode).toHaveBeenCalledWith("worktree");
     expect(workspaceState.setNewThreadBranchFromPr).toHaveBeenCalledWith(
       "feature/review",
+      42,
     );
     expect(draftState.setPendingPrefill).toHaveBeenCalledWith(
       "Review PR #42: Refine pull request workspace",

@@ -223,6 +223,7 @@ interface PendingThreadCreation {
   approvalReviewMode?: ApprovalReviewMode;
   transportMode: "direct" | "worktree";
   branch: string;
+  pullRequestNumber?: number;
   worktreeBranchMode?: "branchless" | "named";
   existingWorktreePath?: string;
   existingWorktreeBaseBranch?: string;
@@ -248,6 +249,7 @@ interface PendingThreadCreation {
 interface ThreadCreationTarget {
   transportMode: "direct" | "worktree";
   branch: string;
+  pullRequestNumber?: number;
   worktreeBranchMode?: "branchless" | "named";
   existingWorktreePath?: string;
   existingWorktreeBaseBranch?: string;
@@ -327,13 +329,18 @@ function newThreadCreationTarget(
   mode: WorkspaceState["newThreadMode"],
   branch: string,
   branchSource: WorkspaceState["newThreadBranchSource"],
+  pullRequestNumber: number | undefined,
   selectedWorktree: WorktreeInfo | null,
 ): ThreadCreationTarget {
-  if (mode === "direct") return { transportMode: "direct", branch: branch || "main" };
+  const selectedPullRequestNumber = branchSource === "pr" ? pullRequestNumber : undefined;
+  if (mode === "direct") {
+    return { transportMode: "direct", branch: branch || "main", pullRequestNumber: selectedPullRequestNumber };
+  }
   if (mode === "worktree") {
     return {
       transportMode: "worktree",
       branch: branch || "main",
+      pullRequestNumber: selectedPullRequestNumber,
       worktreeBranchMode: branchSource === "pr" ? "named" : "branchless",
     };
   }
@@ -432,6 +439,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     approvalReviewMode: pending.approvalReviewMode,
     mode: pending.transportMode,
     branch: pending.branch,
+    pullRequestNumber: pending.pullRequestNumber,
     worktreeBranchMode: pending.worktreeBranchMode,
     existingWorktreePath: pending.existingWorktreePath,
     existingWorktreeBaseBranch: pending.existingWorktreeBaseBranch,
@@ -520,6 +528,7 @@ interface WorkspaceState {
   newThreadMode: "direct" | "worktree" | "existing-worktree";
   newThreadBranch: string;
   newThreadBranchSource: "branch" | "pr";
+  newThreadPullRequestNumber: number | undefined;
   worktrees: WorktreeInfo[];
   worktreesLoading: boolean;
   /** The workspace ID whose worktrees are currently in the `worktrees` array. Null before any load. */
@@ -629,7 +638,7 @@ interface WorkspaceState {
   checkoutBranch: (workspaceId: string, branch: string) => Promise<void>;
   setNewThreadMode: (mode: "direct" | "worktree" | "existing-worktree") => void;
   setNewThreadBranch: (branch: string) => void;
-  setNewThreadBranchFromPr: (branch: string) => void;
+  setNewThreadBranchFromPr: (branch: string, pullRequestNumber: number) => void;
   /** Set whether the user has explicitly picked a branch, preventing live branch updates from overriding it. */
   setBranchManuallySelected: (value: boolean) => void;
 
@@ -817,6 +826,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       pendingNewThread: false,
       branchManuallySelected: false,
       newThreadBranchSource: "branch",
+      newThreadPullRequestNumber: undefined,
       error: null,
     }));
     reconcileSelectedConversation();
@@ -920,6 +930,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   newThreadMode: readRememberedComposerMode(),
   newThreadBranch: "",
   newThreadBranchSource: "branch" as const,
+  newThreadPullRequestNumber: undefined,
   worktrees: [],
   worktreesLoading: false,
   worktreesLoadedForWorkspace: null,
@@ -1278,11 +1289,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
-    const { newThreadMode, newThreadBranch, newThreadBranchSource, selectedWorktree } = get();
+    const {
+      newThreadMode,
+      newThreadBranch,
+      newThreadBranchSource,
+      newThreadPullRequestNumber,
+      selectedWorktree,
+    } = get();
     const target = newThreadCreationTarget(
       newThreadMode,
       newThreadBranch,
       newThreadBranchSource,
+      newThreadPullRequestNumber,
       selectedWorktree,
     );
     const pending: PendingThreadCreation = {
@@ -1567,6 +1585,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             newThreadMode: readRememberedComposerMode(),
             newThreadBranch: "",
             newThreadBranchSource: "branch" as const,
+            newThreadPullRequestNumber: undefined,
             namingMode: "auto" as const,
             customBranchName: "",
             autoPreviewBranch: generateBranchId(),
@@ -1625,11 +1644,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   setNewThreadBranch: (branch) => {
-    set({ newThreadBranch: branch, newThreadBranchSource: "branch" });
+    set({ newThreadBranch: branch, newThreadBranchSource: "branch", newThreadPullRequestNumber: undefined });
   },
 
-  setNewThreadBranchFromPr: (branch) => {
-    set({ newThreadBranch: branch, newThreadBranchSource: "pr" });
+  setNewThreadBranchFromPr: (branch, pullRequestNumber) => {
+    set({ newThreadBranch: branch, newThreadBranchSource: "pr", newThreadPullRequestNumber: pullRequestNumber });
   },
 
   setBranchManuallySelected: (value) => {

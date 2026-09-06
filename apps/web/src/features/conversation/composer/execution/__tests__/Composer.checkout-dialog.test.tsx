@@ -155,17 +155,17 @@ vi.mock("@/components/chat/ModeSelector", () => ({
 vi.mock("@/components/chat/BranchPicker", () => ({
   BranchPicker: ({
     selectedBranch,
-    onFetchAndSelect,
+    onSelectPullRequest,
   }: {
     selectedBranch: string;
-    onFetchAndSelect?: (branch: string, prNumber: number) => void;
+    onSelectPullRequest?: (branch: string, prNumber: number) => void;
   }) => (
     <div data-testid="branch-picker">
       {selectedBranch}
-      {onFetchAndSelect ? (
+      {onSelectPullRequest ? (
         <button
           type="button"
-          onClick={() => onFetchAndSelect("contributor/pr-branch", 42)}
+          onClick={() => onSelectPullRequest("contributor/pr-branch", 42)}
         >
           Select PR branch
         </button>
@@ -658,18 +658,11 @@ describe("Composer checkout confirmation", () => {
 
   it("preserves PR branch selection when submitting a new worktree thread", async () => {
     seedComposerState("worktree");
-    (mockTransport.fetchBranch as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     render(<Composer isNewThread workspaceId="ws-1" />);
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Select PR branch" }));
-    await waitFor(() =>
-      expect(mockTransport.fetchBranch).toHaveBeenCalledWith(
-        "ws-1",
-        "contributor/pr-branch",
-        42,
-      ),
-    );
+    expect(mockTransport.fetchBranch).not.toHaveBeenCalled();
 
     await user.type(screen.getByLabelText("Message Mcode"), "Review this PR");
     await user.click(screen.getByLabelText("Send message"));
@@ -681,6 +674,7 @@ describe("Composer checkout confirmation", () => {
     expect(createCommand).toMatchObject({
       mode: "worktree",
       branch: "contributor/pr-branch",
+      pullRequestNumber: 42,
       worktreeBranchMode: "named",
     });
   });

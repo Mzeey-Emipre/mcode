@@ -12,6 +12,8 @@ import type * as NodeEvents from "node:events";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import { WorkspaceEnvironmentService } from "../../../projects/index.js";
 import { GitWorktreeService } from "../../../projects/git/git-worktree-service.js";
+import { GitRepositoryService } from "../../../projects/git/git-repository-service.js";
+import { FakeGitExecutor } from "../../../projects/git/execution/fake-git-executor.js";
 import { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
@@ -275,6 +277,7 @@ export function createAgentServiceForTest(
     revoke: () => undefined,
   } as unknown as InternalThreadControlMcpRuntime;
   const testContainer = container.createChildContainer();
+  const gitRepository = new GitRepositoryService(workspaceRepo, new FakeGitExecutor());
   testContainer.registerInstance(TURN_RUNTIME_PERSISTENCE, runtimePersistence);
   testContainer.registerInstance(TURN_FINALIZER, finalizer);
   testContainer.registerInstance(TURN_FILE_EFFECTS, fileEffects);
@@ -286,6 +289,7 @@ export function createAgentServiceForTest(
     threadRepo,
     () => threadService,
     admissions,
+    gitRepository,
     () => threadBranching,
     () => planTurns,
     () => threadStartups,

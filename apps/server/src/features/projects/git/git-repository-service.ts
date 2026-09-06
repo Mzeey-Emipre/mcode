@@ -221,24 +221,25 @@ export class GitRepositoryService {
   async fetchBranchAt(repoPath: string, branch: string, prNumber?: number): Promise<void> {
     validateBranchName(branch);
 
+    if (prNumber != null) {
+      await this.gitExecutor.exec([
+        "-C",
+        repoPath,
+        "fetch",
+        "origin",
+        `+pull/${prNumber}/head:${branch}`,
+      ]);
+      return;
+    }
+
     let fetchOk = true;
     try {
-      if (prNumber != null) {
-        await this.gitExecutor.exec([
-          "-C",
-          repoPath,
-          "fetch",
-          "origin",
-          `+pull/${prNumber}/head:${branch}`,
-        ]);
-      } else {
-        await this.gitExecutor.exec(["-C", repoPath, "fetch", "origin", branch]);
-      }
+      await this.gitExecutor.exec(["-C", repoPath, "fetch", "origin", branch]);
     } catch {
       fetchOk = false;
     }
 
-    if (fetchOk && prNumber == null) {
+    if (fetchOk) {
       if (await this.branchExists(repoPath, branch)) {
         await this.gitExecutor.exec(
           ["-C", repoPath, "branch", "-f", branch, `origin/${branch}`],

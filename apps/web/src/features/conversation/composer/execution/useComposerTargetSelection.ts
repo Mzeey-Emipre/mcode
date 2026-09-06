@@ -42,11 +42,10 @@ interface ComposerTargetStoreState {
   openPrsLoading: boolean;
   fetchingBranch: string | null;
   setNewThreadBranch(branch: string): void;
-  setNewThreadBranchFromPr(branch: string): void;
+  setNewThreadBranchFromPr(branch: string, pullRequestNumber: number): void;
   setSelectedWorktree(worktree: WorktreeInfo | null): void;
   setBranchTargetBranch(branch: string): void;
   setBranchWorktreePath(path: string): void;
-  fetchBranch(workspaceId: string, branch: string, pullRequestNumber?: number): Promise<void>;
 }
 
 interface BranchSelection {
@@ -90,7 +89,6 @@ function useComposerTargetStoreState(): ComposerTargetStoreState {
     setSelectedWorktree: useWorkspaceStore((state) => state.setSelectedWorktree),
     setBranchTargetBranch: useWorkspaceStore((state) => state.setBranchTargetBranch),
     setBranchWorktreePath: useWorkspaceStore((state) => state.setBranchWorktreePath),
-    fetchBranch: useWorkspaceStore((state) => state.fetchBranch),
   };
 }
 
@@ -162,7 +160,6 @@ function getTargetPresentation(variant: ComposerTargetSelectionProps["variant"])
 
 function useTargetSelectionActions(
   isNewThread: boolean,
-  workspaceId: string | undefined,
   store: ComposerTargetStoreState,
 ) {
   const {
@@ -171,7 +168,6 @@ function useTargetSelectionActions(
     setSelectedWorktree,
     setBranchTargetBranch,
     setBranchWorktreePath,
-    fetchBranch,
   } = store;
   const selectWorktree = useCallback((worktree: WorktreeInfo) => {
     if (isNewThread) {
@@ -180,16 +176,14 @@ function useTargetSelectionActions(
     }
     setBranchWorktreePath(worktree.path);
   }, [isNewThread, setBranchWorktreePath, setSelectedWorktree]);
-  const fetchAndSelectPullRequest = useCallback(async (branch: string, pullRequestNumber: number) => {
-    if (!workspaceId) return;
-    await fetchBranch(workspaceId, branch, pullRequestNumber);
-    setNewThreadBranchFromPr(branch);
-  }, [fetchBranch, setNewThreadBranchFromPr, workspaceId]);
+  const selectPullRequest = useCallback(async (branch: string, pullRequestNumber: number) => {
+    setNewThreadBranchFromPr(branch, pullRequestNumber);
+  }, [setNewThreadBranchFromPr]);
 
   return {
     selectBranch: isNewThread ? setNewThreadBranch : setBranchTargetBranch,
     selectWorktree,
-    fetchAndSelectPullRequest: isNewThread ? fetchAndSelectPullRequest : undefined,
+    selectPullRequest: isNewThread ? selectPullRequest : undefined,
   };
 }
 
@@ -209,7 +203,7 @@ export interface ComposerTargetSelectionState {
   fetchingBranch: string | null | undefined;
   selectBranch(branch: string): void;
   selectWorktree(worktree: WorktreeInfo): void;
-  fetchAndSelectPullRequest: ((branch: string, pullRequestNumber: number) => Promise<void>) | undefined;
+  selectPullRequest: ((branch: string, pullRequestNumber: number) => Promise<void>) | undefined;
   triggerClassName: string | undefined;
   iconSize: number | undefined;
 }
@@ -232,7 +226,7 @@ export function useComposerTargetSelection(
     store.branchWorktreePath,
     store.worktrees,
   );
-  const actions = useTargetSelectionActions(scope.isNewThread, scope.workspaceId, store);
+  const actions = useTargetSelectionActions(scope.isNewThread, store);
   const pullRequestSelection = getPullRequestSelection(
     scope.isNewThread,
     store.openPrs,

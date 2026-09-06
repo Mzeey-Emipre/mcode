@@ -24,7 +24,7 @@ interface BranchPickerProps {
   pullRequests?: PrDetail[];
   prsLoading?: boolean;
   fetchingBranch?: string | null;
-  onFetchAndSelect?: (branch: string, prNumber: number) => void;
+  onSelectPullRequest?: (branch: string, prNumber: number) => void;
   /** Optional trigger styling for compact context rails. */
   triggerClassName?: string;
   /** Primary glyph size for the trigger. */
@@ -203,7 +203,7 @@ function BranchPickerDropdown({
   pullRequests,
   prsLoading,
   fetchingBranch,
-  onFetchAndSelect,
+  onSelectPullRequest,
   triggerClassName,
   iconSize = 12,
 }: BranchPickerProps) {
@@ -228,12 +228,12 @@ function BranchPickerDropdown({
   const handleSelectPullRequest = (branch: string, prNumber: number) => {
     if (fetchingBranch === branch) return;
     setOpen(false);
-    if (!onFetchAndSelect) {
+    if (!onSelectPullRequest) {
       handleSelect(branch);
       return;
     }
     useWorkspaceStore.getState().setBranchManuallySelected(true);
-    onFetchAndSelect(branch, prNumber);
+    onSelectPullRequest(branch, prNumber);
   };
 
   return (
