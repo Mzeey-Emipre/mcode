@@ -217,6 +217,8 @@ export class CodexEventMapper {
   private readonly completedApprovalReviewIds = new Set<string>();
   /** A completion without this matching start belongs to an old dispatch attempt. */
   private readonly startedApprovalReviewIds = new Set<string>();
+  /** Native review events are visible only for the frozen automatic supervised dispatch. */
+  private showApprovalReview = false;
 
   constructor(
     threadId: string,
@@ -1660,14 +1662,15 @@ export class CodexEventMapper {
       "thread/settings/updated": () => this.mapThreadSettingsUpdated(notification.params),
       "item/autoApprovalReview/started": () => this.mapApprovalReviewStarted(notification),
       "item/autoApprovalReview/completed": () => this.mapApprovalReviewCompleted(notification),
+      "autoApprovalReview/strictReviewRequired": () => this.mapStrictReviewRequired(notification),
     };
     return dispatchNativeHandler<CodexMappedEvent[]>(handlers, notification.method);
   }
 
   private mapApprovalReviewStarted(notification: CodexNotification): CodexMappedEvent[] {
     const params = notification.params as { reviewId: string; turnId: string; targetItemId?: string | null };
-    if (params.turnId !== this.activeMainTurnId) return [];
-    if (this.completedApprovalReviewIds.has(params.reviewId)) return [];
+    if (!this.showApprovalReview || params.turnId !== this.activeMainTurnId) return [];
+    if (this.startedApprovalReviewIds.has(params.reviewId) || this.completedApprovalReviewIds.has(params.reviewId)) return [];
     this.startedApprovalReviewIds.add(params.reviewId);
     const toolCallId = `approval-review:${params.reviewId}`;
     return [{ type: AgentEventType.ToolUse, threadId: this.threadId, toolCallId, toolName: "Approval review", toolInput: {
@@ -1677,15 +1680,27 @@ export class CodexEventMapper {
 
   private mapApprovalReviewCompleted(notification: CodexNotification): CodexMappedEvent[] {
     const params = notification.params as { reviewId: string; turnId: string; review: { status: string } };
-    if (params.turnId !== this.activeMainTurnId) return [];
+    if (!this.showApprovalReview || params.turnId !== this.activeMainTurnId) return [];
     if (!this.startedApprovalReviewIds.has(params.reviewId) || this.completedApprovalReviewIds.has(params.reviewId)) return [];
     const status = params.review.status;
     if (status === "inProgress") return [];
     this.completedApprovalReviewIds.add(params.reviewId);
+    this.startedApprovalReviewIds.delete(params.reviewId);
     const outcome = status === "approved" ? "Approved" : status === "denied" ? "Denied" : status === "timedOut" ? "Review timed out" : "Review aborted";
     return [this.toolResultEvent({ toolCallId: `approval-review:${params.reviewId}`, output: outcome, isError: status !== "approved", toolInput: {
       reviewId: params.reviewId, status,
     } })];
+  }
+
+  /** Sets the frozen dispatch policy before its native turn can emit review events. */
+  setApprovalReviewVisible(visible: boolean): void {
+    this.showApprovalReview = visible;
+  }
+
+  private mapStrictReviewRequired(notification: CodexNotification): CodexMappedEvent[] {
+    const params = notification.params as { turnId: string };
+    if (!this.showApprovalReview || params.turnId !== this.activeMainTurnId) return [];
+    return this.notice("approval.review.manual-required", "Manual approval is required before Codex can continue.");
   }
 
   private boundedText(value: unknown, fallback: string): string {
@@ -1968,13 +1983,13 @@ export class CodexEventMapper {
   private mapFailedMainTurn(turn: { error?: { message?: string; codexErrorInfo?: unknown } }): CodexMappedEvent[] {
     const error = turn.error?.message ?? "Codex turn failed";
     logger.error("Codex turn failed", { error, codexErrorInfo: turn.error?.codexErrorInfo });
-    const events = [...this.drainPendingAssistantBoundary(false), { type: AgentEventType.Error, threadId: this.threadId, error } as CodexMappedEvent];
+    const events = [...this.drainPendingAssistantBoundary(false), ...this.finishActiveApprovalReviews("Review failed"), { type: AgentEventType.Error, threadId: this.threadId, error } as CodexMappedEvent];
     this.completeMainTurnState();
     return events;
   }
 
   private finishInterruptedMainTurn(): CodexMappedEvent[] {
-    const events = this.drainPendingAssistantBoundary(false);
+    const events = [...this.drainPendingAssistantBoundary(false), ...this.finishActiveApprovalReviews("Review aborted")];
     this.completeMainTurnState();
     return events;
   }
@@ -1983,7 +1998,7 @@ export class CodexEventMapper {
     const inputTokens = usage?.input_tokens ?? 0;
     const cachedInputTokens = usage?.cached_input_tokens ?? 0;
     const tokensOut = usage?.output_tokens ?? 0;
-    const events = this.drainPendingAssistantBoundary(true);
+    const events = [...this.drainPendingAssistantBoundary(true), ...this.finishActiveApprovalReviews("Review aborted")];
     if (this.lastCompletedAssistantText) events.push({ type: AgentEventType.Message, threadId: this.threadId, content: this.lastCompletedAssistantText, tokens: null });
     events.push({ type: AgentEventType.TurnComplete, threadId: this.threadId, reason: "end_turn", costUsd: null, tokensIn: inputTokens, tokensOut, contextWindow: undefined, totalProcessedTokens: inputTokens + cachedInputTokens + tokensOut, cacheReadTokens: cachedInputTokens || undefined, providerId: "codex" });
     this.completeMainTurnState();
@@ -1995,6 +2010,20 @@ export class CodexEventMapper {
     // A later notification from this completed native turn cannot belong to a new dispatch.
     this.activeMainTurnId = undefined;
     this.turnEnded = true;
+  }
+
+  private finishActiveApprovalReviews(output: "Review aborted" | "Review failed"): CodexMappedEvent[] {
+    const events = [...this.startedApprovalReviewIds].map((reviewId) => {
+      this.completedApprovalReviewIds.add(reviewId);
+      return this.toolResultEvent({
+        toolCallId: `approval-review:${reviewId}`,
+        output,
+        isError: true,
+        toolInput: { reviewId, status: "aborted" },
+      });
+    });
+    this.startedApprovalReviewIds.clear();
+    return events;
   }
 
   private mapMainError(notification: CodexNotification): CodexMappedEvent[] {

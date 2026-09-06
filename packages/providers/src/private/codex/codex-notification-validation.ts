@@ -46,6 +46,7 @@ const delta = z.object({ delta: z.string(), threadId: z.string().optional(), ite
 const approvalReview = z.object({ status: z.enum(["inProgress", "approved", "denied", "timedOut", "aborted"]), rationale: z.string().nullish() }).passthrough();
 const approvalReviewStarted = z.object({ ...scoped, startedAtMs: z.number().finite(), reviewId: nativeId, targetItemId: nativeId.nullish(), review: approvalReview }).passthrough();
 const approvalReviewCompleted = approvalReviewStarted.extend({ completedAtMs: z.number().finite() });
+const strictReviewRequired = z.object({ ...scoped, startedAtMs: z.number().finite() }).passthrough();
 const notificationEnvelope = z.object({ jsonrpc: z.literal("2.0") });
 /** Preserve the relationship between each native method and its parsed parameters. */
 function notificationSchema<M extends string, P extends z.ZodTypeAny>(method: M, params: P) {
@@ -64,6 +65,7 @@ const knownNotificationSchema = z.discriminatedUnion("method", [
   notificationSchema("item/completed", z.object({ item: item.optional() }).passthrough()),
   notificationSchema("item/autoApprovalReview/started", approvalReviewStarted),
   notificationSchema("item/autoApprovalReview/completed", approvalReviewCompleted),
+  notificationSchema("autoApprovalReview/strictReviewRequired", strictReviewRequired),
   notificationSchema("item/agentMessage/delta", delta),
   notificationSchema("item/commandExecution/outputDelta", delta),
   notificationSchema("item/reasoning/textDelta", z.object({ delta: z.string().optional(), text: z.string().optional() }).passthrough()),

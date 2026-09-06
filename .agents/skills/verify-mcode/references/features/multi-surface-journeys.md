@@ -24,6 +24,15 @@ Use [Local workspace file invalidation](workspace-file-invalidation.md) for the 
 
 Use `runtime live --scenario completion --confirm-provider-call` for server and persistence evidence. Use the desktop testing skill for UI reload evidence.
 
+## Approval review safety
+
+1. In an owned Electron workspace, open both Composer access controls. Capture the unsupported provider with Manual and Full access only, then switch to a supported provider and capture Auto.
+2. Dispatch an Auto turn through the public server path. A strict-review routing notice may show manual-required, but it must not create a pending permission card or a waiting-for-approval state.
+3. Wait for a real provider permission request. Capture the pending permission card and its waiting state only after that request.
+4. Reload the completed Auto thread and confirm one review result. Run Full access and confirm no review lifecycle or label appears. Remove only verifier-owned data.
+
+Use the approval-review journey in [Provider events and durability](provider-events-and-durability.md#approval-review-journey). Record unavailable provider capabilities or permission requests as coverage gaps.
+
 ## Codex protocol notices and reconnect
 
 1. Start an owned Codex thread from the Electron Composer with the [desktop live-testing skill](../../../electorn-live-testing/SKILL.md).

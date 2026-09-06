@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentEvent, ThreadStartup } from "@mcode/contracts";
+import type { AgentEvent, PermissionRequest, ThreadStartup } from "@mcode/contracts";
 import type { Thread } from "@/transport";
 
 vi.mock("@/transport", () => ({
@@ -17,6 +17,7 @@ import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { onPtyExit } from "@/features/terminal/adapters/pty-data-registry";
 import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
 import { useThreadStartupStore } from "@/features/thread-startup";
+import { buildVolatileItems } from "@/features/conversation/messages/virtual-items";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -309,6 +310,43 @@ describe("ws-events agent.event", () => {
 
     expect(handleAgentEvent).toHaveBeenCalledOnce();
     expect(handleAgentEvent).toHaveBeenCalledWith(event);
+  });
+});
+
+describe("ws-events permission.request", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.restoreAllMocks();
+  });
+
+  it("creates permission controls only from an actual provider permission request", () => {
+    const request = {
+      requestId: "permission-1",
+      threadId: "thread-1",
+      toolName: "Shell",
+      input: { command: "git status" },
+    } satisfies PermissionRequest;
+    startPushListeners();
+
+    pushEmitter.emit("agent.event", {
+      type: "system",
+      threadId: request.threadId,
+      subtype: "approval.review.manual-required",
+      message: "Manual approval is required before Codex can continue.",
+      systemNotice: {
+        kind: "diagnostic",
+        presentation: "timeline",
+        scope: "turn",
+        sessionId: "notice-session",
+        noticeKey: "approval-review-manual-required",
+      },
+    } satisfies AgentEvent);
+    expect(buildVolatileItems([], undefined, undefined, undefined, useThreadStore.getState().records.get(request.threadId)?.permissions))
+      .not.toContainEqual(expect.objectContaining({ type: "permission-request" }));
+    pushEmitter.emit("permission.request", request);
+
+    expect(buildVolatileItems([], undefined, undefined, undefined, useThreadStore.getState().records.get(request.threadId)?.permissions))
+      .toMatchObject([{ type: "permission-request", requestId: request.requestId, toolName: "Shell" }]);
   });
 });
 

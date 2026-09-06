@@ -74,17 +74,33 @@ describe("TurnFooter", () => {
     expect(screen.queryByRole("button", { name: /continue|retry/i })).toBeNull();
   });
 
-  it("renders the persisted automatic-review fallback as readable text", () => {
+  it.each([
+    "provider-version-unsupported",
+    "provider-does-not-support-approval-review",
+    "future-provider-unavailable",
+  ])("renders %s as an automatic-review fallback", (reason) => {
     render(
       <TurnFooter
         counts={{ steps: 0, thoughts: 0, subagents: 0 }}
         durationMs={null}
-        approvalReview={{ mode: "manual", reason: "provider-version-unsupported" }}
+        approvalReview={{ mode: "manual", reason }}
       />,
     );
 
     expect(screen.getByTestId("approval-review")).toHaveTextContent(
       "Automatic review unavailable. Manual approval applies.",
     );
+  });
+
+  it("does not render a review label for Full Access", () => {
+    render(
+      <TurnFooter
+        counts={{ steps: 0, thoughts: 0, subagents: 0 }}
+        durationMs={null}
+        approvalReview={{ mode: "manual", reason: "full-access-bypasses-approval-review" }}
+      />,
+    );
+
+    expect(screen.queryByTestId("approval-review")).not.toBeInTheDocument();
   });
 });

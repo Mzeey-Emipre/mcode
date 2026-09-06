@@ -1187,6 +1187,9 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
 
   private finishAcquiredCodexTurn(turn: PreparedCodexTurn, state: CodexSessionState, existing: CodexSessionState | undefined, reusable: boolean): void {
     const sessionId = turn.request.sessionId;
+    state.mapper.setApprovalReviewVisible(
+      turn.request.permissionMode !== "full" && turn.request.approvalReviewMode === "automatic",
+    );
     this.runtime.recordUsage(sessionId);
     const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
     this.pendingBrowserAccess.delete(sessionId);

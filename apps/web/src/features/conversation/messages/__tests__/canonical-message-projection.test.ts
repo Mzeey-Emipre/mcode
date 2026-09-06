@@ -125,6 +125,7 @@ describe("projectCanonicalMessageList", () => {
   it("adds one terminal answer and retains the completed turn timeline", () => {
     const state = createAgentModelState();
     state.turns[TURN_ID] = turn("Completed", "2026-08-18T12:00:05.000Z", {
+      permissionMode: "supervised",
       approvalReviewMode: "manual",
       approvalReviewReason: "provider-version-unsupported",
     });
@@ -172,6 +173,27 @@ describe("projectCanonicalMessageList", () => {
     });
   });
 
+  it("does not project an approval-review lifecycle for Full Access", () => {
+    const state = createAgentModelState();
+    state.turns[TURN_ID] = turn("Completed", "2026-08-18T12:00:05.000Z", {
+      permissionMode: "full",
+      approvalReviewMode: "manual",
+      approvalReviewReason: "full-access-bypasses-approval-review",
+    });
+    const answer = message({ id: "child-answer", role: "assistant", content: "ok", sequence: 1, timestamp: "2026-08-18T12:00:04.000Z" });
+    state.items.answer = item("answer", "message", { projection: "message", message: answer }, answer.timestamp);
+
+    const projection = projectCanonicalMessageList({
+      threadId: THREAD_ID,
+      state,
+      messages: [message(), answer],
+      toolCalls: [],
+      thoughtSegments: [],
+    });
+
+    expect(projection?.turnSummariesByMessageId["child-answer"]?.approvalReview).toBeUndefined();
+  });
+
   it("projects an active child answer without summarizing its turn", () => {
     const state = createAgentModelState();
     state.turns[TURN_ID] = turn("Running");
@@ -205,9 +227,10 @@ describe("projectCanonicalMessageList", () => {
   it("summarizes structured activity for every completed child turn", () => {
     const state = createAgentModelState();
     const secondTurnId = "canonical-turn-2";
-    state.turns[TURN_ID] = turn("Completed", "2026-08-18T12:00:05.000Z");
+    state.turns[TURN_ID] = turn("Completed", "2026-08-18T12:00:05.000Z", { permissionMode: "supervised" });
     state.turns[secondTurnId] = turn("Completed", "2026-08-18T12:01:05.000Z", {
       id: secondTurnId,
+      permissionMode: "supervised",
       startedAt: "2026-08-18T12:01:00.000Z",
       createdAt: "2026-08-18T12:01:00.000Z",
       updatedAt: "2026-08-18T12:01:05.000Z",

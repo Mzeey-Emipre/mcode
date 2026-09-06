@@ -56,8 +56,8 @@ function CopilotAccessControls({
   onSelectionTouched,
 }: Omit<ComposerAccessControlsProps, "permissionLocked" | "showInlineOptions">) {
   const permissionMode = selection.permissionMode;
-  const permissionLabel = permissionMode === PERMISSION_MODES.FULL ? "Full access" : "Supervised";
-  const permissionTooltip = permissionMode === PERMISSION_MODES.FULL ? "Full access mode" : "Supervised mode";
+  const permissionLabel = permissionMode === PERMISSION_MODES.FULL ? "Full access" : "Manual";
+  const permissionTooltip = permissionMode === PERMISSION_MODES.FULL ? "Full access mode" : "Manual mode";
 
   return (
     <>
