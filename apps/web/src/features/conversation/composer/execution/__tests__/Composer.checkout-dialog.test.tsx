@@ -1,7 +1,7 @@
 import React from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent, SelectedTextComment } from "@mcode/contracts";
 import { Composer } from "../../Composer";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
@@ -388,6 +388,16 @@ function makeSavedDiffAnnotation(): SavedDiffAnnotation {
 }
 
 describe("Composer checkout confirmation", () => {
+  beforeAll(() => {
+    if (typeof window.ResizeObserver === "undefined") {
+      window.ResizeObserver = class ResizeObserver {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      };
+    }
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();

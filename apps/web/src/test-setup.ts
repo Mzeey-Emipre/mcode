@@ -47,17 +47,4 @@ if (typeof window !== "undefined") {
       dispatchEvent: () => false,
     }),
   });
-  if (typeof globalThis.ResizeObserver === "undefined") {
-    class ResizeObserverMock {
-      observe(): void {}
-      unobserve(): void {}
-      disconnect(): void {}
-    }
-
-    Object.defineProperty(globalThis, "ResizeObserver", {
-      configurable: true,
-      writable: true,
-      value: ResizeObserverMock,
-    });
-  }
 }
