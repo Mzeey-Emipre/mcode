@@ -45,6 +45,8 @@ export const RECORD_MESSAGE_CACHE_SIZE = 100;
  */
 export interface ConversationCacheState {
   messages: ThreadRecord["messages"];
+  sessionNotices: ThreadRecord["sessionNotices"];
+  noticeSessionId: ThreadRecord["noticeSessionId"];
   oldestLoadedSequence: ThreadRecord["oldestLoadedSequence"];
   newestLoadedSequence: ThreadRecord["newestLoadedSequence"];
   hasMoreMessages: ThreadRecord["hasMoreMessages"];
@@ -66,6 +68,8 @@ export interface ConversationCacheState {
 export function projectConversationCacheState(record: ThreadRecord): ConversationCacheState {
   return {
     messages: record.messages,
+    sessionNotices: record.sessionNotices,
+    noticeSessionId: record.noticeSessionId,
     oldestLoadedSequence: record.oldestLoadedSequence,
     newestLoadedSequence: record.newestLoadedSequence,
     hasMoreMessages: record.hasMoreMessages,

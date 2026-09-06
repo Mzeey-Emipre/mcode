@@ -19,6 +19,24 @@ All UI primitives live in `apps/web/src/components/ui/`. **Always use these inst
 | `Switch` | `switch.tsx` | Custom toggle implementations |
 | `Tooltip` | `tooltip.tsx` | `title` attributes or custom hover text |
 
+## Composer overlay layers
+
+`ComposerOverlaySurface` renders composer popups into `document.body`. Keep its
+layers below application overlay primitives:
+
+| Layer | z-index | Surfaces |
+|-------|--------:|----------|
+| Composer base | 10 | Local composer surface |
+| Composer status | 20 | Local queued-send toast |
+| Provider notice | 30 | `ComposerProviderNoticeSurface`, `NoticePrototypeComposer` |
+| Composer menu | 40 | Slash commands, mentions, and Add to composer |
+| Application overlay primitive | 50 | Dialogs, popovers, tooltips, dropdowns, and toasts |
+| Desktop title-bar root | 60 | Desktop title bar and its descendants |
+
+The notice is also hidden while the slash or mention picker is open. Do not use
+an inline Tailwind z-index utility to override this order: the CSS classes own
+the shared portal layers.
+
 ## Button Variants
 
 ```tsx

@@ -39,8 +39,9 @@ import { mockTransport, createMockMessage, createMockThread } from "@/__tests__/
 import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { coerceTaskStatus } from "@/stores/taskStore";
 import { getTransport } from "@/transport";
+import type { Message } from "@/transport";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
-import type { GoalLookupResult, GoalState, TurnSnapshot } from "@mcode/contracts";
+import type { ConversationPage, ConversationTail, GoalLookupResult, GoalState, TurnSnapshot } from "@mcode/contracts";
 import { CONVERSATION_OLDER_PAGE_MAX_BYTES } from "@mcode/contracts";
 import { clearScrollMemory, rememberScrollTop } from "@/components/chat/scrollPositionMemory";
 
@@ -200,6 +201,49 @@ describe("ThreadHydrator", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     resetStores();
     hydrator = createStoreHydrator();
+  });
+
+  it.each(["active", "resident", "background"] as const)("keeps a live session notice when a stale %s fetch returns newer transcript rows", async (surface) => {
+    let resolvePage!: (page: ConversationPage) => void;
+    vi.mocked(mockTransport.loadConversationPage).mockImplementationOnce(() => new Promise((resolve) => { resolvePage = resolve; }));
+    const pending = surface === "active"
+      ? hydrator.hydrate(THREAD_A, "active", { force: true })
+      : surface === "resident"
+        ? hydrator.hydrateResident(THREAD_A, { force: true, generation: 1, isCurrent: () => true })
+        : hydrator.hydrate(THREAD_A, "background");
+    await vi.waitFor(() => expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1));
+    const metadata = { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: "config-1" } as const;
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: THREAD_A, subtype: "provider.notice.configuration", message: "Live config warning", messageId: "live-notice", systemNotice: metadata });
+    resolvePage({ messages: [msgA], sessionNotices: [], hasMore: false, narrativeByMessage: {} });
+    await pending;
+    const record = surface === "background" ? getCachedRecord(THREAD_A)! : useThreadStore.getState().records.get(THREAD_A)!;
+    expect(record.messages.map((message) => message.id)).toEqual(["a1"]);
+    expect(record.sessionNotices).toMatchObject([{ content: "Live config warning", systemNotice: metadata }]);
+    if (surface !== "background") expect(useThreadStore.getState().records.get(THREAD_A)!.loading).toBe(false);
+  });
+
+  it.each(["active", "resident"] as const)("does not restore a replaced session from a stale %s response", async (surface) => {
+    const metadata = { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "old-session", noticeKey: "old-config" } as const;
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: THREAD_A, subtype: "provider.notice.configuration", message: "Old config", messageId: "old-notice", systemNotice: metadata });
+    let resolvePage!: (page: ConversationPage) => void;
+    vi.mocked(mockTransport.loadConversationPage).mockImplementationOnce(() => new Promise((resolve) => { resolvePage = resolve; }));
+    const pending = surface === "active"
+      ? hydrator.hydrate(THREAD_A, "active", { force: true })
+      : hydrator.hydrateResident(THREAD_A, { force: true, generation: 1, isCurrent: () => true });
+    await vi.waitFor(() => expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1));
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: THREAD_A, subtype: "provider.session.started", systemNotice: { kind: "diagnostic", presentation: "timeline", scope: "session", sessionId: "new-session" } });
+    resolvePage({ messages: [msgA], sessionNotices: [createMockMessage({ id: "old-notice", thread_id: THREAD_A, role: "system", content: "Old config", systemNotice: metadata })], hasMore: false, narrativeByMessage: {} });
+    await pending;
+    expect(useThreadStore.getState().records.get(THREAD_A)!.sessionNotices).toEqual([]);
+    expect(useThreadStore.getState().records.get(THREAD_A)!.messages.map((message) => message.id)).toEqual(["a1"]);
+  });
+
+  it("evicts stale cached diagnostics when a provider session starts before selection", async () => {
+    cacheRecord(THREAD_A, { ...makeCachedRecord(), sessionNotices: [createMockMessage({ id: "old-notice", thread_id: THREAD_A, role: "system", content: "Old config", systemNotice: { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "old-session", noticeKey: "old-config" } })] });
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: THREAD_A, subtype: "provider.session.started", systemNotice: { kind: "diagnostic", presentation: "timeline", scope: "session", sessionId: "new-session" } });
+    await hydrator.hydrate(THREAD_A, "active");
+    expect(useThreadStore.getState().records.get(THREAD_A)!.sessionNotices).toEqual([]);
+    expect(getTestActiveMessages()).toEqual([msgA]);
   });
 
   it("cache hit restores synchronously with loading false and skips conversation.page", async () => {
@@ -1722,6 +1766,222 @@ describe("ThreadHydrator", () => {
     expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
     expect(useThreadStore.getState().currentThreadId).toBe(THREAD_B);
     expect(getTestActiveMessages()).toEqual([msgB]);
+  });
+
+  it("keeps the current provider notice collection from a fresh bounded-tail selection", async () => {
+    const sessionId = "provider-session";
+    const definitions: Array<{
+      kind: NonNullable<Message["systemNotice"]>["kind"];
+      content: string;
+      scope: "turn" | "session";
+    }> = [
+      { kind: "configuration", content: "Configuration needs review", scope: "session" },
+      { kind: "security", content: "Review this security notice", scope: "turn" },
+      { kind: "warning", content: "Provider warning", scope: "turn" },
+      { kind: "model-rerouted", content: "Model changed", scope: "turn" },
+      { kind: "authentication-recovered", content: "Authentication recovered", scope: "turn" },
+    ];
+    const sessionNotices = definitions.map(({ kind, content, scope }, index) => createMockMessage({
+      id: `notice-${kind}`,
+      thread_id: THREAD_A,
+      role: "system",
+      content,
+      sequence: index + 1,
+      systemNotice: {
+        kind,
+        presentation: "timeline",
+        scope,
+        sessionId,
+        noticeKey: `notice-${kind}`,
+      },
+    }));
+    const tailLoader = vi.fn().mockResolvedValue({ messages: [msgA], sessionNotices, hasMore: true });
+    mockTransport.loadConversationTail = tailLoader;
+
+    try {
+      await hydrator.hydrate(THREAD_A, "active");
+
+      expect(useThreadStore.getState().records.get(THREAD_A)?.sessionNotices.map((notice) => notice.id))
+        .toEqual(sessionNotices.map((notice) => notice.id));
+      expect(useThreadStore.getState().records.get(THREAD_A)?.noticeSessionId).toBe(sessionId);
+      expect(getCachedRecord(THREAD_A)?.sessionNotices.map((notice) => notice.id))
+        .toEqual(sessionNotices.map((notice) => notice.id));
+      expect(getCachedRecord(THREAD_A)?.noticeSessionId).toBe(sessionId);
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
+  it("does not discard fetched notices after an equivalent empty collection is allocated", async () => {
+    const notice = createMockMessage({
+      id: "fresh-warning",
+      thread_id: THREAD_A,
+      role: "system",
+      content: "Review this warning.",
+      systemNotice: {
+        kind: "warning",
+        presentation: "timeline",
+        scope: "turn",
+        sessionId: "provider-session",
+        noticeKey: "fresh-warning",
+      },
+    });
+    let resolveTail!: (tail: ConversationTail) => void;
+    mockTransport.loadConversationTail = vi.fn().mockImplementation(
+      () => new Promise<ConversationTail>((resolve) => { resolveTail = resolve; }),
+    );
+
+    try {
+      const hydration = hydrator.hydrate(THREAD_A, "active");
+      await vi.waitFor(() => expect(mockTransport.loadConversationTail).toHaveBeenCalledTimes(1));
+      useThreadStore.setState((state) => ({
+        records: patchThreadRecord(state.records, THREAD_A, { sessionNotices: [] }),
+      }));
+      resolveTail({ messages: [msgA], sessionNotices: [notice], hasMore: false });
+      await hydration;
+
+      expect(useThreadStore.getState().records.get(THREAD_A)?.sessionNotices).toEqual([notice]);
+      expect(useThreadStore.getState().records.get(THREAD_A)?.noticeSessionId).toBe("provider-session");
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
+  it("coalesces fetched and live notices from the same provider session", async () => {
+    const sessionId = "provider-session";
+    const securityNotice = createMockMessage({
+      id: "fetched-security",
+      thread_id: THREAD_A,
+      role: "system",
+      content: "Review the fetched security notice.",
+      systemNotice: {
+        kind: "security",
+        presentation: "timeline",
+        scope: "turn",
+        sessionId,
+        noticeKey: "security-a",
+      },
+    });
+    let resolveTail!: (tail: ConversationTail) => void;
+    mockTransport.loadConversationTail = vi.fn().mockImplementation(
+      () => new Promise<ConversationTail>((resolve) => { resolveTail = resolve; }),
+    );
+
+    try {
+      const hydration = hydrator.hydrate(THREAD_A, "active");
+      await vi.waitFor(() => expect(mockTransport.loadConversationTail).toHaveBeenCalledTimes(1));
+      useThreadStore.getState().handleAgentEvent({
+        type: "system",
+        threadId: THREAD_A,
+        subtype: "provider.notice.warning",
+        message: "Review the live warning.",
+        messageId: "live-warning",
+        systemNotice: {
+          kind: "warning",
+          presentation: "timeline",
+          scope: "session",
+          sessionId,
+          noticeKey: "warning-b",
+        },
+      });
+      resolveTail({ messages: [msgA], sessionNotices: [securityNotice], hasMore: false });
+      await hydration;
+
+      expect(useThreadStore.getState().records.get(THREAD_A)?.sessionNotices.map((notice) => notice.id))
+        .toEqual(["fetched-security", "live-warning"]);
+      expect(getCachedRecord(THREAD_A)?.sessionNotices.map((notice) => notice.id))
+        .toEqual(["fetched-security", "live-warning"]);
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
+  it("keeps a live notice when its provider metadata changes during a tail fetch", async () => {
+    const sessionId = "provider-session";
+    const fetchedNotice = createMockMessage({
+      id: "reroute-notice",
+      thread_id: THREAD_A,
+      role: "system",
+      content: "The provider selected another model.",
+      systemNotice: {
+        kind: "model-rerouted",
+        presentation: "timeline",
+        scope: "turn",
+        sessionId,
+        noticeKey: "reroute",
+        toModel: "model-a",
+      },
+    });
+    const liveNotice = {
+      ...fetchedNotice,
+      systemNotice: { ...fetchedNotice.systemNotice!, toModel: "model-b" },
+    };
+    useThreadStore.setState((state) => ({
+      records: patchThreadRecord(state.records, THREAD_A, {
+        noticeSessionId: sessionId,
+        sessionNotices: [fetchedNotice],
+      }),
+    }));
+    let resolveTail!: (tail: ConversationTail) => void;
+    mockTransport.loadConversationTail = vi.fn().mockImplementation(
+      () => new Promise<ConversationTail>((resolve) => { resolveTail = resolve; }),
+    );
+
+    try {
+      const hydration = hydrator.hydrate(THREAD_A, "active");
+      await vi.waitFor(() => expect(mockTransport.loadConversationTail).toHaveBeenCalledTimes(1));
+      useThreadStore.setState((state) => ({
+        records: patchThreadRecord(state.records, THREAD_A, { sessionNotices: [liveNotice] }),
+      }));
+      resolveTail({ messages: [msgA], sessionNotices: [fetchedNotice], hasMore: false });
+      await hydration;
+
+      expect(useThreadStore.getState().records.get(THREAD_A)?.sessionNotices).toEqual([liveNotice]);
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
+  it("restores an explicit empty notice session from cache", async () => {
+    cacheRecord(THREAD_A, {
+      ...makeCachedRecord(),
+      noticeSessionId: "new-provider-session",
+      sessionNotices: [],
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(useThreadStore.getState().records.get(THREAD_A)?.noticeSessionId).toBe("new-provider-session");
+    expect(useThreadStore.getState().records.get(THREAD_A)?.sessionNotices).toEqual([]);
+  });
+
+  it("retains an unscoped provider notice from the bounded tail", async () => {
+    const notice = createMockMessage({
+      id: "unscoped-warning",
+      thread_id: THREAD_A,
+      role: "system",
+      content: "Review this unscoped warning.",
+      systemNotice: {
+        kind: "warning",
+        presentation: "timeline",
+        scope: "turn",
+        noticeKey: "unscoped-warning",
+      },
+    });
+    mockTransport.loadConversationTail = vi.fn().mockResolvedValue({
+      messages: [msgA],
+      sessionNotices: [notice],
+      hasMore: false,
+    });
+
+    try {
+      await hydrator.hydrate(THREAD_A, "active");
+
+      expect(useThreadStore.getState().records.get(THREAD_A)?.sessionNotices).toEqual([notice]);
+      expect(useThreadStore.getState().records.get(THREAD_A)?.noticeSessionId).toBeNull();
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
   });
 
   it("uses the bounded tail loader only for active first-paint fetches", async () => {

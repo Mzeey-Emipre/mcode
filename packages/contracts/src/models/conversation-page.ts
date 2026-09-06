@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
-import { MessageSchema } from "./message.js";
+import { MessageSchema, SessionNoticesSchema, type Message } from "./message.js";
 import { ToolCallRecordSchema } from "./tool-call-record.js";
 import { ThoughtSegmentRecordSchema } from "./thought-segment.js";
 import { HookExecutionRecordSchema } from "./hook-execution.js";
@@ -15,9 +15,10 @@ export const ConversationNarrativeBatchSchema = lazySchema(() =>
 );
 
 /** Thread conversation page: messages plus their grouped narrative payloads. */
-export const ConversationPageSchema = lazySchema(() =>
+export const ConversationPageSchema = lazySchema<z.ZodType<ConversationPage>>(() =>
   z.object({
     messages: z.array(MessageSchema()),
+    sessionNotices: SessionNoticesSchema().optional(),
     hasMore: z.boolean(),
     answeredPlanMessageIds: z.array(z.string()).optional(),
     narrativeByMessage: z.record(ConversationNarrativeBatchSchema()),
@@ -28,4 +29,10 @@ export const ConversationPageSchema = lazySchema(() =>
 export type ConversationNarrativeBatch = z.infer<ReturnType<typeof ConversationNarrativeBatchSchema>>;
 
 /** Thread conversation page returned by `conversation.page`. */
-export type ConversationPage = z.infer<ReturnType<typeof ConversationPageSchema>>;
+export interface ConversationPage {
+  messages: Message[];
+  sessionNotices?: Message[];
+  hasMore: boolean;
+  answeredPlanMessageIds?: string[];
+  narrativeByMessage: Record<string, ConversationNarrativeBatch>;
+}

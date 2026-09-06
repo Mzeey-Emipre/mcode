@@ -333,8 +333,13 @@
   }
 }
 .composer-autocomplete-surface {
-  z-index: 60;
+  /* Composer menus sit below application overlay primitives (z-50). */
+  z-index: 40;
   transform-origin: bottom left;
+}
+.composer-provider-notice-surface {
+  /* Autocomplete must stay available while a notice is visible. */
+  z-index: 30;
 }
 .animate-composer-popup-enter {
   animation: composer-popup-enter 140ms cubic-bezier(0.22, 1, 0.36, 1);

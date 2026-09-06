@@ -129,6 +129,8 @@ export const threads = sqliteTable(
     /** Thread-scoped default open-in app id (ADR-0005 tier 1); null = no override. */
     defaultOpenInApp: text("default_open_in_app"),
     hasFileChanges: integer("has_file_changes").notNull().default(0),
+    /** Provider notice session selected by the last provider.session.started boundary. */
+    currentNoticeSessionId: text("current_notice_session_id"),
   },
   (table) => [
     index("idx_threads_workspace").on(table.workspaceId),
@@ -349,10 +351,17 @@ export const messages = sqliteTable(
     outcome: text("outcome"),
     /** Exact execution identity for retrying an interrupted or errored turn. */
     outcomeExecutionId: text("outcome_execution_id"),
+    /** Bounded typed provider notice metadata for durable system messages. */
+    systemNotice: text("system_notice"),
   },
   (table) => [
     index("idx_messages_thread").on(table.threadId),
     index("idx_messages_sequence").on(table.threadId, table.sequence),
+    index("idx_messages_notice_session_sequence").on(
+      table.threadId,
+      sql`json_extract(${table.systemNotice}, '$.sessionId')`,
+      desc(table.sequence),
+    ),
   ],
 );
 

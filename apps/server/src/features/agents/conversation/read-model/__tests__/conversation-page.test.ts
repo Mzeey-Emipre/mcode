@@ -55,6 +55,146 @@ function createDeps(db: Database.Database) {
 }
 
 describe("loadConversationPage", () => {
+  it("replays current-session notices beyond the bounded tail and retains old turn notices in history", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const deps = createDeps(db);
+    deps.messageRepo.beginNoticeSession("thread-1", "old-session");
+    deps.messageRepo.createSystemNotice("thread-1", "Old security notice", 1, {
+      kind: "security", presentation: "timeline", scope: "turn", sessionId: "old-session", noticeKey: "old-security",
+    });
+    deps.messageRepo.beginNoticeSession("thread-1", "current-session");
+    deps.messageRepo.createSystemNotice("thread-1", "Late old-session warning", 2, {
+      kind: "warning", presentation: "timeline", scope: "turn", sessionId: "old-session", noticeKey: "old-warning",
+    });
+    const notices = [
+      { content: "Security notice", kind: "security", scope: "turn", noticeKey: "security" },
+      { content: "Warning notice", kind: "warning", scope: "turn", noticeKey: "warning" },
+      { content: "Model rerouted", kind: "model-rerouted", scope: "turn", noticeKey: "rerouted" },
+      { content: "Fix config", kind: "configuration", scope: "session", noticeKey: "config" },
+    ] as const;
+    for (const [offset, notice] of notices.entries()) {
+      const { content, ...metadata } = notice;
+      deps.messageRepo.createSystemNotice("thread-1", content, offset + 3, {
+        ...metadata,
+        presentation: "timeline",
+        sessionId: "current-session",
+      });
+    }
+    deps.messageRepo.createSystemNotice("thread-1", "Fix config again", 7, {
+      kind: notices[3].kind,
+      scope: notices[3].scope,
+      noticeKey: notices[3].noticeKey,
+      presentation: "timeline",
+      sessionId: "current-session",
+    });
+    insertMessage(db, "user", "user", "Tail message one", 8);
+    insertMessage(db, "assistant", "assistant", "Tail message two", 9);
+
+    const page = loadConversationPage(deps, { threadId: "thread-1", limit: 20 });
+    const tail = loadConversationTail(deps, { threadId: "thread-1", limit: 2 });
+
+    expect(page.messages.map((message) => message.content)).toEqual([
+      "Old security notice", "Late old-session warning", "Security notice", "Warning notice", "Model rerouted", "Tail message one", "Tail message two",
+    ]);
+    expect(tail.messages.map((message) => message.content)).toEqual(["Tail message one", "Tail message two"]);
+    expect(page.sessionNotices.map((message) => message.content)).toEqual([
+      "Security notice", "Warning notice", "Model rerouted", "Fix config again",
+    ]);
+    expect(tail.sessionNotices).toEqual(page.sessionNotices);
+    deps.messageRepo.beginNoticeSession("thread-1", "current-session");
+    expect(deps.messageRepo.listSessionNotices("thread-1")).toEqual(page.sessionNotices);
+    deps.messageRepo.beginNoticeSession("thread-1", "empty-session");
+    expect(deps.messageRepo.listSessionNotices("thread-1")).toEqual([]);
+    expect(db.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE content = 'Fix config again'",
+    ).get()).toEqual({ count: 0 });
+    expect(deps.messageRepo.listByThread("thread-1", 20).messages.map((message) => message.content)).toEqual([
+      "Old security notice", "Late old-session warning", "Security notice", "Warning notice", "Model rerouted", "Tail message one", "Tail message two",
+    ]);
+    db.close();
+  });
+
+  it("keeps session notices out of budgeted transcript history", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const repo = new MessageRepo(db);
+    repo.beginNoticeSession("thread-1", "session-1");
+    repo.createSystemNotice("thread-1", "Fix config", 1, {
+      kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: "config-1",
+    });
+    repo.createSystemNotice("thread-1", "Disk space low", 2, {
+      kind: "warning", presentation: "timeline", scope: "turn", sessionId: "session-1", noticeKey: "warning-1",
+    });
+
+    const history = repo.listByThreadUpToSequenceBudgeted("thread-1", 2, { maxBytes: 1 });
+
+    expect(history.messages.map((message) => message.content)).toEqual(["D"]);
+    expect(history.budget.omittedBeforeCount).toBe(0);
+    db.close();
+  });
+
+  it("bounds session-scoped configuration notices without adding transcript rows", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const repo = new MessageRepo(db);
+    repo.beginNoticeSession("thread-1", "session-1");
+    for (let i = 0; i < 23; i++) repo.createSystemNotice("thread-1", `Config ${i}`, i, { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: `config-${i}` });
+
+    expect(repo.listSessionNotices("thread-1").map((message) => message.content)).toEqual(Array.from({ length: 20 }, (_, i) => `Config ${i + 3}`));
+    expect(repo.listByThread("thread-1", 20).messages).toEqual([]);
+    db.close();
+  });
+
+  it("does not let late session-scoped notices evict the current collection", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const repo = new MessageRepo(db);
+    repo.beginNoticeSession("thread-1", "old-session");
+    repo.beginNoticeSession("thread-1", "current-session");
+    for (let i = 0; i < 20; i++) repo.createSystemNotice("thread-1", `Current config ${i}`, i, { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "current-session", noticeKey: `current-config-${i}` });
+    for (let i = 0; i < 23; i++) repo.createSystemNotice("thread-1", `Late old config ${i}`, i + 20, { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "old-session", noticeKey: `old-config-${i}` });
+
+    expect(repo.listSessionNotices("thread-1").map((message) => message.content)).toEqual(Array.from({ length: 20 }, (_, i) => `Current config ${i}`));
+    db.close();
+  });
+
+  it("replays notices without a session id only while the current marker is null", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const repo = new MessageRepo(db);
+    repo.beginNoticeSession("thread-1", undefined);
+    repo.create("thread-1", "assistant", "Ordinary message", 1);
+    repo.createSystemNotice("thread-1", "Unscoped warning", 2, {
+      kind: "warning", presentation: "timeline", scope: "turn", noticeKey: "unscoped-warning",
+    });
+
+    expect(repo.listSessionNotices("thread-1").map((message) => message.content)).toEqual([
+      "Unscoped warning",
+    ]);
+
+    repo.beginNoticeSession("thread-1", "current-session");
+    repo.createSystemNotice("thread-1", "Current warning", 3, {
+      kind: "warning", presentation: "timeline", scope: "turn", sessionId: "current-session", noticeKey: "current-warning",
+    });
+
+    expect(repo.listSessionNotices("thread-1").map((message) => message.content)).toEqual([
+      "Current warning",
+    ]);
+    db.close();
+  });
+
+  it("retains only the newest twenty notices from all metadata scopes", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const repo = new MessageRepo(db);
+    repo.beginNoticeSession("thread-1", "session-1");
+    for (let i = 0; i < 23; i++) repo.createSystemNotice("thread-1", `Warning ${i}`, i, { kind: "warning", presentation: "timeline", scope: "turn", sessionId: "session-1", noticeKey: `warning-${i}` });
+    expect(repo.listSessionNotices("thread-1").map((message) => message.content)).toEqual(Array.from({ length: 20 }, (_, i) => `Warning ${i + 3}`));
+    expect(repo.listByThread("thread-1", 23).messages).toHaveLength(23);
+    db.close();
+  });
+
   it("prefers canonical messages and narrative while retaining older compatibility history", () => {
     const db = openMemoryDatabase();
     seedThread(db);
@@ -283,6 +423,7 @@ describe("loadConversationTail", () => {
     });
 
     expect(tail).toEqual({
+      sessionNotices: [],
       messages: [
         expect.objectContaining({ id: "a1", sequence: 2 }),
         expect.objectContaining({ id: "u2", sequence: 4 }),
@@ -332,6 +473,7 @@ describe("loadConversationTail", () => {
 
     expect(canonicalSink.loadConversationProjection).toHaveBeenCalledWith("thread-1", 2);
     expect(tail).toEqual({
+      sessionNotices: [],
       messages: [
         expect.objectContaining({
           id: "compatibility-overlap",

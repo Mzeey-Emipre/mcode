@@ -15,6 +15,24 @@ Read this file when a change crosses product surfaces. Use the linked feature fi
 
 Use `runtime live --scenario completion --confirm-provider-call` for server and persistence evidence. Use the desktop testing skill for UI reload evidence.
 
+## Codex protocol notices and reconnect
+
+1. Start an owned Codex thread from the Electron Composer with the [desktop live-testing skill](../../../electorn-live-testing/SKILL.md).
+2. Trigger each available reroute, warning, configuration, deprecation, workspace-security, or authentication-recovery notice.
+3. Confirm the current warning above Composer before any history scroll. Expand its details, hide it, then reopen it with Review notices. Inspect the public conversation state without provider payloads.
+4. Type `/` and `@` in the real Composer. Each picker takes precedence. Escape restores the notice and preserves the draft. Reload the Electron conversation and check the warning before any history scroll. Confirm that no duplicate toast or diagnostics entry appears.
+5. Capture the trigger and stable state, then remove only verifier-owned thread state.
+
+Run `runtime health` before this journey. Use the trigger table and proof limits
+in [Provider events and durability](provider-events-and-durability.md#codex-notice-triggers-and-desktop-proof).
+Capture an Electron assertion and screenshot as well as public persistence
+evidence. Record unavailable Codex access or notification variants as coverage
+gaps. The focused mapper, server, and web tests do not prove desktop appearance.
+For the controlled five-notice fixture, run `desktop codex-protocol-notices
+setup`, set its returned path only in the owned Electron runtime, and use a fresh
+direct thread. One fixture process supports one turn. Restore the prior path
+before fixture cleanup.
+
 ## Stop and reconnect hydration
 
 1. Start a provider-backed thread from the Mcode composer.

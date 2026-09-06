@@ -216,16 +216,21 @@ export class CodexRpcClient extends NodeEvents.EventEmitter {
       return;
     }
 
-    logger.warn("CodexRpcClient: unrecognized message", { msg });
+    logger.warn("CodexRpcClient: unrecognized message");
   }
 
   private parseMessage(line: string): Record<string, unknown> | undefined {
     const trimmed = line.trim();
     if (trimmed === "") return undefined;
     try {
-      return JSON.parse(trimmed) as Record<string, unknown>;
+      const value: unknown = JSON.parse(trimmed);
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        logger.warn("CodexRpcClient: malformed message envelope");
+        return undefined;
+      }
+      return value as Record<string, unknown>;
     } catch {
-      logger.warn("CodexRpcClient: malformed JSON line", { line: trimmed });
+      logger.warn("CodexRpcClient: malformed JSON line");
       return undefined;
     }
   }

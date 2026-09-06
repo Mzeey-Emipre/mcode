@@ -1166,7 +1166,7 @@ describe("CodexEventMapper", () => {
       method: "item/completed",
       params: {},
     });
-    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{ type: "system", subtype: "provider.notice.unknown-event", systemNotice: { kind: "diagnostic" } }]);
   });
 
   it("drains a malformed item completion before turn completion can promote pending text", () => {
@@ -1188,8 +1188,9 @@ describe("CodexEventMapper", () => {
     });
 
     expect(delta.map((runtimeEvent) => runtimeEvent.event.type)).toEqual(["textDelta"]);
-    expect(malformed.map((runtimeEvent) => runtimeEvent.event)).toEqual([
+    expect(malformed.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([
       { type: "assistantMessageBoundary", threadId: "test-thread", isFinalResponse: false },
+      { type: "system", subtype: "provider.notice.unknown-event", systemNotice: { kind: "diagnostic" } },
     ]);
     expect(terminal.map((runtimeEvent) => runtimeEvent.event.type)).toEqual(["turnComplete"]);
     expect(terminal.some((runtimeEvent) => runtimeEvent.event.type === "message")).toBe(false);
@@ -1216,7 +1217,7 @@ describe("CodexEventMapper", () => {
       method: "item/completed",
       params: { item: { type: "unknown_item_type" } },
     });
-    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{ type: "system", subtype: "provider.notice.unknown-event", systemNotice: { kind: "diagnostic" } }]);
   });
 
   it.each(["__proto__", "constructor", "toString"])("treats prototype item type %s as unknown", (type) => {
@@ -1226,7 +1227,7 @@ describe("CodexEventMapper", () => {
       params: { item: { type } },
     } as never);
 
-    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{ type: "system", subtype: "provider.notice.unknown-event", systemNotice: { kind: "diagnostic" } }]);
   });
 
   // ---------------------------------------------------------------------------
@@ -3004,7 +3005,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{ type: "system", subtype: "provider.notice.unknown-event", systemNotice: { kind: "diagnostic" } }]);
     expect(registered.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({ type: "toolUse", toolCallId: "collab-unrelated" }),
     ]);
@@ -3471,7 +3472,6 @@ describe("CodexEventMapper", () => {
   });
 
   it("drops unknown-thread notifications before they mutate main turn state", async () => {
-    const { logger } = await import("@mcode/shared");
     mapper = new CodexEventMapper("test-thread", "main-codex-thread");
 
     const unknown = mapper.mapNotification({
@@ -3488,13 +3488,9 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-codex-thread", turn: { status: "completed" } },
     });
 
-    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{ type: "system", subtype: "provider.notice.unknown-event", systemNotice: { kind: "diagnostic" } }]);
     expect(main).toHaveLength(1);
     expect(main[0]!.event).toMatchObject({ type: "turnComplete" });
-    expect(logger.warn).toHaveBeenCalledWith(
-      "CodexEventMapper: dropping unknown-thread notification",
-      expect.objectContaining({ method: "item/completed", notificationThreadId: "stray-thread" }),
-    );
   });
 
   it("consumes child-thread text and reasoning without adding it to the main final reply", () => {
@@ -3919,7 +3915,7 @@ describe("CodexEventMapper", () => {
   // Unrecognized notification method
   // ---------------------------------------------------------------------------
 
-  it("returns empty array and warns for unrecognized notification method", async () => {
+  it("turns an unknown notification into a bounded diagnostic without blocking later terminal events", async () => {
     const { logger } = await import("@mcode/shared");
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
@@ -3927,7 +3923,13 @@ describe("CodexEventMapper", () => {
       params: {},
     } as never);
 
-    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{
+      type: "system",
+      threadId: "test-thread",
+      subtype: "provider.notice.unknown-event",
+      message: "Codex sent an update this client does not recognize (unknown/method). The thread continues normally.",
+      systemNotice: { kind: "diagnostic", presentation: "timeline", scope: "turn" },
+    }]);
     expect(logger.warn).toHaveBeenCalledWith(
       "CodexEventMapper: unrecognized notification",
       expect.objectContaining({ method: "unknown/method" }),
@@ -3947,11 +3949,14 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-thread", turn: { status: "completed" } },
     });
 
-    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{
+      type: "system",
+      subtype: "provider.notice.unknown-event",
+    }]);
     expect(terminal.map((runtimeEvent) => runtimeEvent.event.type)).toEqual(["turnComplete"]);
   });
 
-  it("logs warning notifications without treating them as unrecognized", async () => {
+  it("maps ordinary warnings to bounded canonical notices", async () => {
     const { logger } = await import("@mcode/shared");
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
@@ -3959,17 +3964,85 @@ describe("CodexEventMapper", () => {
       params: { message: "configuration degraded", code: "config" },
     });
 
-    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
-    expect(logger.warn).toHaveBeenCalledWith(
-      "Codex warning notification",
-      expect.objectContaining({
-        method: "warning",
-        params: { message: "configuration degraded", code: "config" },
-      }),
-    );
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toMatchObject([{
+      type: "system",
+      threadId: "test-thread",
+      subtype: "provider.notice.warning",
+      message: "configuration degraded",
+      systemNotice: { kind: "warning", presentation: "timeline", scope: "turn" },
+    }]);
     expect(logger.warn).not.toHaveBeenCalledWith(
       "CodexEventMapper: unrecognized notification",
       expect.anything(),
     );
+  });
+
+  it("maps security, configuration, deprecation, reroute, and recovery notices without raw payloads", () => {
+    mapper.setMainCodexThreadId("main-thread");
+    const notices = [
+      mapper.mapNotification({ jsonrpc: "2.0", method: "guardianWarning", params: { threadId: "main-thread", message: "guardian warning" } }),
+      mapper.mapNotification({ jsonrpc: "2.0", method: "windows/worldWritableWarning", params: { samplePaths: ["C:/workspace", "C:/shared"], extraCount: 2, failedScan: true } }),
+      mapper.mapNotification({ jsonrpc: "2.0", method: "configWarning", params: { summary: "Bad config", details: "Fix it", path: "C:/config.toml", range: { start: { line: 1, column: 2 }, end: { line: 3, column: 4 } } } }),
+      mapper.mapNotification({ jsonrpc: "2.0", method: "deprecationNotice", params: { summary: "Deprecated", details: "Use the replacement" } }),
+      mapper.mapNotification({ jsonrpc: "2.0", method: "model/rerouted", params: { threadId: "main-thread", turnId: "turn-1", fromModel: "gpt-5", toModel: "gpt-5-safe", reason: "highRiskCyberActivity" } }),
+      mapper.mapNotification({ jsonrpc: "2.0", method: "modelProvider/authRecoveryCompleted", params: { threadId: "main-thread", turnId: "turn-1", provider: "OpenAI", message: "Signed in again" } }),
+    ].flatMap((events) => events.map((event) => event.event));
+
+    expect(notices).toMatchObject([
+      { subtype: "provider.notice.security", message: "guardian warning" },
+      { subtype: "provider.notice.security", message: expect.stringContaining("world-writable") },
+      { subtype: "provider.notice.configuration", systemNotice: { configPath: "C:/config.toml", configRange: { startLine: 1, startColumn: 2, endLine: 3, endColumn: 4 }, scope: "session" } },
+      { subtype: "provider.notice.deprecation", message: "Deprecated Use the replacement" },
+      { subtype: "provider.notice.model-rerouted", message: expect.stringContaining("high-risk cyber safety") },
+      { subtype: "provider.notice.authentication-recovered", message: "OpenAI: Signed in again" },
+    ]);
+    expect(notices.every((notice) => Object.keys(notice).every((key) => ["type", "threadId", "subtype", "message", "systemNotice"].includes(key)))).toBe(true);
+  });
+
+  it("drops an out-of-range configuration location while retaining its bounded notice", () => {
+    const [event] = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "configWarning",
+      params: {
+        summary: "Configuration warning",
+        range: {
+          start: { line: 1_000_001, column: 1 },
+          end: { line: 1_000_001, column: 2 },
+        },
+      },
+    } as never).map((mapped) => mapped.event);
+
+    expect(event).toMatchObject({
+      type: "system",
+      systemNotice: { kind: "configuration", presentation: "timeline" },
+    });
+    expect(event).not.toHaveProperty("systemNotice.configRange");
+  });
+
+  it("contains malformed notice payloads in a bounded diagnostic without throwing", () => {
+    expect(() => mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "configWarning",
+      params: null,
+    } as never)).not.toThrow();
+
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "configWarning",
+      params: null,
+    } as never).map((mapped) => mapped.event)).toMatchObject([{
+      type: "system",
+      systemNotice: { kind: "diagnostic", scope: "turn" },
+    }]);
+  });
+
+  it("does not leak a child-thread safety notice into the parent transcript", () => {
+    const parentMapper = new CodexEventMapper("parent-thread", "parent-native");
+
+    expect(parentMapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "guardianWarning",
+      params: { threadId: "child-native", message: "Unsafe action blocked" },
+    })).toMatchObject([{ event: { type: "system", message: "Unsafe action blocked", systemNotice: { kind: "security", scope: "session", origin: "unattributed-thread" } } }]);
   });
 });

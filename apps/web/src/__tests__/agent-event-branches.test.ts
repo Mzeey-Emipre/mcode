@@ -10,10 +10,14 @@ import {
 import { createEmptyThreadRecord, patchThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { countActiveSubagentCalls, useThreadStore } from "@/stores/threadStore";
-import { mockTransport, createMockThread } from "./mocks/transport";
+import { mockTransport, createMockMessage, createMockThread } from "./mocks/transport";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useTaskStore } from "@/stores/taskStore";
+import { createElement } from "react";
+import { render, cleanup } from "@testing-library/react";
+import { SessionDiagnostics } from "@/features/conversation/messages/SessionDiagnostics";
+import { SnapshotBuilder } from "@/features/conversation/hydration/snapshot-builder";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -120,6 +124,236 @@ describe("handleAgentEvent branches", () => {
     }]);
     expect(readThreadField("thread-1", (record) => record.runtimePhase)).toBe("running");
     expect(useThreadStore.getState().runningThreadIds.has("thread-1")).toBe(true);
+  });
+
+  it("does not duplicate a persisted provider notice after reconnect delivery", () => {
+    const handle = useThreadStore.getState().handleAgentEvent;
+    const event = {
+      type: "system" as const,
+      threadId: "thread-1",
+      subtype: "provider.notice.warning",
+      message: "Disk space is low.",
+      messageId: "d2d3f8a6-2a49-4e33-b038-a40ce92f9519",
+    };
+    handle(event);
+    handle(event);
+
+    expect(getTestActiveMessages()).toMatchObject([{ id: event.messageId, content: event.message }]);
+    expect(getTestActiveMessages()).toHaveLength(1);
+  });
+
+  it("retains reroute metadata in the Composer collection without a duplicate toast", () => {
+    useToastStore.setState({ toasts: [] });
+    const event = {
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.notice.model-rerouted",
+      message: "Codex rerouted this turn from gpt-5 to gpt-5-safe.",
+      messageId: "server-receipt-1",
+      systemNotice: { kind: "model-rerouted", presentation: "toast", scope: "turn", sessionId: "session-1", noticeKey: "turn-reroute-1", fromModel: "gpt-5", toModel: "gpt-5-safe", reason: "safety" },
+    } as const;
+    useThreadStore.getState().handleAgentEvent({ ...event, messageId: "server-receipt-2" });
+    useThreadStore.getState().handleAgentEvent(event);
+
+    expect(getTestActiveMessages()).toMatchObject([{
+      content: "Codex rerouted this turn from gpt-5 to gpt-5-safe.",
+      systemNotice: { kind: "model-rerouted", presentation: "toast" },
+    }]);
+    expect(getTestActiveMessages()).toHaveLength(1);
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices).toMatchObject([{
+      content: event.message,
+      systemNotice: { kind: "model-rerouted", sessionId: "session-1" },
+    }]);
+    expect(useToastStore.getState().toasts).toEqual([]);
+  });
+
+  it("retains current-session configuration notices outside the transcript and clears a replaced session", () => {
+    const event = { type: "system", threadId: "thread-1", subtype: "provider.notice.configuration", message: "Fix <config>", messageId: "config-1", systemNotice: { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: "config-key", configPath: "C:/config.toml", configRange: { startLine: 2, startColumn: 3, endLine: 2, endColumn: 9 } } } as const;
+    useThreadStore.getState().handleAgentEvent(event);
+    useThreadStore.getState().handleAgentEvent({ ...event, messageId: "config-duplicate" });
+    const sessionNotices = useThreadStore.getState().records.get("thread-1")!.sessionNotices;
+    expect(getTestActiveMessages()).toEqual([]);
+    expect(sessionNotices).toMatchObject([{ content: "Fix <config>", systemNotice: event.systemNotice }]);
+    const patch = new SnapshotBuilder().build({ messages: [], sessionNotices, hasMore: false });
+    useThreadStore.setState((state) => ({ records: patchThreadRecord(state.records, "thread-1", patch) }));
+    const rendered = render(createElement(SessionDiagnostics, { threadId: "thread-1" })).container.innerHTML;
+    expect(rendered).toBe("");
+    cleanup();
+    useThreadStore.getState().handleAgentEvent({ ...event, subtype: "provider.session.started", message: undefined });
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices).toEqual(sessionNotices);
+    useThreadStore.getState().handleAgentEvent({ ...event, subtype: "provider.session.started", message: undefined, systemNotice: { ...event.systemNotice, sessionId: "session-2" } });
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices).toEqual([]);
+    expect(getTestActiveMessages()).toEqual([]);
+    useThreadStore.getState().handleAgentEvent({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.session.started",
+    });
+    expect(useThreadStore.getState().records.get("thread-1")!.noticeSessionId).toBeNull();
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices).toEqual([]);
+  });
+
+  it("keeps a current turn notice in the Composer collection while retaining its timeline row", () => {
+    const event = {
+      type: "system" as const,
+      threadId: "thread-1",
+      subtype: "provider.notice.warning",
+      message: "Review the provider warning.",
+      messageId: "turn-warning",
+      systemNotice: {
+        kind: "warning" as const,
+        presentation: "timeline" as const,
+        scope: "turn" as const,
+        sessionId: "session-1",
+        noticeKey: "turn-warning",
+      },
+    };
+
+    useThreadStore.getState().handleAgentEvent(event);
+    expect(getTestActiveMessages()).toMatchObject([{ id: "turn-warning", content: event.message }]);
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices)
+      .toMatchObject([{ id: "turn-warning", content: event.message }]);
+
+    useThreadStore.getState().handleAgentEvent({
+      ...event,
+      subtype: "provider.session.started",
+      message: undefined,
+    });
+    expect(getTestActiveMessages()).toMatchObject([{ id: "turn-warning", content: event.message }]);
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices)
+      .toMatchObject([{ id: "turn-warning", content: event.message }]);
+  });
+
+  it("keeps a repeated boundary and rejects a late notice from an older session", () => {
+    const currentSession = "session-current";
+    useThreadStore.getState().handleAgentEvent({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.session.started",
+      systemNotice: {
+        kind: "diagnostic",
+        presentation: "timeline",
+        sessionId: currentSession,
+      },
+    });
+    useThreadStore.getState().handleAgentEvent({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.session.started",
+      systemNotice: {
+        kind: "diagnostic",
+        presentation: "timeline",
+        sessionId: currentSession,
+      },
+    });
+    useThreadStore.getState().handleAgentEvent({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.notice.warning",
+      message: "Late warning from an earlier session.",
+      messageId: "late-warning",
+      systemNotice: {
+        kind: "warning",
+        presentation: "timeline",
+        scope: "turn",
+        sessionId: "session-old",
+        noticeKey: "late-warning",
+      },
+    });
+
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices).toEqual([]);
+    expect(getTestActiveMessages()).toMatchObject([{ id: "late-warning" }]);
+  });
+
+  it("uses hydrated current-session notices to reject a late older-session event", () => {
+    const current = createMockMessage({
+      id: "hydrated-current",
+      thread_id: "thread-1",
+      role: "system",
+      content: "Current provider notice.",
+      systemNotice: {
+        kind: "warning",
+        presentation: "timeline",
+        scope: "turn",
+        sessionId: "session-current",
+        noticeKey: "hydrated-current",
+      },
+    });
+    useThreadStore.setState((state) => ({
+      records: patchThreadRecord(state.records, "thread-1", { sessionNotices: [current] }),
+    }));
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.notice.warning",
+      message: "Late warning from an earlier session.",
+      messageId: "late-warning",
+      systemNotice: {
+        kind: "warning",
+        presentation: "timeline",
+        scope: "turn",
+        sessionId: "session-old",
+        noticeKey: "late-warning",
+      },
+    });
+
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices).toEqual([current]);
+    expect(getTestActiveMessages()).toMatchObject([{ id: "late-warning" }]);
+  });
+
+  it("keeps a background reroute in its thread without interrupting the active thread", () => {
+    useToastStore.setState({ toasts: [] });
+    useWorkspaceStore.setState({ activeThreadId: "other-thread" });
+    useThreadStore.getState().handleAgentEvent({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.notice.model-rerouted",
+      message: "Codex rerouted this turn.",
+      messageId: "2ed71b20-e3c7-41fb-8dfe-8f4c4b27b89b",
+      systemNotice: { kind: "model-rerouted", presentation: "toast" },
+    });
+    expect(getTestActiveMessages()).toHaveLength(1);
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it("does not let a late reroute replace the current provider session", () => {
+    const handle = useThreadStore.getState().handleAgentEvent;
+    const reroute = (sessionId: string, messageId: string, message: string) => ({
+      type: "system" as const,
+      threadId: "thread-1",
+      subtype: "provider.notice.model-rerouted",
+      messageId,
+      message,
+      systemNotice: {
+        kind: "model-rerouted" as const,
+        presentation: "toast" as const,
+        scope: "turn" as const,
+        sessionId,
+        noticeKey: `reroute-${messageId}`,
+      },
+    });
+    handle({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.session.started",
+      systemNotice: { kind: "diagnostic", presentation: "timeline", sessionId: "old-session" },
+    });
+    handle(reroute("old-session", "old-reroute", "Old model changed."));
+    handle({
+      type: "system",
+      threadId: "thread-1",
+      subtype: "provider.session.started",
+      systemNotice: { kind: "diagnostic", presentation: "timeline", sessionId: "current-session" },
+    });
+    handle(reroute("current-session", "current-reroute", "Current model changed."));
+    handle(reroute("old-session", "late-reroute", "Late old model changed."));
+
+    const current = getTestActiveMessages().find((message) =>
+      message.systemNotice?.sessionId === "current-session");
+    expect(current?.content).toBe("Current model changed.");
+    expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices)
+      .toMatchObject([{ id: "current-reroute" }]);
   });
 
   it("session.system with an unknown subtype appends no message", () => {

@@ -414,7 +414,7 @@ interface CodexTurnCompletionState {
 }
 
 /** Return the generated image path from an app-server imageGeneration item. */
-export function generatedImagePathFromCodexItem(item: CompletedItem | undefined): string | null {
+export function generatedImagePathFromCodexItem(item: Record<string, unknown> | undefined): string | null {
   if (!item || item.type !== "imageGeneration") return null;
   const status = typeof item.status === "string" ? item.status.toLowerCase() : "";
   if (status === "failed" || status === "error") return null;
@@ -1317,11 +1317,15 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
   private createCodexEventMapper(threadId: string): CodexEventMapper {
     const mapper = new CodexEventMapper(threadId, undefined, (event) => this.emit("file_mutation_start", event));
     mapper.setOutputTruncationMode(this.outputTruncationMode);
+    this.emitRuntimeEvent(mapper.sessionStartedEvent());
     return mapper;
   }
 
   private attachCodexServerEvents(context: CodexSpawnContext, server: CodexAppServer, mapper: CodexEventMapper): void {
-    server.on("notification", (notification) => this.handleCodexServerNotification(context, server, mapper, notification as CodexNotification));
+    server.on("invalidNotification", () => {
+      for (const event of mapper.mapNotification(undefined)) this.emitRuntimeEvent(event);
+    });
+    server.on("notification", (notification: CodexNotification) => this.handleCodexServerNotification(context, server, mapper, notification));
     server.on("fatal", (error: string) => this.handleCodexServerFatal(context, server, mapper, error));
     this.attachFatalDrain(context.sessionId, server);
     server.on("exit", () => {
@@ -1335,7 +1339,7 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
     mapper: CodexEventMapper,
     notification: CodexNotification,
   ): void {
-    const rawNotification = notification as { method?: string; params?: Record<string, unknown> };
+    const rawNotification = notification;
     const entry = this.runtime.get(context.sessionId);
     const mainNotification = isMainThreadNotification(server, rawNotification.params);
     const nativeThreadId = nativeThreadIdFromParams(rawNotification.params);
@@ -1593,7 +1597,7 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
     rawNotification: { method?: string; params?: Record<string, unknown> },
   ): ProviderRuntimeEvent[] {
     const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification).map(providerRuntimeEvent);
-    const mapperEvents = mapper.mapNotification(notification);
+    const mapperEvents = mapper.mapValidatedNotification(notification).events;
     const events = [...generatedImageEvents, ...mapperEvents];
     traceCodexIngest(threadId, rawNotification.method, rawNotification.params, events.map((event) => event.event));
     return events;
@@ -1688,6 +1692,7 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
     args: Omit<Parameters<CodexProvider["deliverCodexNotificationEvents"]>[0], "mappedEvents">,
     event: ProviderRuntimeEvent,
   ): boolean {
+    if (event.event.type === AgentEventType.System && event.event.systemNotice) return false;
     if (!args.entry || args.mainNotification || !args.nativeThreadId || args.nativeTurnId) return false;
     return args.mapper.hasReceiverThread(args.nativeThreadId) && Boolean(event.extension?.child);
   }
@@ -2442,7 +2447,7 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
 
   /** Persist Codex-generated image output files before the turn finalizes. */
   private mapGeneratedImageEvents(threadId: string, notification: CodexNotification): AgentEvent[] {
-    if (notification.method !== "item/completed") return [];
+    if (notification.unrecognized || notification.method !== "item/completed") return [];
     const item = notification.params.item;
     if (item?.type !== "imageGeneration") return [];
 

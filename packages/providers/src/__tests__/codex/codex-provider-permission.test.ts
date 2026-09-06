@@ -264,6 +264,19 @@ describe("CodexProvider permission flow", () => {
         expect.objectContaining({ sessionId, error: "simulated fatal", breadcrumb }),
       );
       expect(events).toEqual([
+        {
+          event: {
+            type: AgentEventType.System,
+            threadId,
+            subtype: "provider.session.started",
+            systemNotice: {
+              kind: "diagnostic",
+              presentation: "timeline",
+              scope: "session",
+              sessionId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+            },
+          },
+        },
         { event: { type: AgentEventType.Error, threadId, error: "simulated fatal" } },
       ]);
     } finally {

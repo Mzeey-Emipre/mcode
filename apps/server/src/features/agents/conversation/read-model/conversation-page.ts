@@ -171,6 +171,7 @@ export function loadConversationPage(
 
   return {
     messages,
+    sessionNotices: deps.messageRepo.listSessionNotices(input.threadId),
     hasMore: conversationHasMore(compatibilityPage.hasMore, canonicalPage?.hasMore, exceededLimit),
     answeredPlanMessageIds:
       deps.planQuestionAnswersRepo.listAnsweredForThread(input.threadId),
@@ -386,12 +387,14 @@ export function loadConversationTail(
     model: message.model,
     outcome: message.outcome,
     outcomeExecutionId: message.outcomeExecutionId,
+    systemNotice: message.systemNotice,
     is_internal: message.is_internal,
     parentAgentProvenance: message.parentAgentProvenance,
   }));
   const hasMore = compatibilityPage.hasMore || canonicalPage?.hasMore === true || exceededLimit;
   return {
     messages,
+    sessionNotices: deps.messageRepo.listSessionNotices(input.threadId),
     hasMore,
     ...(hasMore && messages.length > 0
       ? { nextBefore: messages[0].sequence }

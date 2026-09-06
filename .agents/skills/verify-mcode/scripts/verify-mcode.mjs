@@ -15,6 +15,8 @@ Areas:
       Verify AgentService, provider events, turn runtime, and runtime cleanup.
   thread-lifecycle <health|check|proof|inspect|cleanup>
       Verify desktop thread completion and managed-worktree cleanup.
+  desktop codex-protocol-notices <check|setup|inspect|cleanup>
+      Prepare the fixture-driven Codex app-server notice boundary for owned Electron proof.
   desktop selected-text-comments <setup|proof|cleanup>
       Prepare, prove, or remove the Electron selected-text-comments fixture.
 
@@ -64,7 +66,8 @@ function resolveChild(args) {
 
 function resolveDesktopChild(args) {
   const [feature, command, ...rest] = args;
-  if (feature === "--help" || feature === "-h") return { help: SELECTED_TEXT_COMMENTS_HELP };
+  if (feature === "--help" || feature === "-h") return { help: HELP };
+  if (feature === "codex-protocol-notices") return { script: "codex-protocol-notices.mjs", args: args.slice(1) };
   if (feature !== "selected-text-comments") {
     throw usageError(`Unknown desktop feature: ${String(feature)}`);
   }

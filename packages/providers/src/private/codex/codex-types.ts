@@ -6,6 +6,8 @@
  */
 
 import type { OrchestrationMode, ReasoningLevel } from "@mcode/contracts";
+import type { z } from "zod";
+import type { codexNoticeSchemas } from "./codex-notification-validation.js";
 
 // JSON-RPC base shapes
 
@@ -482,10 +484,14 @@ export interface ErrorNotificationPayload {
   [key: string]: unknown;
 }
 
-/** Payload for the `warning` notification. Logged wholesale; never routed per-thread. */
-export interface WarningNotificationPayload {
-  [key: string]: unknown;
-}
+/** Native notice payloads share their runtime validation schemas. */
+export type WarningNotificationPayload = z.infer<typeof codexNoticeSchemas.warning>;
+export type GuardianWarningNotificationPayload = z.infer<typeof codexNoticeSchemas.guardianWarning>;
+export type WorldWritableWarningNotificationPayload = z.infer<typeof codexNoticeSchemas["windows/worldWritableWarning"]>;
+export type ModelReroutedNotificationPayload = z.infer<typeof codexNoticeSchemas["model/rerouted"]>;
+export type ConfigWarningNotificationPayload = z.infer<typeof codexNoticeSchemas.configWarning>;
+export type DeprecationNoticeNotificationPayload = z.infer<typeof codexNoticeSchemas.deprecationNotice>;
+export type AuthRecoveryCompletedNotificationPayload = z.infer<typeof codexNoticeSchemas["modelProvider/authRecoveryCompleted"]>;
 
 /** One Codex account rate-limit window from `account/rateLimits/updated`. */
 export interface CodexRateLimitWindow {
@@ -530,33 +536,5 @@ export interface McpServerStartupStatusUpdatedPayload {
   failureReason?: string | null;
 }
 
-/**
- * Discriminated union of all JSON-RPC notifications from `codex app-server`
- * that reach the mapper (lifecycle notifications are filtered upstream).
- *
- * Full protocol: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts
- *
- * Notifications whose `method` matches `LIFECYCLE_NOTIFICATION_PREFIXES` in
- * `CodexAppServer` never reach the mapper. Everything else (including
- * `mcpServer/startupStatus/updated` and `item/reasoning/*` streams) is mapped
- * to {@link AgentEvent} values.
- */
-export type CodexNotification =
-  | (JsonRpcNotification<LifecyclePayload> & { method: "turn/started" })
-  | (JsonRpcNotification<ThreadSettingsUpdatedPayload> & { method: "thread/settings/updated" })
-  | (JsonRpcNotification<ItemStartedPayload> & { method: "item/started" })
-  | (JsonRpcNotification<AgentMessageDeltaPayload> & { method: "item/agentMessage/delta" })
-  | (JsonRpcNotification<CommandExecOutputDeltaPayload> & { method: "item/commandExecution/outputDelta" })
-  | (JsonRpcNotification<ReasoningStreamDeltaPayload> & { method: "item/reasoning/textDelta" })
-  | (JsonRpcNotification<ReasoningStreamDeltaPayload> & { method: "item/reasoning/summaryTextDelta" })
-  | (JsonRpcNotification<LifecyclePayload> & { method: "item/reasoning/summaryPartAdded" })
-  | (JsonRpcNotification<PlanDeltaPayload> & { method: "item/plan/delta" })
-  | (JsonRpcNotification<TurnPlanUpdatedPayload> & { method: "turn/plan/updated" })
-  | (JsonRpcNotification<ItemCompletedPayload> & { method: "item/completed" })
-  | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn/completed" })
-  | (JsonRpcNotification<ThreadGoalUpdatedPayload> & { method: "thread/goal/updated" })
-  | (JsonRpcNotification<ThreadGoalClearedPayload> & { method: "thread/goal/cleared" })
-  | (JsonRpcNotification<McpServerStartupStatusUpdatedPayload> & { method: "mcpServer/startupStatus/updated" })
-  | (JsonRpcNotification<CodexRateLimitsPayload> & { method: "account/rateLimits/updated" })
-  | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" })
-  | (JsonRpcNotification<WarningNotificationPayload> & { method: "warning" });
+/** Schema-derived known notifications and explicitly classified unknown native envelopes. */
+export type { ValidatedCodexNotification as CodexNotification } from "./codex-notification-validation.js";

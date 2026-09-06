@@ -77,6 +77,13 @@ const LazyPullRequestSurface = lazy(async () => {
   return { default: m.PullRequestSurface };
 });
 
+const LazyNoticePrototype = import.meta.env.DEV
+  ? lazy(async () => {
+      const m = await import("@/features/conversation/messages/NoticePrototype");
+      return { default: m.NoticePrototype };
+    })
+  : null;
+
 type AppLayoutProps = {
   isDesktop: boolean;
   navigationHistory: NavigationHistoryState;
@@ -308,6 +315,9 @@ function AppMainSurface(props: Pick<
   "rightPanelMaximized" | "showPullRequests" | "showNewThreadCanvas" | "settingsOpen" | "settingsSection" | "isDesktop" | "pullRequestTab" | "setPullRequestTab" | "isValidLocation" | "navigateHistory"
 >) {
   if (props.rightPanelMaximized && !props.showPullRequests) return null;
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("noticePrototype") === "1" && LazyNoticePrototype) {
+    return <Suspense fallback={null}><LazyNoticePrototype /></Suspense>;
+  }
   const useFlexibleWidth = props.showNewThreadCanvas || props.settingsOpen || props.showPullRequests;
   return (
     <main

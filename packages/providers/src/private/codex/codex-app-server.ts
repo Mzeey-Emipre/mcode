@@ -14,6 +14,8 @@ import which from "which";
 import { resolveSubagentDisplayName } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import { CodexRpcClient } from "./codex-rpc-client.js";
+import { codexIgnoredNotificationReason } from "./codex-notification-policy.js";
+import { parseCodexNotification } from "./codex-notification-validation.js";
 import { mapDecisionToCodexResponse } from "./codex-permission-mapper.js";
 import type {
   ThreadStartParams,
@@ -372,33 +374,7 @@ export async function routeCodexServerRequest(args: {
   sendResponse(msg.id, mapDecisionToCodexResponse(method, "deny", params));
 }
 
-/**
- * Notification method prefixes that are silently consumed at debug level
- * and never forwarded to the turn mapper.
- *
- * Source: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts
- * in https://github.com/openai/codex
- *
- * Intentionally excluded prefixes that DO reach the mapper:
- *   `turn/` – excluded because `turn/completed` must reach the mapper
- *   `item/` – excluded because `item/completed`, `item/agentMessage/delta`,
- *             and `item/commandExecution/outputDelta` must reach the mapper
- *   `error` – excluded because it must reach the mapper
- */
-const LIFECYCLE_NOTIFICATION_PREFIXES = [
-  "thread/",           // thread lifecycle (started, status/changed, archived, name/updated, etc.)
-  "codex/event/",      // legacy codex events
-  "account/",          // account/rateLimits/updated, account/updated, account/login/completed
-  "hook/",             // hook/started, hook/completed
-  "rawResponseItem/",  // rawResponseItem/completed - low-level response items
-  "serverRequest/",    // serverRequest/resolved - approval flow bookkeeping
-  "mcpServer/oauthLogin/", // OAuth lifecycle stays provider-internal; startup status is user-visible.
-  "fuzzyFileSearch/",  // fuzzyFileSearch/sessionUpdated, fuzzyFileSearch/sessionCompleted
-  "windows",           // windows/worldWritableWarning, windowsSandbox/setupCompleted
-  "app/",              // app/list/updated (EXPERIMENTAL)
-  "fs/",               // fs/changed
-  "thread/realtime/",  // realtime audio/SDP (EXPERIMENTAL)
-] as const;
+
 
 /** Maximum time to drain an exact turn's terminal notification after interrupt acknowledgement. */
 const INTERRUPT_DRAIN_TIMEOUT_MS = 5_000;
@@ -1044,23 +1020,29 @@ export class CodexAppServer extends NodeEvents.EventEmitter {
   }
 
   private handleNotification(notification: unknown): void {
-    const message = notification as { method?: string; params?: Record<string, unknown> };
+    const parsed = parseCodexNotification(notification);
+    if (!parsed) {
+      this.emit("invalidNotification");
+      return;
+    }
+    const message = parsed as { method: string; params?: Record<string, unknown> };
     const method = message.method ?? "";
     const diagnosticMethod = boundProtocolIdentifier(method);
     this.lastActivity = { method: diagnosticMethod, timestamp: Date.now() };
     if (method === "account/rateLimits/updated" || method === "account/updated") {
       this.emit("activity");
-      this.emit("notification", notification);
+      this.emit("notification", parsed);
       return;
     }
     if (this.handleThreadStartedNotification(message.params, method, diagnosticMethod)) return;
     this.trackTurnNotification(message.params, method);
-    if (this.isSilencedLifecycleNotification(method)) {
+    const ignoredReason = codexIgnoredNotificationReason(method);
+    if (ignoredReason) {
       this.emit("activity");
-      logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
+      logger.debug("Codex notification disposition", { method: diagnosticMethod, kind: "ignored-with-reason", reason: ignoredReason });
       return;
     }
-    this.emit("notification", notification);
+    this.emit("notification", parsed);
   }
 
   private handleThreadStartedNotification(
@@ -1072,7 +1054,7 @@ export class CodexAppServer extends NodeEvents.EventEmitter {
     const threadStarted = codexThreadStartedNotification(params);
     this.rotateThreadIdFromNotification(threadStarted);
     this.emit("activity");
-    logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
+    logger.debug("Codex notification disposition", { method: diagnosticMethod, kind: "state-only", reason: "native-state" });
     return true;
   }
 
@@ -1092,12 +1074,6 @@ export class CodexAppServer extends NodeEvents.EventEmitter {
     const turn = params?.turn as { id?: string } | undefined;
     const turnId = turn?.id ?? (typeof params?.turnId === "string" ? params.turnId : undefined);
     if (turnId) this.activeTurnId = boundProtocolIdentifier(turnId);
-  }
-
-  private isSilencedLifecycleNotification(method: string): boolean {
-    return method !== "thread/settings/updated"
-      && !method.startsWith("thread/goal/")
-      && LIFECYCLE_NOTIFICATION_PREFIXES.some((prefix) => method.startsWith(prefix));
   }
 
   private handleServerRequest(msg: unknown): void {

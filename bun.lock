@@ -216,6 +216,7 @@
         "@mcode/thread-orchestration": "workspace:*",
         "smol-toml": "^1.7.0",
         "which": "^5.0.0",
+        "zod": "^3.24.2",
       },
       "devDependencies": {
         "@types/node": "^22.19.17",

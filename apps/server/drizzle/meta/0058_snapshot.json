@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e9f8acfa-0049-4372-a088-af0ea20acc55",
-  "prevId": "56c6518d-ac9d-4841-b991-d68051996155",
+  "id": "73833ed2-0c03-4575-a333-088babcafd85",
+  "prevId": "e9f8acfa-0049-4372-a088-af0ea20acc55",
   "tables": {
     "canonical_agent_events": {
       "name": "canonical_agent_events",
@@ -1588,6 +1588,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "system_notice": {
+          "name": "system_notice",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1603,6 +1610,15 @@
           "columns": [
             "thread_id",
             "sequence"
+          ],
+          "isUnique": false
+        },
+        "idx_messages_notice_session_sequence": {
+          "name": "idx_messages_notice_session_sequence",
+          "columns": [
+            "thread_id",
+            "json_extract(\"system_notice\", '$.sessionId')",
+            "\"sequence\" desc"
           ],
           "isUnique": false
         }
@@ -3399,6 +3415,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "current_notice_session_id": {
+          "name": "current_notice_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -4639,6 +4662,16 @@
   },
   "internal": {
     "indexes": {
+      "idx_messages_notice_session_sequence": {
+        "columns": {
+          "json_extract(\"system_notice\", '$.sessionId')": {
+            "isExpression": true
+          },
+          "\"sequence\" desc": {
+            "isExpression": true
+          }
+        }
+      },
       "idx_thread_startups_workspace_updated": {
         "columns": {
           "\"updated_at\" desc": {

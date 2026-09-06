@@ -41,6 +41,19 @@ export class TurnConversationProjectionService {
     this.messages.create(threadId, "system", "Context compacted", sequence);
   }
 
+  /** Persist a bounded provider notice before it is published to the client. */
+  persistSystemNotice(event: Extract<AgentEvent, { type: "system" }>): void {
+    const sequence = this.messages.getLatestSequenceIncludingInternal(event.threadId) + 1;
+    event.messageId = this.messages.createSystemNotice(
+      event.threadId, event.message ?? "", sequence, event.systemNotice,
+    ).id;
+  }
+
+  /** Remove diagnostics from a previous provider session before publishing startup. */
+  beginNoticeSession(event: Extract<AgentEvent, { type: "system" }>): void {
+    this.messages.beginNoticeSession(event.threadId, event.systemNotice?.sessionId);
+  }
+
   /** Start the deterministic reliability harness parent turn with its durable user message. */
   startReliabilityTurn(threadId: string, executionId: string): void {
     const thread = this.threads.findById(threadId);

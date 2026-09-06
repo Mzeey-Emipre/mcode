@@ -1,4 +1,7 @@
 import * as NodeCrypto from "node:crypto";
+import { mapCodexNotice } from "./codex-notices.js";
+import { parseCodexNotification } from "./codex-notification-validation.js";
+import { codexIgnoredNotificationReason, type CodexNotificationDisposition } from "./codex-notification-policy.js";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type {
@@ -9,6 +12,7 @@ import type {
   GoalState,
   ProviderFileMutationStart,
   ProviderRuntimeEvent,
+  SystemNoticeMetadata,
 } from "@mcode/contracts";
 import {
   BoundedToolOutputBuffer,
@@ -20,7 +24,6 @@ import type {
   CompletedItem,
   McpServerStartupStatus,
   ThreadGoal,
-  ThreadSettingsUpdatedPayload,
 } from "./codex-types.js";
 
 type CodexMappedEvent = AgentEvent & {
@@ -34,18 +37,16 @@ type ChildNotificationContext = {
   nativeTurnId: string | undefined;
 };
 
-/** Notification methods that produce no agent events (module-level to avoid per-call allocation). */
-const SILENCED_METHODS = new Set([
-  "turn/diff/updated",
-  "skills/changed", "model/rerouted",
-  "deprecationNotice", "configWarning",
-  "item/fileChange/outputDelta",
-  "item/autoApprovalReview/started", "item/autoApprovalReview/completed",
-  "item/mcpToolCall/progress",
-  "remoteControl/status/changed",
-  // Observed against codex-cli 0.130.0; see docs/guides/codex-app-server-trace.md
-  "thread/started", "thread/status/changed",
-  "account/rateLimits/updated", "thread/tokenUsage/updated",
+const NOTICE_KIND_BY_SUBTYPE: Record<string, SystemNoticeMetadata["kind"]> = {
+  "provider.notice.unknown-event": "diagnostic",
+};
+
+/** Methods whose late content cannot change an already completed turn. */
+const TURN_CONTENT_METHODS = new Set([
+  "item/started", "item/completed", "item/agentMessage/delta",
+  "item/commandExecution/outputDelta", "item/reasoning/textDelta",
+  "item/reasoning/summaryTextDelta", "item/plan/delta", "turn/plan/updated",
+  "turn/completed", "error",
 ]);
 
 /** Item types from item/completed that produce no agent events (module-level to avoid per-call allocation). */
@@ -307,12 +308,12 @@ export class CodexEventMapper {
 
   /** Reads `params.threadId` from a Codex notification when present. */
   private notificationThreadId(notification: CodexNotification): string | undefined {
-    const tid = (notification.params as { threadId?: unknown }).threadId;
+    const tid = this.noticeRecord(notification.params).threadId;
     return typeof tid === "string" && tid.length > 0 ? tid : undefined;
   }
 
   private nativeTurnId(notification: CodexNotification): string | undefined {
-    const params = notification.params as Record<string, unknown>;
+    const params = this.noticeRecord(notification.params);
     const turn = params.turn;
     if (turn && typeof turn === "object") {
       const id = (turn as Record<string, unknown>).id;
@@ -534,6 +535,8 @@ export class CodexEventMapper {
     const childThreadId = this.notificationThreadId(notification);
     this.rememberChildTurnId(notification, childThreadId);
     const context = this.childNotificationContext(notification);
+    const notice = this.mapDirectNotification(notification);
+    if (notice) return this.withChildNotificationEvidence(notice, context, undefined, "notice");
     const handlers: Record<string, () => CodexMappedEvent[]> = {
       "turn/started": () => this.mapChildTurnStarted(context),
       "item/commandExecution/outputDelta": () => this.mapChildCommandOutputDelta(notification),
@@ -547,8 +550,12 @@ export class CodexEventMapper {
     };
     const events = dispatchNativeHandler<CodexMappedEvent[]>(handlers, notification.method);
     if (events !== undefined) return events;
-    logger.debug("Codex child thread notification consumed", { method: notification.method });
-    return [];
+    const ignoredReason = codexIgnoredNotificationReason(notification.method);
+    if (ignoredReason) {
+      this.disposition = { kind: "ignored-with-reason", reason: ignoredReason };
+      return [];
+    }
+    return this.withChildNotificationEvidence(this.unknownNotification(notification.method), context, undefined, "notice");
   }
 
   private childNotificationContext(notification: CodexNotification): ChildNotificationContext {
@@ -1069,10 +1076,10 @@ export class CodexEventMapper {
   }
 
   /** Stores authoritative child-thread settings and updates any mapped Agent row. */
-  private mapThreadSettingsUpdated(params: ThreadSettingsUpdatedPayload): CodexMappedEvent[] {
+  private mapThreadSettingsUpdated(params: Record<string, unknown>): CodexMappedEvent[] {
     const childThreadId = params.threadId;
     const settings = params.threadSettings;
-    if (!childThreadId || !settings || typeof settings !== "object" || Array.isArray(settings)) return [];
+    if (typeof childThreadId !== "string" || !childThreadId || !settings || typeof settings !== "object" || Array.isArray(settings)) return [];
 
     const record = settings as Record<string, unknown>;
     const model = this.stringField(record, "model");
@@ -1368,7 +1375,7 @@ export class CodexEventMapper {
 
   /** Extracts assistant text from completed assistant message item shapes. */
   private assistantTextFromCompletedItem(item: CompletedItem): string {
-    const content = item.content ?? [];
+    const content = item.content;
     if (Array.isArray(content)) {
       return content
         .filter((c) => c.type === "output_text" || c.type === "text")
@@ -1476,14 +1483,51 @@ export class CodexEventMapper {
    * Translates a single `CodexNotification` into zero or more `AgentEvent` objects.
    * Returns an empty array for silently consumed notification types.
    */
-  mapNotification(notification: CodexNotification): ProviderRuntimeEvent[] {
+  mapNotification(notification: unknown): ProviderRuntimeEvent[] {
+    return this.mapNotificationWithDisposition(notification).events;
+  }
+
+  /** Dispatch once and return the content-free receipt from that actual execution. */
+  mapNotificationWithDisposition(input: unknown): { events: ProviderRuntimeEvent[]; disposition: CodexNotificationDisposition } {
+    return this.mapValidatedNotification(parseCodexNotification(input));
+  }
+
+  /** Dispatches the validated value supplied by CodexAppServer without parsing it again. */
+  mapValidatedNotification(notification: CodexNotification | undefined): { events: ProviderRuntimeEvent[]; disposition: CodexNotificationDisposition } {
+    this.disposition = { kind: "state-only", reason: "native-state" };
     this.replayedChildEvents = [];
-    const events = this.mapNotificationInternal(notification);
-    return this.dedupeChildEvents(
-      this.replayedChildEvents.length > 0
-        ? [...events, ...this.replayedChildEvents]
-        : events,
-    ).map((event) => this.toRuntimeEvent(event));
+    const events = notification
+      ? this.mapNotificationInternal(notification)
+      : this.malformedNotification();
+    const mapped = this.dedupeChildEvents([...events, ...this.replayedChildEvents]).map((event) => this.toRuntimeEvent(event));
+    if (mapped.some(({ event }) => event.type === AgentEventType.System && event.systemNotice?.kind === "diagnostic")) {
+      this.disposition = this.diagnosticDisposition();
+    } else if (mapped.length > 0) {
+      this.disposition = { kind: "mapped" };
+    }
+    logger.debug("Codex notification disposition", { method: notification?.method ?? "invalid", ...this.disposition });
+    return { events: mapped, disposition: this.disposition };
+  }
+
+  private disposition: CodexNotificationDisposition = { kind: "state-only", reason: "native-state" };
+
+  private diagnosticDisposition(): CodexNotificationDisposition {
+    return this.disposition.kind === "diagnostic" ? this.disposition : { kind: "diagnostic", reason: "unknown-notification" };
+  }
+
+  private malformedNotification(): CodexMappedEvent[] {
+    this.disposition = { kind: "diagnostic", reason: "malformed-notification" };
+    return this.notice("provider.notice.unknown-event", "Codex sent a malformed notification.");
+  }
+
+  private readonly noticeSessionId = NodeCrypto.randomUUID();
+
+  /** Identifies a new provider session without adding a transcript message. */
+  sessionStartedEvent(): ProviderRuntimeEvent {
+    return { event: {
+      type: AgentEventType.System, threadId: this.threadId, subtype: "provider.session.started",
+      systemNotice: { kind: "diagnostic", presentation: "timeline", scope: "session", sessionId: this.noticeSessionId },
+    } };
   }
 
   private toRuntimeEvent(event: CodexMappedEvent): ProviderRuntimeEvent {
@@ -1550,17 +1594,51 @@ export class CodexEventMapper {
   }
 
   private mapNotificationInternal(notification: CodexNotification): CodexMappedEvent[] {
-    return this.mapDirectNotification(notification)
-      ?? this.mapRoutedNotification(notification)
+    if (notification.method === "thread/settings/updated") {
+      return this.mapDirectNotification(notification) ?? [];
+    }
+    return this.mapRoutedNotification(notification)
+      ?? this.mapDirectNotification(notification)
       ?? this.mapMainNotification(notification);
   }
 
   private mapDirectNotification(notification: CodexNotification): CodexMappedEvent[] | undefined {
+    const notice = mapCodexNotice(notification, this.threadId, this.noticeSessionId);
+    if (notice) return [notice];
     const handlers: Record<string, () => CodexMappedEvent[]> = {
-      warning: () => { logger.warn("Codex warning notification", { method: notification.method, params: notification.params }); return []; },
-      "thread/settings/updated": () => this.mapThreadSettingsUpdated(notification.params as ThreadSettingsUpdatedPayload),
+      "thread/settings/updated": () => this.mapThreadSettingsUpdated(notification.params),
     };
     return dispatchNativeHandler<CodexMappedEvent[]>(handlers, notification.method);
+  }
+
+  private boundedText(value: unknown, fallback: string): string {
+    return typeof value === "string" && value.trim() ? value.trim().slice(0, 1_000) : fallback;
+  }
+
+  private notice(
+    subtype: string,
+    message: string,
+    extra: Pick<SystemNoticeMetadata, "configPath" | "configRange" | "scope" | "origin"> = {},
+  ): CodexMappedEvent[] {
+    const kind = NOTICE_KIND_BY_SUBTYPE[subtype] ?? "diagnostic";
+    return [{
+      type: AgentEventType.System,
+      threadId: this.threadId,
+      subtype,
+      message: this.boundedText(message, "Codex reported an update."),
+      systemNotice: {
+        kind,
+        presentation: kind === "model-rerouted" ? "toast" : "timeline",
+        scope: kind === "configuration" || kind === "deprecation" ? "session" : "turn",
+        sessionId: this.noticeSessionId,
+        noticeKey: NodeCrypto.createHash("sha256").update(this.noticeSessionId + subtype + message).digest("hex"),
+        ...extra,
+      },
+    }];
+  }
+
+  private noticeRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   }
 
   private mapRoutedNotification(notification: CodexNotification): CodexMappedEvent[] | undefined {
@@ -1571,15 +1649,28 @@ export class CodexEventMapper {
   }
 
   private mapUnknownThreadNotification(notification: CodexNotification): CodexMappedEvent[] {
-    if (this.bufferEligibleEarlyChildNotification(notification)) return [];
-    logger.warn("CodexEventMapper: dropping unknown-thread notification", { method: notification.method, notificationThreadId: this.notificationThreadId(notification), mainCodexThreadId: this.mainCodexThreadId });
-    return [];
+    const notice = this.mapDirectNotification(notification);
+    if (notice) return notice.map((event) => event.type === AgentEventType.System && event.systemNotice
+      ? { ...event, systemNotice: { ...event.systemNotice, scope: "session", origin: "unattributed-thread" } }
+      : event);
+    if (this.bufferEligibleEarlyChildNotification(notification)) {
+      this.disposition = { kind: "state-only", reason: "buffered-child" };
+      return [];
+    }
+    this.disposition = { kind: "diagnostic", reason: "unattributed-thread" };
+    return this.notice("provider.notice.unknown-event", "Codex sent a notification for an unlinked provider thread.", { scope: "session", origin: "unattributed-thread" });
   }
 
   private mapKnownChildNotification(notification: CodexNotification): CodexMappedEvent[] {
     const childThreadId = this.notificationThreadId(notification);
-    if (this.markChildNativeNotification(notification)) return [];
-    if (this.shouldBufferChildNotificationBeforeTurn(notification, childThreadId)) return [];
+    if (this.markChildNativeNotification(notification)) {
+      this.disposition = { kind: "ignored-with-reason", reason: "duplicate-child-notification" };
+      return [];
+    }
+    if (this.shouldBufferChildNotificationBeforeTurn(notification, childThreadId)) {
+      this.disposition = { kind: "state-only", reason: "buffered-child" };
+      return [];
+    }
     return this.mapChildThreadNotification(notification);
   }
 
@@ -1594,7 +1685,7 @@ export class CodexEventMapper {
   private mapMainNotification(notification: CodexNotification): CodexMappedEvent[] {
     const lifecycle = this.mapMainLifecycleNotification(notification);
     if (lifecycle) return lifecycle;
-    if (this.turnEnded) return this.ignoreEndedMainNotification(notification.method);
+    if (this.turnEnded && TURN_CONTENT_METHODS.has(notification.method)) return this.ignoreEndedMainNotification(notification.method);
     return this.mapActiveMainNotification(notification);
   }
 
@@ -1635,16 +1726,17 @@ export class CodexEventMapper {
   }
 
   private ignoreEndedMainNotification(method: string): CodexMappedEvent[] {
+    this.disposition = { kind: "ignored-with-reason", reason: "turn-already-completed" };
     logger.debug("Codex notification ignored after turn/completed", { method });
     return [];
   }
 
   private mapActiveMainNotification(notification: CodexNotification): CodexMappedEvent[] {
+    if (notification.method === "thread/started" || notification.method === "account/updated" || notification.method === "account/rateLimits/updated") return [];
     const handlers: Record<string, () => CodexMappedEvent[]> = {
       "item/started": () => this.mapMainItemStarted(notification),
       "item/reasoning/textDelta": () => this.mapReasoningDelta(notification),
       "item/reasoning/summaryTextDelta": () => this.mapReasoningDelta(notification),
-      "item/reasoning/summaryPartAdded": () => [],
       "item/plan/delta": () => this.mapPlanDelta(notification),
       "turn/plan/updated": () => this.mapPlanUpdated(notification),
       "item/agentMessage/delta": () => this.mapAssistantDelta(notification),
@@ -1655,9 +1747,18 @@ export class CodexEventMapper {
     };
     const events = dispatchNativeHandler<CodexMappedEvent[]>(handlers, notification.method);
     if (events !== undefined) return events;
-    if (SILENCED_METHODS.has(notification.method)) { logger.debug("Codex notification silenced", { method: notification.method }); return []; }
-    logger.warn("CodexEventMapper: unrecognized notification", { method: notification.method });
-    return [];
+    const ignoredReason = codexIgnoredNotificationReason(notification.method);
+    if (ignoredReason) {
+      this.disposition = { kind: "ignored-with-reason", reason: ignoredReason };
+      return [];
+    }
+    return this.unknownNotification(notification.method);
+  }
+
+  private unknownNotification(nativeMethod: string): CodexMappedEvent[] {
+    const method = this.boundedText(nativeMethod, "unknown").slice(0, 128);
+    logger.warn("CodexEventMapper: unrecognized notification", { method });
+    return this.notice("provider.notice.unknown-event", `Codex sent an update this client does not recognize (${method}). The thread continues normally.`);
   }
 
   private mapMainItemStarted(notification: CodexNotification): CodexMappedEvent[] {
@@ -1711,6 +1812,10 @@ export class CodexEventMapper {
   }
 
   private logMainItemStarted(method: string, itemType: string | undefined, boundaryEvents: CodexMappedEvent[]): CodexMappedEvent[] {
+    if (itemType && !TOOL_LIKE_ITEM_TYPES.has(itemType) && !SILENT_ITEM_TYPES.has(itemType) && !["userMessage", "agentMessage", "message", "reasoning", "subAgentActivity"].includes(itemType)) {
+      return [...boundaryEvents, ...this.unknownNotification(`${method}/${itemType}`)];
+    }
+    this.disposition = { kind: "ignored-with-reason", reason: "item-start-has-no-transcript-projection" };
     logger.debug("Codex lifecycle notification", { method, itemType });
     return boundaryEvents;
   }
@@ -1758,7 +1863,7 @@ export class CodexEventMapper {
     const itemId = typeof item?.id === "string" ? item.id : undefined;
     const boundaryEvents = this.shouldDrainAssistantBeforeCompletion(item, itemId) ? this.drainAssistantBoundaryBeforeItem(itemId) : [];
     logger.debug("Codex item/completed", { type: item?.type });
-    return [...boundaryEvents, ...this.mapItemCompleted(item, notification)];
+    return [...boundaryEvents, ...(item ? this.mapItemCompleted(item, notification) : this.malformedNotification())];
   }
 
   private shouldDrainAssistantBeforeCompletion(item: CompletedItem | undefined, itemId: string | undefined): boolean {
@@ -2019,8 +2124,10 @@ export class CodexEventMapper {
   }
 
   private consumeCompletedItem(itemType: CompletedItem["type"]): CodexMappedEvent[] {
-    if (SILENT_ITEM_TYPES.has(itemType)) { logger.debug("Codex item/completed silenced", { itemType }); return []; }
-    logger.debug("CodexEventMapper: unrecognized item type in item/completed", { itemType });
-    return [];
+    if (SILENT_ITEM_TYPES.has(itemType)) {
+      this.disposition = { kind: "ignored-with-reason", reason: "item-has-no-transcript-projection" };
+      return [];
+    }
+    return this.unknownNotification(`item/completed/${itemType}`);
   }
 }

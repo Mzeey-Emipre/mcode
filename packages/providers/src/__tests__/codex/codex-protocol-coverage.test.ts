@@ -32,6 +32,9 @@ const KNOWN_METHODS = new Set([
   "item/plan/delta",
   "error",
   "warning",
+  "guardianWarning",
+  "windows/worldWritableWarning",
+  "modelProvider/authRecoveryCompleted",
   // Silenced lifecycle plus structured plan snapshots.
   "thread/started",
   "thread/status/changed",
@@ -151,6 +154,22 @@ describe("Codex protocol coverage", () => {
     const unknown = [...methodsSeen].filter((m) => !KNOWN_METHODS.has(m));
     expect(unknown, `Add to KNOWN_METHODS or SILENCED_METHODS: ${unknown.join(", ")}`).toEqual([]);
   }, GOLDEN_REPLAY_TIMEOUT_MS);
+
+  it.each([
+    ["warning", { threadId: null, message: "Disk space is low" }, "warning"],
+    ["guardianWarning", { threadId: "native-main", message: "Action needs review" }, "security"],
+    ["configWarning", { summary: "Config ignored", details: null }, "configuration"],
+    ["deprecationNotice", { summary: "Option deprecated", details: null }, "deprecation"],
+    ["windows/worldWritableWarning", { samplePaths: [], extraCount: 0, failedScan: true }, "security"],
+    ["model/rerouted", { threadId: "native-main", turnId: "turn-1", fromModel: "requested", toModel: "safe", reason: "highRiskCyberActivity" }, "model-rerouted"],
+    ["modelProvider/authRecoveryCompleted", { threadId: "native-main", turnId: "turn-1", provider: "openai", message: "Authentication recovered" }, "authentication-recovered"],
+  ])("dispatches %s to its real bounded presentation", (method, params, kind) => {
+    const mapper = new CodexEventMapper("coverage-thread", "native-main");
+    const result = mapper.mapNotificationWithDisposition({ method, params });
+    expect(result.disposition).toEqual({ kind: "mapped" });
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].event).toMatchObject({ type: "system", threadId: "coverage-thread", systemNotice: { kind } });
+  });
 
   it("maps collab Agent rows and nests child-thread commandExecution under collab", () => {
     const { events } = replay(notifications);

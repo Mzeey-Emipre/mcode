@@ -18,6 +18,8 @@ const QUEUED_TURNS_FIFO_MIGRATION = "0046_queued_turns_fifo";
 const PROJECT_ACTION_RUNS_MIGRATION = "0047_conscious_tusk";
 const PREVIOUS_MIGRATION = "0054_wise_supernaut";
 const CODEX_CHILD_ORPHAN_REPAIR_MIGRATION = "0055_codex_child_orphan_repair";
+const TURN_DIFF_MIGRATION = "0057_stiff_zaladane";
+const SYSTEM_NOTICE_SESSION_MIGRATION = "0058_fine_rafael_vega";
 
 type JournalEntry = {
   idx: number;
@@ -566,6 +568,44 @@ describe("successful database migration recovery", () => {
           currentMigrationsDirectory,
           CODEX_CHILD_ORPHAN_REPAIR_MIGRATION,
         ).when,
+      }]);
+    } finally {
+      upgradedDatabase.close();
+    }
+  });
+
+  it("adds notice metadata and the session lookup index", () => {
+    const currentMigrationsDirectory = NodePath.join(process.cwd(), "drizzle");
+    const previousMigrationsDirectory = NodePath.join(directory, "drizzle-through-0057");
+    copyMigrationsThrough(
+      currentMigrationsDirectory,
+      previousMigrationsDirectory,
+      TURN_DIFF_MIGRATION,
+    );
+
+    const previousDatabase = new Database(databasePath, {
+      nativeBinding: resolveElectronNativeBinding(),
+    });
+    try {
+      migrate(drizzle(previousDatabase), {
+        migrationsFolder: migrationsFolderForDrizzle(previousMigrationsDirectory),
+      });
+    } finally {
+      previousDatabase.close();
+    }
+
+    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
+    const upgradedDatabase = openDatabase({ dbPath: databasePath });
+    try {
+      expect(columnNames(upgradedDatabase, "messages")).toContain("system_notice");
+      expect(columnNames(upgradedDatabase, "threads")).toContain("current_notice_session_id");
+      expect(upgradedDatabase.prepare("PRAGMA index_list(messages)").all()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "idx_messages_notice_session_sequence", unique: 0 }),
+      ]));
+      expect(upgradedDatabase.prepare(
+        "SELECT created_at FROM __drizzle_migrations WHERE hash = ?",
+      ).all(migrationHash(currentMigrationsDirectory, SYSTEM_NOTICE_SESSION_MIGRATION))).toEqual([{
+        created_at: migrationEntry(currentMigrationsDirectory, SYSTEM_NOTICE_SESSION_MIGRATION).when,
       }]);
     } finally {
       upgradedDatabase.close();

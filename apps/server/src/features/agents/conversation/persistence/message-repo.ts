@@ -13,11 +13,13 @@ import type {
   PreviewAnnotationBundle,
   SelectedTextComment,
   StoredAttachment,
+  SystemNoticeMetadata,
   TurnOutcome,
 } from "@mcode/contracts";
 import {
   PreviewAnnotationBundleSchema,
   SelectedTextCommentsSchema,
+  SystemNoticeMetadataSchema,
   THREAD_GET_TRANSCRIPT_MAX_BYTES,
 } from "@mcode/contracts";
 
@@ -47,6 +49,7 @@ interface MessageRow {
   is_internal: number;
   outcome?: TurnOutcome | null;
   outcome_execution_id?: string | null;
+  system_notice: string | null;
   tool_call_count?: number;
 }
 
@@ -133,6 +136,12 @@ function parseSelectedTextComments(value: string | null): SelectedTextComment[] 
   return SelectedTextCommentsSchema().parse(parsed);
 }
 
+function parseSystemNotice(value: string | null): SystemNoticeMetadata | null {
+  const parsed = parseJsonField(value);
+  if (parsed === null) return null;
+  return SystemNoticeMetadataSchema().parse(parsed);
+}
+
 function serializeSelectedTextComments(
   selectedTextComments: SelectedTextComment[] | undefined,
 ): string | null {
@@ -163,6 +172,7 @@ function rowToMessage(row: MessageRow): Message {
     model: row.model,
     outcome: row.outcome ?? null,
     outcomeExecutionId: row.outcome_execution_id ?? null,
+    systemNotice: parseSystemNotice(row.system_notice),
     is_internal: row.is_internal === 1,
     ...(row.origin_type === "legacy"
       ? {
@@ -184,10 +194,10 @@ function rowToMessage(row: MessageRow): Message {
 }
 
 const MESSAGE_COLUMNS =
-  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, selected_text_comments, reply_to_message_id, quoted_text, model, provider, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, outcome, outcome_execution_id";
+  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, selected_text_comments, reply_to_message_id, quoted_text, model, provider, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, outcome, outcome_execution_id, system_notice";
 
 const MESSAGE_COLUMNS_PREFIXED =
-  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.selected_text_comments, m.reply_to_message_id, m.quoted_text, m.model, m.provider, m.origin_type, m.source_thread_id, m.source_turn_id, m.source_provider_id, m.is_internal, m.outcome, m.outcome_execution_id";
+  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.selected_text_comments, m.reply_to_message_id, m.quoted_text, m.model, m.provider, m.origin_type, m.source_thread_id, m.source_turn_id, m.source_provider_id, m.is_internal, m.outcome, m.outcome_execution_id, m.system_notice";
 
 /**
  * Pre-aggregates tool call counts for the selected page only.
@@ -252,7 +262,7 @@ export class MessageRepo {
 
   private getCreateStatement(): Database.Statement {
     return this.createStatement ??= this.db.prepare(
-      "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, selected_text_comments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, selected_text_comments, system_notice) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
   }
 
@@ -292,6 +302,7 @@ export class MessageRepo {
     origin: MessageOriginInput = { type: "composer" },
     messageId?: string,
     selectedTextComments?: SelectedTextComment[],
+    systemNotice?: SystemNoticeMetadata,
   ): Message {
     const id = messageId ?? NodeCrypto.randomUUID();
     const now = new Date().toISOString();
@@ -299,13 +310,14 @@ export class MessageRepo {
     const mentionsJson = this.serializeNonEmptyArray(mentions);
     const previewAnnotationsJson = serializePreviewAnnotations(previewAnnotations);
     const selectedTextCommentsJson = serializeSelectedTextComments(selectedTextComments);
+    const systemNoticeJson = systemNotice ? JSON.stringify(SystemNoticeMetadataSchema().parse(systemNotice)) : null;
     const modelValue = model ?? null;
     const isInternalValue = isInternal ? 1 : 0;
     const source = this.messageSource(origin);
 
     this.getCreateStatement().run(
         id, threadId, role, content, now, sequence,
-        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, origin.type, source.threadId, source.turnId, source.providerId, isInternalValue, selectedTextCommentsJson,
+        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, origin.type, source.threadId, source.turnId, source.providerId, isInternalValue, selectedTextCommentsJson, systemNoticeJson,
       );
 
     return this.createdMessage({
@@ -323,7 +335,61 @@ export class MessageRepo {
       quotedText,
       model: modelValue,
       isInternal,
+      systemNotice,
     });
+  }
+
+  /** Create a visible system message carrying bounded provider notice metadata. */
+  createSystemNotice(
+    threadId: string,
+    content: string,
+    sequence: number,
+    systemNotice: SystemNoticeMetadata | undefined,
+  ): Message {
+    const metadata = systemNotice ? SystemNoticeMetadataSchema().parse(systemNotice) : undefined;
+    return this.db.transaction(() => this.writeSystemNotice(threadId, content, sequence, metadata))();
+  }
+
+  private writeSystemNotice(threadId: string, content: string, sequence: number, systemNotice: SystemNoticeMetadata | undefined): Message {
+    if (systemNotice?.noticeKey) {
+      const existing = this.db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.sessionId') IS ? AND (json_extract(system_notice, '$.noticeKey') = ? OR (? = 'model-rerouted' AND json_extract(system_notice, '$.kind') = 'model-rerouted')) ORDER BY sequence DESC LIMIT 1`).get(threadId, systemNotice.sessionId ?? null, systemNotice.noticeKey, systemNotice.kind) as MessageRow | undefined;
+      if (existing) {
+        this.db.prepare("UPDATE messages SET content = ?, system_notice = ? WHERE id = ?").run(content, JSON.stringify(systemNotice), existing.id);
+        return rowToMessage({ ...existing, content, system_notice: JSON.stringify(systemNotice) });
+      }
+    }
+    if (systemNotice?.scope === "session") {
+      this.db.prepare("DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.scope') = 'session' AND json_extract(system_notice, '$.sessionId') IS ? ORDER BY sequence DESC LIMIT -1 OFFSET 19)").run(threadId, systemNotice.sessionId ?? null);
+    }
+    return this.create(
+      threadId, "system", content, sequence,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, systemNotice,
+    );
+  }
+
+  /** Select the provider notice session and expire session-scoped rows from prior sessions. */
+  beginNoticeSession(threadId: string, sessionId: string | undefined): void {
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE threads SET current_notice_session_id = ? WHERE id = ?").run(sessionId ?? null, threadId);
+      this.db.prepare("DELETE FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.scope') = 'session' AND json_extract(system_notice, '$.sessionId') IS NOT ?").run(threadId, sessionId ?? null);
+    })();
+  }
+
+  /** Read the latest notices for the provider session selected at its startup boundary. */
+  listSessionNotices(threadId: string): Message[] {
+    const rows = this.db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM (
+      SELECT ${MESSAGE_COLUMNS}
+      FROM messages
+      WHERE thread_id = ?
+        AND system_notice IS NOT NULL
+        AND json_extract(system_notice, '$.sessionId') IS (
+          SELECT current_notice_session_id FROM threads WHERE id = ?
+        )
+      ORDER BY sequence DESC
+      LIMIT 20
+    ) ORDER BY sequence ASC`).all(threadId, threadId) as MessageRow[];
+    return rows.map(rowToMessage);
   }
 
   /**
@@ -419,6 +485,7 @@ export class MessageRepo {
     quotedText?: string;
     model?: string | null;
     isInternal?: boolean;
+    systemNotice?: SystemNoticeMetadata | null;
   }): Message {
     return {
       id: input.id,
@@ -441,6 +508,7 @@ export class MessageRepo {
       is_internal: input.isInternal ?? false,
       outcome: null,
       outcomeExecutionId: null,
+      systemNotice: input.systemNotice ?? null,
     };
   }
 
@@ -518,8 +586,8 @@ export class MessageRepo {
     const fetchLimit = clampedLimit + 1;
 
     const whereClause = before != null
-      ? "m.thread_id = ? AND m.sequence < ? AND m.is_internal = 0"
-      : "m.thread_id = ? AND m.is_internal = 0";
+      ? "m.thread_id = ? AND m.sequence < ? AND m.is_internal = 0 AND json_extract(m.system_notice, '$.scope') IS NOT 'session'"
+      : "m.thread_id = ? AND m.is_internal = 0 AND json_extract(m.system_notice, '$.scope') IS NOT 'session'";
     const queryParams = before != null
       ? [threadId, before, fetchLimit]
       : [threadId, fetchLimit];
@@ -546,7 +614,7 @@ export class MessageRepo {
     const fetchLimit = clampedLimit + 1;
     let rows = this.db
       .prepare(pagedMessageQuery(
-        "m.thread_id = ? AND m.sequence > ? AND m.is_internal = 0",
+        "m.thread_id = ? AND m.sequence > ? AND m.is_internal = 0 AND json_extract(m.system_notice, '$.scope') IS NOT 'session'",
         "ASC",
       ))
       .all(threadId, after, fetchLimit) as MessageRow[];
@@ -571,7 +639,7 @@ export class MessageRepo {
              timestamp, provider, model, origin_type,
              source_thread_id, source_turn_id, source_provider_id
       FROM messages
-      WHERE thread_id = ? AND is_internal = 0
+      WHERE thread_id = ? AND is_internal = 0 AND json_extract(system_notice, '$.scope') IS NOT 'session'
       ORDER BY sequence DESC
       LIMIT ?
     `).all(threadId, clampedLimit + 1) as Array<{
@@ -681,7 +749,7 @@ export class MessageRepo {
 SELECT ${MESSAGE_COLUMNS_PREFIXED}, COALESCE(counts.tool_call_count, 0) AS tool_call_count
 FROM messages m
 LEFT JOIN counts ON counts.message_id = m.id
-WHERE m.thread_id = ? AND m.sequence <= ? AND m.is_internal = 0
+WHERE m.thread_id = ? AND m.sequence <= ? AND m.is_internal = 0 AND json_extract(m.system_notice, '$.scope') IS NOT 'session'
 ORDER BY m.sequence ASC`,
       )
       .all(threadId, maxSequence, threadId, maxSequence) as MessageRow[];
@@ -834,8 +902,8 @@ LIMIT ?`,
         DEFAULT_HISTORY_MAX_ROWS,
         MAX_HISTORY_MAX_ROWS,
       ),
-      internalClause: includeInternal ? "" : "AND m.is_internal = 0",
-      countInternalClause: includeInternal ? "" : "AND is_internal = 0",
+      internalClause: includeInternal ? "" : "AND m.is_internal = 0 AND json_extract(m.system_notice, '$.scope') IS NOT 'session'",
+      countInternalClause: includeInternal ? "" : "AND is_internal = 0 AND json_extract(system_notice, '$.scope') IS NOT 'session'",
     };
   }
 
@@ -855,7 +923,7 @@ LIMIT ?`,
   m.id, m.thread_id, m.role, m.content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
   m.attachments, m.preview_annotations, m.mentions, m.selected_text_comments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
-  m.outcome, m.outcome_execution_id,
+  m.outcome, m.outcome_execution_id, m.system_notice,
   ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,
@@ -865,7 +933,7 @@ WHERE m.id = ?`,
   m.id, m.thread_id, m.role, substr(m.content, 1, ?) AS content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
   m.attachments, m.preview_annotations, m.mentions, m.selected_text_comments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
-  m.outcome, m.outcome_execution_id,
+  m.outcome, m.outcome_execution_id, m.system_notice,
   ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,

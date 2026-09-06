@@ -28,6 +28,7 @@ import type { SubagentRosterTarget } from "../../narrative";
 import { Composer } from "../../composer/Composer";
 import { SavingDelayedDialog } from "../../saving/SavingDelayedDialog";
 import { MessageList, type SelectedTextCommentSourceNavigationRequest } from "../MessageList";
+import { SessionDiagnostics } from "../SessionDiagnostics";
 import type { ChatViewState } from "./useChatViewState";
 
 const NEW_THREAD_STARTERS = [
@@ -300,6 +301,7 @@ function ActiveThreadBanners({ state, recovery }: { state: ChatViewState; recove
     <>
       {recovery.incident && <div className="px-4 pt-2"><InterruptedSessionsBanner incident={recovery.incident} onDismiss={() => recovery.onDismiss(recovery.incident!.id)} onRetry={recovery.onRetry} /></div>}
       {thread.clientWarnings?.length ? <div className="px-4 pt-2"><ThreadWarningBanner warnings={thread.clientWarnings} onDismiss={() => useWorkspaceStore.getState().dismissWarnings(thread.id)} /></div> : null}
+      <SessionDiagnostics threadId={thread.id} />
     </>
   );
 }

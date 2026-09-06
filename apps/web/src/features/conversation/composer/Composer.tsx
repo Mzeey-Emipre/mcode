@@ -46,6 +46,7 @@ import {
   type PendingCheckoutConfirmation,
 } from "./submission/useComposerSubmissionController";
 import { ComposerContentSurface } from "./ComposerContentSurface";
+import { ComposerProviderNoticeSurface } from "./ComposerProviderNoticeSurface";
 import { ComposerStatusStrip } from "./ComposerStatusStrip";
 import { useComposerSurfaceState } from "./useComposerSurfaceState";
 import {
@@ -650,7 +651,13 @@ export function Composer({
 
       {/* Max-width wrapper to align with message list column */}
       <div className={PRIMARY_CONTENT_RAIL_CLASS}>
-        <ComposerContentSurface
+        <ComposerProviderNoticeSurface
+          threadId={threadId}
+          composerContainerRef={composerContainerRef}
+          isMentionPickerOpen={fileAutocomplete.isOpen}
+          isSlashPickerOpen={slashCommand.isOpen}
+        >
+          {(providerNoticeTrigger) => <ComposerContentSurface
           model={{
             threadId,
             workspaceId,
@@ -713,6 +720,7 @@ export function Composer({
             modelId,
             contextEntry,
             hasLowQuota,
+            providerNoticeTrigger,
           }}
           actions={{
             onBranchModeExit,
@@ -767,7 +775,8 @@ export function Composer({
             ),
             onSelectedTextCommentEditorChange: setSelectedTextCommentEditor,
           }}
-        />
+          />}
+        </ComposerProviderNoticeSurface>
         <ComposerStatusStrip
           visible={showComposerStatusBar}
           isGitRepo={isGitRepo}

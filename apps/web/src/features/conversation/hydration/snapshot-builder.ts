@@ -1,10 +1,11 @@
 import type { Message } from "@/transport";
 import type { TurnSnapshot } from "@mcode/contracts";
-import type { ThreadRecord } from "@/stores/thread-record";
+import { providerNoticeSessionId, type ThreadRecord } from "@/stores/thread-record";
 
 /** Raw RPC inputs used to assemble a canonical thread-record patch. */
 export interface SnapshotBuilderInput {
   messages: Message[];
+  sessionNotices?: Message[];
   hasMore: boolean;
   answeredPlanMessageIds?: string[];
   snapshots?: TurnSnapshot[];
@@ -24,6 +25,8 @@ export interface FileChangeFields {
 export type ThreadRecordPatch = Pick<
   ThreadRecord,
   | "messages"
+  | "sessionNotices"
+  | "noticeSessionId"
   | "oldestLoadedSequence"
   | "newestLoadedSequence"
   | "hasMoreMessages"
@@ -44,7 +47,13 @@ export class SnapshotBuilder {
    * Build a {@link ThreadRecordPatch} from message and snapshot RPC results.
    */
   build(input: SnapshotBuilderInput): ThreadRecordPatch {
-    const { messages, hasMore, answeredPlanMessageIds, snapshots = [] } = input;
+    const {
+      messages,
+      sessionNotices = [],
+      hasMore,
+      answeredPlanMessageIds,
+      snapshots = [],
+    } = input;
 
     const persistedToolCallCounts: Record<string, number> = {};
     for (const msg of messages) {
@@ -59,6 +68,8 @@ export class SnapshotBuilder {
 
     return {
       messages,
+      sessionNotices,
+      noticeSessionId: providerNoticeSessionId(sessionNotices),
       oldestLoadedSequence,
       newestLoadedSequence,
       hasMoreMessages: hasMore,

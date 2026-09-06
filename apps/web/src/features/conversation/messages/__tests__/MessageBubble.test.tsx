@@ -1,9 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Message, StoredAttachment } from "@/transport";
 import type { PreviewAnnotationBundle } from "@mcode/contracts";
 import { MessageBubble } from "../MessageBubble";
+import { createEmptyThreadRecord } from "@/stores/thread-record";
+import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import {
   clearAttachmentTransportWsUrlCache,
   setAttachmentTransportWsUrl,
@@ -547,6 +549,40 @@ describe("MessageBubble agent response state", () => {
 
     expect(queryByTestId("agent-message-metadata")).not.toBeInTheDocument();
     expect(queryByTestId("agent-message-actions")).not.toBeInTheDocument();
+  });
+});
+
+describe("MessageBubble provider notices", () => {
+  afterEach(() => resetThreadStoreForTests());
+
+  it("suppresses only notices represented by the current Composer collection", () => {
+    const notice: Message = {
+      ...makeMessage("Review the workspace permissions."),
+      role: "system",
+      systemNotice: {
+        kind: "security",
+        presentation: "timeline",
+        scope: "turn",
+        noticeKey: "security-warning",
+      },
+    };
+
+    resetThreadStoreForTests({
+      records: new Map([["thread-1", {
+        ...createEmptyThreadRecord(),
+        sessionNotices: [notice],
+      }]]),
+    });
+
+    const { container, rerender } = render(<MessageBubble message={notice} />);
+    expect(container).toBeEmptyDOMElement();
+
+    resetThreadStoreForTests({
+      records: new Map([["thread-1", createEmptyThreadRecord()]]),
+    });
+    rerender(<MessageBubble message={notice} />);
+
+    expect(container).toHaveTextContent("Review the workspace permissions.");
   });
 });
 
