@@ -27,6 +27,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
+import { WS_CHANNELS } from "@mcode/contracts";
 import type {
   PreviewAnnotationVisualProposal,
   PreviewPageError,
@@ -34,6 +35,7 @@ import type {
 } from "@mcode/contracts";
 import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts";
 import type { PreviewAnnotationSnapshotRequest } from "@/transport/desktop-bridge";
+import { pushEmitter } from "@/transport/ws-transport";
 import { isEmptyPreviewTabUrl } from "../navigation/open-url-in-preview";
 import { cn } from "@/lib/utils";
 import { useDiffStore } from "@/stores/diffStore";
@@ -85,6 +87,7 @@ import {
 } from "@/components/chat/FileTagPopup";
 import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
 import { useWorkspaceThread } from "@/features/projects/state/workspace-selectors";
+import { useWorkspaceFileInvalidation } from "@/features/projects/files/useWorkspaceFileInvalidation";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
 import {
   browserAutomationTargetKey,
@@ -131,6 +134,28 @@ const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
   element: "element",
   context: "page context",
 };
+
+function fileChangeMatchesPreviewScope(
+  data: unknown,
+  workspaceId: string | null | undefined,
+  threadId: string,
+): boolean {
+  const parsed = WS_CHANNELS["files.changed"].safeParse(data);
+  return parsed.success && parsed.data.workspaceId === workspaceId &&
+    (parsed.data.threadId === undefined || parsed.data.threadId === threadId);
+}
+
+function localPreviewAddress(address: string | null): string | null {
+  if (!address) return null;
+  try {
+    const url = new URL(address);
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]"
+      ? address
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /** How long the capture confirmation badge stays visible after a successful attach. */
 const CAPTURE_CONFIRMATION_DURATION_MS = 2200;
@@ -2257,6 +2282,13 @@ function WebRuntimePreview({
       accessible: !current.automationOnly,
     }, presentationRegistrationRef.current?.token);
   }, [identity]);
+
+  useEffect(() => pushEmitter.on("files.changed", (data) => {
+    if (!fileChangeMatchesPreviewScope(data, workspaceId, threadId)) return;
+    const current = browserSurfaceHost.getSnapshot(identity);
+    const address = localPreviewAddress(current?.committedAddress ?? current?.pendingAddress ?? null);
+    if (address) browserSurfaceHost.navigate(identity, address);
+  }), [identity, threadId, workspaceId]);
   useLayoutEffect(() => {
     if (!surfaceAvailable) return;
     useBrowserAutomationStore.getState().registerTarget(
@@ -2459,6 +2491,7 @@ export function PreviewPanel({
   presentationActive = true,
   coveredLeft,
 }: PreviewPanelProps) {
+  useWorkspaceFileInvalidation(workspaceId, threadId);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
   const [viewportCanvasBounds, setViewportCanvasBounds] = useState({ width: 0, height: 0 });
@@ -2822,6 +2855,11 @@ export function PreviewPanel({
       webviewRefs.current[activeWebviewTabId] ?? null,
     [activeWebviewTabId],
   );
+
+  useEffect(() => pushEmitter.on("files.changed", (data) => {
+    if (!fileChangeMatchesPreviewScope(data, workspaceId, threadId)) return;
+    if (localPreviewAddress(activeWebviewRef()?.getUrl() ?? null)) activeWebviewRef()?.reload();
+  }), [activeWebviewRef, threadId, workspaceId]);
 
   useEffect(() => {
     webviewRequestedUrlRef.current = activeWebviewSrc;

@@ -110,7 +110,7 @@ describe("useFileAutocomplete async lifecycle", () => {
     expect(result.current.suggestions).toEqual([]);
   });
 
-  it("reloads mounted suggestions after the scope cache is invalidated", async () => {
+  it("refreshes an open picker after the scope cache is invalidated", async () => {
     listWorkspaceFiles
       .mockResolvedValueOnce(["src/old.ts"])
       .mockResolvedValueOnce(["src/new.ts"]);
@@ -129,9 +129,10 @@ describe("useFileAutocomplete async lifecycle", () => {
       clearFileListCache("workspace-1");
     });
     await act(async () => {
-      await result.current.handleInputChange("@", 1);
+      await Promise.resolve();
     });
 
+    expect(result.current.isOpen).toBe(true);
     expect(result.current.suggestions.map((item) => item.path)).toEqual([
       "src/new.ts",
     ]);

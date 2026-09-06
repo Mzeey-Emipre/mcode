@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { ReviewComparison, ReviewFileChange } from "@mcode/contracts";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { useWorkspaceFileInvalidation } from "@/features/projects/files/useWorkspaceFileInvalidation";
 import { projectRightPanelForScope, useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { DiffToolbar } from "./DiffToolbar";
@@ -693,6 +694,7 @@ export function DiffPanel() {
     subagentScope,
     viewMode,
   } = store;
+  useWorkspaceFileInvalidation(activeWorkspaceId, activeThreadId);
   const {
     activeWorktreePath,
     filesDocked,

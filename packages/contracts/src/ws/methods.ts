@@ -1199,6 +1199,13 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.string(),
   },
+  "file.watch": {
+    params: z.object({
+      workspaceId: z.string(),
+      threadId: z.string().optional(),
+    }),
+    result: z.void(),
+  },
   "github.branchPr": {
     params: z.object({ branch: z.string(), cwd: z.string() }),
     result: PrInfoSchema().nullable(),

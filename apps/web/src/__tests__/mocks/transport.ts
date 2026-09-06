@@ -232,6 +232,7 @@ export const mockTransport: McodeTransport = {
   readClipboardImage: vi.fn().mockResolvedValue(null),
   saveClipboardFile: vi.fn().mockResolvedValue(null),
   listWorkspaceFiles: vi.fn().mockResolvedValue([]),
+  watchWorkspaceFiles: vi.fn().mockResolvedValue(undefined),
   getReviewComparison: vi.fn().mockResolvedValue({ files: [], additions: 0, deletions: 0 }),
   readFileContent: vi.fn().mockResolvedValue(""),
   listOpenInApps: vi.fn().mockResolvedValue([]),

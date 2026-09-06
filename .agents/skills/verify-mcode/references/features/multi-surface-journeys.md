@@ -6,6 +6,15 @@ Use the [turn-diff Review feature](turn-diff-review.md) for selectors and eviden
 
 Read this file when a change crosses product surfaces. Use the linked feature files for selectors and surface-specific proof.
 
+## External local workspace change
+
+1. Open the owned fixture workspace in Files and its file content view, type `@` in Composer, open its file in Mcode Browser Preview, and open Review for the same workspace scope.
+2. Edit, rename, or delete the fixture file outside Mcode and inspect the resulting file state on disk.
+3. Capture the stable Files catalog, file content view, autocomplete suggestions, refreshed Preview, and refreshed live Review. Confirm that Last turn still shows only the historical agent-attributed comparison.
+4. Keep the client connected for the update, then close it and verify that its removed local watch cannot cause a later refresh.
+
+Use [Local workspace file invalidation](workspace-file-invalidation.md) for the required runtime command, bounded-event checks, screenshots, and proof limits.
+
 ## Provider completion and durable conversation
 
 1. Start a thread from the Mcode composer with a selected provider and model.
