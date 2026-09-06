@@ -9,6 +9,7 @@ describe("ProviderAvailabilitySchema", () => {
       hasAdapter: true,
       beta: false,
       comingSoon: false,
+      capabilities: [],
       cli: { status: "found", resolvedPath: "/usr/local/bin/claude", configuredPath: "" },
     });
     expect(parsed.id).toBe("claude");
