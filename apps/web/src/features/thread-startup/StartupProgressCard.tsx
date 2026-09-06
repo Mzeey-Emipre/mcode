@@ -278,7 +278,7 @@ function StartupControls({
 }) {
   const cancellationUnavailable = cancelling || startup.cancellation === "requested";
   return (
-    <div className="flex flex-wrap justify-end gap-2 max-sm:justify-start">
+    <div className="flex flex-wrap gap-2">
       {actions}
       {canCancelStartup(startupId, startup) && !cancellationUnavailable ? (
         <Button type="button" variant="destructive" size="sm" onClick={() => { void onCancel(); }}>
@@ -314,15 +314,17 @@ export function StartupProgressCard({ startup, context, startupId, actions }: St
         </header>
         <StartupSteps startup={display} context={context} />
         <StartupNotice startup={display} cancelError={cancelError} />
-        <div className="mt-3 grid grid-cols-[1fr_auto] items-start gap-x-3 gap-y-2 max-sm:grid-cols-1">
+        <div className="mt-3 space-y-3">
           <StartupTranscript transcript={display.transcript} />
-          <StartupControls
-            startup={display}
-            startupId={startupId}
-            actions={actions}
-            cancelling={cancellation.cancelling}
-            onCancel={cancellation.cancel}
-          />
+          <div data-testid="startup-action-area" className="border-t border-border pt-3">
+            <StartupControls
+              startup={display}
+              startupId={startupId}
+              actions={actions}
+              cancelling={cancellation.cancelling}
+              onCancel={cancellation.cancel}
+            />
+          </div>
         </div>
       </section>
     </section>

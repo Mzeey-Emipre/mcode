@@ -6,6 +6,7 @@
 - The visible steps follow the operations that make the selected checkout ready.
 - The activity line uses chat-body type, a shared directional shimmer for its worktree icon and text while startup runs, and a static readable label when reduced motion is requested.
 - `More details` is a native collapsed disclosure. When opened, its live log receives checkout and Setup output.
+- Details use the full card width. Cancellation and available recovery actions appear in a stable footer below the disclosure.
 - During a cancellation request for a running managed Setup, only the web activity line animates `Cancelling setup`.
 - The preparing shell stays spatially stable from optimistic thread creation through persisted startup. After startup completes, it remains until the conversation is paintable, then switches directly to normal chat without `conversation-transition-shell` or moving the startup card into the timeline first.
 - Failed, blocked, cancelled, and interrupted startup records remain visible with their available actions.

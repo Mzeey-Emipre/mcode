@@ -118,6 +118,45 @@ describe("StartupProgressCard", () => {
     expect(screen.getByRole("log")).toHaveTextContent("setup finished");
   });
 
+  it("keeps provided recovery actions available after failed startup details", async () => {
+    const user = userEvent.setup();
+    const retrySetup = vi.fn();
+    const continueWithoutSetup = vi.fn();
+    render(
+      <StartupProgressCard
+        startup={startup({
+          state: "failed",
+          steps: [
+            { phase: "thread", state: "completed" },
+            { phase: "worktree", state: "completed" },
+            { phase: "setup", state: "failed" },
+            { phase: "agent", state: "pending" },
+          ],
+          transcript: [{ phase: "setup", content: "setup failed", createdAt: "2026-09-02T12:00:00.000Z" }],
+        })}
+        startupId={startupId}
+        context="managed-worktree"
+        actions={(
+          <>
+            <button type="button" onClick={retrySetup}>Retry setup</button>
+            <button type="button" onClick={continueWithoutSetup}>Continue without setup</button>
+          </>
+        )}
+      />,
+    );
+
+    await user.click(screen.getByText("More details"));
+    const transcript = screen.getByRole("log");
+    const actionArea = screen.getByTestId("startup-action-area");
+    expect(transcript.compareDocumentPosition(actionArea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Retry setup" }));
+    await user.click(screen.getByRole("button", { name: "Continue without setup" }));
+    expect(retrySetup).toHaveBeenCalledOnce();
+    expect(continueWithoutSetup).toHaveBeenCalledOnce();
+  });
+
   it("uses one animated activity line until cancellation is confirmed", async () => {
     const user = userEvent.setup();
     useThreadStartupStore.getState().apply(startup());
