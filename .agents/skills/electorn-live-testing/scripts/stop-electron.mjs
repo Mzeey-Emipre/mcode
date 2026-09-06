@@ -70,6 +70,21 @@ function readCommandLine(pid) {
   return result.status === 0 ? result.stdout.trim() : "";
 }
 
+/** Confirms that a live process still matches this worktree's managed Electron launch. */
+export function isOwnedElectronProcess(record, root) {
+  try {
+    validateRecord(record, root);
+    const commandLine = readCommandLine(record.pid);
+    if (!commandLine) return false;
+    const normalizedCommand = commandLine.toLowerCase();
+    const expectedExecutable = resolve(record.executablePath).toLowerCase();
+    const expectedPort = `--remote-debugging-port=${record.debugPort}`;
+    return normalizedCommand.includes(expectedExecutable) && normalizedCommand.includes(expectedPort);
+  } catch {
+    return false;
+  }
+}
+
 function validateRecord(record, root) {
   if (
     !record ||

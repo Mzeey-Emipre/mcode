@@ -105,8 +105,40 @@ export function assertDevDirIgnored(repoRoot = resolveRepoRoot()) {
 export function ensureRuntimeRoot(repoRoot = resolveRepoRoot()) {
   assertDevDirIgnored(repoRoot);
   const paths = getRuntimePaths(repoRoot);
+  assertRuntimeDirectorySafe(paths.devDir, "runtime directory", true);
   NodeFS.mkdirSync(paths.devDir, { recursive: true });
   return paths;
+}
+
+/** Rejects linked runtime paths before lifecycle commands read or write them. */
+export function assertRuntimeDirectorySafe(path, label, allowMissing = false) {
+  const stats = readRuntimePathStats(path, label, allowMissing);
+  if (!stats) return;
+  if (stats.isSymbolicLink()) throw new Error(`The ${label} must not be a link: ${path}`);
+  if (!stats.isDirectory()) throw new Error(`The ${label} must be a directory: ${path}`);
+}
+
+/** Rejects linked or non-regular runtime files before lifecycle commands read or write them. */
+export function assertRuntimeFileSafe(path, label, allowMissing = false) {
+  const stats = readRuntimePathStats(path, label, allowMissing);
+  if (!stats) return;
+  if (stats.isSymbolicLink()) throw new Error(`The ${label} must not be a link: ${path}`);
+  if (!stats.isFile()) throw new Error(`The ${label} must be a regular file: ${path}`);
+}
+
+/** Validates the runtime root before inspecting lifecycle state. */
+export function assertRuntimeRootSafe(repoRoot = resolveRepoRoot()) {
+  assertRuntimeDirectorySafe(getRuntimePaths(repoRoot).devDir, "runtime directory", true);
+}
+
+function readRuntimePathStats(path, label, allowMissing) {
+  try {
+    return NodeFS.lstatSync(path);
+  } catch (error) {
+    if (allowMissing && error?.code === "ENOENT") return null;
+    if (error?.code === "ENOENT") throw new Error(`The ${label} is missing: ${path}`);
+    throw error;
+  }
 }
 
 /**
@@ -173,7 +205,9 @@ export async function computeAvailablePorts(worktreePath) {
  * @returns {AgentRuntimePorts | null}
  */
 export function readPortsFile(repoRoot = resolveRepoRoot()) {
+  assertRuntimeRootSafe(repoRoot);
   const { portsFile } = getRuntimePaths(repoRoot);
+  assertRuntimeFileSafe(portsFile, "runtime contract", true);
   if (!NodeFS.existsSync(portsFile)) {
     return null;
   }
@@ -191,10 +225,13 @@ export function readPortsFile(repoRoot = resolveRepoRoot()) {
 export function writePortsFile(ports, repoRoot = resolveRepoRoot()) {
   validatePortsContract(ports);
   const paths = ensureRuntimeRoot(repoRoot);
-  NodeFS.writeFileSync(`${paths.portsFile}.tmp`, `${JSON.stringify(ports, null, 2)}\n`, {
+  assertRuntimeFileSafe(paths.portsFile, "runtime contract", true);
+  const temporaryPortsFile = `${paths.portsFile}.tmp`;
+  assertRuntimeFileSafe(temporaryPortsFile, "temporary runtime contract", true);
+  NodeFS.writeFileSync(temporaryPortsFile, `${JSON.stringify(ports, null, 2)}\n`, {
     mode: 0o600,
   });
-  NodeFS.renameSync(`${paths.portsFile}.tmp`, paths.portsFile);
+  NodeFS.renameSync(temporaryPortsFile, paths.portsFile);
 }
 
 /**

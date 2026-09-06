@@ -2,7 +2,7 @@
 
 ## Shared prerequisites
 
-1. Run `bun run --shell system agent:up` in this worktree when an area health command reports that the runtime is missing or stale.
+1. Run `bun run agent:setup`, then `bun run --shell system agent:up`, in this worktree when an area health command reports that the runtime is missing or stale.
 2. Use the worktree that matches `.dev/ports.json`. Do not print its credentials.
 3. Register this repository as an Mcode Workspace before a runtime live proof.
 4. Log in to each provider CLI before its live proof.

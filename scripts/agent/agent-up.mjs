@@ -11,6 +11,9 @@ import * as NodeURL from "node:url";
 import {
   buildPortsContract,
   buildRuntimeStateEnv,
+  assertRuntimeDirectorySafe,
+  assertRuntimeFileSafe,
+  assertRuntimeRootSafe,
   computeAvailablePorts,
   ensureRuntimeRoot,
   generateInstanceToken,
@@ -18,12 +21,11 @@ import {
   resolveRepoRoot,
   writePortsFile,
 } from "./runtime-contract.mjs";
-import { seedFixtureRepo } from "./fixture-repo.mjs";
-import { stopRecordedPidFile } from "./runtime-processes.mjs";
-import { stopRecordedDesktopPidFile, stopRecordedRuntimePids } from "./agent-down.mjs";
-import { ensureDependencies } from "./ensure-dependencies.mjs";
-import { startManagedDesktop } from "./managed-desktop.mjs";
-import { seedDatabaseForStartup } from "../db-seed.mjs";
+import { stopPid } from "./runtime-processes.mjs";
+import { stopRecordedRuntimePids } from "./agent-down.mjs";
+import { MANAGED_DESKTOP_SESSION_FILE, startManagedDesktop, stopManagedDesktop } from "./managed-desktop.mjs";
+import { isFixtureRepo } from "./fixture-repo.mjs";
+import { hasRuntimeDatabaseMarker } from "./runtime-database.mjs";
 import {
   prepareRuntimeDirectories as prepareSharedRuntimeDirectories,
   resolveElectronBinary as resolveSharedElectronBinary,
@@ -33,8 +35,6 @@ import {
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const rootDir = NodePath.resolve(__dirname, "..", "..");
-const desktopRoot = NodePath.resolve(rootDir, "apps", "desktop");
-const serverCjs = NodePath.resolve(desktopRoot, "dist", "server", "server.cjs");
 let agentUpTestHooks = {};
 
 /** Resolves the explicit web-automation opt-in for the Vite child process. */
@@ -57,14 +57,15 @@ export function buildWebAutomationEnv(env = process.env) {
  *
  * @param {Partial<{
  *   stopRecordedRuntimePids: typeof stopRecordedRuntimePids,
- *   seedDatabaseForStartup: typeof seedDatabaseForStartup,
- *   seedFixtureRepo: typeof seedFixtureRepo,
  *   computeAvailablePorts: typeof computeAvailablePorts,
  *   getElectronBinary: typeof getElectronBinary,
- *   rebuildServerDevBundle: () => Promise<void>,
+ *   getElectronBinding: typeof getElectronBinding,
  *   spawnLogged: typeof spawnLogged,
  *   startManagedDesktop: typeof startManagedDesktop,
+ *   stopManagedDesktop: typeof stopManagedDesktop,
  *   waitForDesktopPage: typeof waitForDesktopPage,
+ *   writePid: typeof writePid,
+ *   stopPid: typeof stopPid,
  * }>} hooks
  * @returns {() => void}
  */
@@ -79,47 +80,109 @@ export function setAgentUpTestHooks(hooks) {
  * Starts the server and Vite web app for the current worktree.
  *
  * @param {string} [repoRoot]
- * @param {{ desktop?: boolean }} [options]
+ * @param {{ desktop?: boolean, wait?: boolean }} [options]
  * @returns {Promise<import("./runtime-contract.mjs").AgentRuntimePorts>}
  */
-export async function agentUp(repoRoot = resolveRepoRoot(), { desktop = false } = {}) {
+export async function agentUp(repoRoot = resolveRepoRoot(), { desktop = false, wait = false } = {}) {
+  assertRuntimeRootSafe(repoRoot);
   const paths = ensureRuntimeRoot(repoRoot);
   prepareSharedRuntimeDirectories(paths);
+  if (desktop) assertManagedDesktopPathsSafe(paths);
+  assertRuntimeProvisioned(repoRoot, paths, desktop);
   const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
   await stopRuntimePids(repoRoot);
-  const seedRuntimeDatabase = agentUpTestHooks.seedDatabaseForStartup ?? seedDatabaseForStartup;
-  // agent:reset owns fresh snapshots; an ordinary restart must retain threads.
-  seedRuntimeDatabase({ repoRoot, preserveExistingTarget: true });
 
   const runtime = await prepareRuntime(repoRoot);
+  const electronBin = requireElectronBinary();
+  const getBinding = agentUpTestHooks.getElectronBinding ?? getElectronBinding;
+  runtime.electronBinding = getBinding();
+  return startProvisionedRuntime({ desktop, electronBin, paths, repoRoot, runtime, wait });
+}
+
+function requireElectronBinary() {
   const electronBin = resolveElectronBinary();
-  if (!electronBin) throw new Error("Electron binary not found. Run 'bun install' in the project root.");
-  runtime.electronBinding = getElectronBinding();
-  await rebuildRuntimeServerBundle();
+  if (!electronBin) throw new Error("Electron binary not found. Run 'bun run agent:setup' first.");
+  return electronBin;
+}
 
-  const startedPidFiles = [];
+async function startProvisionedRuntime({ desktop, electronBin, paths, repoRoot, runtime, wait }) {
+  const startedProcesses = [];
+  const persistPid = agentUpTestHooks.writePid ?? writePid;
   try {
-    const server = startRuntimeServer({ electronBin, paths, repoRoot, runtime });
-    startedPidFiles.push(writePid(paths, "server", server.pid));
-
-    await waitForHealth(runtime.contract.healthUrl);
+    const server = await startRuntimeServer({ electronBin, paths, repoRoot, runtime });
+    startedProcesses.push({ name: "server", pid: requireChildPid("server", server) });
+    startedProcesses.at(-1).pidFile = persistPid(paths, "server", server.pid);
     writePortsFile(runtime.contract, repoRoot);
 
-    const web = startRuntimeWeb({ paths, repoRoot, runtime });
-    startedPidFiles.push(writePid(paths, "web", web.pid));
-    await waitForHttpOk(runtime.contract.appUrl, "web app");
+    const web = await startRuntimeWeb({ paths, repoRoot, runtime });
+    startedProcesses.push({ name: "web", pid: requireChildPid("web", web) });
+    startedProcesses.at(-1).pidFile = persistPid(paths, "web", web.pid);
 
-    if (desktop) {
-      const desktopProcess = await startRuntimeDesktop(repoRoot, electronBin);
-      startedPidFiles.push(writePid(paths, "desktop", desktopProcess.pid));
-      await waitForRuntimeDesktopPage(desktopProcess.endpoint, runtime.contract.appUrl);
+    const desktopProcess = desktop ? await startRuntimeDesktop(repoRoot, electronBin) : null;
+    if (desktopProcess) {
+      startedProcesses.push({ name: "desktop", pid: requireChildPid("desktop", desktopProcess) });
+      startedProcesses.at(-1).pidFile = persistPid(paths, "desktop", desktopProcess.pid);
     }
+
+    if (wait) await waitForRuntimeReadiness(runtime.contract, desktopProcess);
 
     await writeRuntimeContract(runtime.contract);
     return runtime.contract;
   } catch (error) {
-    await cleanupStartedProcesses(startedPidFiles, repoRoot);
+    const cleanupError = await cleanupStartedProcesses(startedProcesses, repoRoot);
+    if (cleanupError) {
+      throw new AggregateError([error, cleanupError], `Agent runtime startup failed: ${error.message}`, { cause: error });
+    }
     throw error;
+  }
+}
+
+function requireChildPid(name, child) {
+  if (!Number.isSafeInteger(child?.pid) || child.pid <= 0) {
+    throw new Error(`Could not start ${name}: child process has no PID`);
+  }
+  return child.pid;
+}
+
+function assertManagedDesktopPathsSafe(paths) {
+  const userDataDir = NodePath.join(paths.devDir, MANAGED_DESKTOP_SESSION_FILE.slice(0, -".json".length));
+  assertRuntimeDirectorySafe(userDataDir, "managed desktop user-data directory", true);
+  assertRuntimeDirectorySafe(NodePath.join(userDataDir, "runtime"), "managed desktop runtime directory", true);
+}
+
+async function waitForRuntimeReadiness(contract, desktopProcess) {
+  await waitForHttpOk(contract.healthUrl, "server health");
+  await waitForHttpOk(contract.appUrl, "web app");
+  if (desktopProcess) await waitForRuntimeDesktopPage(desktopProcess.endpoint, contract.appUrl);
+}
+
+/** Parses command-line startup options. */
+export function parseAgentUpOptions(args) {
+  return {
+    desktop: args.includes("--desktop"),
+    wait: args.includes("--wait"),
+  };
+}
+
+/**
+ * Fails fast when the runtime has not been provisioned by `agent:setup`.
+ *
+ * @param {string} repoRoot
+ * @param {ReturnType<typeof getRuntimePaths>} paths
+ * @param {boolean} desktop
+ */
+function assertRuntimeProvisioned(repoRoot, paths, desktop) {
+  const serverCjs = NodePath.resolve(repoRoot, "apps", "desktop", "dist", "server", "server.cjs");
+  const desktopMain = NodePath.resolve(repoRoot, "apps", "desktop", "dist", "main", "main.cjs");
+  const missing = [];
+  if (!hasRuntimeDatabaseMarker(repoRoot)) missing.push("a valid .dev/db database marker");
+  if (!isFixtureRepo(repoRoot)) missing.push("an independent .dev/fixture-repo");
+  if (!NodeFS.existsSync(serverCjs)) missing.push("apps/desktop/dist/server/server.cjs");
+  if (desktop && !NodeFS.existsSync(desktopMain)) missing.push("apps/desktop/dist/main/main.cjs");
+  if (missing.length > 0) {
+    throw new Error(
+      `Agent runtime is not provisioned. Run 'bun run agent:setup' first. Missing: ${missing.join(", ")}`,
+    );
   }
 }
 
@@ -134,14 +197,12 @@ async function waitForRuntimeDesktopPage(endpoint, appUrl) {
 }
 
 async function prepareRuntime(repoRoot) {
-  const seedRuntimeFixtureRepo = agentUpTestHooks.seedFixtureRepo ?? seedFixtureRepo;
   const computeRuntimePorts = agentUpTestHooks.computeAvailablePorts ?? computeAvailablePorts;
-  const fixtureRepo = seedRuntimeFixtureRepo(repoRoot);
   const { serverPort, webPort } = await computeRuntimePorts(repoRoot);
   const token = NodeCrypto.randomUUID();
   const instanceToken = generateInstanceToken();
   return {
-    fixtureRepo,
+    fixtureRepo: getRuntimePaths(repoRoot).fixtureRepoDir,
     token,
     instanceToken,
     serverPort,
@@ -167,13 +228,8 @@ function resolveElectronBinary() {
   return getElectron();
 }
 
-async function rebuildRuntimeServerBundle() {
-  const rebuild = agentUpTestHooks.rebuildServerDevBundle
-    ?? (await import("../build-server-dev-bundle.mjs")).rebuildServerDevBundle;
-  await rebuild();
-}
-
-function startRuntimeServer({ electronBin, paths, repoRoot, runtime }) {
+async function startRuntimeServer({ electronBin, paths, repoRoot, runtime }) {
+  const serverCjs = NodePath.resolve(repoRoot, "apps", "desktop", "dist", "server", "server.cjs");
   const spawnRuntimeProcess = agentUpTestHooks.spawnLogged ?? spawnLogged;
   return spawnRuntimeProcess(
     electronBin,
@@ -200,7 +256,7 @@ function startRuntimeServer({ electronBin, paths, repoRoot, runtime }) {
   );
 }
 
-function startRuntimeWeb({ paths, repoRoot, runtime }) {
+async function startRuntimeWeb({ paths, repoRoot, runtime }) {
   const spawnRuntimeProcess = agentUpTestHooks.spawnLogged ?? spawnLogged;
   return spawnRuntimeProcess(
     getBunBinary(),
@@ -250,7 +306,8 @@ function getElectronBinding() {
  * @param {string} logPath
  * @returns {import("node:child_process").ChildProcess}
  */
-function spawnLogged(command, args, options, logPath) {
+async function spawnLogged(command, args, options, logPath) {
+  assertRuntimeFileSafe(logPath, "runtime log", true);
   const logFd = NodeFS.openSync(logPath, "a");
   const child = NodeChildProcess.spawn(command, args, {
     cwd: options.cwd,
@@ -260,8 +317,23 @@ function spawnLogged(command, args, options, logPath) {
     shell: false,
     windowsHide: true,
   });
+  await acknowledgeSpawn(child);
   child.unref();
   return child;
+}
+
+function acknowledgeSpawn(child) {
+  return new Promise((resolveSpawn, rejectSpawn) => {
+    const failed = (error) => {
+      clearImmediate(acknowledged);
+      rejectSpawn(error);
+    };
+    const acknowledged = setImmediate(() => {
+      child.off("error", failed);
+      resolveSpawn();
+    });
+    child.once("error", failed);
+  });
 }
 
 /**
@@ -291,6 +363,7 @@ function writePid(paths, name, pid) {
     throw new Error(`Could not start ${name}: child process has no PID`);
   }
   const pidFile = NodePath.resolve(paths.pidsDir, `${name}.pid`);
+  assertRuntimeFileSafe(pidFile, "runtime PID file", true);
   NodeFS.writeFileSync(pidFile, `${pid}\n`, { encoding: "utf8" });
   return pidFile;
 }
@@ -301,20 +374,6 @@ function writePid(paths, name, pid) {
  * @param {string} healthUrl
  * @param {number} [timeoutMs]
  */
-async function waitForHealth(healthUrl, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(healthUrl);
-      if (res.ok) return;
-    } catch {
-      // Retry until the startup deadline.
-    }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 300));
-  }
-  throw new Error(`Server did not become healthy: ${healthUrl}`);
-}
-
 /**
  * Wait for a URL to return a successful HTTP response.
  *
@@ -322,8 +381,8 @@ async function waitForHealth(healthUrl, timeoutMs = 30_000) {
  * @param {string} label
  * @param {number} [timeoutMs]
  */
-async function waitForHttpOk(url, label, timeoutMs = 30_000) {
-  return waitForSharedHttpOk(url, label, timeoutMs);
+export async function waitForHttpOk(url, label, timeoutMs = 30_000, options) {
+  return waitForSharedHttpOk(url, label, timeoutMs, options);
 }
 
 /** Waits until Electron opens the exact managed worktree app page. */
@@ -370,20 +429,53 @@ function isManagedAppPage(target, expectedUrl) {
  * @param {string[]} pidFiles
  * @param {string} repoRoot
  */
-async function cleanupStartedProcesses(pidFiles, repoRoot) {
+async function cleanupStartedProcesses(processes, repoRoot) {
   const paths = getRuntimePaths(repoRoot);
-  NodeFS.rmSync(paths.portsFile, { force: true });
-  for (const pidFile of [...pidFiles].reverse()) {
+  const cleanupErrors = [];
+  try {
+    assertRuntimeFileSafe(paths.portsFile, "runtime contract", true);
+    NodeFS.rmSync(paths.portsFile, { force: true });
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  const stopDesktop = agentUpTestHooks.stopManagedDesktop ?? stopManagedDesktop;
+  const stopOwnedProcess = agentUpTestHooks.stopPid ?? stopPid;
+  for (const processRecord of [...processes].reverse()) {
     try {
-      if (NodePath.basename(pidFile) === "desktop.pid") {
-        await stopRecordedDesktopPidFile(pidFile, repoRoot);
-      } else {
-        await stopRecordedPidFile(pidFile, { repoRoot });
-      }
-    } catch {
-      // Startup is already failing; preserve the original error.
+      await cleanupStartedProcess(processRecord, { paths, repoRoot, stopDesktop, stopOwnedProcess });
+    } catch (error) {
+      cleanupErrors.push(error);
     }
   }
+  return cleanupErrors.length === 0 ? null : new AggregateError(cleanupErrors, "Agent runtime cleanup failed");
+}
+
+async function cleanupStartedProcess(processRecord, { paths, repoRoot, stopDesktop, stopOwnedProcess }) {
+  if (processRecord.name === "desktop") {
+    await cleanupStartedDesktop(processRecord.pid, paths, repoRoot, stopDesktop, stopOwnedProcess);
+  } else {
+    await stopOwnedProcess(processRecord.pid);
+  }
+  if (!processRecord.pidFile) return;
+  assertRuntimeFileSafe(processRecord.pidFile, "runtime PID file", true);
+  NodeFS.rmSync(processRecord.pidFile, { force: true });
+}
+
+async function cleanupStartedDesktop(pid, paths, repoRoot, stopDesktop, stopOwnedProcess) {
+  let result;
+  try {
+    result = await stopDesktop(repoRoot);
+  } catch {
+    return stopCapturedDesktop(pid, paths, stopOwnedProcess);
+  }
+  if (result?.status === "not-running") return stopCapturedDesktop(pid, paths, stopOwnedProcess);
+}
+
+async function stopCapturedDesktop(pid, paths, stopOwnedProcess) {
+  await stopOwnedProcess(pid);
+  const sessionFile = NodePath.join(paths.devDir, MANAGED_DESKTOP_SESSION_FILE);
+  assertRuntimeFileSafe(sessionFile, "desktop session", true);
+  NodeFS.rmSync(sessionFile, { force: true });
 }
 
 /**
@@ -407,6 +499,5 @@ async function writeStdout(value) {
 if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   const repoArg = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
   const repoRoot = repoArg ? NodePath.resolve(repoArg) : resolveRepoRoot();
-  ensureDependencies({ repoRoot });
-  await agentUp(repoRoot, { desktop: process.argv.includes("--desktop") });
+  await agentUp(repoRoot, parseAgentUpOptions(process.argv.slice(2)));
 }

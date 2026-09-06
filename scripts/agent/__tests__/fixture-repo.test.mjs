@@ -8,7 +8,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { seedFixtureRepo } from "../fixture-repo.mjs";
+import { isFixtureRepo, seedFixtureRepo } from "../fixture-repo.mjs";
 
 NodeTest.test("fixture repo seeds expected branches and real merge conflict", () => {
   const repo = makeHostRepo();
@@ -50,6 +50,63 @@ NodeTest.test("fixture seeding is idempotent inside .dev fixture directory", () 
     NodeAssertStrict.default.equal(git(second, ["status", "--short"]), "");
   } finally {
     removeTree(repo);
+  }
+});
+
+NodeTest.test("fixture validation requires an independent repository at the fixture path", () => {
+  const repo = makeHostRepo();
+  try {
+    const nested = NodePath.join(repo, ".dev", "fixture-repo");
+    NodeFS.mkdirSync(nested, { recursive: true });
+    NodeAssertStrict.default.equal(isFixtureRepo(repo), false);
+    seedFixtureRepo(repo);
+    NodeAssertStrict.default.equal(isFixtureRepo(repo), true);
+  } finally {
+    removeTree(repo);
+  }
+});
+
+NodeTest.test("fixture validation rejects a linked .git directory and reseeding leaves its target untouched", (context) => {
+  const repo = makeHostRepo();
+  const external = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fixture-external-git-"));
+  const sentinel = NodePath.join(external, "sentinel.txt");
+  try {
+    const fixture = seedFixtureRepo(repo);
+    NodeFS.writeFileSync(sentinel, "external data\n");
+    NodeFS.rmSync(NodePath.join(fixture, ".git"), { recursive: true, force: true });
+    try {
+      NodeFS.symlinkSync(external, NodePath.join(fixture, ".git"), process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      context.skip(`links unavailable: ${error.message}`);
+      return;
+    }
+    NodeAssertStrict.default.equal(isFixtureRepo(repo), false);
+    seedFixtureRepo(repo);
+    NodeAssertStrict.default.equal(isFixtureRepo(repo), true);
+    NodeAssertStrict.default.equal(NodeFS.readFileSync(sentinel, "utf8"), "external data\n");
+  } finally {
+    removeTree(repo);
+    removeTree(external);
+  }
+});
+
+NodeTest.test("fixture validation rejects a Git linked worktree", () => {
+  const repo = makeHostRepo();
+  const source = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fixture-worktree-source-"));
+  try {
+    git(source, ["init", "-q", "-b", "main"]);
+    git(source, ["config", "user.email", "fixture@example.invalid"]);
+    git(source, ["config", "user.name", "Fixture Test"]);
+    NodeFS.writeFileSync(NodePath.join(source, "README.md"), "fixture source\n");
+    git(source, ["add", "README.md"]);
+    git(source, ["commit", "-qm", "fixture source"]);
+    const fixture = NodePath.join(repo, ".dev", "fixture-repo");
+    NodeFS.mkdirSync(NodePath.dirname(fixture), { recursive: true });
+    git(source, ["worktree", "add", "--detach", fixture]);
+    NodeAssertStrict.default.equal(isFixtureRepo(repo), false);
+  } finally {
+    removeTree(repo);
+    removeTree(source);
   }
 });
 

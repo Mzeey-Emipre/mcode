@@ -72,6 +72,8 @@ bunx --no-install opensrc path <package-or-owner/repo>
 3. **Bypassing type and complexity checks.** Never suppress TypeScript errors with unsafe casts or ignore complexity warnings. Keep functions small and modular.
 4. **Running the app with `bun run dev` or `bun run dev:*` in the foreground.** These commands hold synchronous harnesses until shutdown. Use `bun run --shell system agent:up` by default, or add `--desktop` when Electron is required; run direct long-lived commands in the background.
 
+   `agent:up` starts detached processes and returns after it writes `.dev/ports.json`. Run `bun run agent:setup` when runtime artifacts are absent or stale, then run `bun run agent:ready` to wait for readiness.
+
 ## Hit every surface
 
 Before calling frontend or feature work done, verify all applicable dimensions:
@@ -85,28 +87,26 @@ Before calling frontend or feature work done, verify all applicable dimensions:
 
 ## Dev servers & Runtime contract
 
-- `bun run setup` runs `scripts/setup-env.mjs` to configure the environment; `bun install` installs dependencies.
-- Use `bun run --shell system agent:up` to start the server and web app in the background. Add `--desktop` to also start Electron in the background. It waits for server health, web HTTP readiness, and the Electron app page when requested, writes `.dev/ports.json`, prints the port configuration, then returns control. Use regular dev commands only for a specific need and run long-lived commands in the background.
+- Run `bun install` before `bun run agent:setup`. Setup snapshots the local Mcode database into `.dev/db/app.sqlite`, creates or validates `.dev/fixture-repo`, and builds runtime bundles. Run it only when those artifacts are absent or stale.
+- Use `bun run --shell system agent:up` to start the server and web app in the background. Add `--desktop` for Electron. Then run `bun run agent:ready`. It reads `.dev/ports.json` and polls every started surface.
+
+  ```powershell
+  # Windows PowerShell
+  bun run --shell system agent:up
+  bun run agent:ready
+  ```
+
+  ```bash
+  # macOS / Linux
+  bun run --shell system agent:up
+  bun run agent:ready
+  ```
 - Read `.dev/ports.json` instead of recomputing ports. Authenticate HTTP and WebSocket requests with `seedLogin.authHeader` or the `mcode-auth` cookie. `instanceToken` and `worktreeIdentity` identify and pair the worktree runtime.
 - `bun run --shell system agent:down` stops the runtime cleanly.
-- `bun run --shell system agent:reset` deletes only `.dev/db` and restarts with a fresh seeded database.
 
 ## Test data
 
-An empty database is a bad test. Seed your worktree sandbox with a copy of real data instead of pointing at live state:
-
-- Run `bun run db:seed` to safely snapshot the live database (`~/.mcode/mcode.db` or `~/.mcode-dev/mcode.db`) into your worktree (`.dev/db/app.sqlite` or `.mcode-local/mcode.db`).
-- Snapshot uses SQLite `VACUUM INTO`, which is corruption-safe even while a live server has the source database open and yields one consistent file:
-
-  ```bash
-  # Manual snapshot equivalent:
-  mkdir -p .dev/db
-  rm -f .dev/db/app.sqlite*
-  bun -e "new (require('bun:sqlite').Database)(require('os').homedir() + '/.mcode/mcode.db', { readonly: true }).run(\"VACUUM INTO '.dev/db/app.sqlite'\")"
-  ```
-
-- A plain `cp` is only safe when no server is running, and must copy `-wal` and `-shm` files. A live file copy can be inconsistent while SQLite has uncheckpointed WAL changes; use SQLite's backup mechanisms instead.
-- Copy in, never symlink. Data flows one way: into your sandbox, never back out.
+The local database snapshot can contain representative user projects. Product and runtime tests must select and mutate only `.dev/fixture-repo`. Do not copy, register, or modify user projects or the live Mcode database.
 
 ## How it works
 

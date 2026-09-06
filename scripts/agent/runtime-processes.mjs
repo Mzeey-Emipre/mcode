@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 
 import {
   assertInsideDevDir,
+  assertRuntimeFileSafe,
   getRuntimePaths,
   resolveRepoRoot,
 } from "./runtime-contract.mjs";
@@ -44,6 +45,8 @@ export async function stopRecordedPidFile(pidFilePath, options = {}) {
   if (!/^[a-z0-9.-]+\.pid$/i.test(NodePath.basename(resolvedPidFile))) {
     throw new Error(`Invalid PID file name: ${pidFilePath}`);
   }
+
+  assertRuntimeFileSafe(resolvedPidFile, "runtime PID file");
 
   const pid = parsePidFile(resolvedPidFile);
   const stop = options.stop ?? stopPid;

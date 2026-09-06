@@ -10,6 +10,7 @@ import * as NodeURL from "node:url";
 import {
   assertInsideDevDir,
   ensureRuntimeRoot,
+  getRuntimePaths,
   resolveRepoRoot,
 } from "./runtime-contract.mjs";
 
@@ -34,6 +35,40 @@ export function seedFixtureRepo(repoRoot = resolveRepoRoot()) {
   git(fixtureDir, ["fast-import", "--quiet"], fixtureHistory());
   git(fixtureDir, ["checkout", "-q", "main"]);
   return fixtureDir;
+}
+
+/** Returns whether the fixture is an independent repository at its exact runtime path. */
+export function isFixtureRepo(repoRoot = resolveRepoRoot()) {
+  const fixtureDir = getRuntimePaths(repoRoot).fixtureRepoDir;
+  try {
+    if (NodeFS.lstatSync(fixtureDir).isSymbolicLink()) return false;
+    const gitDir = NodePath.join(fixtureDir, ".git");
+    const gitDirStats = NodeFS.lstatSync(gitDir);
+    if (gitDirStats.isSymbolicLink() || !gitDirStats.isDirectory()) return false;
+    const result = NodeChildProcess.spawnSync("git", ["rev-parse", "--show-toplevel", "--git-common-dir"], {
+      cwd: fixtureDir,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (result.status !== 0) return false;
+    const [topLevel, commonDir] = result.stdout.trim().split(/\r?\n/);
+    return isExactPath(topLevel, fixtureDir)
+      && isPathInside(NodePath.resolve(fixtureDir, commonDir), fixtureDir);
+  } catch {
+    return false;
+  }
+}
+
+function isExactPath(candidate, expected) {
+  return NodeFS.realpathSync.native(candidate).toLowerCase()
+    === NodeFS.realpathSync.native(expected).toLowerCase();
+}
+
+function isPathInside(candidate, parent) {
+  const resolvedCandidate = NodeFS.realpathSync.native(candidate).toLowerCase();
+  const resolvedParent = NodeFS.realpathSync.native(parent).toLowerCase();
+  const prefix = resolvedParent.endsWith(NodePath.sep) ? resolvedParent : `${resolvedParent}${NodePath.sep}`;
+  return resolvedCandidate === resolvedParent || resolvedCandidate.startsWith(prefix);
 }
 
 function fixtureHistory() {

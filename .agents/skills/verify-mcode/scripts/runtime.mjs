@@ -234,7 +234,7 @@ function readRuntime(repoRoot) {
   try {
     const ports = readPortsFile(repoRoot);
     if (!ports) {
-      throw actionable("The runtime contract is missing", "Run bun run --shell system agent:up in this worktree.");
+      throw actionable("The runtime contract is missing", "Run bun run agent:setup, then bun run --shell system agent:up in this worktree.");
     }
     return ports;
   } catch (error) {
@@ -274,7 +274,7 @@ function runtimeArtifacts(repoRoot) {
 
 function requiredFileTimestamp(path, label) {
   if (!NodeFS.existsSync(path) || !NodeFS.statSync(path).isFile()) {
-    throw actionable(`The ${label} is missing: ${relativeTo(resolveRepoRoot(), path)}`, "Run bun run --shell system agent:down, then bun run --shell system agent:up in this worktree.");
+    throw actionable(`The ${label} is missing: ${relativeTo(resolveRepoRoot(), path)}`, "Run bun run agent:setup, then bun run --shell system agent:up in this worktree.");
   }
   return { path, modifiedMs: NodeFS.statSync(path).mtimeMs };
 }
@@ -305,7 +305,7 @@ function sourceIsNewerThanArtifact(source, artifact) {
 function staleRuntimeError(repoRoot, staleSources, artifacts) {
   const paths = staleSources.slice(0, 3).map((source) => relativeTo(repoRoot, source.path)).join(", ");
   const artifactPaths = [relativeTo(repoRoot, artifacts.bundle.path), relativeTo(repoRoot, artifacts.ports.path)].join(", ");
-  return actionable(`${staleSources.length} runtime source file(s) are newer than ${artifactPaths}: ${paths}`, "Run bun run --shell system agent:down, then bun run --shell system agent:up in this worktree.");
+  return actionable(`${staleSources.length} runtime source file(s) are newer than ${artifactPaths}: ${paths}`, "Run bun run agent:setup, then bun run --shell system agent:up in this worktree.");
 }
 
 async function health(repoRoot) {

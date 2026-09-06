@@ -9,7 +9,7 @@ Use one persistent Playwright connection to an agent-owned Electron process. Lau
 
 ## Start the session
 
-1. Read `docs/agents/runtime.md` and start the worktree runtime with `bun run --shell system agent:up` if it is not healthy.
+1. Read `docs/agents/runtime.md`. Run `bun run agent:setup` if runtime artifacts are absent or stale. Start the worktree runtime with `bun run --shell system agent:up` if it is not healthy. Poll `healthUrl` and `appUrl` before you start Electron.
 2. Read `.dev/ports.json`. Never print its token or seeded credentials.
 3. Make Playwright importable by the Node REPL. Prefer an existing external installation. Otherwise use the helper to create an isolated private package under `.dev/playwright-scratch`. Never add Playwright to the repository package manifest:
 

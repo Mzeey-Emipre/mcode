@@ -36,6 +36,7 @@ NodeTest.test("repository orchestration scripts use Bun without a system Node co
     "dev:server",
     "test",
     "test:scripts",
+    "agent:setup",
     "agent:up",
     "agent:down",
     "agent:reset",
@@ -56,6 +57,7 @@ NodeTest.test("agent commands no longer rely on lifecycle dependency hooks", () 
     "dev:desktop",
     "dev:web",
     "dev:server",
+    "agent:setup",
     "agent:up",
     "agent:reset",
   ]) {

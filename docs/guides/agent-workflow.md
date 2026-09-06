@@ -9,12 +9,16 @@ Use focused checks locally. Hosted CI owns the full repository gate.
 
 ## Bootstrap
 
-Before the first development or verification command, check the root
-`node_modules` directory. If it is absent, run `bun install --frozen-lockfile`
-once. The install runs the repository postinstall script.
+Run `bun install`, then run `bun run agent:setup` when runtime artifacts are
+absent or stale. Setup snapshots the local database into the worktree, creates
+or validates `.dev/fixture-repo`, and builds runtime artifacts. Product and
+runtime tests select and mutate only `.dev/fixture-repo`.
 
-`agent:up`, `agent:reset`, and focused test commands do this check. Treat
-an install error as a setup error, not a product failure.
+`agent:up` assumes setup is complete and fails fast if it is not.
+
+After `bun run --shell system agent:up`, run `bun run agent:ready`. It reads
+`.dev/ports.json` and waits for the server, web app, and any managed desktop
+surface.
 
 ## Implement
 
