@@ -133,7 +133,7 @@ async function health(repoRoot) {
 
   const fixtureRepo = getRuntimePaths(repoRoot).fixtureRepoDir;
   if (!NodeFS.existsSync(NodePath.join(fixtureRepo, ".git"))) {
-    throw new Error("The disposable fixture repository is missing. Run agent:up in this worktree, then retry.");
+    throw new Error("The disposable fixture repository is missing. Run agent:setup, then agent:up in this worktree, then retry.");
   }
   requireDesktopBundle(repoRoot);
   requirePlaywright(repoRoot);

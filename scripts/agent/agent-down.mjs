@@ -7,12 +7,15 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import {
+  assertRuntimeDirectorySafe,
+  assertRuntimeFileSafe,
+  assertRuntimeRootSafe,
   getRuntimePaths,
   readPortsFile,
   resolveRepoRoot,
 } from "./runtime-contract.mjs";
 import { parsePidFile, stopRecordedPidFile } from "./runtime-processes.mjs";
-import { stopManagedDesktop } from "./managed-desktop.mjs";
+import { MANAGED_DESKTOP_SESSION_FILE, stopManagedDesktop } from "./managed-desktop.mjs";
 
 /**
  * Stops the agent runtime processes recorded under `.dev/pids`.
@@ -22,6 +25,11 @@ import { stopManagedDesktop } from "./managed-desktop.mjs";
  * @returns {Promise<void>}
  */
 export async function agentDown(repoRoot = resolveRepoRoot(), options = {}) {
+  assertRuntimeRootSafe(repoRoot);
+  const paths = getRuntimePaths(repoRoot);
+  assertRuntimeFileSafe(paths.portsFile, "runtime contract", true);
+  assertRuntimeDirectorySafe(paths.pidsDir, "runtime PID directory", true);
+  assertRuntimeFileSafe(NodePath.join(paths.devDir, MANAGED_DESKTOP_SESSION_FILE), "desktop session", true);
   const contract = readPortsFileForShutdown(repoRoot);
   const gracefulShutdownRequested = Boolean(contract?.seedLogin?.token);
   if (contract?.seedLogin?.token) {
@@ -98,6 +106,9 @@ function readPortsFileForShutdown(repoRoot) {
  */
 export async function stopRecordedRuntimePids(repoRoot = resolveRepoRoot(), options = {}) {
   const paths = getRuntimePaths(repoRoot);
+  assertRuntimeRootSafe(repoRoot);
+  assertRuntimeDirectorySafe(paths.pidsDir, "runtime PID directory", true);
+  assertRuntimeFileSafe(NodePath.join(paths.devDir, MANAGED_DESKTOP_SESSION_FILE), "desktop session", true);
   if (!NodeFS.existsSync(paths.pidsDir)) return;
   const pidFiles = NodeFS.readdirSync(paths.pidsDir)
     .filter((name) => name.endsWith(".pid"))
@@ -106,6 +117,7 @@ export async function stopRecordedRuntimePids(repoRoot = resolveRepoRoot(), opti
 
   for (const name of pidFiles) {
     const pidFile = NodePath.join(paths.pidsDir, name);
+    assertRuntimeFileSafe(pidFile, "runtime PID file");
     try {
       await stopRuntimePidFile(name, pidFile, repoRoot, options);
     } catch (error) {
@@ -126,9 +138,10 @@ async function stopRuntimePidFile(name, pidFile, repoRoot, options) {
   return stopRecordedPidFile(pidFile, { repoRoot, stop: options.stop });
 }
 
-/** Stops the validated managed desktop tree before removing its PID file. */
+/** Stops the validated managed desktop process tree before removing its PID file. */
 export async function stopRecordedDesktopPidFile(pidFile, repoRoot, options = {}) {
-  const result = stopManagedDesktop(repoRoot);
+  const stopDesktop = options.stopManagedDesktop ?? stopManagedDesktop;
+  const result = await stopDesktop(repoRoot);
   if (result.status === "not-running") {
     return stopRecordedPidFile(pidFile, { repoRoot, stop: options.stop });
   }

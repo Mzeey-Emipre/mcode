@@ -85,6 +85,9 @@ export async function startElectron(repoRoot = process.cwd(), options = {}) {
   const runtime = await loadElectronRuntime(root, options);
   const settings = resolveElectronSettings(options, runtime.ports, runtime.packagedExecutablePath);
   const sessionFile = join(runtime.paths.devDir, settings.sessionFileName);
+  const userDataDir = join(runtime.paths.devDir, settings.sessionFileName.slice(0, -".json".length));
+  runtime.runtimeContract.assertRuntimeDirectorySafe(userDataDir, "managed desktop user-data directory", true);
+  runtime.runtimeContract.assertRuntimeDirectorySafe(join(userDataDir, "runtime"), "managed desktop runtime directory", true);
   const existing = await readExistingSession(sessionFile, root);
   if (existing) return existing;
   const debugPort = await runtime.runtimeContract.findAvailablePort(
@@ -99,6 +102,7 @@ export async function startElectron(repoRoot = process.cwd(), options = {}) {
     runtime,
     sessionFile,
     settings,
+    waitForDebugger: options.waitForDebugger ?? true,
   });
 }
 
@@ -282,7 +286,7 @@ function spawnDetachedElectron(launch, logsDir, env) {
   }
 }
 
-async function launchElectron({ launch, record, runtime, sessionFile, settings }) {
+async function launchElectron({ launch, record, runtime, sessionFile, settings, waitForDebugger: shouldWait }) {
   let child;
   try {
     child = spawnDetachedElectron(
@@ -290,9 +294,6 @@ async function launchElectron({ launch, record, runtime, sessionFile, settings }
       runtime.paths.logsDir,
       buildElectronEnvironment(record.repoRoot, runtime, launch, settings),
     );
-    const spawnFailure = new Promise((_, rejectSpawn) => {
-      child.once("error", rejectSpawn);
-    });
     child.unref();
 
     const running = {
@@ -302,13 +303,28 @@ async function launchElectron({ launch, record, runtime, sessionFile, settings }
       status: "running",
     };
     writeFileSync(sessionFile, `${JSON.stringify(running, null, 2)}\n`, "utf8");
-    await Promise.race([waitForDebugger(launch.endpoint, child), spawnFailure]);
+    await acknowledgeSpawn(child);
+    if (shouldWait) await waitForDebugger(launch.endpoint, child);
     return running;
   } catch (error) {
     if (child?.pid) terminateProcessTree(child.pid);
     rmSync(sessionFile, { force: true });
     throw error;
   }
+}
+
+function acknowledgeSpawn(child) {
+  return new Promise((resolveSpawn, rejectSpawn) => {
+    const failed = (error) => {
+      clearImmediate(acknowledged);
+      rejectSpawn(error);
+    };
+    const acknowledged = setImmediate(() => {
+      child.off("error", failed);
+      resolveSpawn();
+    });
+    child.once("error", failed);
+  });
 }
 
 async function isReusable(record, root) {

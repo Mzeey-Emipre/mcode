@@ -11,8 +11,7 @@ export const MANAGED_DESKTOP_SESSION_FILE = "electron-agent-runtime.json";
 
 /** Starts the owned Electron desktop session for one managed runtime. */
 export function startManagedDesktop(repoRoot, electronBin = resolveElectronBinary(rootDir)) {
-  buildDesktopMain();
-  return runDesktopHelper("start-electron.mjs", "startElectron", repoRoot, electronBin);
+  return runDesktopHelper("start-electron.mjs", "startElectron", repoRoot, electronBin, ", waitForDebugger: false");
 }
 
 /** Stops the owned Electron desktop session for one managed runtime. */
@@ -20,29 +19,22 @@ export function stopManagedDesktop(repoRoot, electronBin = resolveElectronBinary
   return runDesktopHelper("stop-electron.mjs", "stopElectron", repoRoot, electronBin);
 }
 
-function buildDesktopMain() {
-  NodeChildProcess.execFileSync(process.execPath, ["scripts/build-main.mjs", "--main-only"], {
-    cwd: NodePath.join(rootDir, "apps", "desktop"),
-    env: process.env,
-    stdio: "inherit",
-    windowsHide: true,
-  });
-}
-
-function runDesktopHelper(scriptName, exportName, repoRoot, electronBin) {
+async function runDesktopHelper(scriptName, exportName, repoRoot, electronBin, extraOptions = "") {
   if (!electronBin) throw new Error("Electron binary not found. Run 'bun install' in the project root.");
   const scriptUrl = NodeURL.pathToFileURL(NodePath.join(skillRoot, scriptName)).href;
   const source = [
     `import(${JSON.stringify(scriptUrl)}).then(async (helper) => {`,
-    `const result = await helper.${exportName}(process.cwd(), { sessionFileName: ${JSON.stringify(MANAGED_DESKTOP_SESSION_FILE)} });`,
+    `const result = await helper.${exportName}(process.cwd(), { sessionFileName: ${JSON.stringify(MANAGED_DESKTOP_SESSION_FILE)}${extraOptions} });`,
     "process.stdout.write(JSON.stringify(result));",
     "}).catch((error) => { console.error(error); process.exitCode = 1; });",
   ].join("");
-  const output = NodeChildProcess.execFileSync(electronBin, ["-e", source], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-    windowsHide: true,
+  const output = await new Promise((resolveOutput, rejectOutput) => {
+    NodeChildProcess.execFile(electronBin, ["-e", source], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      windowsHide: true,
+    }, (error, stdout) => error ? rejectOutput(error) : resolveOutput(stdout));
   });
   return JSON.parse(output);
 }

@@ -28,7 +28,7 @@ function withoutWarnings(callback) {
   }
 }
 
-NodeTest.test("seedDatabaseForStartup snapshots an available SQLite database", () => {
+NodeTest.test("seedDatabase snapshots representative data without modifying its source", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-db-seed-test-"));
   const sourcePath = NodePath.join(tempDir, "source.db");
   const targetPath = NodePath.join(tempDir, "target", "target.db");
@@ -41,8 +41,16 @@ NodeTest.test("seedDatabaseForStartup snapshots an available SQLite database", (
     sourceDb.run("INSERT INTO threads VALUES ('th-1'), ('th-2'), ('th-3');");
     sourceDb.close(true);
 
-    seedDatabaseForStartup({ source: sourcePath, target: targetPath });
+    seedDatabase({ source: sourcePath, target: targetPath });
     NodeAssertStrict.default.equal(NodeFS.existsSync(targetPath), true);
+
+    const sourceCheck = new Database(sourcePath, { readonly: true });
+    try {
+      NodeAssertStrict.default.equal(sourceCheck.query("SELECT COUNT(*) as count FROM workspaces").get().count, 2);
+      NodeAssertStrict.default.equal(sourceCheck.query("SELECT COUNT(*) as count FROM threads").get().count, 3);
+    } finally {
+      sourceCheck.close(true);
+    }
 
     const targetDb = new Database(targetPath, { readonly: true });
     try {
