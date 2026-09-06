@@ -164,7 +164,6 @@ async function check(repoRoot) {
       name: "thread-lifecycle-web",
       args: ["run", "--cwd", "apps/web", "test", "--", ...FOCUSED_WEB_TESTS],
     },
-    { name: "lint", args: ["run", "lint"] },
   ];
   const results = [];
   for (const phase of phases) {

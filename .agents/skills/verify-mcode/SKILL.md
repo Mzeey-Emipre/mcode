@@ -5,10 +5,10 @@ description: Verify Mcode behavior in the Electron desktop app and through publi
 
 # Verify Mcode
 
-Use this skill before merge when a change affects Mcode's runtime, desktop UI, persistence, provider adapter, or managed-worktree behavior.
+Use this skill for requested live proof and for changes that cross an Electron UI, persistence, provider adapter, or managed-worktree boundary. Select focused checks with [the agent workflow](../../../docs/guides/agent-workflow.md#focused-checks); do not use a verifier area check as a repository-wide gate.
 
 1. Read `references/features/README.md`. Read each affected feature file. Read `multi-surface-journeys.md` when a workflow crosses product surfaces.
-2. Select the proof surface below. Run the health command for every affected area before proof collection.
+2. Select the proof surface below. Run the health command for each area that needs live proof before proof collection.
 3. Run the area `check` command. Drive the documented public UI, API, or CLI path. Capture the required visual and non-visual evidence.
 4. Run the documented cleanup command after you finish with harness evidence. Report skipped providers, unavailable models, failed proofs, and coverage gaps.
 5. Update this feature map and harness only for stale instructions, harness defects, or verifier-contract mismatches. Report application and environment failures separately. Run the affected proof again after each verifier update.
@@ -38,6 +38,10 @@ cannot be tested.
 ## Commands
 
 Run `bun .agents/skills/verify-mcode/scripts/verify-mcode.mjs --help` for the command reference.
+
+Run a selected runtime check with `runtime check --phase runtime`, `provider`,
+`contract`, or `ui`. Repeat `--phase` to select several areas. With no phase,
+the command runs every area and retains its normal failure behavior.
 
 Run `runtime health` before AgentService, provider-event, turn-runtime, or selected-text-comments proof. The runtime area rejects a missing or stale server bundle or runtime contract before it calls `/health`.
 

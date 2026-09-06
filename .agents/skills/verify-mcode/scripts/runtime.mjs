@@ -36,9 +36,11 @@ const WORKTREE_SETUP_TRACKED_FILES = Object.freeze([
 ].sort());
 const RUNTIME_SOURCE_DIRECTORIES = [
   ["apps", "server", "src"],
+  ["packages", "agent-model", "src"],
   ["packages", "contracts", "src"],
   ["packages", "providers", "src"],
   ["packages", "shared", "src"],
+  ["packages", "thread-orchestration", "src"],
 ];
 const PROVIDERS = new Set(["codex", "claude", "cursor", "opencode"]);
 const SCENARIOS = new Set(["completion", "stop", "subagent", "opencode-resume"]);
@@ -70,6 +72,12 @@ const FOCUSED_TEST_FILES = [
   "src/features/providers/composition/__tests__/provider-event-ingress.test.ts",
   "src/features/projects/git/__tests__/git-service-push.test.ts",
 ];
+const CHECK_PHASES = [
+  { selector: "runtime", name: "focused-agent-runtime", args: ["run", "--cwd", "apps/server", "test", "--", ...FOCUSED_TEST_FILES] },
+  { selector: "provider", name: "codex-subagent-protocol", args: ["run", "--cwd", "packages/providers", "test", "--", "src/__tests__/codex/codex-app-server-handshake.test.ts", "src/__tests__/codex/codex-provider-subagent-turn.test.ts"] },
+  { selector: "contract", name: "subagent-presentation-contract", args: ["run", "--cwd", "packages/contracts", "test", "--", "src/__tests__/subagent-presentation.test.ts"] },
+  { selector: "ui", name: "subagent-ui", args: ["run", "--cwd", "apps/web", "test", "--", "src/features/conversation/narrative/__tests__/build-persisted-narrative.test.ts", "src/features/conversation/narrative/__tests__/SubagentRow.test.tsx", "src/features/subagents/roster/__tests__/subagent-projection.test.ts", "src/features/subagents/roster/__tests__/SubagentsPanel.test.tsx"] },
+];
 const FIXED_PROMPTS = {
   completion: "Reply with exactly: Agent runtime verification complete. Do not edit files or invoke tools.",
   stop: "Inspect this repository with read-only file-search and file-reading tools. Do not write files, change settings, or run mutating commands. Explain the repository structure in detail.",
@@ -85,8 +93,8 @@ Usage:
 Commands:
   health
       Validate this worktree's .dev/ports.json and GET /health. Does not start a runtime.
-  check
-      Run focused AgentService/event tests and bun run lint.
+  check [--phase <runtime|provider|contract|ui>]
+      Run all focused AgentService, provider, contract, and UI tests by default. Repeat --phase to select related areas.
   inspect
       Read active runtime and workspace summaries through the authenticated WebSocket RPC API.
   live --provider <codex|claude|cursor|opencode> --model <id> --scenario <completion|stop|subagent|opencode-resume> --confirm-provider-call [--keep-thread]
@@ -131,8 +139,24 @@ function parseArguments(argv) {
   const [command, ...rest] = argv;
   validateCommand(command);
   if (command === "live") return parseLiveArguments(rest);
+  if (command === "check") return parseCheckArguments(rest);
   if (["worktree-setup", "worktree-setup-cleanup"].includes(command)) return parseCleanupConfirmedCommand(command, rest);
   return parseOptionlessCommand(command, rest);
+}
+
+function parseCheckArguments(rest) {
+  const phaseSelectors = [];
+  for (let index = 0; index < rest.length; index += 2) {
+    if (rest[index] !== "--phase") throw cliError(`Unknown option ${String(rest[index])}`);
+    const selector = rest[index + 1];
+    if (!selector || selector.startsWith("--")) throw cliError("Missing value for --phase");
+    if (!CHECK_PHASES.some((phase) => phase.selector === selector)) {
+      throw cliError("--phase must be runtime, provider, contract, or ui");
+    }
+    if (phaseSelectors.includes(selector)) throw cliError(`Duplicate phase ${selector}`);
+    phaseSelectors.push(selector);
+  }
+  return { command: "check", phaseSelectors };
 }
 
 function validateCommand(command) {
@@ -207,7 +231,7 @@ function validateLiveScenario(provider, model, scenario) {
 async function execute(parsed, repoRoot) {
   try {
     if (parsed.command === "health") return success(await health(repoRoot));
-    if (parsed.command === "check") return await check(repoRoot);
+    if (parsed.command === "check") return await check(repoRoot, parsed.phaseSelectors);
     if (parsed.command === "inspect") return success(await inspect(repoRoot));
     if (parsed.command === "live") return await live(repoRoot, parsed);
     if (parsed.command === "worktree-setup") return await worktreeSetup(repoRoot);
@@ -256,7 +280,8 @@ function resolveOptionalBranch(repoRoot) {
   }
 }
 
-function assertRuntimeFreshness(repoRoot) {
+/** Throws when a bundled runtime artifact predates a production source file. */
+export function assertRuntimeFreshness(repoRoot) {
   const artifacts = runtimeArtifacts(repoRoot);
   const staleSources = runtimeSourceFiles(repoRoot).filter((source) => sourceIsNewerThanArtifact(source, artifacts.bundle)
     || sourceIsNewerThanArtifact(source, artifacts.ports));
@@ -387,16 +412,12 @@ async function inspect(repoRoot) {
   }
 }
 
-async function check(repoRoot) {
+async function check(repoRoot, phaseSelectors = []) {
   const evidenceDirectory = ensureEvidenceDirectory(repoRoot);
   const stamp = fileStamp();
-  const phases = [
-    { name: "focused-agent-runtime", args: ["run", "--cwd", "apps/server", "test", "--", ...FOCUSED_TEST_FILES] },
-    { name: "codex-subagent-protocol", args: ["run", "--cwd", "packages/providers", "test", "--", "src/__tests__/codex/codex-app-server-handshake.test.ts", "src/__tests__/codex/codex-provider-subagent-turn.test.ts"] },
-    { name: "subagent-presentation-contract", args: ["test", "packages/contracts/src/__tests__/subagent-presentation.test.ts"] },
-    { name: "subagent-ui", args: ["run", "--cwd", "apps/web", "test", "--", "src/features/conversation/narrative/__tests__/build-persisted-narrative.test.ts", "src/features/conversation/narrative/__tests__/SubagentRow.test.tsx", "src/features/subagents/roster/__tests__/subagent-projection.test.ts", "src/features/subagents/roster/__tests__/SubagentsPanel.test.tsx"] },
-    { name: "lint", args: ["run", "lint"] },
-  ];
+  const phases = phaseSelectors.length === 0
+    ? CHECK_PHASES
+    : CHECK_PHASES.filter((phase) => phaseSelectors.includes(phase.selector));
   const results = [];
   for (const phase of phases) {
     const logPath = NodePath.join(evidenceDirectory, `${stamp}-${phase.name}.log`);
