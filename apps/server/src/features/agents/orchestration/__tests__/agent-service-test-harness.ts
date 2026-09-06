@@ -276,6 +276,9 @@ export function createAgentServiceForTest(
     revoke: () => undefined,
   } as unknown as InternalThreadControlMcpRuntime;
   const testContainer = container.createChildContainer();
+  const gitRepository: Pick<GitRepositoryService, "fetchBranch"> = {
+    fetchBranch: async () => undefined,
+  };
   testContainer.registerInstance(TURN_RUNTIME_PERSISTENCE, runtimePersistence);
   testContainer.registerInstance(TURN_FINALIZER, finalizer);
   testContainer.registerInstance(TURN_FILE_EFFECTS, fileEffects);
@@ -287,7 +290,7 @@ export function createAgentServiceForTest(
     threadRepo,
     () => threadService,
     admissions,
-    testContainer.resolve(GitRepositoryService),
+    gitRepository,
     () => threadBranching,
     () => planTurns,
     () => threadStartups,
