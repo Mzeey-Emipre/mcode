@@ -136,9 +136,9 @@ export class CanonicalCodexCollaborationCoordinator {
   recordChildItem(input: CodexChildItemInput): AgentItem {
     const turn = this.loadChildTurn(input.childThreadId, input.nativeTurnId);
     if (!turn) throw new Error(`Codex child turn not found: ${input.nativeTurnId}`);
-    const itemId = `item:codex-child:${hashCodexKey(`${turn.id}:${input.nativeItemId}:${input.eventKey}:${input.kind}`)}`;
+    const itemId = `item:codex-child:${hashCodexKey(`${turn.id}:${input.nativeItemId}:${this.childItemEventKey(input)}:${input.kind}`)}`;
     const existing = this.operations.loadItem(itemId);
-    if (existing) return this.validateExistingChildItem(existing, input, itemId);
+    if (existing) return this.updateExistingChildItem(existing, input, itemId);
 
     const thread = this.operations.loadThread(input.childThreadId);
     if (!thread) throw new Error(`Codex child thread not found: ${input.childThreadId}`);
@@ -937,7 +937,7 @@ export class CanonicalCodexCollaborationCoordinator {
     return finished;
   }
 
-  private validateExistingChildItem(
+  private updateExistingChildItem(
     existing: AgentItem,
     input: CodexChildItemInput,
     itemId: string,
@@ -946,8 +946,68 @@ export class CanonicalCodexCollaborationCoordinator {
       if (!this.matchesExistingChildPayload(existing, input)) throw this.childItemConflict(itemId);
       return existing;
     }
-    if (!this.matchesExistingChildMessage(existing, input)) throw this.childItemConflict(itemId);
-    return existing;
+    if (input.eventKey !== "stream" && input.eventKey !== "stream-complete") {
+      if (!this.matchesExistingChildMessage(existing, input)) throw this.childItemConflict(itemId);
+      return existing;
+    }
+    return this.updateStreamedChildMessage(existing, input, itemId);
+  }
+
+  private updateStreamedChildMessage(
+    existing: AgentItem,
+    input: CodexChildItemInput,
+    itemId: string,
+  ): AgentItem {
+    const content = this.streamedChildMessageContent(existing, input);
+    if (content === undefined) throw this.childItemConflict(itemId);
+    const message = existing.payload.message;
+    if (!isRecord(message)) throw this.childItemConflict(itemId);
+    const thread = this.operations.loadThread(input.childThreadId);
+    if (!thread) throw new Error(`Codex child thread not found: ${input.childThreadId}`);
+    const turn = this.loadChildTurn(input.childThreadId, input.nativeTurnId);
+    if (!turn) throw new Error(`Codex child turn not found: ${input.nativeTurnId}`);
+    if (isTerminalTurn(turn)) {
+      return existing;
+    }
+    const item = {
+      ...existing,
+      payload: {
+        ...existing.payload,
+        message: { ...message, content },
+        nativeItemId: input.nativeItemId,
+        eventKey: input.eventKey,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    const executionId = this.operations.executionIdForTurn(turn.id);
+    this.operations.commit({
+      threadId: thread.id,
+      turnId: turn.id,
+      executionId,
+      phase: "running",
+      events: [this.operations.itemDraft(executionId, thread, turn, item, `${executionId}:item:${item.id}:${input.eventKey}:${hashCodexKey(content)}`)],
+    });
+    return item;
+  }
+
+  private streamedChildMessageContent(existing: AgentItem, input: CodexChildItemInput): string | undefined {
+    if (
+      (input.eventKey !== "stream" && input.eventKey !== "stream-complete")
+      || !isRecord(existing.payload.message)
+      || typeof existing.payload.message.content !== "string"
+    ) return undefined;
+    const inputMessage = childMessageSource(input.payload);
+    if (typeof inputMessage.content !== "string") return undefined;
+    if (typeof inputMessage.id === "string" && inputMessage.id !== existing.payload.message.id) return undefined;
+    return input.eventKey === "stream-complete"
+      ? inputMessage.content
+      : `${existing.payload.message.content}${inputMessage.content}`;
+  }
+
+  private childItemEventKey(input: CodexChildItemInput): string {
+    return input.kind === "message" && (input.eventKey === "stream" || input.eventKey === "stream-complete")
+      ? "stream"
+      : input.eventKey;
   }
 
   private matchesExistingChildPayload(existing: AgentItem, input: CodexChildItemInput): boolean {

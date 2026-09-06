@@ -2113,6 +2113,55 @@ describe("CodexEventMapper", () => {
     });
   });
 
+  it("deduplicates a replayed completed child message after streamed text", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-replay",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-replay"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-replay", turn: { id: "child-turn-replay" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-replay", itemId: "message-replay", delta: "A" },
+    });
+    const completed = {
+      jsonrpc: "2.0" as const,
+      method: "item/completed",
+      params: {
+        threadId: "child-replay",
+        item: { type: "agentMessage", id: "message-replay", content: [{ type: "output_text", text: "A" }] },
+      },
+    };
+
+    const first = mapper.mapNotification(completed);
+    const immediateReplay = mapper.mapNotification(completed);
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-replay", turn: { id: "child-turn-replay", status: "completed" } },
+    });
+    const replay = mapper.mapNotification(completed);
+
+    expect(first.map((runtimeEvent) => runtimeEvent.event)).toEqual([
+      { type: "message", threadId: "test-thread", content: "A", tokens: null },
+    ]);
+    expect(immediateReplay).toEqual([]);
+    expect(replay).toEqual([]);
+  });
   it("keeps follow-up prompts and assistant output isolated across reused child turns", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     mapper.mapNotification({
@@ -2134,7 +2183,7 @@ describe("CodexEventMapper", () => {
       method: "turn/started",
       params: { threadId: "child-worker", turn: { id: "child-turn-1" } },
     });
-    mapper.mapNotification({
+    const firstDelta = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/agentMessage/delta",
       params: { threadId: "child-worker", itemId: "message-1", delta: "First answer." },
@@ -2163,7 +2212,7 @@ describe("CodexEventMapper", () => {
       method: "turn/started",
       params: { threadId: "child-worker", turn: { id: "child-turn-2" } },
     });
-    mapper.mapNotification({
+    const secondDelta = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/agentMessage/delta",
       params: { threadId: "child-worker", itemId: "message-2", delta: "Second answer." },
@@ -2186,9 +2235,16 @@ describe("CodexEventMapper", () => {
     expect((secondStarted[0]!).extension).toMatchObject({
       child: expect.objectContaining({ prompt: "Read the README heading." }),
     });
-    expect(secondCompleted.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
+    expect(firstDelta.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
+      type: "textDelta",
+      delta: "First answer.",
+    }));
+    expect(secondDelta.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
+      type: "textDelta",
+      delta: "Second answer.",
+    }));
+    expect(secondCompleted.map((runtimeEvent) => runtimeEvent.event)).not.toContainEqual(expect.objectContaining({
       type: "message",
-      content: "Second answer.",
     }));
   });
 
@@ -3497,7 +3553,7 @@ describe("CodexEventMapper", () => {
     );
   });
 
-  it("consumes child-thread text and reasoning without adding it to the main final reply", () => {
+  it("projects child assistant text without adding it to the main final reply", () => {
     mapper = new CodexEventMapper("test-thread", "main-codex-thread");
     mapper.mapNotification({
       jsonrpc: "2.0",
@@ -3522,10 +3578,20 @@ describe("CodexEventMapper", () => {
       },
     });
 
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-thread", turn: { id: "child-turn" } },
+    });
     const childText = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/agentMessage/delta",
-      params: { threadId: "child-thread", delta: "child private text" },
+      params: { threadId: "child-thread", itemId: "child-message", delta: "child " },
+    });
+    const childTextSecond = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-thread", itemId: "child-message", delta: "private text" },
     });
     const childReasoning = mapper.mapNotification({
       jsonrpc: "2.0",
@@ -3543,7 +3609,16 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-codex-thread", turn: { status: "completed" } },
     });
 
-    expect(childText.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(childText.map((runtimeEvent) => runtimeEvent.event)).toEqual([
+      { type: "textDelta", threadId: "test-thread", delta: "child ", isFinalResponse: false },
+    ]);
+    expect(childTextSecond.map((runtimeEvent) => runtimeEvent.event)).toEqual([
+      { type: "textDelta", threadId: "test-thread", delta: "private text", isFinalResponse: false },
+    ]);
+    expect((childText[0]!).extension).toMatchObject({
+      child: { nativeThreadId: "child-thread", nativeTurnId: "child-turn", nativeItemId: "child-message", itemEventKey: "stream" },
+    });
+    expect((childText[0]!).extension.child.nativeEventId).not.toBe((childTextSecond[0]!).extension.child.nativeEventId);
     expect(childReasoning.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
     expect(mainText.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "main final", isFinalResponse: false },
@@ -3553,6 +3628,30 @@ describe("CodexEventMapper", () => {
       type: "message",
       content: "main final",
     });
+    const lateChildText = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-thread", itemId: "child-message", delta: " after parent completion" },
+    });
+    expect(lateChildText.map((runtimeEvent) => runtimeEvent.event)).toEqual([
+      { type: "textDelta", threadId: "test-thread", delta: " after parent completion", isFinalResponse: false },
+    ]);
+    const childCompletedMessage = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { threadId: "child-thread", item: { type: "agentMessage", id: "child-message", content: [{ type: "output_text", text: "child private text after parent completion" }] } },
+    });
+    expect(childCompletedMessage.map((runtimeEvent) => runtimeEvent.event)).toEqual([
+      { type: "message", threadId: "test-thread", content: "child private text after parent completion", tokens: null },
+    ]);
+    expect((childCompletedMessage[0]!).extension).toMatchObject({
+      child: { nativeThreadId: "child-thread", nativeItemId: "child-message", itemEventKey: "stream-complete" },
+    });
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-thread", turn: { id: "child-turn", status: "completed" } },
+    }).map((runtimeEvent) => runtimeEvent.event)).not.toContainEqual(expect.objectContaining({ type: "message" }));
   });
 
   it("does not let child turn/completed reset or latch the main turn", () => {

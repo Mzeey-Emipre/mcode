@@ -209,6 +209,46 @@ describe("CodexCollaborationEventAdapter", () => {
     }));
   });
 
+  it("updates one child assistant message as text deltas grow", () => {
+    const store = durability({
+      loadCodexChildDelegationByReceiverThreadId: vi.fn(() => childDelegation()),
+      bindCodexChildIdentity: vi.fn(() => childDelegation()),
+    });
+    const adapter = new CodexCollaborationEventAdapter(store);
+    const extension = codexExtension({ child: {
+      nativeThreadId: "native-child",
+      nativeTurnId: "native-turn",
+      nativeItemId: "native-message",
+      itemEventKey: "stream",
+      parentCollaborationItemId: "spawn-1",
+    } });
+
+    adapter.project(ingressEvent({
+      type: AgentEventType.TextDelta,
+      threadId: "parent-thread",
+      turnExecutionId: EXECUTION_ID,
+      delta: "Before tool. ",
+    }, extension));
+    adapter.project(ingressEvent({
+      type: AgentEventType.TextDelta,
+      threadId: "parent-thread",
+      turnExecutionId: EXECUTION_ID,
+      delta: "After tool.",
+    }, extension));
+
+    expect(store.recordCodexChildItem).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      childThreadId: "child-thread",
+      nativeItemId: "native-message",
+      eventKey: "stream",
+      kind: "message",
+      payload: expect.objectContaining({ message: expect.objectContaining({ content: "Before tool. " }) }),
+    }));
+    expect(store.recordCodexChildItem).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      kind: "message",
+      payload: expect.objectContaining({ message: expect.objectContaining({ content: "After tool." }) }),
+    }));
+  });
+
   it("rejects missing native child-turn evidence with a durable diagnostic", () => {
     const store = durability({
       loadCodexChildDelegationByReceiverThreadId: vi.fn(() => childDelegation()),
