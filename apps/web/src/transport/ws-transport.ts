@@ -954,6 +954,8 @@ export function createWsTransport(
       rpc<string[]>("file.list", { workspaceId, threadId }),
     readFileContent: (workspaceId, relativePath, threadId?) =>
       rpc<string>("file.read", { workspaceId, relativePath, threadId }),
+    watchWorkspaceFiles: (workspaceId, threadId?) =>
+      rpc<void>("file.watch", { workspaceId, threadId }),
 
     // Open-in apps (delegated to desktopBridge; no-op over WS)
     listOpenInApps: async () => (await window.desktopBridge?.listOpenInApps()) ?? [],

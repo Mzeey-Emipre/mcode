@@ -131,7 +131,9 @@ export const WS_CHANNELS = {
   "files.changed": z.object({
     workspaceId: z.string(),
     threadId: z.string().optional(),
-  }),
+    changedPaths: z.array(z.string()).max(100).optional(),
+    wholeWorkspace: z.boolean().optional(),
+  }).strict(),
   "settings.changed": SettingsSchema(),
   /** Invalidates only providers backed by the shared filesystem catalog. */
   "skills.changed": z.object({

@@ -535,6 +535,7 @@ export interface McodeTransport {
   // File operations (@ file tagging)
   listWorkspaceFiles(workspaceId: string, threadId?: string): Promise<string[]>;
   readFileContent(workspaceId: string, relativePath: string, threadId?: string): Promise<string>;
+  watchWorkspaceFiles(workspaceId: string, threadId?: string): Promise<void>;
 
   // Open-in app actions
   /**

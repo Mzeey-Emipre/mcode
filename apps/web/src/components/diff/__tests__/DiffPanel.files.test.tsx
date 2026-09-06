@@ -9,6 +9,7 @@ import { DiffPanel } from "../DiffPanel";
 let measuredWidth = 900;
 const transport = vi.hoisted(() => ({
   listWorkspaceFiles: vi.fn().mockResolvedValue(["src/App.tsx", "README.md"]),
+  watchWorkspaceFiles: vi.fn().mockResolvedValue(undefined),
   listSnapshots: vi.fn().mockResolvedValue([]),
   getSnapshotDiffStats: vi.fn().mockResolvedValue([]),
   getTurnDiffComparison: vi.fn().mockResolvedValue(null),

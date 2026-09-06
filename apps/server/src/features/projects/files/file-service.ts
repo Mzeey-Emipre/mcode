@@ -101,7 +101,8 @@ export class FileService {
    * Validates that the thread exists and belongs to the given workspace to prevent
    * cross-workspace file access.
    */
-  private resolveWorkingDir(
+  /** Resolves the local root used for direct file operations in one workspace scope. */
+  resolveWorkingDir(
     workspaceId: string,
     threadId?: string,
   ): string {

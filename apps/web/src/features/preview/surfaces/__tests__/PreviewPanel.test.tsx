@@ -62,7 +62,10 @@ vi.mock("../../navigation/usePreviewSurfaceBridge", () => ({
 // tests. The mock is shared across all describe blocks; individual tests that
 // need specific catalogs override mockGetProviderCatalog directly.
 vi.mock("@/transport", () => ({
-  getTransport: () => ({ getProviderCatalog: mockGetProviderCatalog }),
+  getTransport: () => ({
+    getProviderCatalog: mockGetProviderCatalog,
+    watchWorkspaceFiles: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 // The panel only consumes usePreviewTabs for the header's "New page" action and
@@ -112,6 +115,7 @@ import {
 } from "../../automation/browserAutomationStore";
 import { ViewportCoordinator } from "../../automation/services/viewportCoordinator";
 import { browserSurfaceHost } from "../BrowserSurfaceHostRoot";
+import { pushEmitter } from "@/transport/ws-transport";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -968,6 +972,74 @@ describe("PreviewPanel: full panel state", () => {
     } finally {
       rect.mockRestore();
     }
+  });
+
+  it("reloads the current local webview after a matching workspace file change", async () => {
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "http://127.0.0.1:4173/index.html" }),
+    );
+    const navigateSurface = vi.mocked(window.desktopBridge!.preview!.surface.navigate);
+
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+    await screen.findByTestId("preview-webview");
+    await waitFor(() => expect(pushEmitter.channels()).toContain("files.changed"));
+
+    act(() => {
+      pushEmitter.emit("files.changed", {
+        workspaceId: "workspace-1",
+        threadId: "thread-1",
+        changedPaths: ["src/main.ts"],
+        wholeWorkspace: false,
+      });
+    });
+
+    expect(navigateSurface).toHaveBeenCalledWith(expect.objectContaining({
+      navigation: { kind: "reload" },
+    }));
+  });
+
+  it("does not reload the webview for a file change outside its workspace scope", async () => {
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "http://localhost:4173/index.html" }),
+    );
+    const navigateSurface = vi.mocked(window.desktopBridge!.preview!.surface.navigate);
+
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+    await screen.findByTestId("preview-webview");
+    await waitFor(() => expect(pushEmitter.channels()).toContain("files.changed"));
+
+    act(() => {
+      pushEmitter.emit("files.changed", {
+        workspaceId: "workspace-2",
+        threadId: "thread-1",
+        changedPaths: ["src/main.ts"],
+        wholeWorkspace: false,
+      });
+    });
+
+    expect(navigateSurface).not.toHaveBeenCalled();
+  });
+
+  it("does not reload a remote webview after a matching workspace file change", async () => {
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "https://example.com/docs" }),
+    );
+    const navigateSurface = vi.mocked(window.desktopBridge!.preview!.surface.navigate);
+
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+    await screen.findByTestId("preview-webview");
+    await waitFor(() => expect(pushEmitter.channels()).toContain("files.changed"));
+
+    act(() => {
+      pushEmitter.emit("files.changed", {
+        workspaceId: "workspace-1",
+        threadId: "thread-1",
+        changedPaths: ["src/main.ts"],
+        wholeWorkspace: false,
+      });
+    });
+
+    expect(navigateSurface).not.toHaveBeenCalled();
   });
 
   it("keeps an about:blank live tab stable while the persisted URL is empty", async () => {

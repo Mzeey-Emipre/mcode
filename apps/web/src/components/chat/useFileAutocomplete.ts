@@ -206,21 +206,6 @@ export function useFileAutocomplete({
     }
   }, [currentScopeKey]);
 
-  useEffect(() => {
-    const listener = (invalidatedKey?: string) => {
-      if (invalidatedKey && invalidatedKey !== prevScopeRef.current) return;
-      requestEpochRef.current += 1;
-      refreshedAgentScopeRef.current = null;
-      setFileList({ scopeKey: prevScopeRef.current, files: [] });
-      setIsOpen(false);
-    };
-    cacheInvalidationListeners.add(listener);
-    return () => {
-      requestEpochRef.current += 1;
-      cacheInvalidationListeners.delete(listener);
-    };
-  }, []);
-
   const loadFiles = useCallback(async (): Promise<string[] | undefined> => {
     if (!workspaceId) return;
 
@@ -265,6 +250,21 @@ export function useFileAutocomplete({
     }
     return files;
   }, [workspaceId, threadId]);
+
+  useEffect(() => {
+    const listener = (invalidatedKey?: string) => {
+      if (invalidatedKey && invalidatedKey !== prevScopeRef.current) return;
+      requestEpochRef.current += 1;
+      refreshedAgentScopeRef.current = null;
+      setFileList({ scopeKey: prevScopeRef.current, files: [] });
+      if (isOpen) void loadFiles();
+    };
+    cacheInvalidationListeners.add(listener);
+    return () => {
+      requestEpochRef.current += 1;
+      cacheInvalidationListeners.delete(listener);
+    };
+  }, [isOpen, loadFiles]);
 
   const dismiss = useCallback(() => {
     requestEpochRef.current += 1;
