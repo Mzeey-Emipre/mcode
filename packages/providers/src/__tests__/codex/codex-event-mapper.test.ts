@@ -4145,6 +4145,30 @@ describe("CodexEventMapper", () => {
     })).toMatchObject([{ event: { type: "system", message: "Unsafe action blocked", systemNotice: { kind: "security", scope: "session", origin: "unattributed-thread" } } }]);
   });
 
+  it("logs an unlinked provider-thread notification as a diagnostic", async () => {
+    const { logger } = await import("@mcode/shared");
+    const parentMapper = new CodexEventMapper("parent-thread", "parent-native");
+    const result = parentMapper.mapNotificationWithDisposition({
+      jsonrpc: "2.0",
+      method: "unknown/notification",
+      params: { threadId: "child-native" },
+    });
+
+    expect(result).toMatchObject({
+      events: [{ event: {
+        type: "system",
+        message: "Codex sent a notification for an unlinked provider thread.",
+        systemNotice: { kind: "diagnostic", scope: "session", origin: "unattributed-thread" },
+      } }],
+      disposition: { kind: "diagnostic", reason: "unattributed-thread" },
+    });
+    expect(logger.debug).toHaveBeenCalledWith("Codex notification disposition", {
+      method: "unknown/notification",
+      kind: "diagnostic",
+      reason: "unattributed-thread",
+    });
+  });
+
   it("maps bounded approval-review outcomes and rejects malformed, stale, and duplicate events", () => {
     mapper.mapNotification({ jsonrpc: "2.0", method: "turn/started", params: { turn: { id: "turn-current" } } });
     mapper.setApprovalReviewVisible(true);

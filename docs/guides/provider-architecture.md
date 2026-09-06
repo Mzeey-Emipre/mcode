@@ -71,11 +71,10 @@ implementation.
 
 ## Codex notices
 
-Codex warnings and security notices use bounded system messages. Configuration
-and deprecation notices appear in **Session diagnostics**, outside the turn
-transcript. Configuration diagnostics retain the file path and one-based line
-and column range. The panel retains the newest 20 diagnostics. Reconnect restores
-the current session; a new provider session clears the previous diagnostics.
+Codex warnings, security notices, configuration notices, and deprecation
+notices appear above the Composer. Configuration notices retain the file path
+and one-based line and column range. Reconnect restores the current session;
+a new provider session clears the previous notices.
 
 Model reroutes show one current notice in the affected thread and a toast only
 when that thread is active. Repeated delivery updates the existing notice. The
@@ -84,8 +83,8 @@ model unavailability. Authentication recovery produces a notice after Codex
 reports recovery.
 
 The Codex adapter validates native notice payloads before projection. Unknown
-or malformed notifications produce bounded diagnostics without copying raw
-payloads. Its dispatch receipt distinguishes mapped events, internal state
-updates, diagnostics, and intentionally ignored methods with a stable reason.
-Known child-thread notices retain child attribution. A notice from an unlinked
-native thread appears as a session diagnostic rather than a parent-turn event.
+or malformed notifications produce bounded diagnostics and logs without
+copying raw payloads. Its dispatch receipt distinguishes mapped events,
+internal state updates, diagnostics, and intentionally ignored methods with a
+stable reason. Known child-thread notices retain child attribution. A notice
+from an unlinked native thread is logged rather than shown in the chat.
