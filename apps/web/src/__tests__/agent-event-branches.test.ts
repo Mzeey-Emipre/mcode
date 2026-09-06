@@ -14,9 +14,6 @@ import { mockTransport, createMockMessage, createMockThread } from "./mocks/tran
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { createElement } from "react";
-import { render, cleanup } from "@testing-library/react";
-import { SessionDiagnostics } from "@/features/conversation/messages/SessionDiagnostics";
 import { SnapshotBuilder } from "@/features/conversation/hydration/snapshot-builder";
 
 vi.mock("@/transport", async () => ({
@@ -167,7 +164,7 @@ describe("handleAgentEvent branches", () => {
     expect(useToastStore.getState().toasts).toEqual([]);
   });
 
-  it("retains current-session configuration notices outside the transcript and clears a replaced session", () => {
+  it("retains current-session configuration notices for the Composer and clears a replaced session", () => {
     const event = { type: "system", threadId: "thread-1", subtype: "provider.notice.configuration", message: "Fix <config>", messageId: "config-1", systemNotice: { kind: "configuration", presentation: "timeline", scope: "session", sessionId: "session-1", noticeKey: "config-key", configPath: "C:/config.toml", configRange: { startLine: 2, startColumn: 3, endLine: 2, endColumn: 9 } } } as const;
     useThreadStore.getState().handleAgentEvent(event);
     useThreadStore.getState().handleAgentEvent({ ...event, messageId: "config-duplicate" });
@@ -176,9 +173,6 @@ describe("handleAgentEvent branches", () => {
     expect(sessionNotices).toMatchObject([{ content: "Fix <config>", systemNotice: event.systemNotice }]);
     const patch = new SnapshotBuilder().build({ messages: [], sessionNotices, hasMore: false });
     useThreadStore.setState((state) => ({ records: patchThreadRecord(state.records, "thread-1", patch) }));
-    const rendered = render(createElement(SessionDiagnostics, { threadId: "thread-1" })).container.innerHTML;
-    expect(rendered).toBe("");
-    cleanup();
     useThreadStore.getState().handleAgentEvent({ ...event, subtype: "provider.session.started", message: undefined });
     expect(useThreadStore.getState().records.get("thread-1")!.sessionNotices).toEqual(sessionNotices);
     useThreadStore.getState().handleAgentEvent({ ...event, subtype: "provider.session.started", message: undefined, systemNotice: { ...event.systemNotice, sessionId: "session-2" } });
