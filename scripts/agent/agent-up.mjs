@@ -126,7 +126,7 @@ async function startProvisionedRuntime({ desktop, electronBin, paths, repoRoot, 
 
     if (wait) await waitForRuntimeReadiness(runtime.contract, desktopProcess);
 
-    await writeRuntimeContract(runtime.contract);
+    await writeRuntimeSummary(runtime.contract, repoRoot);
     return runtime.contract;
   } catch (error) {
     const cleanupError = await cleanupStartedProcesses(startedProcesses, repoRoot);
@@ -279,8 +279,15 @@ async function startRuntimeWeb({ paths, repoRoot, runtime }) {
   );
 }
 
-async function writeRuntimeContract(contract) {
-  if (!process.argv.includes("--quiet")) await writeStdout(`${JSON.stringify(contract)}\n`);
+async function writeRuntimeSummary(contract, repoRoot) {
+  if (process.argv.includes("--quiet")) return;
+  const { portsFile } = getRuntimePaths(repoRoot);
+  await writeStdout(`${JSON.stringify({
+    healthUrl: contract.healthUrl,
+    appUrl: contract.appUrl,
+    worktreeIdentity: contract.worktreeIdentity,
+    contractPath: NodePath.relative(repoRoot, portsFile).replace(/\\/g, "/"),
+  })}\n`);
 }
 
 /**

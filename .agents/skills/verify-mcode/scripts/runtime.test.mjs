@@ -1,9 +1,11 @@
 import * as NodeAssertStrict from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 
-import { isOpenCodeSessionInvalidatedEvent, isRuntimeHarnessEvidenceFile } from "./runtime.mjs";
+import { assertRuntimeFreshness, isOpenCodeSessionInvalidatedEvent, isRuntimeHarnessEvidenceFile } from "./runtime.mjs";
 
 const CLI = NodePath.join(import.meta.dirname, "verify-mcode.mjs");
 const BROWSER_PROOF = NodePath.join(import.meta.dirname, "browser-opencode-proof.mjs");
@@ -39,6 +41,50 @@ NodeTest.test("lists and validates the OpenCode resume proof contract without a 
   NodeAssertStrict.match(invalid.stdout, /opencode\/muse-spark-1\.3-contributor-free/);
 });
 
+NodeTest.test("rejects invalid runtime check phases before any check runs", async () => {
+  const unknown = await runBun([CLI, "runtime", "check", "--phase", "unknown"]);
+  const missing = await runBun([CLI, "runtime", "check", "--phase"]);
+  const repeated = await runBun([CLI, "runtime", "check", "--phase", "contract", "--phase", "contract"]);
+
+  NodeAssertStrict.equal(unknown.code, 1);
+  NodeAssertStrict.match(unknown.stdout, /--phase must be runtime, provider, contract, or ui/);
+  NodeAssertStrict.equal(missing.code, 1);
+  NodeAssertStrict.match(missing.stdout, /Missing value for --phase/);
+  NodeAssertStrict.equal(repeated.code, 1);
+  NodeAssertStrict.match(repeated.stdout, /Duplicate phase contract/);
+});
+
+NodeTest.test("runtime freshness includes bundled workspace dependencies but ignores test-only and unrelated files", () => {
+  const repo = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runtime-freshness-"));
+  const now = Date.now();
+  const bundle = NodePath.join(repo, "apps", "desktop", "dist", "server", "server.cjs");
+  const ports = NodePath.join(repo, ".dev", "ports.json");
+  const threadDependency = NodePath.join(repo, "packages", "thread-orchestration", "src", "guide.ts");
+  const modelDependency = NodePath.join(repo, "packages", "agent-model", "src", "guide.ts");
+  const dependencyTest = NodePath.join(repo, "packages", "agent-model", "src", "guide.test.ts");
+  const unrelated = NodePath.join(repo, "packages", "unrelated", "src", "guide.ts");
+
+  try {
+    writeTimestampedFile(bundle, now);
+    writeTimestampedFile(ports, now);
+    writeTimestampedFile(threadDependency, now + 5_000);
+    NodeAssertStrict.throws(() => assertRuntimeFreshness(repo), /packages\/thread-orchestration\/src\/guide\.ts/);
+
+    NodeFS.rmSync(threadDependency);
+    writeTimestampedFile(modelDependency, now);
+    NodeAssertStrict.doesNotThrow(() => assertRuntimeFreshness(repo));
+    writeTimestampedFile(modelDependency, now + 5_000);
+    NodeAssertStrict.throws(() => assertRuntimeFreshness(repo), /packages\/agent-model\/src\/guide\.ts/);
+
+    NodeFS.rmSync(modelDependency);
+    writeTimestampedFile(dependencyTest, now + 5_000);
+    writeTimestampedFile(unrelated, now + 5_000);
+    NodeAssertStrict.doesNotThrow(() => assertRuntimeFreshness(repo));
+  } finally {
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 NodeTest.test("requires confirmation before the browser proof starts Electron", async () => {
   const help = await runBun([BROWSER_PROOF, "--help"]);
   const missingConfirmation = await runBun([BROWSER_PROOF]);
@@ -59,3 +105,9 @@ NodeTest.test("recognizes the provider-neutral OpenCode session invalidation sub
   NodeAssertStrict.equal(isOpenCodeSessionInvalidatedEvent({ type: "system", subtype: "sdk_session_invalidated" }), true);
   NodeAssertStrict.equal(isOpenCodeSessionInvalidatedEvent({ type: "system", subtype: "opencode:session-recreated" }), false);
 });
+
+function writeTimestampedFile(path, modifiedMs) {
+  NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+  NodeFS.writeFileSync(path, "fixture\n");
+  NodeFS.utimesSync(path, modifiedMs / 1_000, modifiedMs / 1_000);
+}

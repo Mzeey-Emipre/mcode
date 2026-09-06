@@ -9,8 +9,32 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
-    "test": {},
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
+    "test": {
+      "dependsOn": ["transit"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "../../scripts/vitest-test-dir.ts",
+        "../../scripts/vitest-global-setup.ts",
+        "../../scripts/run-electron-node.mjs",
+        "../../scripts/kill-process-tree.mjs"
+      ]
+    },
+    "mcode-desktop#test": {
+      "dependsOn": ["transit", "@mcode/server#transit"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "../../scripts/vitest-test-dir.ts",
+        "../../scripts/vitest-global-setup.ts",
+        "../../scripts/run-electron-node.mjs",
+        "../../scripts/kill-process-tree.mjs",
+        "../../scripts/build-server-dev-bundle.mjs"
+      ]
+    },
     "typecheck": {
+      "dependsOn": ["transit"],
       "outputs": ["node_modules/.cache/tsbuildinfo"]
     },
     "lint": {}

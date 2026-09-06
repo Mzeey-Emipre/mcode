@@ -39,6 +39,28 @@ Run the narrowest test that exercises the changed behavior. Run typecheck or
 lint when the change affects those boundaries. Hosted CI owns the full
 repository gate.
 
+Build a fresh related-test candidate from package dependencies and TypeScript
+aliases after the edit. Then inspect direct callers and manually include
+transport, event, dependency-injection, and contract consumers that the graph
+cannot resolve. A broad store may justify several focused tests. Establish a
+focused baseline on the unchanged revision before calling an unexpected result
+a regression.
+
+Use the workspace's installed Vitest to list a candidate before selecting its
+tests. For an explicit candidate, run
+`bunx --no-install vitest list <test-file> --filesOnly`. To discover changed
+tests from a workspace, run `bunx --no-install vitest list --changed --filesOnly`.
+Add a base reference to compare against it, such as `--changed origin/main`.
+From `apps/server`, keep
+the Electron runner with
+`bun ../../scripts/run-electron-node.mjs --workspace-cli vitest vitest.mjs list --changed --filesOnly`.
+Review the result with the manual boundary checks above before running the
+selected tests.
+
+For changes under `scripts/agent`, run the named maintained test with
+`bun run test:scripts -- scripts/agent/__tests__/<file>.test.mjs`. Supplying no
+file runs the maintained script-test collection.
+
 ## Failed focused check
 
 Reproduce the smallest failed phase. Fix the root cause, then rerun it. Keep

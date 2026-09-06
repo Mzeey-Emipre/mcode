@@ -6,7 +6,7 @@ import * as NodeAssertStrict from "node:assert/strict";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { discoverAgentTestFiles } from "../test-scripts.mjs";
+import { discoverAgentTestFiles, selectAgentTestFiles } from "../test-scripts.mjs";
 
 NodeTest.test("root dev uses the paired dev:web runtime", () => {
   const packageJson = JSON.parse(NodeFS.readFileSync(NodePath.resolve("package.json"), "utf8"));
@@ -74,5 +74,47 @@ NodeTest.test("maintained test discovery fails when no tests exist", () => {
     );
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+NodeTest.test("maintained test selection runs only named files inside the agent test directory", () => {
+  const temporaryRoot = NodeFS.mkdtempSync(NodePath.resolve(NodeOS.tmpdir(), "mcode-agent-tests-"));
+  const directory = NodePath.join(temporaryRoot, "agent-tests");
+  const testFile = NodePath.join(directory, "focused.test.mjs");
+  const nestedFile = NodePath.join(directory, "nested", "focused.test.mjs");
+  const externalFile = NodePath.join(temporaryRoot, "outside.test.mjs");
+  const directoryNamedAsTest = NodePath.join(directory, "directory.test.mjs");
+  const linkedFile = NodePath.join(directory, "linked.test.mjs");
+  try {
+    NodeFS.mkdirSync(directory, { recursive: true });
+    NodeFS.writeFileSync(testFile, "");
+    NodeFS.mkdirSync(NodePath.dirname(nestedFile));
+    NodeFS.writeFileSync(nestedFile, "");
+    NodeFS.writeFileSync(externalFile, "");
+    NodeFS.mkdirSync(directoryNamedAsTest);
+    NodeAssertStrict.default.deepEqual(selectAgentTestFiles(directory, [testFile]), [testFile]);
+    NodeAssertStrict.default.throws(
+      () => selectAgentTestFiles(directory, [nestedFile]),
+      /Expected a maintained agent test file/,
+    );
+    NodeAssertStrict.default.throws(
+      () => selectAgentTestFiles(directory, [externalFile]),
+      /Expected a maintained agent test file/,
+    );
+    NodeAssertStrict.default.throws(
+      () => selectAgentTestFiles(directory, [directoryNamedAsTest]),
+      /Expected a maintained agent test file/,
+    );
+    try {
+      NodeFS.symlinkSync(externalFile, linkedFile, "file");
+      NodeAssertStrict.default.throws(
+        () => selectAgentTestFiles(directory, [linkedFile]),
+        /Expected a maintained agent test file/,
+      );
+    } catch (error) {
+      if (error?.code !== "EPERM" && error?.code !== "EACCES") throw error;
+    }
+  } finally {
+    NodeFS.rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
