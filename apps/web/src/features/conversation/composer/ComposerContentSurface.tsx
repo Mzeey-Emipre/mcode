@@ -1,4 +1,4 @@
-import type { ComponentProps, DragEventHandler, RefObject } from "react";
+import type { ComponentProps, DragEventHandler, ReactNode, RefObject } from "react";
 import { ArrowUp, X } from "lucide-react";
 import { AttachmentPreview } from "@/components/chat/AttachmentPreview";
 import { ComposerAddMenu } from "@/components/chat/ComposerAddMenu";
@@ -113,6 +113,7 @@ interface ComposerContentSurfaceProps {
       readonly totalProcessedTokens?: number;
     };
     readonly hasLowQuota: boolean;
+    readonly providerNoticeTrigger?: ReactNode;
   };
   readonly actions: {
     readonly onBranchModeExit?: () => void;
@@ -612,6 +613,7 @@ function ComposerControlBar({
         onDetachGoal={actions.onDetachGoal}
         onDetachOrchestration={actions.onDetachOrchestration}
       />
+      {model.providerNoticeTrigger}
       <div className="flex-1" />
       <ComposerThreadScaffoldStatus isThreadScaffold={model.isThreadScaffold} />
       <ComposerInlineStopButton model={model} actions={actions} />

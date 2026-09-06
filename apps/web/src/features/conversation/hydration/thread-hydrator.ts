@@ -15,6 +15,7 @@ import {
   deleteThreadRecord,
   getThreadRecord,
   patchThreadRecord,
+  providerNoticeSessionId,
 } from "@/stores/thread-record";
 import type { ThreadRecord } from "@/stores/thread-record";
 import type { GoalLookupResult } from "@mcode/contracts";
@@ -100,7 +101,7 @@ interface FetchCommitContext {
   epoch: number;
   invalidationGeneration: number;
   conversationRevision: number;
-  sessionNotices: ThreadRecord["sessionNotices"];
+  noticeState: NoticeCollectionSnapshot;
 }
 
 interface LoadedActiveConversation {
@@ -148,27 +149,79 @@ function mergedConversationMetadata(
   };
 }
 
-function mergeSessionNotices(
-  resident: ThreadRecord["sessionNotices"],
-  cached: ThreadRecord["sessionNotices"],
-  preferResident: boolean | undefined,
-): ThreadRecord["sessionNotices"] {
-  const preferred = preferResident === false ? cached : resident;
-  const secondary = preferResident === false ? resident : cached;
-  if (preferred.length === 0) return preferResident === undefined ? secondary : [];
-  const sessionId = preferred.at(-1)?.systemNotice?.sessionId;
-  return coalesceSessionNotices([...secondary, ...preferred], sessionId);
+interface NoticeCollectionSnapshot {
+  readonly sessionId: ThreadRecord["noticeSessionId"];
+  readonly revision: string;
 }
 
-function coalesceSessionNotices(notices: ThreadRecord["sessionNotices"], sessionId: string | undefined): ThreadRecord["sessionNotices"] {
-  const byKey = new Map<string, ThreadRecord["sessionNotices"][number]>();
-  for (const notice of notices) {
-    if (notice.systemNotice?.sessionId !== sessionId) continue;
+type NoticeCollectionState = Pick<ConversationCacheState, "sessionNotices" | "noticeSessionId">;
+
+function noticeCollectionState(
+  record: Pick<ThreadRecord, "sessionNotices" | "noticeSessionId"> | undefined,
+): NoticeCollectionState {
+  const sessionId = record?.noticeSessionId !== undefined
+    ? record.noticeSessionId
+    : providerNoticeSessionId(record?.sessionNotices ?? []);
+  return { sessionNotices: record?.sessionNotices ?? [], noticeSessionId: sessionId };
+}
+
+function hasNoticeCollection(state: NoticeCollectionState): boolean {
+  return state.noticeSessionId !== undefined || state.sessionNotices.length > 0;
+}
+
+function isExplicitEmptyNoticeSession(state: NoticeCollectionState): boolean {
+  return state.noticeSessionId !== undefined && state.sessionNotices.length === 0;
+}
+
+function coalesceSessionNotices(
+  secondary: NoticeCollectionState,
+  preferred: NoticeCollectionState,
+): ThreadRecord["sessionNotices"] {
+  const noticesByKey = new Map<string, ThreadRecord["sessionNotices"][number]>();
+  for (const notice of [...secondary.sessionNotices, ...preferred.sessionNotices]) {
+    if ((notice.systemNotice?.sessionId ?? null) !== preferred.noticeSessionId) continue;
     const key = notice.systemNotice?.noticeKey ?? notice.id;
-    byKey.delete(key);
-    byKey.set(key, notice);
+    noticesByKey.delete(key);
+    noticesByKey.set(key, notice);
   }
-  return [...byKey.values()].slice(-20);
+  return [...noticesByKey.values()].slice(-20);
+}
+
+function noticeCollectionSnapshot(
+  record: Pick<ThreadRecord, "sessionNotices" | "noticeSessionId"> | undefined,
+): NoticeCollectionSnapshot {
+  const state = noticeCollectionState(record);
+  return {
+    sessionId: state.noticeSessionId,
+    revision: JSON.stringify([
+      state.noticeSessionId === undefined ? "unknown" : state.noticeSessionId,
+      state.sessionNotices.map((notice) => [notice.id, notice.content, notice.systemNotice]),
+    ]),
+  };
+}
+
+function hasNoticeCollectionChanged(
+  current: Pick<ThreadRecord, "sessionNotices" | "noticeSessionId">,
+  previous: NoticeCollectionSnapshot,
+): boolean {
+  const next = noticeCollectionSnapshot(current);
+  return next.sessionId !== previous.sessionId || next.revision !== previous.revision;
+}
+
+function mergeSessionNotices(
+  resident: Pick<ThreadRecord, "sessionNotices" | "noticeSessionId">,
+  cached: Pick<ConversationCacheState, "sessionNotices" | "noticeSessionId">,
+  preferResident: boolean | undefined,
+): Pick<ConversationCacheState, "sessionNotices" | "noticeSessionId"> {
+  const residentState = noticeCollectionState(resident);
+  const cachedState = noticeCollectionState(cached);
+  const preferred = preferResident === false || !hasNoticeCollection(residentState)
+    ? cachedState
+    : residentState;
+  const secondary = preferred === residentState ? cachedState : residentState;
+  if (preferred.noticeSessionId === undefined || isExplicitEmptyNoticeSession(preferred)) return preferred;
+  if (preferred.noticeSessionId !== secondary.noticeSessionId) return preferred;
+  return { ...preferred, sessionNotices: coalesceSessionNotices(secondary, preferred) };
 }
 
 /** Merge transcript and session diagnostics using their separate freshness evidence. */
@@ -178,8 +231,8 @@ function mergeResidentConversationCacheState(
   options: { preferResidentMessages?: boolean; preferResidentNotices?: boolean } = {},
 ): ConversationCacheState {
   const residentCacheState = projectConversationCacheState(resident);
-  const sessionNotices = mergeSessionNotices(resident.sessionNotices, cached.sessionNotices, options.preferResidentNotices);
-  if (cachedConversationIsNewer(residentCacheState, cached)) return { ...cached, sessionNotices };
+  const noticeState = mergeSessionNotices(resident, cached, options.preferResidentNotices);
+  if (cachedConversationIsNewer(residentCacheState, cached)) return { ...cached, ...noticeState };
   const messages = mergedConversationMessages(cached, residentCacheState, options.preferResidentMessages ?? true);
   const retainedMessageIds = new Set(messages.map((message) => message.id));
   const metadata = mergedConversationMetadata(cached, residentCacheState, retainedMessageIds);
@@ -188,7 +241,7 @@ function mergeResidentConversationCacheState(
     ...cached,
     ...residentCacheState,
     messages,
-    sessionNotices,
+    ...noticeState,
     oldestLoadedSequence: messages[0]?.sequence ?? residentCacheState.oldestLoadedSequence,
     newestLoadedSequence: messages.at(-1)?.sequence ?? residentCacheState.newestLoadedSequence,
     hasMoreMessages: cached.hasMoreMessages || residentCacheState.hasMoreMessages,
@@ -420,7 +473,7 @@ export class ThreadHydrator {
         });
         const conversation = mergeResidentConversationCacheState(current, fetchedConversation, {
           preferResidentMessages: false,
-          preferResidentNotices: current.sessionNotices !== currentBeforeLoad.sessionNotices,
+          preferResidentNotices: hasNoticeCollectionChanged(current, noticeCollectionSnapshot(currentBeforeLoad)),
         });
         const { settledFileEffectSummary, ...conversationFields } = conversation;
         return {
@@ -653,7 +706,7 @@ export class ThreadHydrator {
 
   /** Cache-only fetch used by sidebar hover prefetches. */
   private async fetchAndCacheBackground(threadId: string): Promise<void> {
-    const sessionNoticesBeforeFetch = this.deps.getState().records.get(threadId)?.sessionNotices;
+    const noticeStateBeforeFetch = noticeCollectionSnapshot(this.deps.getState().records.get(threadId));
     try {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
       const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
@@ -683,7 +736,7 @@ export class ThreadHydrator {
       const resident = this.deps.getState().records.get(threadId);
       if (resident) {
         cacheRecord(threadId, mergeResidentConversationCacheState(resident, cachedRecord, {
-          preferResidentNotices: resident.sessionNotices !== sessionNoticesBeforeFetch,
+          preferResidentNotices: hasNoticeCollectionChanged(resident, noticeStateBeforeFetch),
         }));
         return;
       }
@@ -1204,7 +1257,7 @@ export class ThreadHydrator {
       epoch: record.loadEpoch,
       invalidationGeneration: this.invalidationGenerations.get(threadId) ?? 0,
       conversationRevision: conversationRevision(record),
-      sessionNotices: record.sessionNotices,
+      noticeState: noticeCollectionSnapshot(record),
     };
   }
 
@@ -1256,7 +1309,7 @@ export class ThreadHydrator {
       const fetchedConversation = projectConversationCacheState({ ...createEmptyThreadRecord(), ...patch, narrativeByMessage: page.narrativeByMessage });
       const conversation = mergeResidentConversationCacheState(current, fetchedConversation, {
         preferResidentMessages: false,
-        preferResidentNotices: current.sessionNotices !== context.sessionNotices,
+        preferResidentNotices: hasNoticeCollectionChanged(current, context.noticeState),
       });
       const { settledFileEffectSummary, ...conversationFields } = conversation;
       return {
@@ -1296,7 +1349,7 @@ export class ThreadHydrator {
 
   private currentFetchCommitContext(threadId: string): FetchCommitContext {
     const record = getThreadRecord(this.deps.getState().records, threadId);
-    return { epoch: record.loadEpoch, invalidationGeneration: this.invalidationGenerations.get(threadId) ?? 0, conversationRevision: conversationRevision(record), sessionNotices: record.sessionNotices };
+    return { epoch: record.loadEpoch, invalidationGeneration: this.invalidationGenerations.get(threadId) ?? 0, conversationRevision: conversationRevision(record), noticeState: noticeCollectionSnapshot(record) };
   }
 
   private async hydrateTailNarrative(threadId: string, context: FetchCommitContext): Promise<boolean> {

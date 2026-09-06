@@ -61,6 +61,7 @@ import {
   type ThreadRecord,
   type HandoffMeta,
   type ThreadSettings,
+  providerNoticeSessionId,
   getThreadRecord,
   patchThreadRecord,
   deleteThreadRecord,
@@ -1164,6 +1165,56 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     systemNotice,
   });
 
+  const appendCurrentSessionNotice = (record: ThreadRecord, next: Message): Message[] => {
+    const noticeKey = next.systemNotice?.noticeKey;
+    return [
+      ...record.sessionNotices.filter((notice) => notice.id !== next.id
+        && (noticeKey === undefined || notice.systemNotice?.noticeKey !== noticeKey)),
+      next,
+    ].slice(-20);
+  };
+
+  const currentNoticeSessionId = (record: ThreadRecord) =>
+    record.noticeSessionId !== undefined
+      ? record.noticeSessionId
+      : providerNoticeSessionId(record.sessionNotices);
+
+  const rememberCurrentSessionNotice = (threadId: string, next: Message): void => {
+    const metadata = next.systemNotice;
+    if (!metadata) return;
+    const incomingSessionId = metadata.sessionId ?? null;
+    patchRec(threadId, (record) => {
+      const currentSessionId = currentNoticeSessionId(record);
+      if (currentSessionId !== undefined && currentSessionId !== incomingSessionId) return {};
+      return {
+        noticeSessionId: incomingSessionId,
+        sessionNotices: appendCurrentSessionNotice(record, next),
+      };
+    });
+  };
+
+  const beginCurrentNoticeSession = (threadId: string, sessionId: string | undefined): void => {
+    patchRec(threadId, (record) => {
+      const currentSessionId = currentNoticeSessionId(record);
+      const nextSessionId = sessionId ?? null;
+      if (currentSessionId === nextSessionId) {
+        return { noticeSessionId: nextSessionId };
+      }
+      return { noticeSessionId: nextSessionId, sessionNotices: [] };
+    });
+  };
+
+  const isDuplicateSystemNotice = (
+    event: Extract<AgentEvent, { type: "system" }>,
+    notice: string,
+  ): boolean => getRec(event.threadId).messages.some((message) =>
+    event.messageId
+      ? message.id === event.messageId
+      : event.systemNotice?.kind === "model-rerouted"
+        && message.systemNotice?.kind === "model-rerouted"
+        && message.content === notice,
+  );
+
   const closeOpenThoughtSegment = (segments: ThreadRecord["thoughtSegments"]) => {
     const last = segments.at(-1);
     if (!last || last.endedAt !== undefined) return segments;
@@ -1190,7 +1241,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
   const replaceRerouteNotice = (event: Extract<AgentEvent, { type: "system" }>, notice: string): boolean => {
     if (event.systemNotice?.kind !== "model-rerouted") return false;
-    const existing = getRec(event.threadId).messages.find((message) => message.systemNotice?.kind === "model-rerouted");
+    const existing = getRec(event.threadId).messages.find((message) =>
+      message.systemNotice?.kind === "model-rerouted"
+      && message.systemNotice.sessionId === event.systemNotice?.sessionId);
     if (!existing) return false;
     if (existing.content === notice && existing.systemNotice?.noticeKey === event.systemNotice.noticeKey) return true;
     patchRec(event.threadId, (record) => ({
@@ -1198,42 +1251,25 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         ? createSystemMessage(event.threadId, notice, event.messageId ?? existing.id, event.systemNotice)
         : message),
     }));
-    if (useWorkspaceStore.getState().activeThreadId === event.threadId) {
-      useToastStore.getState().show("info", "Model rerouted", notice);
-    }
     return true;
   };
 
   const handleSystemEvent = (event: Extract<AgentEvent, { type: "system" }>): void => {
     if (event.subtype === "provider.session.started") {
       evictCachedRecord(event.threadId);
-      patchRec(event.threadId, (record) => ({ sessionNotices: record.sessionNotices.filter((message) => message.systemNotice?.sessionId === event.systemNotice?.sessionId) }));
+      beginCurrentNoticeSession(event.threadId, event.systemNotice?.sessionId);
       return;
     }
     const notice = systemNoticeFor(event.subtype, event.message);
     if (!notice) return;
+    const next = createSystemMessage(event.threadId, notice, event.messageId, event.systemNotice);
+    rememberCurrentSessionNotice(event.threadId, next);
     if (event.systemNotice?.scope === "session") {
-      const next = createSystemMessage(event.threadId, notice, event.messageId, event.systemNotice);
-      patchRec(event.threadId, (record) => ({ sessionNotices: [
-        ...record.sessionNotices.filter((message) => message.systemNotice?.sessionId === event.systemNotice?.sessionId
-          && message.systemNotice?.noticeKey !== event.systemNotice?.noticeKey && message.id !== next.id),
-        next,
-      ].slice(-20) }));
       return;
     }
     if (replaceRerouteNotice(event, notice)) return;
-    const duplicate = getRec(event.threadId).messages.some((message) =>
-      event.messageId
-        ? message.id === event.messageId
-        : event.systemNotice?.kind === "model-rerouted"
-          && message.systemNotice?.kind === "model-rerouted"
-          && message.content === notice,
-    );
-    if (duplicate) return;
-    appendMessageToThread(event.threadId, createSystemMessage(event.threadId, notice, event.messageId, event.systemNotice));
-    if (event.systemNotice?.presentation === "toast" && useWorkspaceStore.getState().activeThreadId === event.threadId) {
-      useToastStore.getState().show("info", "Model rerouted", notice);
-    }
+    if (isDuplicateSystemNotice(event, notice)) return;
+    appendMessageToThread(event.threadId, next);
   };
 
   const setWorkspaceThreadActive = (threadId: string): void => {

@@ -414,6 +414,13 @@
       "when": 1788579083879,
       "tag": "0057_system_notice_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1788647626958,
+      "tag": "0058_fine_rafael_vega",
+      "breakpoints": true
     }
   ]
 }

@@ -80,6 +80,17 @@ export interface ThreadForkMode {
   role: "user" | "assistant";
 }
 
+/** A provider notice collection is scoped to an id or an explicit unscoped boundary. */
+export type ProviderNoticeSessionId = string | null;
+
+/** Returns the session identity represented by a provider notice collection. */
+export function providerNoticeSessionId(
+  notices: readonly Message[],
+): ProviderNoticeSessionId | undefined {
+  const metadata = notices.at(-1)?.systemNotice;
+  return metadata ? metadata.sessionId ?? null : undefined;
+}
+
 /**
  * Canonical in-memory state for one thread.
  * Collapses the former ~30 parallel `Record<string, X>` maps and active-thread mirror fields.
@@ -95,6 +106,8 @@ export interface ThreadRecord {
   savingStatus: TurnSavingStatus | null;
   messages: Message[];
   sessionNotices: Message[];
+  /** Provider notice collection owner. Null means an explicit unscoped provider session. */
+  noticeSessionId?: ProviderNoticeSessionId;
   loading: boolean;
   oldestLoadedSequence: number;
   newestLoadedSequence: number;

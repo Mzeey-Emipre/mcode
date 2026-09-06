@@ -352,15 +352,14 @@ export class MessageRepo {
 
   private writeSystemNotice(threadId: string, content: string, sequence: number, systemNotice: SystemNoticeMetadata | undefined): Message {
     if (systemNotice?.noticeKey) {
-      const existing = this.db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE thread_id = ? AND (json_extract(system_notice, '$.noticeKey') = ? OR (? = 'model-rerouted' AND json_extract(system_notice, '$.kind') = 'model-rerouted')) ORDER BY sequence DESC LIMIT 1`).get(threadId, systemNotice.noticeKey, systemNotice.kind) as MessageRow | undefined;
+      const existing = this.db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.sessionId') IS ? AND (json_extract(system_notice, '$.noticeKey') = ? OR (? = 'model-rerouted' AND json_extract(system_notice, '$.kind') = 'model-rerouted')) ORDER BY sequence DESC LIMIT 1`).get(threadId, systemNotice.sessionId ?? null, systemNotice.noticeKey, systemNotice.kind) as MessageRow | undefined;
       if (existing) {
         this.db.prepare("UPDATE messages SET content = ?, system_notice = ? WHERE id = ?").run(content, JSON.stringify(systemNotice), existing.id);
         return rowToMessage({ ...existing, content, system_notice: JSON.stringify(systemNotice) });
       }
     }
     if (systemNotice?.scope === "session") {
-      this.beginNoticeSession(threadId, systemNotice.sessionId);
-      this.db.prepare("DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.scope') = 'session' ORDER BY sequence DESC LIMIT -1 OFFSET 19)").run(threadId);
+      this.db.prepare("DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.scope') = 'session' AND json_extract(system_notice, '$.sessionId') IS ? ORDER BY sequence DESC LIMIT -1 OFFSET 19)").run(threadId, systemNotice.sessionId ?? null);
     }
     return this.create(
       threadId, "system", content, sequence,
@@ -369,14 +368,27 @@ export class MessageRepo {
     );
   }
 
-  /** Replace prior-session diagnostics while keeping repeat startup delivery idempotent. */
+  /** Select the provider notice session and expire session-scoped rows from prior sessions. */
   beginNoticeSession(threadId: string, sessionId: string | undefined): void {
-    this.db.prepare("DELETE FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.scope') = 'session' AND json_extract(system_notice, '$.sessionId') IS NOT ?").run(threadId, sessionId ?? null);
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE threads SET current_notice_session_id = ? WHERE id = ?").run(sessionId ?? null, threadId);
+      this.db.prepare("DELETE FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.scope') = 'session' AND json_extract(system_notice, '$.sessionId') IS NOT ?").run(threadId, sessionId ?? null);
+    })();
   }
 
-  /** Read bounded session diagnostics independently of transcript pagination. */
+  /** Read the latest notices for the provider session selected at its startup boundary. */
   listSessionNotices(threadId: string): Message[] {
-    const rows = this.db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE thread_id = ? AND json_extract(system_notice, '$.scope') = 'session' ORDER BY sequence LIMIT 20`).all(threadId) as MessageRow[];
+    const rows = this.db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM (
+      SELECT ${MESSAGE_COLUMNS}
+      FROM messages
+      WHERE thread_id = ?
+        AND system_notice IS NOT NULL
+        AND json_extract(system_notice, '$.sessionId') IS (
+          SELECT current_notice_session_id FROM threads WHERE id = ?
+        )
+      ORDER BY sequence DESC
+      LIMIT 20
+    ) ORDER BY sequence ASC`).all(threadId, threadId) as MessageRow[];
     return rows.map(rowToMessage);
   }
 

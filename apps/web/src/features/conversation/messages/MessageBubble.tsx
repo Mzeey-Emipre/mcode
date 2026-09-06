@@ -26,6 +26,7 @@ import { useRetriableAttachmentImage } from "@/components/chat/useRetriableAttac
 import { EntityToken } from "@/components/chat/EntityToken";
 import { basename } from "@/lib/path";
 import { SelectedTextCommentsComposerAttachment } from "../composer/SelectedTextCommentsComposerAttachment";
+import { isCurrentComposerProviderNotice } from "../notices/provider-notices";
 
 /**
  * Returns true when the assistant message body collapses to nothing visible
@@ -784,7 +785,9 @@ function UserMessageContent({
 
 /** Renders a system message, including structured handoffs and synthetic agent errors. */
 function SystemMessageContent({ message }: Pick<MessageBubbleProps, "message">) {
+  const currentSessionNotices = useThreadRecord(message.thread_id, (record) => record.sessionNotices);
   if (message.systemNotice?.scope === "session") return null;
+  if (isCurrentComposerProviderNotice(message, currentSessionNotices)) return null;
   if (isHandoffMessage(message.role, message.content) && parseHandoffJson(message.content)) {
     return <HandoffCard content={message.content} />;
   }

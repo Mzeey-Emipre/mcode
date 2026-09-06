@@ -111,7 +111,7 @@ export const MessageSchema = lazySchema(() =>
 /** Message record from the database. */
 export type Message = z.infer<ReturnType<typeof MessageSchema>>;
 
-/** Bounded session diagnostics, separate from transcript pagination. */
+/** Bounded current-provider-session notices, separate from transcript pagination. */
 export const SessionNoticesSchema = lazySchema<z.ZodType<Message[]>>(() => z.array(MessageSchema()).max(20));
 
 /** Paginated message list with cursor metadata. */
