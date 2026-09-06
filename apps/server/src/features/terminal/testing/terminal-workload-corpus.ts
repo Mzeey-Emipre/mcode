@@ -163,8 +163,7 @@ process.stdout.write("WF:high-output:begin\n");
 for (let index = 0; index < 20; index += 1) {
   process.stdout.write("WF:high-output:chunk:" + index + ":" + payload + "\n");
 }
-process.stdout.write("WF:high-output:end\n");
-process.exit(0);
+process.stdout.write("WF:high-output:end\n", () => process.exit(0));
 `;
 
 const RECONNECT_PROGRAM = String.raw`
