@@ -737,7 +737,6 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
       }
       if (req.method === "thread/items/list") {
         childRequests.push(req as Record<string, unknown>);
-        const threadId = (req.params as { threadId?: string } | undefined)?.threadId;
         return {
           result: {
             data: [],
