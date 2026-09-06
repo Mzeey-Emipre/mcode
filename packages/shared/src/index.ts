@@ -16,6 +16,7 @@ export {
 } from "./paths/handoffs.js";
 
 // Git utilities
+export { createTextPatch } from "./git/text-patch.js";
 export {
   validateWorktreeName,
   validateBranchName,

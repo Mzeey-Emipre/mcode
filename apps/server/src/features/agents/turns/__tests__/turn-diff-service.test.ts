@@ -99,6 +99,28 @@ describe("TurnDiffService production settlement", () => {
     expect(repo.latest(identity.threadId)).toMatchObject({ source: "git", patch: null });
   });
 
+  it("uses Git after an adapter rejects native evidence before persistence", () => {
+    expect(service.push({ ...identity, revision: 1, state: "rejected" })).toBe("accepted");
+    service.prepareFinalization(identity.threadId, identity.turnExecutionId, "completed")("message-1", effects);
+    expect(repo.latest(identity.threadId)).toMatchObject({ source: "git", patch: null });
+  });
+
+  it("orders native evidence before tracked reconstruction and Git fallback", () => {
+    const reconstruction = patch.replace("+new", "+tracked");
+    service.push(update());
+    service.prepareFinalization(identity.threadId, identity.turnExecutionId, "completed")("message-1", effects, reconstruction);
+    expect(repo.latest(identity.threadId)).toMatchObject({ source: "native", patch });
+
+    service = new TurnDiffService(repo);
+    service.begin({ ...identity, turnId: "turn-2", turnExecutionId: "execution-2" });
+    service.prepareFinalization(identity.threadId, "execution-2", "completed")("message-2", effects, reconstruction);
+    expect(repo.latest(identity.threadId)).toMatchObject({ source: "tracked", patch: reconstruction });
+
+    service.begin({ ...identity, turnId: "turn-3", turnExecutionId: "execution-3" });
+    service.prepareFinalization(identity.threadId, "execution-3", "completed")("message-2", effects, undefined);
+    expect(repo.latest(identity.threadId)).toMatchObject({ source: "tracked", patch: reconstruction });
+  });
+
   it("uses Git for a provider without native evidence and removes records on message rollback", () => {
     service.prepareFinalization(identity.threadId, identity.turnExecutionId, "completed")("message-1", effects);
     expect(repo.latest(identity.threadId)).toMatchObject({ source: "git", patch: null });

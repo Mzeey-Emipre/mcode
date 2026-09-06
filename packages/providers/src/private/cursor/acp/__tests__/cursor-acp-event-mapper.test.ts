@@ -478,9 +478,11 @@ describe("Cursor ACP client-factory session-update seam", () => {
     const child = fakeChild();
     const state = createCursorAcpTurnState();
     const events: unknown[] = [];
+    const diffUpdates: unknown[] = [];
     const bridge = new CursorAcpClientBridge({
       settings: { get: () => ({ provider: { cursor: { traceSessionUpdates: false } } }) } as any,
       publishEvent: (_entry, event) => { events.push(event); },
+      publishNativeTurnDiff: (_entry, update) => { diffUpdates.push(update); },
       emitPermissionRequest: () => {},
       emitPermissionResolved: () => {},
       emitExitPlanMode: () => {},
@@ -564,14 +566,17 @@ describe("Cursor ACP client-factory session-update seam", () => {
       { type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "live" },
     ]);
     expect(resolveCursorAssistantMessageContent(state.accumulator)).toBe("live");
+    expect(diffUpdates).toEqual([{ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "live" } }]);
   });
 
   it("drops updates after the active Cursor turn closes", async () => {
     const state = createCursorAcpTurnState();
     const events: unknown[] = [];
+    const diffUpdates: unknown[] = [];
     const bridge = new CursorAcpClientBridge({
       settings: { get: () => ({ provider: { cursor: { traceSessionUpdates: false } } }) } as any,
       publishEvent: (_entry, event) => { events.push(event); },
+      publishNativeTurnDiff: (_entry, update) => { diffUpdates.push(update); },
       emitPermissionRequest: () => {},
       emitPermissionResolved: () => {},
       emitExitPlanMode: () => {},
@@ -604,6 +609,7 @@ describe("Cursor ACP client-factory session-update seam", () => {
     expect(events).toEqual([
       { type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "accepted" },
     ]);
+    expect(diffUpdates).toEqual([{ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "accepted" } }]);
   });
 
   it("keeps late callbacks bound to their ACP generation", async () => {

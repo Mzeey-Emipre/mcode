@@ -5,7 +5,7 @@ export interface StoredTurnDiff {
   id: string;
   message_id: string;
   thread_id: string;
-  source: "native" | "git";
+  source: "native" | "tracked" | "git";
   patch: string | null;
   revision: number;
 }
@@ -20,7 +20,7 @@ export class TurnDiffRepo {
       (id, message_id, thread_id, state, source, fidelity, patch, revision)
       VALUES (?, ?, ?, 'snapshot', ?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`)
       .run(record.id, record.message_id, record.thread_id, record.source,
-        record.source === "native" ? "agent" : "same-file-changes-possible", record.patch, record.revision);
+        record.source === "git" ? "same-file-changes-possible" : "agent", record.patch, record.revision);
   }
 
   /** Read the newest durable comparison in conversation order. */

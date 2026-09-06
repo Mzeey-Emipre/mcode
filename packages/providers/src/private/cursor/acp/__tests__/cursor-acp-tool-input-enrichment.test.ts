@@ -5,6 +5,14 @@ import {
 } from "../cursor-acp-tool-input-enrichment.js";
 
 describe("cursor-acp-tool-input-enrichment", () => {
+  it.each([
+    [null, "", "add"],
+    ["", "new\n", "edit"],
+    ["old\n", "", "edit"],
+  ] as const)("distinguishes absent files from empty file contents", (oldText, newText, kind) => {
+    const input = enrichAcpToolInput("Edit", { kind: "edit", title: "Edit" }, {}, undefined, [{ type: "diff", path: "a.txt", oldText, newText }]);
+    expect(input._mcodeFileMutations).toEqual([{ path: "a.txt", kind, fullFileContent: true, beforeText: oldText ?? "", afterText: newText }]);
+  });
   it("fills Read file_path from rawOutput.path when present", () => {
     const input = enrichAcpToolInput(
       "Read",

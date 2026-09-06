@@ -41,7 +41,7 @@ export class TurnDiffService {
     const parsed = update.state === "snapshot" ? parseTurnDiff(update.patch) : null;
     const evidence: ProviderTurnDiffUpdate = update.state === "snapshot" && !parsed
       ? { turnId: update.turnId, turnExecutionId: update.turnExecutionId, deliveryAttempt: update.deliveryAttempt, revision: update.revision, state: "invalidated" } : update;
-    this.active.set(update.turnId, { ...current, revision: update.revision, evidence, parsed, rejected: update.state === "snapshot" && !parsed });
+    this.active.set(update.turnId, { ...current, revision: update.revision, evidence, parsed, rejected: update.state === "rejected" || (update.state === "snapshot" && !parsed) });
     this.changed(current.threadId);
     return evidence.state === "invalidated" ? "invalidated" : "accepted";
   }
@@ -60,9 +60,9 @@ export class TurnDiffService {
     const current = [...this.active.values()].find((entry) => entry.threadId === threadId && entry.turnExecutionId === executionId);
     if (!current) return () => {};
     this.clear(current.turnId, executionId);
-    return (messageId, effects) => {
+    return (messageId, effects, reconstructionPatch) => {
       if (outcome !== "completed") return;
-      const selected = selectSettledEvidence(current, effects);
+      const selected = selectSettledEvidence(current, effects, reconstructionPatch);
       if (!selected) return;
       this.repo.create({ id: NodeCrypto.randomUUID(), message_id: messageId, thread_id: threadId,
         ...selected, revision: Math.max(0, current.revision) });
@@ -101,7 +101,7 @@ export class TurnDiffService {
 }
 
 /** Persists a frozen terminal candidate after the assistant message and file effects exist. */
-export type SettleTurnDiff = (messageId: string, effects: TurnFileEffectSummary | undefined) => void;
+export type SettleTurnDiff = (messageId: string, effects: TurnFileEffectSummary | undefined, reconstructionPatch?: string) => void;
 
 function liveId(current: ActiveDiff): string {
   return `live:${current.turnId}:${current.turnExecutionId}:${current.deliveryAttempt}:${current.revision}`;
@@ -116,12 +116,19 @@ function isNewRevision(update: ProviderTurnDiffUpdate, current: ActiveDiff): boo
   return matches(update, current) && Number.isSafeInteger(update.revision) && update.revision > current.revision;
 }
 
-function selectSettledEvidence(current: ActiveDiff, effects: TurnFileEffectSummary | undefined): Pick<StoredTurnDiff, "source" | "patch"> | null {
-  const evidence = current.evidence;
-  if (evidence) {
-    if (evidence.state === "snapshot") return { source: "native", patch: evidence.patch };
-    if (evidence.state === "invalidated" && !current.rejected) return null;
-    if (evidence.state === "indeterminate-empty" && effects?.fileCount === 0) return { source: "native", patch: "" };
-  }
+function selectSettledEvidence(current: ActiveDiff, effects: TurnFileEffectSummary | undefined, reconstructionPatch?: string): Pick<StoredTurnDiff, "source" | "patch"> | null {
+  const native = nativeSettlement(current, effects);
+  if (native !== undefined) return native;
+  if (reconstructionPatch && parseTurnDiff(reconstructionPatch)) return { source: "tracked", patch: reconstructionPatch };
   return effects?.fileCount ? { source: "git", patch: null } : null;
+}
+
+function nativeSettlement(current: ActiveDiff, effects: TurnFileEffectSummary | undefined): Pick<StoredTurnDiff, "source" | "patch"> | null | undefined {
+  const evidence = current.evidence;
+  if (!evidence) return undefined;
+  if (evidence.state === "snapshot") return { source: "native", patch: evidence.patch };
+  if (evidence.state === "invalidated" && !current.rejected) return null;
+  return evidence.state === "indeterminate-empty" && effects?.fileCount === 0
+    ? { source: "native", patch: "" }
+    : undefined;
 }

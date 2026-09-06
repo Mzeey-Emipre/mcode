@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import { AgentEventType, type TurnFileEffectSummary } from "@mcode/contracts";
 import { TurnFileTracker } from "../turn-file-tracker.js";
+import { parseTurnDiff } from "../turn-diff-patch.js";
 import {
   createCursorAcpTurnState,
   mapCursorAcpSessionNotification,
@@ -37,6 +38,47 @@ function trackerWithBaseline(
 }
 
 describe("TurnFileTracker", () => {
+  it("attributes empty-file creation and preserves its added kind for Git fallback", async () => {
+    const root = await tempDir("mcode-empty-created-");
+    const tracker = trackerWithBaseline({}, []);
+    tracker.beginTurn("t", root, "base");
+    await tracker.observeToolUse("t", "create", "Write", { _mcodeFileMutations: [{ path: "empty.txt", kind: "add", fullFileContent: true, beforeText: "", afterText: "" }] });
+    await NodeFSPromises.writeFile(NodePath.join(root, "empty.txt"), "");
+    await tracker.observeToolResult("t", "create");
+    expect((await tracker.finalizeTurn("t")).effects).toEqual([{ path: "empty.txt", kind: "added", scope: "workspace", additions: 0, deletions: 0, binary: false, toolCallIds: ["create"] }]);
+    expect(await tracker.reconstructionPatch("t")).toBeUndefined();
+  });
+  it("reconstructs complete evidence with unchanged context and final newline semantics", async () => {
+    const root = await tempDir("mcode-reconstruction-");
+    const before = "first\nunchanged\n";
+    const after = "changed\nunchanged";
+    await NodeFSPromises.writeFile(NodePath.join(root, "a.txt"), before);
+    const tracker = trackerWithBaseline({ "a.txt": before }, []);
+    tracker.beginTurn("t", root, "base");
+    const input = { _mcodeFileMutations: [{ path: "a.txt", kind: "edit", fullFileContent: true, beforeText: before, afterText: after }] };
+    await tracker.observeToolUse("t", "edit", "Edit", input);
+    await NodeFSPromises.writeFile(NodePath.join(root, "a.txt"), after);
+    await tracker.observeToolResult("t", "edit", input);
+    const patch = await tracker.reconstructionPatch("t");
+    expect(parseTurnDiff(patch!)?.files).toEqual([{ path: "a.txt", previousPath: null, binary: false, changeType: "modified" }]);
+    expect(patch).toContain("\\ No newline at end of file");
+    tracker.clearTurn("t");
+    expect(await tracker.reconstructionPatch("t")).toBeUndefined();
+  });
+
+  it("rejects reconstruction after a discontinuous second edit", async () => {
+    const root = await tempDir("mcode-reconstruction-gap-");
+    await NodeFSPromises.writeFile(NodePath.join(root, "a.txt"), "first\n");
+    const tracker = trackerWithBaseline({ "a.txt": "first\n" }, []);
+    tracker.beginTurn("t", root, "base");
+    for (const [id, before, after] of [["one", "first\n", "second\n"], ["two", "external\n", "third\n"]]) {
+      await tracker.observeToolUse("t", id!, "Edit", { _mcodeFileMutations: [{ path: "a.txt", kind: "edit", fullFileContent: true, beforeText: before, afterText: after }] });
+      await NodeFSPromises.writeFile(NodePath.join(root, "a.txt"), after!);
+      await tracker.observeToolResult("t", id!);
+    }
+    expect((await tracker.finalizeTurn("t")).fileCount).toBe(1);
+    expect(await tracker.reconstructionPatch("t")).toBeUndefined();
+  });
   it("captures an unavailable-Git baseline before an early child mutation is attributed", async () => {
     const root = await tempDir("mcode-early-child-effects-");
     const trackedPath = NodePath.join(root, "tracked.txt");

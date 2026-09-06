@@ -45,6 +45,7 @@ interface PendingAcpPermission {
 export interface CursorAcpClientBridgeDeps {
   settings: CursorProviderPorts["settings"];
   publishEvent: (entry: CursorAcpSessionEntry, event: AgentEvent) => void;
+  publishNativeTurnDiff: (entry: CursorAcpSessionEntry, update: SessionNotification["update"]) => void;
   emitPermissionRequest: (request: PermissionRequest) => void;
   emitPermissionResolved: (requestId: string, decision: PermissionDecision) => void;
   emitExitPlanMode: (args: { threadId: string; planMarkdown: string }) => void;
@@ -259,6 +260,7 @@ export class CursorAcpClientBridge {
     const turnState = entry.acpRuntime.state.sessionId
       ? entry.activeTurnState
       : (entry.replayTurnState ??= createCursorAcpTurnState());
+    if (entry.acpRuntime.state.sessionId) this.deps.publishNativeTurnDiff(entry, params.update);
     const mapped = mapCursorAcpSessionNotification(
       params,
       entry.threadId,

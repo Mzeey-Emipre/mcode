@@ -42,7 +42,7 @@ export type ProviderTurnDiffUpdate = {
   turnExecutionId: string;
   deliveryAttempt: number;
   revision: number;
-} & ({ state: "snapshot"; patch: string; nativeFidelity: "agent" } | { state: "indeterminate-empty" } | { state: "invalidated" });
+} & ({ state: "snapshot"; patch: string; nativeFidelity: "agent" } | { state: "indeterminate-empty" } | { state: "invalidated" } | { state: "rejected" });
 
 /** Optional provider capability that pushes complete native turn-diff updates. */
 export interface ITurnDiffSource {

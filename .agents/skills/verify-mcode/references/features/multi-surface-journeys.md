@@ -1,5 +1,9 @@
 # Multi-surface journeys
 
+## Cross-provider Last turn Review
+
+Use the [turn-diff Review feature](turn-diff-review.md) for selectors and evidence requirements. Run equivalent Composer edits in one owned fixture workspace with Codex, Cursor, and Claude. Open Last turn Review through the same controls, capture the selected source and patch, and compare them with the resulting file and public comparison response. Reload each completed thread and confirm that its source and patch persist. Record unavailable providers as coverage gaps. Remove only owned threads and fixture state.
+
 Read this file when a change crosses product surfaces. Use the linked feature files for selectors and surface-specific proof.
 
 ## Provider completion and durable conversation

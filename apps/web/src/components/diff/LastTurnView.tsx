@@ -67,6 +67,6 @@ function turnLabel(comparison: ReviewComparison): string {
 function TurnDiffSource({ comparison }: { comparison: ReviewComparison }) {
   if (!comparison.turnDiff) return null;
   return <Badge variant="secondary">
-    {comparison.turnDiff.source === "git" ? "Git fallback: same-file edits may appear" : "Agent changes"}
+    {comparison.turnDiff.source === "git" ? "Git fallback: same-file edits may appear" : comparison.turnDiff.source === "tracked" ? "Tracked file evidence" : "Agent changes"}
   </Badge>;
 }
