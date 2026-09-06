@@ -333,7 +333,13 @@ describe("ws-events permission.request", () => {
       threadId: request.threadId,
       subtype: "approval.review.manual-required",
       message: "Manual approval is required before Codex can continue.",
-      systemNotice: { kind: "permission", scope: "turn", origin: "provider" },
+      systemNotice: {
+        kind: "diagnostic",
+        presentation: "timeline",
+        scope: "turn",
+        sessionId: "notice-session",
+        noticeKey: "approval-review-manual-required",
+      },
     } satisfies AgentEvent);
     expect(buildVolatileItems([], undefined, undefined, undefined, useThreadStore.getState().records.get(request.threadId)?.permissions))
       .not.toContainEqual(expect.objectContaining({ type: "permission-request" }));
