@@ -17,6 +17,7 @@ import {
   cursorSettingEvidence,
   cursorNeedsProofLocalEnablement,
   assertQueueRows,
+  assertNoQueueSuccessToast,
   evidenceFile,
   ensureFixtureWorkspace,
   finishInterruptedCleanup,
@@ -529,8 +530,12 @@ test("fills a queued message only after the root turn exposes Stop agent", async
     },
   });
   const page = {
+    getByText: () => ({ isVisible: async () => false }),
+    locator: () => ({ getByText: () => ({ isVisible: async () => false }) }),
     getByRole: (_role, { name }) => button(name),
-    getByTestId: () => ({ getByRole: () => editor }),
+    getByTestId: () => ({
+      getByRole: () => editor,
+    }),
   };
 
   await expect(page.getByRole("button", { name: "Queue message" }).waitFor()).rejects
@@ -557,6 +562,15 @@ test("fills a queued message only after the root turn exposes Stop agent", async
   ]);
 });
 
+test("rejects a visible inline Composer queue success toast", async () => {
+  const page = {
+    getByText: () => ({ isVisible: async () => false }),
+    locator: () => ({ getByText: () => ({ isVisible: async () => true }) }),
+  };
+
+  await expect(assertNoQueueSuccessToast(page)).rejects.toThrow("success notification");
+});
+
 test("accepts visible A admission when provider start events are absent", async () => {
   const record = { marker: "root", provider: "codex", threadId: "thread-owned" };
   const operations = [];
@@ -578,14 +592,10 @@ test("accepts visible A admission when provider start events are absent", async 
           getByRole: (_role, { name: actionName }) => {
             expect(actionName).toEqual(/^Remove queued message \d+$/);
             return {
-              all: async () => [{
-                locator: () => ({
-                  innerText: async () => {
-                    operations.push("read:queue");
-                    return queuePrompt("B", record);
-                  },
-                }),
-              }],
+              evaluateAll: async () => {
+                operations.push("read:queue");
+                return [queuePrompt("B", record)];
+              },
             };
           },
           waitFor: async () => undefined,
@@ -681,7 +691,7 @@ test("rejects queued rows that contain the expected markers but not the exact FI
   const page = {
     getByRole: () => ({
       getByRole: () => ({
-        all: async () => rows.map((row) => ({ locator: () => ({ innerText: async () => row }) })),
+        evaluateAll: async () => rows,
       }),
       waitFor: async () => undefined,
     }),
@@ -698,15 +708,9 @@ test("derives FIFO queue rows from accessible remove actions and ignores DnD hel
       getByRole: (_role, { name }) => {
         expect(name).toEqual(/^Remove queued message \d+$/);
         return {
-          all: async () => rows.map((row) => ({
-            locator: (selector) => {
-              expect(selector).toContain("ancestor::div");
-              return { innerText: async () => row };
-            },
-          })),
+          evaluateAll: async () => rows,
         };
       },
-      locator: () => ({ allTextContents: async () => ["DnD accessibility helper", ...rows] }),
       waitFor: async () => undefined,
     }),
   };
