@@ -224,9 +224,6 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       },
     }));
 
-    const count = queueDepth(get(), threadId);
-    showToast(set, count > 1 ? `Queued \u00b7 ${count} pending` : "Queued");
-
     return true;
   },
 

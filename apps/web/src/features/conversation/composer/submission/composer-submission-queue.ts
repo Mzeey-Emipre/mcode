@@ -4,7 +4,6 @@ import { stripPreviewAnnotationFence } from "@/features/preview/capture/preview-
 import { usePreviewAnnotationStore } from "@/features/preview/state/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/features/preview/state/previewDesignModeStore";
 import { useQueueStore } from "@/stores/queueStore";
-import { useToastStore } from "@/stores/toastStore";
 import type { ComposerAgentSelection, ComposerFormController } from "../draft/useComposerFormController";
 import type { ComposerQueueEdit } from "../queue/useComposerQueueEditing";
 import type { HandoffQueuedSend } from "../queue/useHandoffQueuedSend";
@@ -27,7 +26,6 @@ export interface CompleteQueuedComposerSubmissionOptions {
   annotationScopeId?: string;
   annotations?: PreviewAnnotationBundle;
   goalObjective?: string;
-  editing: ComposerQueueEdit | null;
   form: ComposerFormController;
   finishEditing(): void;
 }
@@ -72,14 +70,12 @@ export function completeQueuedComposerSubmission({
   annotationScopeId,
   annotations,
   goalObjective,
-  editing,
   form,
   finishEditing,
 }: CompleteQueuedComposerSubmissionOptions): void {
   form.clear("dispatch");
   clearQueuedAnnotations(annotationScopeId, annotations);
   if (goalObjective) form.setGoalPending(false);
-  if (editing) showQueueEditSaved(editing);
   finishEditing();
   form.focus();
 }
@@ -135,13 +131,4 @@ function clearQueuedAnnotations(
   if (!annotationScopeId || !annotations) return;
   usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
   usePreviewDesignModeStore.getState().setActive(annotationScopeId, false);
-}
-
-/** Shows the original slot when a queued message was edited in place. */
-function showQueueEditSaved(editing: ComposerQueueEdit): void {
-  useToastStore.getState().show(
-    "info",
-    "Saved to queue",
-    `Slot ${String(editing.originalIndex + 1).padStart(2, "0")}`,
-  );
 }

@@ -92,12 +92,11 @@ export function useComposerSubmissionController({
         annotationScopeId,
         annotations: submission.currentAnnotations,
         goalObjective: submission.goalObjective,
-        editing: queue.editing,
         form,
         finishEditing: queue.finishEditing,
       });
     },
-    [annotationScopeId, form, queue.editing, queue.finishEditing],
+    [annotationScopeId, form, queue.finishEditing],
   );
 
   const queuePrepared = useCallback(

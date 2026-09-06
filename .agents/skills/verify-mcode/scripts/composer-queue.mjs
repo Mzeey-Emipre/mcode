@@ -744,13 +744,17 @@ async function runQueueJourney(socket, page, workspaceId, evidenceDirectory, rec
   providerEvents.continueEventIndex = providerEvents.events.length;
   await continueNextQueuedMessage(page);
   await waitForBStart(socket, page, record, deadline(), diagnostics, providerEvents);
-  await assertQueueRows(page, [queuePrompt("C", record)]);
+  const editedC = `${queuePrompt("C", record)} edited`;
+  await editQueuedMessage(page, 1, queuePrompt("C", record), editedC, [editedC]);
+  await assertQueueRows(page, [editedC]);
+  await stopRunningTurn(page);
+  await waitForStopAndStableQueue(socket, page, record, deadline(), ["root", "A", "B"], [editedC], diagnostics, "editStop");
+  await assertQueueRows(page, [editedC]);
+  steps.push(step("edited-c-without-success-toast-retained"));
   await captureQueueSurface(page, artifacts.afterContinue);
   steps.push(step("continue-started-b-once-c-queued"));
 
-  await stopRunningTurn(page);
-  await waitForStopAndStableQueue(socket, page, record, deadline(), ["root", "A", "B"], [queuePrompt("C", record)], diagnostics, "cleanupStop");
-  steps.push(step("cleanup-stop-settled"));
+  steps.push(step("edit-stop-settled"));
 }
 
 async function captureFailureSurface(desktop, outputPath) {
@@ -950,6 +954,41 @@ export async function queueMessages(page, prompts) {
     const queueButton = page.getByRole("button", { name: "Queue message" });
     await queueButton.waitFor({ state: "visible", timeout: LIVE_TIMEOUT_MS });
     await queueButton.click();
+    await assertNoQueueSuccessToast(page);
+  }
+}
+
+/** Edits one queued row through the Composer and verifies that saving is silent. */
+export async function editQueuedMessage(page, index, originalPrompt, prompt, expectedRows) {
+  const editButton = page.getByRole("button", { name: `Edit queued message ${index}` });
+  await editButton.waitFor({ state: "visible", timeout: LIVE_TIMEOUT_MS });
+  await editButton.press("Enter");
+  const editor = composerEditor(page);
+  const removeButtons = page.getByRole("button", { name: /^Remove queued message \d+$/ });
+  await waitForBounded(async () => {
+    return await removeButtons.count() === expectedRows.length - 1
+      && (await editor.textContent())?.trim() === originalPrompt;
+  }, deadline(), "The queued row did not load into the composer for editing");
+  if (!prompt.startsWith(originalPrompt)) throw new Error("Queued edit proof requires an appended prompt");
+  await editor.press("Control+End");
+  await editor.pressSequentially(prompt.slice(originalPrompt.length));
+  await waitForBounded(
+    async () => (await editor.textContent())?.trim() === prompt,
+    deadline(),
+    "The Composer did not contain the edited prompt before saving",
+  );
+  await page.getByRole("button", { name: "Queue message" }).click();
+  await assertNoQueueSuccessToast(page);
+  await waitForBounded(async () => rowsMatch(await queueRows(page), expectedRows), deadline(), "The edited queued row did not return to its slot");
+}
+
+export async function assertNoQueueSuccessToast(page) {
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const saved = page.getByText("Saved to queue", { exact: true });
+  const slot = page.getByText(/^Slot \d+$/, { exact: true });
+  const queued = page.locator("div[class*='-top-8']").getByText(/^Queued(?: · \d+ pending)?$/, { exact: true });
+  if (await saved.isVisible() || await slot.isVisible() || await queued.isVisible()) {
+    throw new Error("Queue admission or edit displayed a success notification");
   }
 }
 
@@ -975,10 +1014,10 @@ export async function assertQueueRows(page, expectedPrompts) {
 async function queueRows(page) {
   const section = page.getByRole("region", { name: "Queued messages" });
   await section.waitFor({ state: "visible", timeout: LIVE_TIMEOUT_MS });
-  const removeButtons = await section.getByRole("button", { name: /^Remove queued message \d+$/ }).all();
-  return Promise.all(removeButtons.map(async (button) => {
-    const row = button.locator("xpath=ancestor::div[.//button[@aria-label='Reorder message (drag, or press space then arrow keys)']][1]");
-    return (await row.innerText()).trim();
+  return section.getByRole("button", { name: /^Remove queued message \d+$/ }).evaluateAll((buttons) => buttons.map((button) => {
+    let row = button.parentElement;
+    while (row && !row.querySelector("button[aria-label='Reorder message (drag, or press space then arrow keys)']")) row = row.parentElement;
+    return row?.innerText.trim() ?? "";
   }));
 }
 

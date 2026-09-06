@@ -31,6 +31,15 @@ describe("queueStore", () => {
     });
   });
 
+  it("queues successful messages silently but reports a full queue", () => {
+    expect(useQueueStore.getState().enqueue(T, basePayload("first"))).toBe(true);
+    expect(useQueueStore.getState().toast).toBeNull();
+
+    seed(Array.from({ length: 19 }, (_, index) => `queued-${index}`));
+    expect(useQueueStore.getState().enqueue(T, basePayload("overflow"))).toBe(false);
+    expect(useQueueStore.getState().toast).toBe("Queue full");
+  });
+
   describe("editMessage", () => {
     it("rewrites content and displayContent for the targeted id, keeps position", () => {
       const [, b] = seed(["alpha", "beta", "gamma"]);
