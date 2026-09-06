@@ -41,6 +41,17 @@ Use one persistent Playwright connection to an agent-owned Electron process. Lau
 
 Do not reset the Node REPL while the application is open. Do not launch a second session to perform the next action.
 
+If the REPL rejects Playwright's ESM entry with a missing default export, load
+the installed CommonJS entry instead, then use the same session helper:
+
+```js
+var electronModule = await import("node:module");
+var electronRequire = electronModule.createRequire(
+  nodeRepl.cwd + "/.dev/playwright-scratch/package.json"
+);
+var electronPlaywright = electronRequire("playwright");
+```
+
 ## Operate directly
 
 Run each observation or action as a new `mcp__node_repl__js` call against `electronPage`, `electronSession.context`, or `electronSession.browser`.
