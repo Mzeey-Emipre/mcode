@@ -41,6 +41,7 @@ function makeMinimalDeps(
     gitService: undefined as unknown as RouterDeps["gitService"],
     githubService: undefined as unknown as RouterDeps["githubService"],
     fileService: undefined as unknown as RouterDeps["fileService"],
+    workspaceInvalidations: { unwatchClient: () => undefined } as unknown as RouterDeps["workspaceInvalidations"],
     configService: undefined as unknown as RouterDeps["configService"],
     skillService: undefined as unknown as RouterDeps["skillService"],
     terminalService: { disconnectClient: () => undefined } as unknown as RouterDeps["terminalService"],
