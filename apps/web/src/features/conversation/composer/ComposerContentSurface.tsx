@@ -100,6 +100,7 @@ interface ComposerContentSurfaceProps {
       readonly capabilities: ComposerAgentControlsProps["capabilities"];
       readonly attachedCapabilityIds: ComponentProps<typeof ComposerAddMenu>["attachedCapabilityIds"];
       readonly permissionLocked: ComposerAgentControlsProps["permissionLocked"];
+      readonly approvalReviewSupported: ComposerAgentControlsProps["approvalReviewSupported"];
     };
     readonly activeGoal: ComposerAgentControlsProps["activeGoal"];
     readonly isModelFullyLocked: boolean;
@@ -605,6 +606,7 @@ function ComposerControlBar({
         isModelLocked={model.isModelFullyLocked}
         isProviderLocked={model.isProviderLocked}
         permissionLocked={model.agentControls.permissionLocked}
+        approvalReviewSupported={model.agentControls.approvalReviewSupported}
         showInlineOptions={model.showInlineComposerOptions}
         showModelPreferences
         onSelectionChange={actions.onSelectionChange}

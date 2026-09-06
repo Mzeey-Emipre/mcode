@@ -32,6 +32,10 @@ export const PermissionModeSchema = z.enum(["full", "supervised"]);
 /** Permission mode for agent sessions. */
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 
+/** Per-turn choice for handling provider-native approval reviews. */
+export const ApprovalReviewModeSchema = z.enum(["manual", "automatic"]);
+export type ApprovalReviewMode = z.infer<typeof ApprovalReviewModeSchema>;
+
 /** Constant lookup for permission modes. */
 export const PERMISSION_MODES = {
   FULL: "full" as const,

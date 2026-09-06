@@ -36,6 +36,7 @@ describe("Provider conformance registry", () => {
       "thread-control",
       "child-cancellation",
       "turn-diff",
+      "approval-review",
     ]);
 
     expect([...new Set(fixtures.map((fixture) => fixture.providerId))].sort()).toEqual([

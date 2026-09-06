@@ -34,6 +34,8 @@ function turn(
     status,
     trigger: { kind: "child", sourceThreadId: "parent", sourceTurnId: "parent-turn" },
     permissionMode: "full",
+    approvalReviewMode: "manual",
+    approvalReviewReason: "manual-requested",
     providerIdentities: [],
     startedAt: STARTED_AT,
     endedAt,
@@ -122,7 +124,10 @@ describe("projectCanonicalMessageList", () => {
 
   it("adds one terminal answer and retains the completed turn timeline", () => {
     const state = createAgentModelState();
-    state.turns[TURN_ID] = turn("Completed", "2026-08-18T12:00:05.000Z");
+    state.turns[TURN_ID] = turn("Completed", "2026-08-18T12:00:05.000Z", {
+      approvalReviewMode: "manual",
+      approvalReviewReason: "provider-version-unsupported",
+    });
     const answer = message({
       id: "child-answer",
       role: "assistant",
@@ -162,6 +167,7 @@ describe("projectCanonicalMessageList", () => {
       "child-answer": {
         counts: { steps: 0, thoughts: 1, subagents: 0 },
         durationMs: 5_000,
+        approvalReview: { mode: "manual", reason: "provider-version-unsupported" },
       },
     });
   });
@@ -288,10 +294,12 @@ describe("projectCanonicalMessageList", () => {
       "child-answer-1": {
         counts: { steps: 1, thoughts: 0, subagents: 0 },
         durationMs: 5_000,
+        approvalReview: { mode: "manual", reason: "manual-requested" },
       },
       "child-answer-2": {
         counts: { steps: 1, thoughts: 0, subagents: 0 },
         durationMs: 5_000,
+        approvalReview: { mode: "manual", reason: "manual-requested" },
       },
     });
   });

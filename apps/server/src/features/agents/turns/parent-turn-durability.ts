@@ -20,6 +20,8 @@ export interface ParentTurnStartInput {
   turnId: string;
   executionId: string;
   permissionMode: "supervised" | "full";
+  approvalReviewMode?: "manual" | "automatic";
+  approvalReviewReason?: string;
   providerIdentities: readonly ProviderIdentity[];
   retryOfExecutionId?: string;
   projectUserMessage: () => Message;

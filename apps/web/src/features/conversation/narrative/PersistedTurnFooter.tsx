@@ -120,6 +120,7 @@ export function PersistedTurnFooter({
       counts={resolvedSummary.counts}
       durationMs={resolvedSummary.durationMs}
       outcome={resolvedSummary.outcome}
+      approvalReview={resolvedSummary.approvalReview}
     />
   );
 }

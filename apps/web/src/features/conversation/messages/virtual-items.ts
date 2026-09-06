@@ -609,7 +609,17 @@ function sameTurnFooterCounts(left: TurnFooterSummary | undefined, right: TurnFo
 }
 
 function sameTurnFooterResult(left: TurnFooterSummary | undefined, right: TurnFooterSummary | undefined): boolean {
-  return [left?.durationMs === right?.durationMs, left?.outcome === right?.outcome, left?.outcomeExecutionId === right?.outcomeExecutionId].every(Boolean);
+  return [
+    left?.durationMs === right?.durationMs,
+    left?.outcome === right?.outcome,
+    left?.outcomeExecutionId === right?.outcomeExecutionId,
+    sameApprovalReview(left, right),
+  ].every(Boolean);
+}
+
+function sameApprovalReview(left: TurnFooterSummary | undefined, right: TurnFooterSummary | undefined): boolean {
+  return left?.approvalReview?.mode === right?.approvalReview?.mode
+    && left?.approvalReview?.reason === right?.approvalReview?.reason;
 }
 
 function sameNarrativeIndicatorItem(left: ChatVirtualItem, right: ChatVirtualItem): boolean {

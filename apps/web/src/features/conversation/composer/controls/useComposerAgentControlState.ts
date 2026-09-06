@@ -10,6 +10,7 @@ import {
   supportsEffortParameter,
 } from "@/lib/model-registry";
 import { useThreadStore } from "@/stores/threadStore";
+import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
 import { useToastStore } from "@/stores/toastStore";
 import {
   INTERACTION_MODES,
@@ -21,6 +22,7 @@ import {
 } from "@mcode/contracts";
 import {
   resolveComposerCapabilities,
+  supportsApprovalReview,
   type ComposerCapabilityId,
 } from "../composer-capabilities";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
@@ -57,6 +59,7 @@ export interface ComposerAgentControlState {
   attachedCapabilityIds: ReadonlySet<ComposerCapabilityId>;
   reasoningLevels: ReasoningLevel[];
   permissionLocked: boolean;
+  approvalReviewSupported: boolean;
   attachCapability(capabilityId: ComposerCapabilityId): void;
   detachPlan(): void;
   detachGoal(): void;
@@ -88,6 +91,9 @@ export function useComposerAgentControlState({
     (capability) => capability.id === "orchestration",
   );
   const permissionLocked = isCursorPermissionLockedToFull(provider, isWindows);
+  const approvalReviewSupported = useProviderAvailabilityStore((state) =>
+    supportsApprovalReview(state.getAvailability(provider)?.capabilities ?? []),
+  );
   const attachedCapabilityIds = useMemo(() => {
     const ids = new Set<ComposerCapabilityId>();
     if (interactionMode === INTERACTION_MODES.PLAN) ids.add("plan");
@@ -212,6 +218,7 @@ export function useComposerAgentControlState({
     attachedCapabilityIds,
     reasoningLevels,
     permissionLocked,
+    approvalReviewSupported,
     attachCapability,
     detachPlan,
     detachGoal,

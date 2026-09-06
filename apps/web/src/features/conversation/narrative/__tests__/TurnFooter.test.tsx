@@ -73,4 +73,18 @@ describe("TurnFooter", () => {
     expect(screen.getByText("Turn failed")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /continue|retry/i })).toBeNull();
   });
+
+  it("renders the persisted automatic-review fallback as readable text", () => {
+    render(
+      <TurnFooter
+        counts={{ steps: 0, thoughts: 0, subagents: 0 }}
+        durationMs={null}
+        approvalReview={{ mode: "manual", reason: "provider-version-unsupported" }}
+      />,
+    );
+
+    expect(screen.getByTestId("approval-review")).toHaveTextContent(
+      "Automatic review unavailable. Manual approval applies.",
+    );
+  });
 });

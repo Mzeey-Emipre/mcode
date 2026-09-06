@@ -30,6 +30,15 @@ export function ActiveToolRow({ toolCall }: ActiveToolRowProps) {
     return <CommandExecutionCard toolCall={toolCall} isActive />;
   }
 
+  if (toolCall.toolName === "Approval review") {
+    return (
+      <div className={`${NARRATIVE_TOOL_ROW} px-2 py-1 text-sm`}>
+        <DEFAULT_ICON className="w-3.5 h-3.5 shrink-0 text-muted-foreground/60" />
+        <span className="font-medium text-foreground shrink-0">Reviewing</span>
+      </div>
+    );
+  }
+
   const canonicalName = resolveToolName(toolCall.toolName);
   const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
   const label =

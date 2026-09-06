@@ -17,6 +17,7 @@ function stubSettings(overrides: Partial<ReturnType<typeof getDefaultSettings>> 
 function stubRegistry(ids: string[]): IProviderRegistry {
   const providers = ids.map((id) => ({
     id,
+    descriptor: { id, capabilities: [] },
     sessionForkOnResume: "unsupported" as const,
     maxInputCharactersPerTurn: 16_000,
   } as IAgentProvider));

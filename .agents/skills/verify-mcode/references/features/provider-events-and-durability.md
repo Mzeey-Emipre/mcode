@@ -8,6 +8,7 @@
 - Assistant data becomes durable before the public conversation query returns it.
 - Runtime inspection exposes active count and authoritative runtime snapshots without provider payloads.
 - Codex protocol notices use bounded canonical events. Reroutes, warnings, configuration, deprecation, workspace-security, recovery, and unknown notices never expose raw protocol payloads.
+- Codex automatic approval review renders one reviewing tool call and one durable terminal result for each native review identity.
 - Current provider notices use one expandable surface above Composer. Configuration and deprecation notices remain quiet until requested.
 - Public conversation page and first-paint tail queries restore the bounded current-session notice collection separately from transcript messages.
 
@@ -180,6 +181,22 @@ Evidence: `.dev/verification/codex-notices/checks.json`,
 `reroute-toast.png`, `live-notices.png`, and `reloaded-notices.png`.
 
 ## Gotchas
+
+### Approval review journey
+
+Verify approval review through the public Composer and public conversation APIs.
+
+1. Register a verifier-owned workspace. Select Auto in Composer's Access mode control, then capture the selected control.
+2. Send one verifier-owned Codex turn. Record the public dispatch receipt and the review tool-call narration when the native app-server emits it.
+3. Confirm one settled review result only. Check the public canonical turn includes the resolved `approvalReviewMode` and its stable reason.
+4. Reopen the thread or reconnect the public socket. Read the same canonical turn and confirm the review result does not duplicate.
+5. Delete only the verifier-owned workspace and thread after recording screenshots and the public receipt.
+
+Run the Composer selection and durable footer check in both the web client and
+Electron when both surfaces are available. Record an unavailable surface as a
+verification gap rather than using the other surface as its substitute.
+
+An unavailable native review capability is a verification gap. Do not record ordinary turn completion as approval-review proof.
 
 - The approved prototype's Sign in button was simulated. The current notice contract reports authentication recovery, not an active sign-in requirement. Do not claim a real sign-in action from this fixture.
 - Migration backfill uses the newest persisted notice session as an upgrade approximation because older databases have no durable notice-session boundary. New session-start events select the authoritative session, including an empty one.

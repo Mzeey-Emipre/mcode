@@ -34,6 +34,7 @@ function createHandoffQueuePayload(queued: HandoffQueuedSend) {
     attachments: queued.attachments,
     model: selection.modelId,
     permissionMode: selection.permissionMode,
+    approvalReviewMode: selection.approvalReviewMode,
     reasoningLevel: selection.reasoning,
     orchestrationMode: queued.orchestrationMode,
     provider: selection.provider,

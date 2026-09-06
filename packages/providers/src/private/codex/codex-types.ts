@@ -57,6 +57,8 @@ export interface ThreadStartParams {
   model?: string | null;
   cwd?: string | null;
   approvalPolicy?: AskForApproval | null;
+  /** Routes this turn's native approval requests to the selected reviewer. */
+  approvalsReviewer?: "user" | "auto_review" | null;
   sandbox?: SandboxMode | null;
   developerInstructions?: string | null;
 }
@@ -177,6 +179,8 @@ export interface TurnStartParams {
   model?: string | null;
   /** Override approval policy for this turn and subsequent turns. */
   approvalPolicy?: AskForApproval | null;
+  /** Routes this turn's native approval requests to the selected reviewer. */
+  approvalsReviewer?: "user" | "auto_review" | null;
   /** Override reasoning effort for this turn and subsequent turns. */
   effort?: ReasoningEffort | null;
   /**
@@ -187,7 +191,7 @@ export interface TurnStartParams {
 }
 
 /** Per-turn overrides passed from {@link CodexProvider} to {@link CodexAppServer.sendTurn}. */
-export type CodexTurnOptions = Pick<TurnStartParams, "model" | "effort" | "serviceTier">;
+export type CodexTurnOptions = Pick<TurnStartParams, "model" | "effort" | "serviceTier" | "approvalsReviewer">;
 
 /** Result returned by the `turn/start` RPC method. */
 export interface TurnStartResult {

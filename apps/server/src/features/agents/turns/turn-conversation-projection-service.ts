@@ -69,6 +69,8 @@ export class TurnConversationProjectionService {
       turnId: NodeCrypto.randomUUID(),
       executionId,
       permissionMode: "supervised",
+      approvalReviewMode: "manual",
+      approvalReviewReason: "manual-requested",
       providerIdentities: [],
       projectUserMessage: () => this.messages.create(
         threadId,

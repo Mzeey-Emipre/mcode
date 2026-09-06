@@ -81,6 +81,21 @@ describe("narrative tool row layout classes", () => {
     expect(command?.className).toContain("overflow-wrap");
   });
 
+  it("ActiveToolRow identifies an in-progress approval review without its native id", () => {
+    render(
+      <ActiveToolRow
+        toolCall={makeBashCall({
+          id: "approval-review-1",
+          toolName: "Approval review",
+          toolInput: { reviewId: "approval-review-1" },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Reviewing")).toBeVisible();
+    expect(screen.queryByText("approval-review-1")).toBeNull();
+  });
+
   it("ToolSummaryLine keeps shell calls nested and reveals a shell transcript", async () => {
     const group: ToolGroup = {
       calls: [
@@ -126,6 +141,42 @@ describe("narrative tool row layout classes", () => {
     expect(screen.getByText("Shell")).toBeTruthy();
     expect(container.querySelector("code")?.textContent).toBe(LONG_SHELL_COMMAND);
     expect(screen.getByText("command output")).toBeTruthy();
+  });
+
+  it("ToolSummaryLine shows the persisted approval review outcome", () => {
+    const group: ToolGroup = {
+      calls: [makeBashCall({
+        id: "approval-review-1",
+        toolName: "Approval review",
+        toolInput: { reviewId: "approval-review-1" },
+        output: "Approved",
+        isComplete: true,
+      })],
+    };
+
+    render(<ToolSummaryLine group={group} hasError={false} hasCancelled={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /approval review/i }));
+
+    expect(screen.getByText("Approved")).toBeVisible();
+    expect(screen.queryByText("approval-review-1")).toBeNull();
+  });
+
+  it("ToolSummaryLine identifies an active approval review without exposing its native id", () => {
+    const group: ToolGroup = {
+      calls: [makeBashCall({
+        id: "approval-review-1",
+        toolName: "Approval review",
+        toolInput: { reviewId: "approval-review-1" },
+      })],
+    };
+
+    render(<ToolSummaryLine group={group} hasError={false} hasCancelled={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /approval review/i }));
+
+    expect(screen.getByText("Reviewing")).toBeVisible();
+    expect(screen.queryByText("approval-review-1")).toBeNull();
   });
 
   it("ToolSummaryLine renders duration hydrated from a persisted shell call", () => {

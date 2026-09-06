@@ -49,6 +49,7 @@ export async function sendComposerThreadMessage(
     payload.goalObjective,
     payload.orchestrationMode,
     payload.selectedTextComments,
+    selection.approvalReviewMode,
   );
   if (!sent) throw new Error("Message dispatch failed");
 }

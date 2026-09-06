@@ -87,6 +87,8 @@ export const AgentTurnSchema = z
     status: AgentTurnStatusSchema,
     trigger: AgentTurnTriggerSchema,
     permissionMode: z.enum(["supervised", "full"]),
+    approvalReviewMode: z.enum(["manual", "automatic"]),
+    approvalReviewReason: z.string().min(1).max(128),
     providerIdentities: ProviderIdentitiesSchema,
     startedAt: CanonicalTimestampSchema.nullable(),
     endedAt: CanonicalTimestampSchema.nullable(),

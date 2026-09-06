@@ -25,6 +25,8 @@ import { SessionRuntime } from "../session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../session-runtime.js";
 import type {
   IAgentProvider,
+  IApprovalReviewCapable,
+  ApprovalReviewSupport,
   IGoalCapable,
   ISessionEvictable,
   SessionForker,
@@ -100,6 +102,9 @@ const USAGE_WARMUP_TIMEOUT_MS = 10_000;
 const CODEX_MCP_STARTUP_TIMEOUT_MS = 10_000;
 const USAGE_WARMUP_RETRY_MS = 60_000;
 const CODEX_MIN_VERSION = "0.37.0";
+// The installed 0.153.4 app-server exposes approvalsReviewer plus the gated
+// item/autoApprovalReview lifecycle used by this adapter.
+const CODEX_AUTO_REVIEW_VALIDATED_VERSION = "0.153.4";
 const MAX_PENDING_CHILD_EVENTS = 128;
 const MAX_CHILD_EVENT_DELIVERY_KEYS = 512;
 
@@ -127,6 +132,7 @@ const CODEX_SUPPORTED_CAPABILITIES = [
   "thread-control",
   "child-cancellation",
   "turn-diff",
+  "approval-review",
 ] as const satisfies readonly ProviderCapabilityName[];
 
 const TURN_SCOPED_EVENT_TYPES = new Set<AgentEvent["type"]>([
@@ -573,7 +579,7 @@ function completedAssistantText(item: CompletedItem | undefined): string {
 }
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
-export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
+export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProvider, IApprovalReviewCapable, IGoalCapable, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
   readonly id = "codex" as const;
   readonly descriptor = Object.freeze({
     id: "codex" as const,
@@ -583,6 +589,26 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
   readonly supportsCompletion = false;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 16_000;
+
+  async getApprovalReviewSupport(input: {
+    permissionMode: "full" | "supervised";
+    interactionMode: "plan" | "build";
+    requestedMode: "manual" | "automatic";
+    model: string;
+  }): Promise<ApprovalReviewSupport> {
+    if (input.permissionMode === "full") {
+      return { status: "unavailable", supportedModes: ["manual"], reason: "full-access-bypasses-approval-review", liveChangeScope: "none" };
+    }
+    const { cliPath } = await this.codexPorts.settings.get();
+    const version = checkCodexVersion(cliPath);
+    if (!version.ok) {
+      return { status: "unavailable", supportedModes: ["manual"], reason: "provider-version-unavailable", liveChangeScope: "none" };
+    }
+    if (version.version !== CODEX_AUTO_REVIEW_VALIDATED_VERSION) {
+      return { status: "unavailable", supportedModes: ["manual"], reason: "provider-version-unsupported", liveChangeScope: "none" };
+    }
+    return { status: "available", supportedModes: ["manual", "automatic"], reason: "experimental-api-enabled", liveChangeScope: "none" };
+  }
   /** Path B forker; calls this provider's throwaway app-server side channel. */
   readonly forker: SessionForker = new CleanForker(this);
 
@@ -1069,7 +1095,13 @@ export class CodexProvider extends NodeEvents.EventEmitter implements IAgentProv
     const orchestrationMode = request.orchestrationMode === "proactive" && supportsCodexUltraOrchestration(request.model)
       ? "proactive"
       : "standard";
-    return { model: request.model || undefined, effort: toCodexEffort(request.reasoningLevel, orchestrationMode), ...(fastMode ? { serviceTier: "priority" } : {}) };
+    const effort = toCodexEffort(request.reasoningLevel, orchestrationMode);
+    return {
+      model: request.model || undefined,
+      approvalsReviewer: request.approvalReviewMode === "automatic" ? "auto_review" : "user",
+      ...(effort ? { effort } : {}),
+      ...(fastMode ? { serviceTier: "priority" } : {}),
+    };
   }
 
   private async reconcileCodexSession(turn: PreparedCodexTurn): Promise<CodexSessionState | undefined> {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SelectedTextComment } from "@mcode/contracts";
+import type { ApprovalReviewMode, SelectedTextComment } from "@mcode/contracts";
 import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import { createDefaultComposerAgentSelection } from "../draft/composer-selection-state";
 import type { ComposerExecutionTargetController } from "../execution/useComposerExecutionTarget";
@@ -46,6 +46,7 @@ function submission(
   content: string,
   selectedTextComments: SelectedTextComment[],
   selectedTextCommentEditor?: SelectedTextCommentEditorDraft,
+  approvalReviewMode: ApprovalReviewMode = "manual",
 ): PreparedComposerSubmission {
   return {
     snapshot: {
@@ -55,7 +56,7 @@ function submission(
       selectedTextComments,
       selectedTextCommentEditor,
       attachments: [],
-      selection: createDefaultComposerAgentSelection(),
+      selection: { ...createDefaultComposerAgentSelection(), approvalReviewMode },
       goalPending: false,
     },
     prepared: { content, displayContent: content, browserCaptures: [] },
@@ -101,7 +102,7 @@ describe("dispatchComposerTarget selected-text comments", () => {
       workspaceId: "workspace-1",
       target,
       execution: execution(target),
-      submission: submission("", comments, editor),
+      submission: submission("", comments, editor, "automatic"),
     });
 
     expect(workspaceActions.createAndSendMessage).toHaveBeenCalledWith(
@@ -128,6 +129,7 @@ describe("dispatchComposerTarget selected-text comments", () => {
         selectedTextCommentEditor: editor,
         attachments: [],
       }),
+      "automatic",
     );
   });
 

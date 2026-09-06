@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AttachmentMeta, PermissionMode } from "@/transport";
 import type {
+  ApprovalReviewMode,
   ContextWindowMode,
   MessageMention,
   PreviewAnnotationBundle,
@@ -22,6 +23,7 @@ export interface QueuedMessage {
   attachments: AttachmentMeta[];
   model: string;
   permissionMode: PermissionMode;
+  approvalReviewMode?: ApprovalReviewMode;
   /** Reasoning effort level to apply when the message is sent. */
   reasoningLevel?: ReasoningLevel;
   /** Provider-native proactive delegation mode for this queued turn. */

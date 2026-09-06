@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveComposerCapabilities } from "../composer-capabilities";
+import { resolveComposerCapabilities, supportsApprovalReview } from "../composer-capabilities";
 
 describe("resolveComposerCapabilities", () => {
   it.each([
@@ -52,5 +52,10 @@ describe("resolveComposerCapabilities", () => {
 
   it("keeps provider-neutral Plan discovery when no provider is selected", () => {
     expect(resolveComposerCapabilities({}).map((capability) => capability.id)).toEqual(["plan"]);
+  });
+
+  it("uses descriptor capabilities for Codex and a second provider without provider branches", () => {
+    expect(supportsApprovalReview([{ name: "approval-review", support: "supported" }])).toBe(true);
+    expect(supportsApprovalReview([{ name: "approval-review", support: "unsupported" }])).toBe(false);
   });
 });

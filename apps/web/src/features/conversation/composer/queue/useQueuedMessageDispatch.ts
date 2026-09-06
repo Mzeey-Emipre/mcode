@@ -32,6 +32,8 @@ export function useQueuedMessageDispatch(threadId: string | undefined): {
           message.previewAnnotations,
           message.goalObjective,
           message.orchestrationMode,
+          undefined,
+          message.approvalReviewMode,
         );
         useQueueStore.getState().settleQueuedDispatch(threadId, message.id, sent);
       } catch {

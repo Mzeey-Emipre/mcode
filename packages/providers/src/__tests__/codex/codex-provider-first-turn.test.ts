@@ -254,7 +254,7 @@ describe("CodexProvider first turn on new session", () => {
     expect(server.options.developerInstructions).toContain("does not authorize Mcode thread control");
     expect(sendTurnMock).toHaveBeenCalledWith(
       [{ type: "text", text: childBrief }],
-      { model: "gpt-5.4" },
+      { model: "gpt-5.4", approvalsReviewer: "user" },
     );
     await provider.stopSession("mcode-child-routing");
   });
@@ -361,7 +361,7 @@ describe("CodexProvider first turn on new session", () => {
     expect(lease.status()).toEqual({ active: 1, pending: 0 });
     expect(sendTurnMock).toHaveBeenCalledWith(
       [{ type: "text", text: "inspect the page" }],
-      { model: "gpt-5.4" },
+      { model: "gpt-5.4", approvalsReviewer: "user" },
     );
     expect(appServers.at(-1)?.isAlive).toBe(true);
     const failure = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus);
@@ -1426,7 +1426,7 @@ describe("CodexProvider first turn on new session", () => {
 
     expect(sendTurnMock).toHaveBeenCalledWith(
       [{ type: "text", text: "continue without the failed MCP" }],
-      { model: "gpt-5.4" },
+      { model: "gpt-5.4", approvalsReviewer: "user" },
     );
     expect(readConfigMock).not.toHaveBeenCalled();
     expect(server.isAlive).toBe(true);
@@ -1487,7 +1487,7 @@ describe("CodexProvider first turn on new session", () => {
 
     expect(sendTurnMock).toHaveBeenCalledWith(
       [{ type: "text", text: "continue after the legacy MCP error" }],
-      { model: "gpt-5.4" },
+      { model: "gpt-5.4", approvalsReviewer: "user" },
     );
     expect(readConfigMock).not.toHaveBeenCalled();
     expect(server.isAlive).toBe(true);
@@ -1544,7 +1544,7 @@ describe("CodexProvider first turn on new session", () => {
 
     expect(sendTurnMock).toHaveBeenCalledWith(
       [{ type: "text", text: "continue after MCP cancellation" }],
-      { model: "gpt-5.4" },
+      { model: "gpt-5.4", approvalsReviewer: "user" },
     );
     expect(readConfigMock).not.toHaveBeenCalled();
     expect(server.isAlive).toBe(true);
@@ -1616,7 +1616,7 @@ describe("CodexProvider first turn on new session", () => {
     expect(readConfigMock).toHaveBeenCalledTimes(1);
     expect(sendTurnMock).toHaveBeenCalledWith(
       [{ type: "text", text: "continue after config verification" }],
-      { model: "gpt-5.4" },
+      { model: "gpt-5.4", approvalsReviewer: "user" },
     );
     expect(server.isAlive).toBe(true);
     expect(close).toHaveBeenCalledWith(sessionId);
@@ -1752,7 +1752,7 @@ describe("CodexProvider first turn on new session", () => {
       expect(appServers.at(-1)?.isAlive).toBe(true);
       expect(sendTurnMock).toHaveBeenCalledWith(
         [{ type: "text", text: "hello" }],
-        { model: "gpt-5.4" },
+        { model: "gpt-5.4", approvalsReviewer: "user" },
       );
       expect(readConfigMock).not.toHaveBeenCalled();
       const failures = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus);

@@ -218,14 +218,25 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
   it("starts canonical providers through AgentService without leaving terminal suppression behind", async () => {
     Object.assign(providerStub, {
       id: "cursor" as ProviderId,
+      descriptor: {
+        id: "cursor",
+        capabilities: [{ name: "approval-review", support: "supported" }],
+      },
+      getApprovalReviewSupport: async () => ({
+        status: "available" as const,
+        supportedModes: ["manual", "automatic"] as const,
+        reason: "automatic-review-available",
+        liveChangeScope: "none" as const,
+      }),
     });
-    startAgentServiceIngressForTest(svc, );
+    startAgentServiceIngressForTest(svc);
     const workspace = workspaceRepo.create("test-ws", process.cwd());
     const thread = threadRepo.create(workspace.id, "Cursor Thread", "direct", "main", true, "cursor");
     void svc.sendMessage({
       threadId: thread.id,
       content: "hello",
       permissionMode: "default",
+      approvalReviewMode: "automatic",
       sourceTurnId: "canonical-cursor-turn",
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -233,6 +244,52 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     expect(svc.runtimeAccess().activeThreadIds()).toContain(thread.id);
     expect(providerStub.sendTurn).toHaveBeenCalledWith(expect.objectContaining({
       turnId: "canonical-cursor-turn",
+      permissionMode: "supervised",
+      approvalReviewMode: "automatic",
     }));
+    const request = providerStub.sendTurn.mock.calls[0]?.[0];
+    expect(request).toBeDefined();
+    const persistedTurn = canonicalSink.loadTurnByExecution(request!.turnExecutionId);
+    expect(persistedTurn).toMatchObject({
+      permissionMode: "supervised",
+      approvalReviewMode: "automatic",
+      approvalReviewReason: "automatic-review-available",
+    });
+
+    providerStub.emit("event", {
+      type: AgentEventType.TextDelta,
+      threadId: thread.id,
+      turnExecutionId: request!.turnExecutionId,
+      delta: "Reviewing approval request.",
+    });
+    providerStub.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: thread.id,
+      turnExecutionId: request!.turnExecutionId,
+      toolCallId: "approval-review:test-id",
+      toolName: "Approval review",
+      toolInput: { status: "reviewing" },
+    });
+    const approved: ProviderRuntimeEvent = {
+      event: {
+        type: AgentEventType.ToolResult,
+        threadId: thread.id,
+        turnExecutionId: request!.turnExecutionId,
+        toolCallId: "approval-review:test-id",
+        output: "approved",
+        isError: false,
+      },
+    };
+    providerStub.emit("event", approved);
+    providerStub.emit("event", approved);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const reviewItems = db.prepare(
+      "SELECT id, payload_json FROM canonical_agent_items WHERE id = ?",
+    ).all("toolCall:approval-review:test-id") as Array<{ id: string; payload_json: string }>;
+    expect(reviewItems).toHaveLength(1);
+    expect(JSON.parse(reviewItems[0]!.payload_json)).toMatchObject({
+      narrative: { record: { id: "approval-review:test-id", output_summary: "approved", status: "completed" } },
+    });
+
   });
 });

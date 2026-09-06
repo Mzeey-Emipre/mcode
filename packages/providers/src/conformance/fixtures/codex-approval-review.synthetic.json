@@ -1,0 +1,21 @@
+{
+  "contractVersion": 1,
+  "providerId": "codex",
+  "cliVersion": "synthetic",
+  "protocolVersion": "synthetic-v1",
+  "provenance": "synthetic",
+  "requiredProfiles": ["core", "approval-review"],
+  "scenario": "approval review lifecycle structure",
+  "sourceHash": "4a7d9d6972363eb5bb9d6eab5b88fc78518d75d54c1ba8ce2046fd7c7d34a651",
+  "redaction": { "reviewed": true, "removedFields": ["prompt", "response", "environment", "tool output", "absolute paths"] },
+  "input": {
+    "events": [
+      { "kind": "session", "sequence": 1, "nativeId": "SESSION_REVIEW", "status": "started" },
+      { "kind": "turn", "sequence": 2, "nativeId": "TURN_REVIEW", "status": "started" },
+      { "kind": "item", "sequence": 3, "nativeId": "ITEM_APPROVAL_REVIEW_STARTED", "pairId": "APPROVAL_REVIEW_PAIR", "status": "started" },
+      { "kind": "item", "sequence": 4, "nativeId": "ITEM_APPROVAL_REVIEW_COMPLETED", "pairId": "APPROVAL_REVIEW_PAIR", "status": "completed" },
+      { "kind": "terminal", "sequence": 5, "nativeId": "TURN_REVIEW", "status": "completed" }
+    ]
+  },
+  "expected": { "orderedKinds": ["session", "turn", "item", "item", "terminal"], "terminal": "completed", "toolPairs": [["APPROVAL_REVIEW_PAIR", "APPROVAL_REVIEW_PAIR"]] }
+}

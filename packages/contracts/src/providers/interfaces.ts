@@ -1,5 +1,5 @@
 import type { ProviderRuntimeEvent } from "../events/provider-runtime-event.js";
-import type { InteractionMode, OrchestrationMode } from "../models/enums.js";
+import type { ApprovalReviewMode, InteractionMode, OrchestrationMode, PermissionMode } from "../models/enums.js";
 import type { AttachmentMeta } from "../models/attachment.js";
 import type { MessageMention } from "../models/mention.js";
 import type { GoalLookupResult, GoalState } from "../models/goal.js";
@@ -12,6 +12,7 @@ import type { ContextWindowMode, ReasoningLevel } from "../models/settings.js";
 import type { ProviderModelInfo } from "./models.js";
 import type { ProviderUsageInfo } from "./usage.js";
 import type { SessionForker } from "./session-forker.js";
+import type { Provider } from "../compat/agent-model.js";
 
 /**
  * Identifier for a supported AI provider.
@@ -96,7 +97,9 @@ export interface TurnRequest<P extends ProviderId = ProviderId> {
   model: string;
   /** Fallback model if the primary is unavailable. Undefined disables fallback. */
   fallbackModel?: string;
-  permissionMode: string;
+  permissionMode: PermissionMode;
+  /** Resolved once for this dispatch attempt before provider delivery begins. */
+  approvalReviewMode: ApprovalReviewMode;
   /** Per-Turn interaction state. Plan suppresses Cursor's native auto-answer. */
   interactionMode: InteractionMode;
   /** Requests provider-native proactive delegation without changing reasoning effort. */
@@ -121,6 +124,8 @@ export interface TurnRequest<P extends ProviderId = ProviderId> {
 /** A pluggable agent backend that can run sessions and emit events. */
 export interface IAgentProvider {
   readonly id: ProviderId;
+  /** Static provider capabilities supplied to clients before dispatch. */
+  readonly descriptor: Provider;
 
   /**
    * Whether this provider supports one-shot text completion (e.g. PR draft generation).
@@ -205,15 +210,33 @@ export interface IAgentProvider {
   on(event: "exit_plan_mode", handler: (payload: { threadId: string; planMarkdown: string }) => void): void;
 }
 
+/** Provider-neutral result of inspecting automatic approval review support. */
+export interface ApprovalReviewSupport {
+  status: "available" | "required" | "unavailable";
+  supportedModes: readonly ApprovalReviewMode[];
+  /** Stable provider-neutral reason for this result. */
+  reason: string;
+  /** The initial implementation changes only the turn being dispatched. */
+  liveChangeScope: "turn" | "none";
+}
+
+/** Optional side-effect-free approval-review support inspection. */
+export interface IApprovalReviewCapable extends IAgentProvider {
+  getApprovalReviewSupport(input: {
+    permissionMode: PermissionMode;
+    interactionMode: InteractionMode;
+    requestedMode: ApprovalReviewMode;
+    model: string;
+  }): Promise<ApprovalReviewSupport>;
+}
+
+/** Narrows a provider that can inspect approval-review support without dispatching work. */
+export function isApprovalReviewCapable(provider: IAgentProvider): provider is IApprovalReviewCapable {
+  return typeof (provider as Partial<IApprovalReviewCapable>).getApprovalReviewSupport === "function";
+}
+
 /** Narrowed view of a provider that can interrupt one exact child turn. */
 export interface IChildTurnCancellable extends IAgentProvider {
-  /** Declares exact child-turn cancellation support. */
-  readonly descriptor: {
-    readonly capabilities: ReadonlyArray<{
-      readonly name: string;
-      readonly support: "supported" | "unsupported";
-    }>;
-  };
   /** Interrupt one native child turn while keeping the provider session alive. */
   interruptChildTurn(sessionId: string, nativeThreadId: string, nativeTurnId: string): Promise<void>;
 }

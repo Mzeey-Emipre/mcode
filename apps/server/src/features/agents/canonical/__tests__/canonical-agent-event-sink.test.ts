@@ -11,6 +11,8 @@ import {
   ThoughtSegmentRecordSchema,
   ToolCallRecordSchema,
   AgentEventType,
+  createAgentModelState,
+  reduceAgentEventBatch,
   type ParentNarrativeRecoveryItem,
   type CanonicalAgentEventEnvelope,
   MAX_TURN_RECOVERIES,
@@ -90,6 +92,8 @@ function initialDrafts(): CanonicalAgentEventDraft[] {
           status: "Pending",
           trigger: { kind: "user" },
           permissionMode: "supervised",
+          approvalReviewMode: "manual",
+          approvalReviewReason: "manual-requested",
           providerIdentities: sourceIdentities,
           startedAt: null,
           endedAt: null,
@@ -163,7 +167,11 @@ function terminalDraft(
   };
 }
 
-function startCanonicalParent(sink: CanonicalAgentEventSink, db: Database.Database): void {
+function startCanonicalParent(
+  sink: CanonicalAgentEventSink,
+  db: Database.Database,
+  approvalReview: { mode: "manual" | "automatic"; reason: string } = { mode: "manual", reason: "manual-requested" },
+): void {
   const messageRepo = new MessageRepo(db);
   sink.startParentTurn({
     thread: {
@@ -175,6 +183,8 @@ function startCanonicalParent(sink: CanonicalAgentEventSink, db: Database.Databa
     turnId: TURN_ID,
     executionId: EXECUTION_ID,
     permissionMode: "supervised",
+    approvalReviewMode: approvalReview.mode,
+    approvalReviewReason: approvalReview.reason,
     providerIdentities: [],
     projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "delegate", 1),
   });
@@ -228,6 +238,16 @@ describe("CanonicalAgentEventSink", () => {
     seedThread(db);
     published = vi.fn();
     sink = new CanonicalAgentEventSink(db, published);
+  });
+
+  it("retains the resolved approval-review decision when a turn is read after reopening", () => {
+    startCanonicalParent(sink, db, { mode: "automatic", reason: "automatic-review-available" });
+    const reloaded = new CanonicalAgentEventSink(db, published);
+
+    expect(reloaded.loadTurnByExecution(EXECUTION_ID)).toMatchObject({
+      approvalReviewMode: "automatic",
+      approvalReviewReason: "automatic-review-available",
+    });
   });
 
   it("checkpoints parent narrative beyond one write transaction without interrupting its turn", () => {
@@ -318,12 +338,16 @@ describe("CanonicalAgentEventSink", () => {
   });
 
   it("returns only retained contiguous canonical deltas after known revisions", () => {
+    const drafts = initialDrafts().map((draft, index) => ({
+      ...draft,
+      eventId: ["recovery-z", "recovery-a", "recovery-m"][index]!,
+    }));
     sink.commit({
       threadId: THREAD_ID,
       turnId: TURN_ID,
       executionId: EXECUTION_ID,
       phase: "running",
-      events: initialDrafts(),
+      events: drafts,
     });
 
     const recovery = sink.recoverThread(THREAD_ID, {
@@ -340,6 +364,16 @@ describe("CanonicalAgentEventSink", () => {
     expect(recovery.mode === "delta"
       ? recovery.events.every((event) => event.durableRevision === 1)
       : false).toBe(true);
+    expect(recovery.mode === "delta"
+      ? recovery.events.map((event) => event.acceptedSequence)
+      : []).toEqual([1, 2, 3]);
+    expect(reduceAgentEventBatch(
+      createAgentModelState(),
+      recovery.mode === "delta" ? recovery.events : [],
+    )).toMatchObject({
+      outcome: "applied",
+      state: { turns: { [TURN_ID]: { status: "Running" } } },
+    });
   });
 
   it("returns a declared canonical snapshot when retained revisions contain a gap", () => {

@@ -52,7 +52,7 @@ import type {
   WorkspaceEnvironmentActionSlotInput,
 } from "../models/workspace-environment.js";
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
-import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
+import { ApprovalReviewModeSchema, ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
 import { PaginatedMessagesSchema } from "../models/message.js";
 import { MessageMentionsSchema } from "../models/mention.js";
 import { SelectedTextCommentsSchema } from "../models/selected-text-comment.js";
@@ -315,6 +315,7 @@ export const SendMessageSchema = lazySchema(() => z.object({
     displayContent: z.string().optional(),
     model: z.string().optional(),
     permissionMode: PermissionModeSchema.optional(),
+    approvalReviewMode: ApprovalReviewModeSchema.optional(),
     attachments: z.array(AttachmentMetaSchema()).max(MAX_ATTACHMENTS).optional(),
     /** Structured Preview Annotation bundle, counted separately from normal attachments. */
     previewAnnotations: PreviewAnnotationBundleSchema().optional(),
@@ -370,6 +371,7 @@ export const CreateAndSendSchema = lazySchema(() =>
     displayContent: z.string().optional(),
     model: z.string(),
     permissionMode: PermissionModeSchema.optional(),
+    approvalReviewMode: ApprovalReviewModeSchema.optional(),
     mode: ThreadModeSchema.optional(),
     branch: z.string().optional(),
     worktreeBranchMode: z.enum(["branchless", "named"]).optional(),

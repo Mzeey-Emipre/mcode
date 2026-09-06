@@ -162,6 +162,8 @@ describe("canonical agent event residency guards", () => {
           status: "Pending",
           trigger: { kind: "child", sourceThreadId: "parent-thread", sourceTurnId: "parent-turn" },
           permissionMode: "full",
+          approvalReviewMode: "manual",
+          approvalReviewReason: "manual-requested",
           providerIdentities: [],
           startedAt: null,
           endedAt: null,

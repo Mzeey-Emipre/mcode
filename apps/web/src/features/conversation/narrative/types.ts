@@ -1,5 +1,5 @@
 import type { ToolCall, HookExecution } from "@/transport/types";
-import type { TurnOutcome } from "@mcode/contracts";
+import type { ApprovalReviewMode, TurnOutcome } from "@mcode/contracts";
 import type { SubagentLifecycle } from "./subagent-lifecycle";
 
 /** Roster view associated with a sub-agent activity control. */
@@ -96,6 +96,8 @@ export interface TurnFooterSummary {
   outcome?: TurnOutcome | null;
   /** Exact execution identity used by the existing retry command. */
   outcomeExecutionId?: string | null;
+  /** Frozen review selection persisted with the canonical turn. */
+  approvalReview?: { mode: ApprovalReviewMode; reason: string };
 }
 
 /** Return value of `buildNarrativeItems` — items plus aggregate counts. */

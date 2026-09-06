@@ -618,6 +618,8 @@ export const canonicalAgentTurns = sqliteTable(
     status: text("status").notNull(),
     triggerJson: text("trigger_json").notNull(),
     permissionMode: text("permission_mode").notNull(),
+    approvalReviewMode: text("approval_review_mode").notNull().default("manual"),
+    approvalReviewReason: text("approval_review_reason").notNull().default("manual-requested"),
     providerIdentitiesJson: text("provider_identities_json").notNull().default("[]"),
     startedAt: text("started_at"),
     endedAt: text("ended_at"),

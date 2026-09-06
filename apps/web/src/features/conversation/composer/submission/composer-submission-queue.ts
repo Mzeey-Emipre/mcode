@@ -99,6 +99,7 @@ function createPersistentQueuePayload(
     attachments: submission.attachmentMetas,
     model: selection.modelId,
     permissionMode: selection.permissionMode,
+    approvalReviewMode: selection.approvalReviewMode,
     reasoningLevel: selection.reasoning,
     orchestrationMode: selection.orchestrationMode,
     provider: selection.provider,

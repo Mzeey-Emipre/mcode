@@ -44,6 +44,7 @@ import {
   type ParentTurnDurability,
 } from "./parent-turn-durability.js";
 import { appendSelectedTextComments } from "./selected-text-comment-append.js";
+import { ApprovalReviewPolicy, type ApprovalReviewDecision } from "./approval-review-policy.js";
 
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
 
@@ -169,6 +170,7 @@ interface PersistedAttachmentData {
 
 /** Owns complete message admission, durable parent-turn projection, and dispatch preparation. */
 export class TurnAdmissionDispatchCoordinator {
+  private readonly approvalReviews = new ApprovalReviewPolicy();
   constructor(
     private readonly threads: ThreadRepo,
     private readonly workspaces: WorkspaceRepo,
@@ -403,13 +405,20 @@ export class TurnAdmissionDispatchCoordinator {
     runtime: TurnRuntimeAdmissionAuthority,
   ): Promise<PreparedTurnDispatch> {
     const cwd = this.resolveWorkingDirectory(prepared);
+    const review = await this.approvalReviews.resolve({
+      requestedMode: prepared.command.approvalReviewMode,
+      permissionMode: this.effectivePermissionMode(prepared.command.permissionMode, prepared.thread.permission_mode ?? "supervised"),
+      interactionMode: this.effectiveInteractionMode(prepared.command) ?? "build",
+      model: prepared.command.model ?? "claude-sonnet-4-6",
+      provider: prepared.provider,
+    });
     runtime.activate(lease);
     const attachmentData = await this.persistAttachments(prepared);
     const sourceTurnId = prepared.command.sourceTurnId ?? NodeCrypto.randomUUID();
-    this.startParentTurn(prepared, lease, sourceTurnId, attachmentData);
+    this.startParentTurn(prepared, lease, sourceTurnId, attachmentData, review);
     this.publishCommittedEffects(prepared, sourceTurnId);
     const wirePayload = this.buildWirePayload(prepared);
-    const request = await this.buildTurnRequest(prepared, lease, sourceTurnId, attachmentData, cwd, wirePayload);
+    const request = await this.buildTurnRequest(prepared, lease, sourceTurnId, attachmentData, cwd, wirePayload, review);
     return {
       kind: "dispatch",
       lease,
@@ -677,6 +686,7 @@ export class TurnAdmissionDispatchCoordinator {
     lease: TurnRuntimeLease,
     sourceTurnId: string,
     attachments: PersistedAttachmentData,
+    review: ApprovalReviewDecision,
   ): void {
     const command = prepared.command;
     const wasUserCompleted = prepared.thread.user_completed_at !== null;
@@ -693,6 +703,8 @@ export class TurnAdmissionDispatchCoordinator {
       turnId: sourceTurnId,
       executionId: lease.turnExecutionId,
       permissionMode: this.effectivePermissionMode(command.permissionMode, prepared.thread.permission_mode ?? "supervised"),
+      approvalReviewMode: review.mode,
+      approvalReviewReason: review.reason,
       providerIdentities: this.resumeIdentities(prepared),
       retryOfExecutionId: command.retryOfExecutionId,
       projectUserMessage: () => {
@@ -888,6 +900,7 @@ export class TurnAdmissionDispatchCoordinator {
     attachments: PersistedAttachmentData,
     cwd: string,
     message: string,
+    review: ApprovalReviewDecision,
   ): Promise<TurnRequest> {
     const settings = await this.settings.get();
     const model = prepared.command.model ?? "claude-sonnet-4-6";
@@ -904,7 +917,8 @@ export class TurnAdmissionDispatchCoordinator {
       cwd,
       model,
       fallbackModel: this.fallbackModel(settings, model),
-      permissionMode: prepared.command.permissionMode ?? "default",
+      permissionMode: this.effectivePermissionMode(prepared.command.permissionMode, prepared.thread.permission_mode ?? "supervised"),
+      approvalReviewMode: review.mode,
       interactionMode: this.effectiveInteractionMode(prepared.command) ?? "build",
       orchestrationMode: prepared.command.orchestrationMode ?? prepared.thread.orchestration_mode ?? "standard",
       attachments: attachments.persisted.length > 0 ? attachments.persisted : undefined,

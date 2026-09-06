@@ -246,6 +246,7 @@ type CopilotClientOptions = NonNullable<ConstructorParameters<typeof CopilotClie
 @injectable()
 export class CopilotProvider extends NodeEvents.EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CopilotSessionState> {
   readonly id: ProviderId = "copilot";
+  readonly descriptor = Object.freeze({ id: "copilot" as const, capabilities: [] });
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 16_000;

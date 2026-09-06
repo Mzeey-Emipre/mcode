@@ -377,10 +377,12 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
     this.persistTurnStatement = db.prepare(`
       INSERT INTO canonical_agent_turns (
         id, thread_id, execution_id, status, trigger_json, permission_mode,
-        provider_identities_json, started_at, ended_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        approval_review_mode, approval_review_reason, provider_identities_json, started_at, ended_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
+        approval_review_mode = excluded.approval_review_mode,
+        approval_review_reason = excluded.approval_review_reason,
         provider_identities_json = excluded.provider_identities_json,
         started_at = excluded.started_at,
         ended_at = excluded.ended_at,
@@ -2375,6 +2377,8 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       turnId: string;
       executionId: string;
       permissionMode: "supervised" | "full";
+      approvalReviewMode?: "manual" | "automatic";
+      approvalReviewReason?: string;
       providerIdentities: readonly ProviderIdentity[];
     },
     message: Message,
@@ -2418,6 +2422,8 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
             status: "Pending",
             trigger: { kind: "user" },
             permissionMode: input.permissionMode,
+            approvalReviewMode: input.approvalReviewMode ?? "manual",
+            approvalReviewReason: input.approvalReviewReason ?? "manual-requested",
             providerIdentities: sourceIdentities,
             startedAt: null,
             endedAt: null,
@@ -3114,6 +3120,8 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       parsed.status,
       JSON.stringify(parsed.trigger),
       parsed.permissionMode,
+      parsed.approvalReviewMode,
+      parsed.approvalReviewReason,
       JSON.stringify(parsed.providerIdentities),
       parsed.startedAt,
       parsed.endedAt,
@@ -3235,6 +3243,8 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       status: row.status,
       trigger: JSON.parse(String(row.trigger_json)),
       permissionMode: row.permission_mode,
+      approvalReviewMode: row.approval_review_mode,
+      approvalReviewReason: row.approval_review_reason,
       providerIdentities: JSON.parse(String(row.provider_identities_json)),
       startedAt: row.started_at,
       endedAt: row.ended_at,

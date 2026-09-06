@@ -46,11 +46,13 @@ export const ENABLED_PROVIDER_CONFORMANCE: readonly ProviderConformanceRegistrat
       "thread-control",
       "child-cancellation",
       "turn-diff",
+      "approval-review",
     ],
     fixtureFiles: [
       fixtureFile("codex"),
       namedFixtureFile("codex-core.captured.json"),
       namedFixtureFile("codex-adversarial.synthetic.json"),
+      namedFixtureFile("codex-approval-review.synthetic.json"),
     ],
     supportedVersions: [{
       component: "codex-cli",

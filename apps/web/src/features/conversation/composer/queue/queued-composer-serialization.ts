@@ -34,6 +34,7 @@ function serializeQueuedSelection(
   QueuedMessage,
   | "model"
   | "permissionMode"
+  | "approvalReviewMode"
   | "reasoningLevel"
   | "orchestrationMode"
   | "provider"
@@ -45,6 +46,7 @@ function serializeQueuedSelection(
   return {
     model: selection.modelId,
     permissionMode: selection.permissionMode,
+    approvalReviewMode: selection.approvalReviewMode,
     reasoningLevel: selection.reasoning,
     orchestrationMode: selection.orchestrationMode,
     provider: selection.provider,

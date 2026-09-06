@@ -11,8 +11,6 @@ export const CODEX_IGNORED_NOTIFICATIONS: Readonly<Record<string, string>> = {
   "skills/changed": "skills-refresh-not-subscribed",
   "item/fileChange/outputDelta": "file-change-completion-is-authoritative",
   "item/reasoning/summaryPartAdded": "reasoning-text-deltas-are-authoritative",
-  "item/autoApprovalReview/started": "automatic-review-slice-deferred",
-  "item/autoApprovalReview/completed": "automatic-review-slice-deferred",
   "item/mcpToolCall/progress": "tool-completion-is-authoritative",
   "remoteControl/status/changed": "remote-control-not-used",
   "thread/status/changed": "turn-lifecycle-is-authoritative",
