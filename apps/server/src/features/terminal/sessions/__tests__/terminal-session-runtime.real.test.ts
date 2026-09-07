@@ -20,6 +20,17 @@ const TEST_PLATFORM: TerminalPlatform =
       ? "macos"
       : "linux";
 const nativeRequire = NodeModule.createRequire(import.meta.url);
+const desktopRequire = NodeModule.createRequire(
+  NodePath.resolve(process.cwd(), "../desktop/package.json"),
+);
+
+function resolveElectronExecutable(): string {
+  const executable = desktopRequire("electron") as string;
+  if (!NodeFS.existsSync(executable)) {
+    throw new Error("Electron executable is required for the isolated PTY host");
+  }
+  return executable;
+}
 
 function launchSnapshot() {
   const executable = TEST_PLATFORM === "windows" ? process.env.ComSpec ?? "cmd.exe" : "/bin/bash";
@@ -167,7 +178,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
               platform: process.platform,
               architecture: process.arch,
               entryPath,
-              executablePath: process.execPath,
+              executablePath: resolveElectronExecutable(),
               env: {
                 ...process.env,
                 ELECTRON_RUN_AS_NODE: "1",

@@ -19,6 +19,9 @@ import { PtyHostSupervisor, type PtyHostChild } from "../pty-host-supervisor.js"
 
 const SECOND_SESSION_ID = "12345678-abcd-4abc-8abc-abcdefabcdef";
 const nativeRequire = NodeModule.createRequire(import.meta.url);
+const desktopRequire = NodeModule.createRequire(
+  NodePath.resolve(process.cwd(), "../desktop/package.json"),
+);
 const TEST_PLATFORM: TerminalPlatform =
   process.platform === "win32"
     ? "windows"
@@ -76,6 +79,14 @@ function resolveNodeExecutable(): string {
     }
   }
   throw new Error("Node.js is required for the PTY workload corpus");
+}
+
+function resolveElectronExecutable(): string {
+  const executable = desktopRequire("electron") as string;
+  if (!NodeFS.existsSync(executable)) {
+    throw new Error("Electron executable is required for the isolated PTY host");
+  }
+  return executable;
 }
 
 function workloadCommand(scriptPath: string, nodeExecutable: string): Buffer {
@@ -182,7 +193,7 @@ async function waitForChildInspection(
 describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
   "isolated PTY host supervisor",
   () => {
-    it("runs a real contained PTY through a separate versioned Node host", async () => {
+    it("runs a real contained PTY through the isolated Electron host", async () => {
       const repoRoot = NodePath.resolve(process.cwd(), "../..");
       const devDir = NodePath.join(repoRoot, ".dev");
       NodeFS.mkdirSync(devDir, { recursive: true });
@@ -220,7 +231,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
               platform: process.platform,
               architecture: process.arch,
               entryPath,
-              executablePath: process.execPath,
+              executablePath: resolveElectronExecutable(),
               env: {
                 ...process.env,
                 ELECTRON_RUN_AS_NODE: "1",

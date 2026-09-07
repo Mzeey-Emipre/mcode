@@ -395,7 +395,7 @@ describe("automatic Project Setup", () => {
       { id: firstQueuedTurn.id, state: "cancelled" },
       { messageId: "message-2", state: "queued" },
     ]);
-    expect(db.prepare("SELECT id FROM messages WHERE id = 'message-1'").get()).toBeUndefined();
+    expect(db.prepare("SELECT id FROM messages WHERE id = 'message-1'").get()).toBeNull();
     expect(db.prepare("SELECT id FROM messages WHERE id = 'message-2'").get()).toMatchObject({ id: "message-2" });
     expect(close).not.toHaveBeenCalled();
   });

@@ -1,9 +1,14 @@
 import "reflect-metadata";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { SkillService, codexPluginNameFromSkillPath } from "../skill-service.js";
+
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => process.env["HOME"] ?? actual.homedir() };
+});
 
 function tmp(): string {
   return NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "skill-svc-"));

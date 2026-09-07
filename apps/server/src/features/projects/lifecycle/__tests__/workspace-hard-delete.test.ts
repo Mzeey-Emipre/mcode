@@ -120,7 +120,7 @@ describe("WorkspaceRepo - soft/hard delete", () => {
     expect(result).toBe(true);
 
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("hardDelete cascades to all threads (active and soft-deleted)", () => {
@@ -298,7 +298,7 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
 
     // Workspace should be fully gone
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("keeps workspace in soft-deleted state when worktree cleanup is pending", () => {
@@ -328,7 +328,7 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
     workspaceService.delete(ws.id);
 
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("does not enqueue duplicate cleanup jobs for already-soft-deleted threads with pending jobs", () => {
@@ -449,7 +449,7 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
 
     // Workspace should now be fully gone
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("does NOT hard-delete workspace if other cleanup jobs remain", async () => {
@@ -554,7 +554,7 @@ describe("CleanupWorker - startup reconciliation", () => {
     worker.reconcileOnStartup();
 
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("does not touch active workspaces during reconciliation", () => {
@@ -765,7 +765,7 @@ describe("Workspace delete - cross-workspace fork lineage", () => {
 
     // Both threads should be gone (cascade from workspace hardDelete)
     const row = db.prepare("SELECT id FROM threads WHERE id = ?").get(t2.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 });
 
@@ -875,7 +875,7 @@ describe("CleanupWorker - missing directory handling", () => {
 
     // Thread should still be hard-deleted (cleanup succeeded)
     const thread = db.prepare("SELECT id FROM threads WHERE id = ?").get(t1.id);
-    expect(thread).toBeUndefined();
+    expect(thread).toBeNull();
     // Cleanup job should be removed
     expect(cleanupJobRepo.countByWorkspacePath("/tmp/ws")).toBe(0);
   });
@@ -900,7 +900,7 @@ describe("CleanupWorker - missing directory handling", () => {
 
     // Should complete without error, thread hard-deleted
     const thread = db.prepare("SELECT id FROM threads WHERE id = ?").get(t1.id);
-    expect(thread).toBeUndefined();
+    expect(thread).toBeNull();
     expect(mockGitWorktrees.removeWorktree).toHaveBeenCalledWith(
       "/tmp/gone-ws",
       "x",

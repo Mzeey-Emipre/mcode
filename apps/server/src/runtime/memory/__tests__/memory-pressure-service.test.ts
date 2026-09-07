@@ -4,7 +4,7 @@ import { getDefaultSettings } from "@mcode/contracts";
 import { MemoryPressureService } from "../memory-pressure-service.js";
 import type { RuntimeMemoryMeasurement } from "../runtime-memory-sampler.js";
 
-const db = { pragma: vi.fn() } as unknown as import("bun:sqlite").Database;
+const db = { run: vi.fn() } as unknown as import("bun:sqlite").Database;
 
 function settingsWithHeapBudget(getHeapMb: () => number) {
   return {
@@ -141,8 +141,8 @@ describe("MemoryPressureService", () => {
 
     await vi.advanceTimersByTimeAsync(30_000);
 
-    expect(db.pragma).toHaveBeenCalledWith("optimize");
-    expect(db.pragma).toHaveBeenCalledWith("shrink_memory");
+    expect(db.run).toHaveBeenCalledWith("PRAGMA optimize");
+    expect(db.run).toHaveBeenCalledWith("PRAGMA shrink_memory");
   });
 
   it("uses the background cache budget and restores the active budget", async () => {
@@ -151,9 +151,9 @@ describe("MemoryPressureService", () => {
     service.markBackground();
 
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(db.pragma).toHaveBeenCalledWith("cache_size = -500");
+    expect(db.run).toHaveBeenCalledWith("PRAGMA cache_size = -500");
 
     service.markForeground();
-    expect(db.pragma).toHaveBeenCalledWith("cache_size = -2048");
+    expect(db.run).toHaveBeenCalledWith("PRAGMA cache_size = -2048");
   });
 });

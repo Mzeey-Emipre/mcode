@@ -3,7 +3,7 @@ import * as NodeHTTP from "node:http";
 import { createReliabilityHarnessAdapter, readReliabilityHarnessCapability } from "../control.js";
 
 function databaseStub() {
-  return { pragma: vi.fn() } as never;
+  return { run: vi.fn() } as never;
 }
 
 describe("reliability harness server adapter", () => {
@@ -32,7 +32,7 @@ describe("reliability harness server adapter", () => {
     await adapter.handleRequest(request, response, new Set() as never);
 
     expect(response.writeHead).toHaveBeenCalledWith(401);
-    expect(database.pragma).not.toHaveBeenCalled();
+    expect(database.run).not.toHaveBeenCalled();
   });
 
   it("publishes a deterministic assistant prefix only after capability authentication", async () => {
@@ -126,7 +126,7 @@ describe("reliability harness server adapter", () => {
     );
 
     expect(response.writeHead).toHaveBeenCalledWith(202, expect.any(Object));
-    expect(database.pragma).toHaveBeenCalledWith("query_only = ON");
+    expect(database.run).toHaveBeenCalledWith("PRAGMA query_only = ON");
   });
 
   it("executes transport loss and bounded server lifecycle controls", async () => {

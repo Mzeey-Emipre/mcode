@@ -266,7 +266,7 @@ function build(options: {
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as PlanQuestionAnswersRepo;
   const db = options.db ?? ({
-    name: ":memory:",
+    filename: ":memory:",
     transaction: vi.fn((fn: Function) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
   } as unknown as Database);

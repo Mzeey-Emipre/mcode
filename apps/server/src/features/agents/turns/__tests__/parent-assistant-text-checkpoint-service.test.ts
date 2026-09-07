@@ -207,7 +207,7 @@ describe("ParentAssistantTextCheckpointService", () => {
 
   it("does not disable journaling when a persistent database path cannot be resolved", () => {
     const persistentDatabase = {
-      name: "",
+      filename: "",
     } as unknown as Database;
 
     expect(() => new ParentAssistantTextCheckpointService(persistentDatabase))

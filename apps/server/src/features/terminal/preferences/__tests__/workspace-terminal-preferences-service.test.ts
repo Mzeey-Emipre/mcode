@@ -43,7 +43,7 @@ describe("WorkspaceTerminalPreferencesService", () => {
     workspaces.hardDelete(workspace.id);
     expect(db.prepare(
       "SELECT workspace_id FROM workspace_terminal_preferences WHERE workspace_id = ?",
-    ).get(workspace.id)).toBeUndefined();
+    ).get(workspace.id)).toBeNull();
   });
 
   it("rejects missing workspaces and invalid profile references", () => {

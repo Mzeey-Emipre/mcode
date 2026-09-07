@@ -295,7 +295,7 @@ export class ParentAssistantTextCheckpointService {
           WHERE execution_id = parent_assistant_text_checkpoints.execution_id
             AND terminal_outcome IS NULL
         )
-    `).run(executionId).changes === 1;
+    `).run(executionId).changes > 0;
   }
 
   /** Remove the journal after its equivalent canonical projection commits. */

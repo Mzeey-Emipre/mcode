@@ -56,16 +56,16 @@ it("upgrades an existing nightly database without rewriting assistant history or
     db.prepare("INSERT INTO threads (id, workspace_id, title, branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run("thread-1", "ws-1", "Existing nightly", "main", now, now);
     db.prepare("INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)").run("message-1", "thread-1", "assistant", "Existing answer", now, 1);
     const snapshot = new TurnSnapshotRepo(db).create({ messageId: "message-1", threadId: "thread-1", refBefore: "before", refAfter: "after", filesChanged: ["a.txt"], worktreePath: null });
-    db.close();
+    db.close(true);
 
     process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
     db = openDatabase({ dbPath });
     expect(db.prepare("SELECT content, sequence FROM messages WHERE id = ?").get("message-1")).toEqual({ content: "Existing answer", sequence: 1 });
     expect(new TurnSnapshotRepo(db).getById(snapshot.id)).toEqual(snapshot);
     expect(db.prepare("SELECT count(*) AS count FROM turn_diff_snapshots").get()).toEqual({ count: 0 });
-    expect(db.pragma("foreign_key_check")).toEqual([]);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   } finally {
-    if (db.open) db.close();
+    db.close(true);
     if (originalMigrationsDirectory === undefined) delete process.env.MCODE_DRIZZLE_MIGRATIONS_DIR;
     else process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = originalMigrationsDirectory;
     NodeFS.rmSync(directory, { recursive: true, force: true });

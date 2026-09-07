@@ -306,7 +306,7 @@ function buildService(
   } as unknown as PlanQuestionAnswersRepo;
 
   const db = {
-    name: ":memory:",
+    filename: ":memory:",
     // Bun SQLite's transaction() returns a wrapped function; calling it executes the callback
     transaction: vi.fn((fn: Function) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
