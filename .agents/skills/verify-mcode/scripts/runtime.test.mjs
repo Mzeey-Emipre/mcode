@@ -5,13 +5,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
 
-import { assertRuntimeFreshness, isOpenCodeSessionInvalidatedEvent, isRuntimeHarnessEvidenceFile } from "./runtime.mjs";
+import { assertRuntimeFreshness, isOpenCodeSessionInvalidatedEvent, isRuntimeHarnessEvidenceFile, runBun } from "./runtime.mjs";
 
 const CLI = NodePath.join(import.meta.dirname, "verify-mcode.mjs");
 const BROWSER_PROOF = NodePath.join(import.meta.dirname, "browser-opencode-proof.mjs");
 const BUN = process.env.BUN_EXE || "bun";
 
-function runBun(args) {
+function runBunCommand(args) {
   return new Promise((resolve, reject) => {
     const child = NodeChildProcess.spawn(BUN, args, { stdout: "pipe", stderr: "pipe", windowsHide: true });
     let stdout = "";
@@ -24,8 +24,8 @@ function runBun(args) {
 }
 
 NodeTest.test("lists and validates the OpenCode resume proof contract without a provider call", async () => {
-  const help = await runBun([CLI, "runtime", "--help"]);
-  const invalid = await runBun([
+  const help = await runBunCommand([CLI, "runtime", "--help"]);
+  const invalid = await runBunCommand([
     CLI,
     "runtime",
     "live",
@@ -42,9 +42,9 @@ NodeTest.test("lists and validates the OpenCode resume proof contract without a 
 });
 
 NodeTest.test("rejects invalid runtime check phases before any check runs", async () => {
-  const unknown = await runBun([CLI, "runtime", "check", "--phase", "unknown"]);
-  const missing = await runBun([CLI, "runtime", "check", "--phase"]);
-  const repeated = await runBun([CLI, "runtime", "check", "--phase", "contract", "--phase", "contract"]);
+  const unknown = await runBunCommand([CLI, "runtime", "check", "--phase", "unknown"]);
+  const missing = await runBunCommand([CLI, "runtime", "check", "--phase"]);
+  const repeated = await runBunCommand([CLI, "runtime", "check", "--phase", "contract", "--phase", "contract"]);
 
   NodeAssertStrict.equal(unknown.code, 1);
   NodeAssertStrict.match(unknown.stdout, /--phase must be runtime, provider, contract, or ui/);
@@ -52,6 +52,33 @@ NodeTest.test("rejects invalid runtime check phases before any check runs", asyn
   NodeAssertStrict.match(missing.stdout, /Missing value for --phase/);
   NodeAssertStrict.equal(repeated.code, 1);
   NodeAssertStrict.match(repeated.stdout, /Duplicate phase contract/);
+});
+
+NodeTest.test("hides Windows consoles for verification check subprocesses", async () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runtime-run-bun-"));
+  const logPath = NodePath.join(directory, "check.log");
+  const bun = globalThis.Bun;
+  let options;
+  globalThis.Bun = {
+    ...bun,
+    spawn(value) {
+      options = value;
+      return {
+        stdout: new Response("").body,
+        stderr: new Response("").body,
+        exited: Promise.resolve(0),
+      };
+    },
+  };
+
+  try {
+    const result = await runBun(directory, ["--version"], logPath);
+    NodeAssertStrict.equal(result.exitCode, 0);
+    NodeAssertStrict.equal(options.windowsHide, true);
+  } finally {
+    globalThis.Bun = bun;
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 NodeTest.test("runtime freshness includes bundled workspace dependencies but ignores test-only and unrelated files", () => {
@@ -86,8 +113,8 @@ NodeTest.test("runtime freshness includes bundled workspace dependencies but ign
 });
 
 NodeTest.test("requires confirmation before the browser proof starts Electron", async () => {
-  const help = await runBun([BROWSER_PROOF, "--help"]);
-  const missingConfirmation = await runBun([BROWSER_PROOF]);
+  const help = await runBunCommand([BROWSER_PROOF, "--help"]);
+  const missingConfirmation = await runBunCommand([BROWSER_PROOF]);
 
   NodeAssertStrict.equal(help.code, 0);
   NodeAssertStrict.match(help.stdout, /--confirm-provider-call/);

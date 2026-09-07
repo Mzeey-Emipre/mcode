@@ -436,7 +436,8 @@ async function check(repoRoot, phaseSelectors = []) {
   };
 }
 
-async function runBun(repoRoot, args, logPath) {
+/** Runs one Bun verification command and records its combined output. */
+export async function runBun(repoRoot, args, logPath) {
   let stdout = "";
   let stderr = "";
   let exitCode = 1;
@@ -447,6 +448,7 @@ async function runBun(repoRoot, args, logPath) {
       env: childCommandEnvironment(),
       stdout: "pipe",
       stderr: "pipe",
+      windowsHide: true,
     });
     [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   } catch (error) {
