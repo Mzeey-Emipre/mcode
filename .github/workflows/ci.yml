@@ -96,6 +96,7 @@ jobs:
             ${{ runner.os }}-bun-runtime-${{ hashFiles('package.json') }}-lock-
       - run: bun install --frozen-lockfile
       - run: bun run lint
+      - run: bun run lint:architecture
 
   test:
     name: Test
