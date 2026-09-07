@@ -22,7 +22,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "bun run --cwd packages/oxlint-plugin build && oxlint",
-    "lint:architecture": "dependency-cruiser apps packages",
+    "lint:architecture": "bun --bun dependency-cruiser apps packages",
     "test:oxlint-plugin": "bun --cwd packages/oxlint-plugin test",
     "lint:deadcode": "knip",
     "typecheck": "turbo run typecheck",
