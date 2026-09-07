@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["apps/web/src/*"],
+      "@mcode/agent-model": ["packages/agent-model/src"],
+      "@mcode/browser-conformance": ["packages/browser-conformance/src"],
+      "@mcode/contracts": ["packages/contracts/src"],
+      "@mcode/contracts/snapshot": ["packages/contracts/src/snapshot.ts"],
+      "@mcode/providers": ["packages/providers/src"],
+      "@mcode/providers/conformance": ["packages/providers/src/conformance/index.ts"],
+      "@mcode/providers/server-compat/session-runtime": ["packages/providers/src/server-compat/session-runtime.ts"],
+      "@mcode/server": ["apps/server/src"],
+      "@mcode/shared": ["packages/shared/src"],
+      "@mcode/shared/browser-preview-redact": ["packages/shared/src/browser-preview/redact.ts"],
+      "@mcode/shared/model-context": ["packages/shared/src/model-context/index.ts"],
+      "@mcode/shared/model-effort": ["packages/shared/src/model-effort/index.ts"],
+      "@mcode/shared/node/host-runtime": ["packages/shared/src/node/host-runtime.ts"],
+      "@mcode/shared/usage": ["packages/shared/src/usage/index.ts"],
+      "@mcode/thread-orchestration": ["packages/thread-orchestration/src"],
+    }
+  },
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "packages/**/*.tsx"]
+}

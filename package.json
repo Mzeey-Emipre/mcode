@@ -22,6 +22,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "bun run --cwd packages/oxlint-plugin build && oxlint",
+    "lint:architecture": "bun --bun dependency-cruiser apps packages",
     "test:oxlint-plugin": "bun --cwd packages/oxlint-plugin test",
     "lint:deadcode": "knip",
     "typecheck": "turbo run typecheck",
@@ -46,6 +47,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.17",
+    "dependency-cruiser": "18.2.0",
     "esbuild": "^0.27.7",
     "knip": "^6.33.0",
     "opensrc": "0.7.3",
