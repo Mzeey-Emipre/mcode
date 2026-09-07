@@ -4,14 +4,18 @@
  * memory before the process reaches an unrecoverable heap limit.
  */
 
-import * as NodeV8 from "node:v8";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { logger } from "@mcode/shared";
+import { SettingsService } from "../../features/settings/settings-service.js";
 import {
   applySQLiteCacheBudget,
   optimizeSQLiteConnection,
 } from "../persistence/sqlite/sqlite-connection-policy.js";
+import {
+  sampleRuntimeMemory,
+  type RuntimeMemoryMeasurement,
+} from "./runtime-memory-sampler.js";
 
 /**
  * Idle state levels, from most active to most aggressive reclamation.
@@ -21,22 +25,22 @@ import {
  */
 type IdleState = "active" | "warm-idle" | "background-idle";
 
-/** Active heap pressure level derived from V8 used heap divided by heap limit. */
+/** Active server-memory pressure level derived from measured use and its budget. */
 export type MemoryPressureLevel = "normal" | "warning" | "critical";
 
-/** Heap pressure snapshot broadcast to provider and pool shedding hooks. */
+/** Server-memory pressure snapshot broadcast to provider and pool shedding hooks. */
 export interface MemoryPressureSnapshot {
-  /** Current heap pressure level. */
+  /** Current server-memory pressure level. */
   level: MemoryPressureLevel;
-  /** V8 used heap bytes at the sample. */
-  usedHeapBytes: number;
-  /** V8 heap size limit bytes. */
-  heapLimitBytes: number;
-  /** Used heap divided by heap limit. */
+  /** Whether the sample is V8 heap use or Bun process RSS. */
+  source: RuntimeMemoryMeasurement["source"];
+  /** Measured memory bytes at the sample. */
+  usedBytes: number;
+  /** V8 heap limit or Bun's configured soft process budget in bytes. */
+  budgetBytes: number;
+  /** Measured bytes divided by the admission budget. */
   ratio: number;
 }
-
-type HeapStats = Pick<ReturnType<typeof NodeV8.getHeapStatistics>, "used_heap_size" | "heap_size_limit">;
 
 /** Warm idle delay: 30 seconds after last agent finishes. */
 const WARM_IDLE_DELAY_MS = 30_000;
@@ -45,7 +49,7 @@ const WARM_IDLE_DELAY_MS = 30_000;
 const BACKGROUND_IDLE_DELAY_MS = 60_000;
 
 /** Poll interval while at least one turn is active. */
-const ACTIVE_HEAP_POLL_MS = 1_000;
+const ACTIVE_MEMORY_POLL_MS = 1_000;
 
 /** Warning threshold: output buffering sheds memory and idle pools are evicted. */
 const WARNING_HEAP_RATIO = 0.8;
@@ -56,13 +60,13 @@ const CRITICAL_HEAP_RATIO = 0.9;
 /** Minimum time between full GC invocations (5 minutes). */
 const MIN_FULL_GC_INTERVAL_MS = 5 * 60_000;
 
-/** Manages memory pressure based on application idle state and V8 heap use. */
+/** Manages memory pressure based on application idle state and runtime memory use. */
 @injectable()
 export class MemoryPressureService {
   private state: IdleState = "active";
   private warmIdleTimer: ReturnType<typeof setTimeout> | null = null;
   private backgroundIdleTimer: ReturnType<typeof setTimeout> | null = null;
-  private activeHeapTimer: ReturnType<typeof setInterval> | null = null;
+  private activeMemoryTimer: ReturnType<typeof setInterval> | null = null;
   private isWindowBackground = false;
   private lastFullGcAt = 0;
   private readonly activeTurns = new Set<string>();
@@ -70,25 +74,29 @@ export class MemoryPressureService {
   private readonly pressureListeners = new Set<(snapshot: MemoryPressureSnapshot) => void>();
   private pressure: MemoryPressureSnapshot = {
     level: "normal",
-    usedHeapBytes: 0,
-    heapLimitBytes: 0,
+    source: "v8-heap",
+    usedBytes: 0,
+    budgetBytes: 0,
     ratio: 0,
   };
 
   /** Creates the service with a reference to the SQLite database. */
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(
+    @inject("Database") private readonly db: Database,
+    @inject(SettingsService) private readonly settings: Pick<SettingsService, "get">,
+  ) {}
 
   /** Current idle state. Exposed for diagnostics. */
   get currentState(): IdleState {
     return this.state;
   }
 
-  /** Current active-turn heap pressure. Exposed for diagnostics and gates. */
+  /** Current active-turn memory pressure. Exposed for diagnostics and gates. */
   get currentPressure(): MemoryPressureSnapshot {
     return this.pressure;
   }
 
-  /** Register a listener invoked when active heap pressure changes level. */
+  /** Register a listener invoked when active-turn memory pressure changes level. */
   onPressureChange(listener: (snapshot: MemoryPressureSnapshot) => void): () => void {
     this.pressureListeners.add(listener);
     return () => {
@@ -97,11 +105,11 @@ export class MemoryPressureService {
   }
 
   /**
-   * Reject starting a new turn while another active turn has pushed the heap
+   * Reject starting a new turn while another active turn has pushed memory
    * into the critical band.
    */
-  assertCanStartTurn(stats: HeapStats = NodeV8.getHeapStatistics()): void {
-    const snapshot = this.heapSnapshot(stats);
+  assertCanStartTurn(measurement?: RuntimeMemoryMeasurement): void {
+    const snapshot = this.snapshot(measurement ?? this.measureRuntimeMemory());
     if (this.activeTurns.size > 0 || this.pressure.level === "critical" || snapshot.level !== "normal") {
       this.setPressure(snapshot);
     }
@@ -123,8 +131,8 @@ export class MemoryPressureService {
     this.state = "active";
     if (threadId) {
       this.activeTurns.add(threadId);
-      this.startActiveHeapPolling();
-      this.sampleActiveHeap();
+      this.startActiveMemoryPolling();
+      this.sampleActiveMemory();
     }
   }
 
@@ -143,8 +151,8 @@ export class MemoryPressureService {
       }
     }
     if (!threadId && this.activeTurns.size > 0) return;
-    this.stopActiveHeapPolling();
-    this.setPressure({ level: "normal", usedHeapBytes: 0, heapLimitBytes: 0, ratio: 0 });
+    this.stopActiveMemoryPolling();
+    this.setPressure({ level: "normal", source: this.pressure.source, usedBytes: 0, budgetBytes: 0, ratio: 0 });
     this.clearIdleTimers();
     if (this.isWindowBackground) {
       this.backgroundIdleTimer = setTimeout(
@@ -192,50 +200,52 @@ export class MemoryPressureService {
   /** Clean up timers on shutdown. */
   dispose(): void {
     this.clearIdleTimers();
-    this.stopActiveHeapPolling();
+    this.stopActiveMemoryPolling();
   }
 
-  /** Test hook for deterministic active-heap sampling. */
-  sampleActiveHeapForTest(stats: HeapStats): void {
-    this.sampleActiveHeap(stats);
+  /** Test hook for deterministic runtime-memory sampling. */
+  sampleActiveMemoryForTest(measurement: RuntimeMemoryMeasurement): void {
+    this.sampleActiveMemory(measurement);
   }
 
-  private startActiveHeapPolling(): void {
-    if (this.activeHeapTimer) return;
-    this.activeHeapTimer = setInterval(() => this.sampleActiveHeap(), ACTIVE_HEAP_POLL_MS);
-    this.activeHeapTimer.unref?.();
+  private startActiveMemoryPolling(): void {
+    if (this.activeMemoryTimer) return;
+    this.activeMemoryTimer = setInterval(() => this.sampleActiveMemory(), ACTIVE_MEMORY_POLL_MS);
+    this.activeMemoryTimer.unref?.();
   }
 
-  private stopActiveHeapPolling(): void {
-    if (!this.activeHeapTimer) return;
-    clearInterval(this.activeHeapTimer);
-    this.activeHeapTimer = null;
+  private stopActiveMemoryPolling(): void {
+    if (!this.activeMemoryTimer) return;
+    clearInterval(this.activeMemoryTimer);
+    this.activeMemoryTimer = null;
   }
 
-  private sampleActiveHeap(stats: HeapStats = NodeV8.getHeapStatistics()): void {
+  private sampleActiveMemory(measurement = this.measureRuntimeMemory()): void {
     if (this.activeTurns.size === 0) return;
-    const snapshot = this.heapSnapshot(stats);
+    const snapshot = this.snapshot(measurement);
 
     for (const threadId of this.activeTurns) {
       const prev = this.turnHighWater.get(threadId);
-      if (!prev || snapshot.usedHeapBytes > prev.usedHeapBytes) {
+      if (!prev || snapshot.usedBytes > prev.usedBytes) {
         this.turnHighWater.set(threadId, snapshot);
       }
     }
     this.setPressure(snapshot);
   }
 
-  private heapSnapshot(stats: HeapStats): MemoryPressureSnapshot {
-    const usedHeapBytes = Math.max(0, stats.used_heap_size);
-    const heapLimitBytes = Math.max(1, stats.heap_size_limit);
-    const ratio = usedHeapBytes / heapLimitBytes;
+  private measureRuntimeMemory(): RuntimeMemoryMeasurement {
+    return sampleRuntimeMemory(this.settings.get().server.memory.heapMb);
+  }
+
+  private snapshot(measurement: RuntimeMemoryMeasurement): MemoryPressureSnapshot {
+    const ratio = measurement.usedBytes / measurement.budgetBytes;
     const level: MemoryPressureLevel =
       ratio >= CRITICAL_HEAP_RATIO
         ? "critical"
         : ratio >= WARNING_HEAP_RATIO
           ? "warning"
           : "normal";
-    return { level, usedHeapBytes, heapLimitBytes, ratio };
+    return { level, ...measurement, ratio };
   }
 
   private setPressure(snapshot: MemoryPressureSnapshot): void {
@@ -245,8 +255,9 @@ export class MemoryPressureService {
     logger.info("Memory pressure level changed", {
       level: snapshot.level,
       ratio: snapshot.ratio,
-      usedHeapBytes: snapshot.usedHeapBytes,
-      heapLimitBytes: snapshot.heapLimitBytes,
+      source: snapshot.source,
+      usedBytes: snapshot.usedBytes,
+      budgetBytes: snapshot.budgetBytes,
     });
     this.notifyPressureListeners(snapshot);
   }
@@ -267,10 +278,11 @@ export class MemoryPressureService {
     this.activeTurns.delete(threadId);
     const highWater = this.turnHighWater.get(threadId);
     if (highWater) {
-      logger.info("Agent turn heap high-watermark", {
+      logger.info("Agent turn memory high-watermark", {
         threadId,
-        usedHeapBytes: highWater.usedHeapBytes,
-        heapLimitBytes: highWater.heapLimitBytes,
+        source: highWater.source,
+        usedBytes: highWater.usedBytes,
+        budgetBytes: highWater.budgetBytes,
         ratio: highWater.ratio,
       });
       this.turnHighWater.delete(threadId);
@@ -292,7 +304,7 @@ export class MemoryPressureService {
       });
     }
     try {
-      this.db.pragma("shrink_memory");
+      this.db.run("PRAGMA shrink_memory");
     } catch (err) {
       logger.warn("shrink_memory failed", {
         error: err instanceof Error ? err.message : String(err),

@@ -40,7 +40,7 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `updates.autoDownload` | boolean | `true` | - | - | Download updates automatically when available |
 | `updates.autoInstallOnQuit` | boolean | `true` | - | - | Install downloaded updates when the app quits |
 | `updates.checkInterval` | enum | `"4hours"` | `"15min"` \| `"1hour"` \| `"4hours"` \| `"1day"` \| `"never"` | - | How often the desktop app checks for updates. Check interval is applied at launch; other update options re-read from disk on each check. |
-| `server.memory.heapMb` | integer | `512` | 256-8192 | `MCODE_SERVER_HEAP_MB` | V8 max old space for the server process (MB). Invalid environment values fall through to `settings.json`. |
+| `server.memory.heapMb` | integer | `512` | 256-8192 | `MCODE_SERVER_HEAP_MB` | Electron uses this as the V8 old-space cap and applies changes after restart. Bun uses it as a soft process-RSS budget for server admission and shedding and applies saved settings immediately. The environment override applies to the Electron launch. Invalid environment values fall through to `settings.json`. |
 | `preview.memorySaver.maxWarm` | integer | `3` | 1-20 | - | Most-recently-used background preview tabs kept warm while the panel is hidden. Others are discarded (renderer freed) and reload on reopen. |
 | `preview.memorySaver.bgIdleMs` | integer | `300000` | 30000-3600000 | - | Idle time (ms) before a background preview tab is discarded while the panel is visible. |
 | `preview.memorySaver.hiddenIdleMs` | integer | `60000` | 5000-600000 | - | Idle time (ms) after the preview panel hides before the warm set is trimmed to `maxWarm`. A reshow within the window cancels the trim. |
