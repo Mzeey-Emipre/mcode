@@ -96,6 +96,7 @@ export function MessageListOverlays({
         <SelectedTextCommentMarkers
           viewportRef={viewportRef}
           renderedThreadId={renderedThreadId}
+          editor={selectedTextCommentEditor}
           onOpenComment={onOpenSelectedTextCommentEditor}
         />
       )}

@@ -65,7 +65,13 @@ function setDraft(
   });
 }
 
-function MarkerHarness({ onOpenComment }: { readonly onOpenComment: (comment: SelectedTextComment) => void }) {
+function MarkerHarness({
+  onOpenComment,
+  editor,
+}: {
+  readonly onOpenComment: (comment: SelectedTextComment) => void;
+  readonly editor?: SelectedTextCommentEditorDraft;
+}) {
   const rootRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -86,6 +92,7 @@ function MarkerHarness({ onOpenComment }: { readonly onOpenComment: (comment: Se
       <SelectedTextCommentMarkers
         viewportRef={viewportRef}
         renderedThreadId="thread-1"
+        editor={editor}
         onOpenComment={onOpenComment}
       />
     </div>
@@ -142,6 +149,7 @@ function SourceEditorHarness({
       <SelectedTextCommentMarkers
         viewportRef={viewportRef}
         renderedThreadId="thread-1"
+        editor={editor}
         onOpenComment={(comment) => setEditor({
           source: comment.source,
           commentId: comment.id,
@@ -276,18 +284,26 @@ describe("SelectedTextCommentMarkers", () => {
     }
   });
 
-  it("renders no marker or highlight for an unsaved editor", () => {
-    setDraft([], {
+  it("keeps a pending source highlight and marker while the note editor is focused, then clears them on close", async () => {
+    const pendingEditor: SelectedTextCommentEditorDraft = {
       source: comments[0]!.source,
       note: "Unsaved note",
       mentions: [],
       escapeWarned: false,
       outsideWarned: false,
       anchor: "source",
-    });
-    render(<MarkerHarness onOpenComment={vi.fn()} />);
+    };
+    setDraft([]);
+    render(<SourceEditorHarness initialEditor={pendingEditor} />);
 
-    expect(screen.queryByTestId("selected-text-comment-marker")).toBeNull();
+    const note = await screen.findByRole("textbox", { name: "Comment note" });
+    await waitFor(() => expect(note).toHaveFocus());
+    await waitFor(() => expect(screen.getByTestId("selected-text-comment-pending-marker")).toHaveTextContent("1"));
+    expect(screen.getByTestId("selected-text-comment-highlight")).toBeVisible();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Close comment editor" }));
+
+    await waitFor(() => expect(screen.queryByTestId("selected-text-comment-pending-marker")).toBeNull());
     expect(screen.queryByTestId("selected-text-comment-highlight")).toBeNull();
   });
 

@@ -18,6 +18,7 @@ const SECOND_COMMENT_TEXT = "Review the selected phrase again.";
 const EVIDENCE_DIR = NodePath.join(ROOT, ".dev/verification");
 const ACTION_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-action.png");
 const EDITOR_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-editor.png");
+const PENDING_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-pending.png");
 const RESULT_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-result.png");
 const RESULTS = NodePath.join(EVIDENCE_DIR, "selected-text-comments.json");
 const SUBAGENT_SCREENSHOT = NodePath.join(EVIDENCE_DIR, "selected-text-comments-subagent.png");
@@ -476,6 +477,24 @@ async function assertDirtyDismissal(content) {
   mark("second_dirty_escape_discards_editor", true);
 }
 
+async function assertPendingCommentLifecycle(dialog, editor) {
+  await editor.pressSequentially("Pending comment draft");
+  const pendingHighlight = page.locator('[data-testid="selected-text-comment-highlight"][data-selected-text-comment-id="pending-selected-text-comment"]');
+  const pendingMarker = page.getByTestId("selected-text-comment-pending-marker");
+  mark(
+    "pending_comment_keeps_one_source_highlight_and_marker",
+    await pendingHighlight.count() === 1 && await pendingMarker.count() === 1 && await pendingMarker.innerText() === "1",
+  );
+  mark("pending_comment_keeps_note_focused", await editor.evaluate((element) => document.activeElement === element));
+  await page.screenshot({ path: PENDING_SCREENSHOT, fullPage: true });
+  await dialog.getByRole("button", { name: "Close comment editor", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  mark(
+    "cancelled_pending_comment_clears_source_highlight_and_marker",
+    await pendingHighlight.count() === 0 && await pendingMarker.count() === 0,
+  );
+}
+
 async function assertSavedCommentMarkerAndCardLifecycle(
   content,
   commentAttachment,
@@ -627,8 +646,12 @@ async function run() {
   await addComment.waitFor({ state: "visible" });
   await assertPopupAnchor("phrase_action", addComment, sourceGeometry);
   let dialog = await openEditorFromSelection();
-  const editor = await assertEditorShell(dialog, await phraseRangeGeometry(content));
+  let editor = await assertEditorShell(dialog, await phraseRangeGeometry(content));
   await assertSourceDockAndReturn(content);
+  await assertPendingCommentLifecycle(dialog, editor);
+
+  dialog = await openEditor(content);
+  editor = await editorTextBox(dialog);
   await editor.pressSequentially(`/${FIXTURE_SKILL_NAME}`);
   const slashSkill = page.getByRole("option", { name: new RegExp(FIXTURE_SKILL_NAME, "i") });
   await slashSkill.waitFor({ state: "visible" });
@@ -787,6 +810,7 @@ async function run() {
     evidence: {
       actionScreenshot: NodePath.basename(ACTION_SCREENSHOT),
       editorScreenshot: NodePath.basename(EDITOR_SCREENSHOT),
+      pendingScreenshot: NodePath.basename(PENDING_SCREENSHOT),
       resultScreenshot: NodePath.basename(RESULT_SCREENSHOT),
     },
   }, null, 2));
