@@ -195,6 +195,9 @@ Verify approval review through the public Composer and public conversation APIs.
 7. Stop, fail, and time out an Auto turn where the provider exposes each path. Confirm each active review has one terminal result, then replay a stale review event and confirm it cannot add another result to the replacement attempt.
 8. Delete only the verifier-owned workspace and thread after recording screenshots and the public receipt.
 
+Store approval-review screenshots and the redacted receipt under
+`.dev/verification/approval-review/`. Do not commit these artifacts.
+
 Run the Composer selection and durable footer check in both the web client and
 Electron when both surfaces are available. Record an unavailable surface as a
 verification gap rather than using the other surface as its substitute.
