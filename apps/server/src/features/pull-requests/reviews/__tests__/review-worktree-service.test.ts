@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import * as NodeCrypto from "node:crypto";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
@@ -113,7 +113,7 @@ function reviewSource(): PullRequestReviewTaskSource {
 }
 
 describe("ReviewWorktreeService", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let reviewLinkRepo: PullRequestReviewLinkRepo;

@@ -6,7 +6,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as NodePath from "node:path";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { CleanupJobRepo } from "../persistence/cleanup-job-repo.js";
 import { ThreadRepo } from "../../persistence/thread-repo.js";
@@ -40,7 +40,7 @@ vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
 const WT_BASE = NodePath.join(getMcodeDir(), "worktrees", "integration-test");
 
 describe("Cleanup integration", () => {
-  let db: Database.Database;
+  let db: Database;
   let cleanupJobRepo: CleanupJobRepo;
   let threadRepo: ThreadRepo;
   let workspaceRepo: WorkspaceRepo;
@@ -331,7 +331,7 @@ describe("Cleanup integration", () => {
 
       // Zero jobs remaining, workspace hard-deleted
       expect(cleanupJobRepo.countByWorkspacePath("/tmp/full")).toBe(0);
-      expect(db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id)).toBeUndefined();
+      expect(db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id)).toBeNull();
     });
   });
 });

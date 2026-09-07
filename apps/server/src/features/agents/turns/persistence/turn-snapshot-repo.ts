@@ -5,7 +5,7 @@
 
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database, Statement } from "bun:sqlite";
 import {
   TurnFileEffectSummarySchema,
   type TurnFileEffectSummary,
@@ -75,13 +75,13 @@ const TURN_SNAPSHOT_COLUMNS =
 /** Repository for turn snapshot creation and retrieval against SQLite. */
 @injectable()
 export class TurnSnapshotRepo {
-  private readonly stmtInsert: Database.Statement;
-  private readonly stmtGetById: Database.Statement;
-  private readonly stmtGetByMessage: Database.Statement;
-  private readonly stmtListByThread: Database.Statement;
-  private readonly stmtDeleteExpired: Database.Statement;
+  private readonly stmtInsert: Statement;
+  private readonly stmtGetById: Statement;
+  private readonly stmtGetByMessage: Statement;
+  private readonly stmtListByThread: Statement;
+  private readonly stmtDeleteExpired: Statement;
 
-  constructor(@inject("Database") db: Database.Database) {
+  constructor(@inject("Database") db: Database) {
     this.stmtInsert = db.prepare(
       "INSERT INTO turn_snapshots (id, message_id, thread_id, ref_before, ref_after, files_changed, file_effects, worktree_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );

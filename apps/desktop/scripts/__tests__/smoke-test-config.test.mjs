@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifySmokeOutcome,
   getPackagedRuntimeStartupTimeoutMs,
+  selectPackagedPtyHost,
 } from "../desktop-packaging/package-validation/smoke-test-config.mjs";
 
 describe("getPackagedRuntimeStartupTimeoutMs", () => {
@@ -61,5 +62,26 @@ describe("classifySmokeOutcome", () => {
       healthy: true,
       exitedAtDeadline: false,
     })).toBe("healthy");
+  });
+});
+
+describe("selectPackagedPtyHost", () => {
+  it("uses the main Electron app for an unsigned macOS smoke test", () => {
+    expect(selectPackagedPtyHost({
+      renamedBinary: "/Mcode.app/Contents/Resources/bin/mcode-server",
+      electron: "/Mcode.app/Contents/MacOS/Mcode",
+      allowsUnsignedMacFallback: true,
+      hasRenamedBinary: true,
+      hasElectron: true,
+    })).toBe("/Mcode.app/Contents/MacOS/Mcode");
+  });
+
+  it("requires the renamed Electron PTY host for production package targets", () => {
+    expect(selectPackagedPtyHost({
+      renamedBinary: "C:/resources/bin/mcode-server.exe",
+      electron: "C:/Mcode.exe",
+      hasRenamedBinary: false,
+      hasElectron: true,
+    })).toBeNull();
   });
 });

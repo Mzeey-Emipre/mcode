@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   killProcessTree: vi.fn(),
+  gracefulKillProcessTree: vi.fn(),
   scope: {
     assign: vi.fn(),
     reconcile: vi.fn(),
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
-  gracefulKillProcessTree: vi.fn(),
+  gracefulKillProcessTree: mocks.gracefulKillProcessTree,
   killProcessTree: mocks.killProcessTree,
   listDirectChildren: vi.fn(),
 }));
@@ -39,6 +40,24 @@ describe("createPtyProcessScope", () => {
     mocks.scope.terminate.mockReturnValue({ ok: true });
     mocks.scope.waitForEmpty.mockResolvedValue({ ok: true });
   });
+
+  it.runIf(process.platform === "win32")(
+    "uses graceful process-tree cleanup before forcing a Job Object close",
+    async () => {
+      mocks.scope.waitForEmpty.mockResolvedValue({ ok: true });
+      const scope = createPtyProcessScope(123, {
+        platform: "win32",
+        architecture: "x64",
+      });
+
+      await scope.close(true);
+
+      expect(mocks.gracefulKillProcessTree).toHaveBeenCalledWith(123, {
+        platform: "win32",
+      });
+      expect(mocks.scope.terminate).not.toHaveBeenCalled();
+    },
+  );
 
   it.runIf(process.platform === "win32")(
     "terminates and waits for the Job Object when fallback cleanup fails",

@@ -2,7 +2,7 @@ import "reflect-metadata";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
@@ -22,7 +22,7 @@ function input(sequence: number, text: string) {
   return { executionId: EXECUTION_ID, threadId: THREAD_ID, turnId: TURN_ID, sequence, text };
 }
 
-function seedParentAssistantTurn(db: Database.Database): void {
+function seedParentAssistantTurn(db: Database): void {
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
   ).run("workspace-1522", "Workspace", "C:/workspace", NOW, NOW);
@@ -41,7 +41,7 @@ function seedParentAssistantTurn(db: Database.Database): void {
 }
 
 describe("ParentAssistantTextCheckpointService", () => {
-  let db: Database.Database;
+  let db: Database;
   let service: ParentAssistantTextCheckpointService;
 
   beforeEach(() => {
@@ -208,7 +208,7 @@ describe("ParentAssistantTextCheckpointService", () => {
   it("does not disable journaling when a persistent database path cannot be resolved", () => {
     const persistentDatabase = {
       name: "",
-    } as unknown as Database.Database;
+    } as unknown as Database;
 
     expect(() => new ParentAssistantTextCheckpointService(persistentDatabase))
       .toThrow("Assistant text recovery journal database path is unavailable");

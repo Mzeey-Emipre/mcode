@@ -3,7 +3,7 @@ import * as NodeFSPromises from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
@@ -47,14 +47,14 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
 function createAgentServiceHarness(automaticSetup?:
   | { queueAutomaticFirstTurn: ReturnType<typeof vi.fn>; admitAutomaticTurn?: ReturnType<typeof vi.fn> }
   | ((deps: {
-    readonly db: Database.Database;
+    readonly db: Database;
     readonly threadRepo: ThreadRepo;
     readonly threadStartups: ThreadStartupService;
   }) => WorkspaceEnvironmentService),
   useGoalLifecycle = false,
   threadBranching?: { create: ReturnType<typeof vi.fn> },
 ) {
-  const db: Database.Database = openMemoryDatabase();
+  const db: Database = openMemoryDatabase();
   const threadRepo = new ThreadRepo(db);
   const workspaceRepo = new WorkspaceRepo(db);
   const messageRepo = new MessageRepo(db);

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   ExternalThreadControlPairingError,
   ExternalThreadControlPairingService,
@@ -288,7 +288,7 @@ function authenticate(service: ExternalThreadControlPairingService, secret: stri
 describe("external thread-control pairing service", () => {
   it("rejects a second active pairing for one integration", () => {
     const db = createFakeDb();
-    const service = new ExternalThreadControlPairingService(db as unknown as Database.Database);
+    const service = new ExternalThreadControlPairingService(db as unknown as Database);
     const pairing = service.create(input());
     expect(() => service.create(input())).toThrowError(new ExternalThreadControlPairingError("conflict", "External integration already has an active pairing"));
     expect(() => service.replace(pairing.pairingId, input({ integrationId: "integration-2" }))).toThrowError("Pairing replacement must preserve integration identity");
@@ -296,7 +296,7 @@ describe("external thread-control pairing service", () => {
 
   it("does not let an old revoke cancel successor approvals", () => {
     const db = createFakeDb();
-    const service = new ExternalThreadControlPairingService(db as unknown as Database.Database);
+    const service = new ExternalThreadControlPairingService(db as unknown as Database);
     const old = service.create(input());
     const successor = service.replace(old.pairingId, input());
     db.approvals.push({ caller_id: "integration-1", status: "pending" });
@@ -307,18 +307,18 @@ describe("external thread-control pairing service", () => {
 
   it("keeps rate reservations durable across service instances and free of duplicate charge", () => {
     const db = createFakeDb();
-    const firstService = new ExternalThreadControlPairingService(db as unknown as Database.Database);
+    const firstService = new ExternalThreadControlPairingService(db as unknown as Database);
     const secret = firstService.create(input({ callsPerMinute: 1 }));
     const authority = authenticate(firstService, secret.credential);
     expect(firstService.beginDelivery(authority, "delivery-1", "fingerprint").status).toBe("reserved");
-    const secondService = new ExternalThreadControlPairingService(db as unknown as Database.Database);
+    const secondService = new ExternalThreadControlPairingService(db as unknown as Database);
     expect(secondService.beginDelivery(authority, "delivery-1", "fingerprint").status).toBe("joined");
     expect(() => secondService.beginDelivery(authority, "delivery-2", "fingerprint")).toThrowError("External call rate limit exceeded");
   });
 
   it("rejects a new delivery when all 10,000 retained slots are in flight", () => {
     const db = createFakeDb();
-    const service = new ExternalThreadControlPairingService(db as unknown as Database.Database);
+    const service = new ExternalThreadControlPairingService(db as unknown as Database);
     const secret = service.create(input());
     const authority = authenticate(service, secret.credential);
     const retainedUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -334,7 +334,7 @@ describe("external thread-control pairing service", () => {
 
   it("terminalizes expired in-flight rows before capacity accounting and preserves replay", () => {
     const db = createFakeDb();
-    const service = new ExternalThreadControlPairingService(db as unknown as Database.Database);
+    const service = new ExternalThreadControlPairingService(db as unknown as Database);
     const secret = service.create(input());
     const authority = authenticate(service, secret.credential);
     const expired = {

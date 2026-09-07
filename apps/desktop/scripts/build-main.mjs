@@ -77,8 +77,8 @@ console.log("Compiling server TypeScript (swc)...");
 compileServerWithSwc(serverRoot);
 
 // Phase 2b: esbuild bundles the tsc output into a single CJS file.
-// better-sqlite3 and node-pty are marked external because they contain native
-// bindings that cannot be inlined and must be asarUnpack'd by electron-builder.
+// node-pty and koffi stay external because the Electron PTY host loads their
+// native bindings from the unpacked application resources.
 //
 // import.meta.url must resolve to a real file:// URL at runtime because the
 // Claude Agent SDK calls fileURLToPath(import.meta.url) to locate its native CLI binary.

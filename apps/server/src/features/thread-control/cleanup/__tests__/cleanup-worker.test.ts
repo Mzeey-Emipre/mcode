@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import { HandoffStorage } from "../../../handoff/index.js";
@@ -20,7 +20,7 @@ import { CleanupJobRepo } from "../persistence/cleanup-job-repo.js";
 const HOST_RUNTIME = { platform: "win32", architecture: "x64", nodeAbi: "127" } as const;
 
 describe("CleanupWorker sandbox worktrees", () => {
-  let database: Database.Database;
+  let database: Database;
   let cleanupJobs: CleanupJobRepo;
   let threads: ThreadRepo;
   let workspaces: WorkspaceRepo;

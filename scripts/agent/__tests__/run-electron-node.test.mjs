@@ -27,7 +27,7 @@ NodeTest.test("Electron adapter uses the bounded verification phase timeout", ()
 function runWorkspaceCli(entryFile) {
   return NodeChildProcess.spawnSync(
     process.execPath,
-    [wrapper, "--workspace-cli", "better-sqlite3", entryFile],
+    [wrapper, "--workspace-cli", "ws", entryFile],
     options,
   );
 }
@@ -96,7 +96,7 @@ NodeTest.test("Electron Node forwards output and preserves exit status", testOpt
 });
 
 NodeTest.test("workspace CLI accepts a nested package entry", testOptions, () => {
-  const result = runWorkspaceCli("lib/index.js");
+  const result = runWorkspaceCli("lib/validation.js");
 
   NodeAssertStrict.default.equal(result.error, undefined);
   NodeAssertStrict.default.equal(result.status, 0, result.stderr);

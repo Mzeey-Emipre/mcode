@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -48,7 +48,7 @@ class WorktreeCreatingGitExecutor extends FakeGitExecutor {
 }
 
 describe("PullRequestReviewGitService", () => {
-  let db: Database.Database;
+  let db: Database;
   let executor: WorktreeCreatingGitExecutor;
   let service: PullRequestReviewGitService;
   let gitRepository: GitRepositoryService;

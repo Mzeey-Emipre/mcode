@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../../persistence/workspace-repo.js";
@@ -56,7 +56,7 @@ function createThreadDeletionTeardownServiceMock(): ThreadDeletionTeardownServic
 }
 
 describe("WorkspaceRepo - soft/hard delete", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
 
@@ -137,7 +137,7 @@ describe("WorkspaceRepo - soft/hard delete", () => {
 });
 
 describe("ThreadRepo - workspace deletion helpers", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
 
@@ -184,7 +184,7 @@ describe("ThreadRepo - workspace deletion helpers", () => {
 });
 
 describe("CleanupJobRepo - workspace helpers", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -235,7 +235,7 @@ describe("CleanupJobRepo - workspace helpers", () => {
 });
 
 describe("WorkspaceService.delete - two-phase orchestration", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -357,7 +357,7 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
 });
 
 describe("CleanupWorker - attachment cleanup and workspace finalization", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -478,7 +478,7 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
 });
 
 describe("CleanupWorker - startup reconciliation", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -568,7 +568,7 @@ describe("CleanupWorker - startup reconciliation", () => {
 });
 
 describe("CleanupWorker - shared branch protection", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -657,7 +657,7 @@ describe("CleanupWorker - shared branch protection", () => {
 });
 
 describe("WorkspaceService.delete - active session handling", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -713,7 +713,7 @@ describe("WorkspaceService.delete - active session handling", () => {
 });
 
 describe("Workspace delete - cross-workspace fork lineage", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -770,7 +770,7 @@ describe("Workspace delete - cross-workspace fork lineage", () => {
 });
 
 describe("CleanupWorker - exhausted retries", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -825,7 +825,7 @@ describe("CleanupWorker - exhausted retries", () => {
 });
 
 describe("CleanupWorker - missing directory handling", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -910,7 +910,7 @@ describe("CleanupWorker - missing directory handling", () => {
 });
 
 describe("CleanupWorker - idempotent retry", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -973,7 +973,7 @@ describe("CleanupWorker - idempotent retry", () => {
 });
 
 describe("Workspace delete - zero-worktree fast path", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;

@@ -178,7 +178,7 @@ function buildService({
     name: ":memory:",
     transaction: vi.fn((fn) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
-  } as unknown as import("better-sqlite3").Database;
+  } as unknown as import("bun:sqlite").Database;
 
   // AgentService constructor (15 params):
   //   threadRepo, workspaceRepo, messageRepo, gitService, attachmentService,

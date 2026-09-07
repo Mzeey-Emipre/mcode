@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { TurnDiffService } from "../../turns/turn-diff-service.js";
 import { TurnDiffRepo } from "../../turns/persistence/turn-diff-repo.js";
 import { container, Lifecycle } from "tsyringe";
@@ -170,7 +170,7 @@ export function createAgentServiceForTest(
   hookExecutionRepo: HookExecutionRepo,
   turnSnapshotRepo: TurnSnapshotPersistence,
   snapshotService: SnapshotService,
-  db: Database.Database,
+  db: Database,
   memoryPressureService: MemoryPressureService,
   settingsService: SettingsService,
   availability: ProviderAvailabilityService,

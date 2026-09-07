@@ -7,8 +7,8 @@
 
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
-import type { Statement } from "better-sqlite3";
+import type { Database } from "bun:sqlite";
+import type { Statement } from "bun:sqlite";
 
 /** Max persisted retry attempts before a cleanup job requires user action. */
 export const MAX_CLEANUP_ATTEMPTS = 5;
@@ -97,7 +97,7 @@ export class CleanupJobRepo {
   private readonly stmtFindByThreadId: Statement;
   private readonly stmtCount: Statement;
 
-  constructor(@inject("Database") private readonly db: Database.Database) {
+  constructor(@inject("Database") private readonly db: Database) {
     this.stmtInsert = db.prepare(
       `INSERT OR IGNORE INTO cleanup_jobs
         (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)

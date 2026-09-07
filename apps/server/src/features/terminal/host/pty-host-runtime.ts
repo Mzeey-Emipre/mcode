@@ -22,7 +22,7 @@ export interface PtyProcessScope {
   readonly processGroupId: string;
   establish(): Promise<boolean>;
   hasChildren(): Promise<boolean>;
-  close(): Promise<void>;
+  close(graceful?: boolean): Promise<void>;
   dispose(): void;
 }
 
@@ -113,6 +113,7 @@ export class PtyHostProcessRuntime {
           message.sessionId,
           "user-close",
           message.closeSeq,
+          message.reason === "app-shutdown",
         );
         return;
       case "probe":
@@ -121,7 +122,7 @@ export class PtyHostProcessRuntime {
       case "shutdown":
         await Promise.all(
           [...this.sessions.keys()].map((sessionId) =>
-            this.closeSession(sessionId, "user-close"),
+            this.closeSession(sessionId, "user-close", undefined, true),
           ),
         );
         await this.dispose();
@@ -316,6 +317,7 @@ export class PtyHostProcessRuntime {
     sessionId: string,
     reason: HostSession["closeReason"],
     closeSeq?: string,
+    graceful = false,
   ): Promise<void> {
     const session = this.requireSession(sessionId);
     if (
@@ -325,7 +327,7 @@ export class PtyHostProcessRuntime {
       throw new Error("PTY close sequence is out of order");
     }
     session.closeReason = reason;
-    await session.scope.close();
+    await session.scope.close(graceful);
     await session.exitPromise;
   }
 

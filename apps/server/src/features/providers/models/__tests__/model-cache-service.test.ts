@@ -6,7 +6,7 @@
 
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ModelCacheRepo } from "../persistence/model-cache-repo.js";
 import { ModelCacheService } from "../model-cache-service.js";
@@ -37,7 +37,7 @@ function makeRegistry(
 }
 
 describe("ModelCacheService", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: ModelCacheRepo;
 
   beforeEach(() => {

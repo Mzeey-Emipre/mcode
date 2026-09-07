@@ -92,12 +92,12 @@ export interface PreparedTerminalCommandRequest {
 export abstract class TerminalBackend {
   abstract capabilities(): TerminalBackendCapabilities;
   abstract setSender(sender: TerminalBackendSender): void;
-  abstract create(scopeId: string): { ptyId: string; shell: string };
+  abstract create(scopeId: string): Promise<{ ptyId: string; shell: string }>;
   abstract pause(ptyId: string): void;
   abstract resume(ptyId: string): void;
   abstract onBufferedAmountTick(bufferedAmount: number): void;
-  abstract write(ptyId: string, data: string): void;
-  abstract resize(ptyId: string, cols: number, rows: number): void;
+  abstract write(ptyId: string, data: string): Promise<void>;
+  abstract resize(ptyId: string, cols: number, rows: number): Promise<void>;
   abstract kill(
     ptyId: string,
     reason?: "user-requested-process-tree-close" | "app-shutdown",

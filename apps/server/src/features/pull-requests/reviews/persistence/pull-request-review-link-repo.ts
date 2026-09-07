@@ -3,7 +3,7 @@
  */
 
 import { inject, injectable } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 /** Stable provider identity for one pull request. */
 export interface PullRequestReviewLinkIdentity {
@@ -166,7 +166,7 @@ export class PullRequestReviewLinkRepo {
   private readonly updatePrimaryThreadStatement;
   private readonly clearPrimaryThreadStatement;
 
-  constructor(@inject("Database") private readonly db: Database.Database) {
+  constructor(@inject("Database") private readonly db: Database) {
     this.findByIdentityStatement = db.prepare(`
       SELECT ${REVIEW_LINK_COLUMNS}
       FROM pull_request_review_links

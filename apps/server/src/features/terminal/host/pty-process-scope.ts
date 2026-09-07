@@ -1,8 +1,29 @@
-import { killProcessTree } from "../../../runtime/process/containment/process-kill.js";
+import { gracefulKillProcessTree, killProcessTree } from "../../../runtime/process/containment/process-kill.js";
 import { WindowsProcessScopeFactory } from "../../../runtime/process/containment/windows-process-scope.js";
 import { createPosixProcessScope } from "./posix-process-scope.js";
 import type { PtyProcessScope } from "./pty-host-runtime.js";
 import type { HostRuntime } from "@mcode/shared/node/host-runtime";
+
+
+async function reconcileForClose(
+  reconcile: () => Promise<{ ok: boolean }>,
+  fallback: () => Promise<void>,
+): Promise<unknown[]> {
+  if ((await reconcile()).ok) return [];
+  const [result] = await Promise.allSettled([fallback()]);
+  return result.status === "rejected" ? [result.reason] : [];
+}
+
+async function closeGracefully(
+  graceful: boolean,
+  rootPid: number,
+  platform: NodeJS.Platform,
+  waitForEmpty: (timeoutMs: number) => Promise<{ ok: boolean }>,
+): Promise<boolean> {
+  if (!graceful) return false;
+  await gracefulKillProcessTree(rootPid, { platform });
+  return (await waitForEmpty(5_000)).ok;
+}
 
 /** Creates an authoritative process scope for one native PTY. */
 export function createPtyProcessScope(
@@ -26,17 +47,17 @@ export function createPtyProcessScope(
         if (!snapshot.ok || snapshot.overflow) return true;
         return snapshot.processIds.some((pid) => pid !== rootPid);
       },
-      close: async () => {
+      close: async (graceful = false) => {
         const cleanupErrors: unknown[] = [];
-        const reconciled = await scope.reconcile(rootPid);
-        if (!reconciled.ok) {
-          const [fallbackResult] = await Promise.allSettled([
-            killProcessTree(rootPid, { platform: hostRuntime.platform }),
-          ]);
-          if (fallbackResult.status === "rejected") {
-            cleanupErrors.push(fallbackResult.reason);
-          }
+        if (await closeGracefully(graceful, rootPid, hostRuntime.platform, scope.waitForEmpty)) {
+          return;
         }
+        cleanupErrors.push(
+          ...await reconcileForClose(
+            () => scope.reconcile(rootPid),
+            () => killProcessTree(rootPid, { platform: hostRuntime.platform }),
+          ),
+        );
         const terminated = scope.terminate(0);
         if (!terminated.ok) {
           cleanupErrors.push(

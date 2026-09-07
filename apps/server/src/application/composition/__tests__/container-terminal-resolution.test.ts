@@ -2,7 +2,7 @@ import "reflect-metadata";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { container } from "tsyringe";
@@ -18,7 +18,7 @@ const SENTINEL_HOST_RUNTIME: HostRuntime = Object.freeze({
 });
 
 describe("server container terminal composition", () => {
-  let database: Database.Database | undefined;
+  let database: Database | undefined;
   let temporaryDirectory: string | undefined;
   const previousDatabasePath = process.env.MCODE_DB_PATH;
   const previousBackend = process.env.MCODE_TERMINAL_BACKEND;
@@ -30,7 +30,7 @@ describe("server container terminal composition", () => {
     process.env.MCODE_TERMINAL_BACKEND = "legacy";
     setupContainer(temporaryDirectory);
     container.register<HostRuntime>("HostRuntime", { useValue: SENTINEL_HOST_RUNTIME });
-    database = container.resolve<Database.Database>("Database");
+    database = container.resolve<Database>("Database");
   });
 
   afterEach(() => {

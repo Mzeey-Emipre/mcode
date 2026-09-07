@@ -2,7 +2,7 @@ import "reflect-metadata";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePerfHooks from "node:perf_hooks";
-import type Database from "better-sqlite3";
+import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { z } from "zod";
 import type { NarrativeEntry } from "@mcode/contracts";
 import { HookExecutionRepo } from "../../../../features/agents/events/persistence/hook-execution-repo.js";
@@ -312,11 +312,11 @@ interface MeasuredResult<T> {
 }
 
 interface WorkloadDatabase {
-  db: Database.Database;
+  db: Database;
   dbPath: string;
 }
 
-const QUERY_PLANS: Record<SQLiteProfileWorkloadName, Record<string, { sql: string; params: readonly unknown[] }>> = {
+const QUERY_PLANS: Record<SQLiteProfileWorkloadName, Record<string, { sql: string; params: readonly SQLQueryBindings[] }>> = {
   "startup-and-migrations": {
     latestMigration: {
       sql: "SELECT id, hash, created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
@@ -567,7 +567,7 @@ export function openSQLiteProfileDatabase(dbPath: string): WorkloadDatabase {
 }
 
 async function runWorkload(
-  db: Database.Database,
+  db: Database,
   workload: SQLiteProfileWorkloadName,
   sample: number,
 ): Promise<SQLiteProfileSample> {
@@ -597,7 +597,7 @@ async function runWorkload(
 }
 
 async function measureSQLiteWorkload(
-  db: Database.Database,
+  db: Database,
   workload: SQLiteProfileWorkloadName,
 ): Promise<MeasuredResult<unknown>> {
   switch (workload) {
@@ -613,12 +613,12 @@ async function measureSQLiteWorkload(
   }
 }
 
-function measureConversationRead(db: Database.Database, limit: 100 | 1000): MeasuredResult<unknown> {
+function measureConversationRead(db: Database, limit: 100 | 1000): MeasuredResult<unknown> {
   seedConversation(db);
   return measureSync(() => readConversation(db, limit));
 }
 
-function seedWorkspaceAndThread(db: Database.Database): void {
+function seedWorkspaceAndThread(db: Database): void {
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
   ).run(WORKSPACE_ID, "SQLite profile", "/mcode/sqlite-profile", FIXED_TIMESTAMP, FIXED_TIMESTAMP);
@@ -627,7 +627,7 @@ function seedWorkspaceAndThread(db: Database.Database): void {
   ).run(THREAD_ID, WORKSPACE_ID, "SQLite profile thread", "main", FIXED_TIMESTAMP, FIXED_TIMESTAMP);
 }
 
-function seedConversation(db: Database.Database): void {
+function seedConversation(db: Database): void {
   seedWorkspaceAndThread(db);
   const insertMessage = db.prepare(
     "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)",
@@ -676,7 +676,7 @@ interface PendingCheckpointChunk {
 }
 
 /** Run final-response text checkpoint appends and project one-byte hourly row growth. */
-export function runSQLiteCheckpointPolicyProfile(db: Database.Database): SQLiteCheckpointPolicyProfile {
+export function runSQLiteCheckpointPolicyProfile(db: Database): SQLiteCheckpointPolicyProfile {
   seedCheckpointProfileWorkspace(db);
   return {
     providerModel: CHECKPOINT_PROVIDER_MODEL,
@@ -712,14 +712,14 @@ export function runSQLiteCheckpointPolicyProfile(db: Database.Database): SQLiteC
   };
 }
 
-function seedCheckpointProfileWorkspace(db: Database.Database): void {
+function seedCheckpointProfileWorkspace(db: Database): void {
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
   ).run(WORKSPACE_ID, "SQLite checkpoint profile", "/mcode/sqlite-checkpoint-profile", FIXED_TIMESTAMP, FIXED_TIMESTAMP);
 }
 
 function measureCheckpointPolicy(
-  db: Database.Database,
+  db: Database,
   streams: 1 | 5,
   virtualDurationMs: number,
   maxAgeMs: number,
@@ -781,7 +781,7 @@ function measureCheckpointPolicy(
 }
 
 function seedCheckpointProfileExecution(
-  db: Database.Database,
+  db: Database,
   streams: number,
   maxAgeMs: number,
   stream: number,
@@ -813,7 +813,7 @@ function seedCheckpointProfileExecution(
 }
 
 function readCheckpointRetention(
-  db: Database.Database,
+  db: Database,
   executionIds: readonly string[],
 ): { rows: number; bytes: number } {
   const statement = db.prepare(`
@@ -888,7 +888,7 @@ function simulateCheckpointPolicy(
   return { durableChunkCount, retainedBytes, deltasPerChunk, virtualChunkWindowMs };
 }
 
-async function writeActiveTurn(db: Database.Database): Promise<NonNullable<SQLiteProfileSample["activeTurnWrite"]>> {
+async function writeActiveTurn(db: Database): Promise<NonNullable<SQLiteProfileSample["activeTurnWrite"]>> {
   const messageRepo = new MessageRepo(db);
   const toolRepo = new ToolCallRecordRepo(db);
   const thoughtRepo = new ThoughtSegmentRepo(db);
@@ -993,7 +993,7 @@ async function writeActiveTurn(db: Database.Database): Promise<NonNullable<SQLit
   };
 }
 
-function readConversation(db: Database.Database, limit: 100 | 1000): unknown {
+function readConversation(db: Database, limit: 100 | 1000): unknown {
   const messageRepo = new MessageRepo(db);
   return loadConversationPage(
     {
@@ -1055,13 +1055,13 @@ function memoryObservation(
   };
 }
 
-function readSQLiteVersion(db: Database.Database): string {
+function readSQLiteVersion(db: Database): string {
   const row = db.prepare("SELECT sqlite_version() AS version").get() as { version: string };
   return row.version;
 }
 
 function captureQueryPlans(
-  db: Database.Database,
+  db: Database,
   workload: SQLiteProfileWorkloadName,
 ): SQLiteQueryPlan[] {
   return Object.entries(QUERY_PLANS[workload]).map(([name, query]) => {
@@ -1079,10 +1079,10 @@ function captureQueryPlans(
 }
 
 function captureConversationReadQueryPlans(
-  db: Database.Database,
+  db: Database,
   limit: 100 | 1000,
 ): SQLiteQueryPlan[] {
-  const captured: Array<{ sql: string; params: unknown[] }> = [];
+  const captured: Array<{ sql: string; params: SQLQueryBindings[] }> = [];
   const originalPrepare = db.prepare.bind(db);
   const instrumentedPrepare = ((source: string) => {
     const statement = originalPrepare(source);
@@ -1091,7 +1091,7 @@ function captureConversationReadQueryPlans(
     return new Proxy(statement, {
       get(target, property, receiver) {
         if (property === "all" || property === "get") {
-          return (...params: unknown[]) => {
+          return (...params: SQLQueryBindings[]) => {
             captured.push({ sql: source, params });
             const method = target[property] as (...args: unknown[]) => unknown;
             return method.apply(target, params);
@@ -1101,13 +1101,13 @@ function captureConversationReadQueryPlans(
         return typeof value === "function" ? value.bind(target) : value;
       },
     });
-  }) as Database.Database["prepare"];
+  }) as Database["prepare"];
 
-  (db as unknown as { prepare: Database.Database["prepare"] }).prepare = instrumentedPrepare;
+  (db as unknown as { prepare: Database["prepare"] }).prepare = instrumentedPrepare;
   try {
     readConversation(db, limit);
   } finally {
-    (db as unknown as { prepare: Database.Database["prepare"] }).prepare = originalPrepare;
+    (db as unknown as { prepare: Database["prepare"] }).prepare = originalPrepare;
   }
 
   return captured.map((query, index) => {
@@ -1149,9 +1149,9 @@ export function assertConversationHistoryQueryPlans(plans: readonly SQLiteQueryP
   }
 }
 
-function capturePragmas(db: Database.Database): Record<string, string | number> {
+function capturePragmas(db: Database): Record<string, string | number> {
   const simple = (name: string): string | number => {
-    const value = db.pragma(name, { simple: true });
+    const value = (db.query(`PRAGMA ${name}`).get() as Record<string, unknown> | null)?.[name];
     if (typeof value !== "string" && typeof value !== "number") {
       throw new Error(`PRAGMA ${name} returned an unsupported value.`);
     }

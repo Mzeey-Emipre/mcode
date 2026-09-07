@@ -45,8 +45,18 @@ export class LegacyTerminalBackend extends TerminalBackend {
   }
 
   /** Creates one legacy PTY for a thread or workspace scope. */
-  create(scopeId: string): { ptyId: string; shell: string } {
-    return this.terminalService.create(scopeId);
+  async create(scopeId: string): Promise<{ ptyId: string; shell: string }> {
+    const thread = this.threads.findById(scopeId);
+    const profile = await this.profiles.resolveLaunchProfile({
+      workspaceId: thread?.workspace_id ?? scopeId,
+    });
+    return this.terminalService.create(scopeId, {
+      executable: profile.resolvedProfile.executable,
+      arguments: [...profile.resolvedProfile.arguments],
+      requestedProfileId: profile.requestedProfileId,
+      resolvedProfile: profile.resolvedProfile,
+      headless: false,
+    });
   }
 
   /** Pauses legacy PTY output for a client request. */
@@ -65,13 +75,13 @@ export class LegacyTerminalBackend extends TerminalBackend {
   }
 
   /** Writes input to one legacy PTY. */
-  write(ptyId: string, data: string): void {
-    this.terminalService.write(ptyId, data);
+  write(ptyId: string, data: string): Promise<void> {
+    return this.terminalService.write(ptyId, data);
   }
 
   /** Resizes one legacy PTY. */
-  resize(ptyId: string, cols: number, rows: number): void {
-    this.terminalService.resize(ptyId, cols, rows);
+  resize(ptyId: string, cols: number, rows: number): Promise<void> {
+    return this.terminalService.resize(ptyId, cols, rows);
   }
 
   /** Closes one legacy PTY. */
@@ -134,9 +144,11 @@ export class LegacyTerminalBackend extends TerminalBackend {
         environmentNames: [],
       });
     }
-    const session = this.terminalService.startPreparedCommand(input.threadId, {
+    const session = await this.terminalService.startPreparedCommand(input.threadId, {
       executable: launch.executable,
-      arguments: launch.arguments,
+      arguments: [...launch.arguments],
+      requestedProfileId: profile.requestedProfileId,
+      resolvedProfile: profile.resolvedProfile,
     });
     return {
       terminalSessionId: session.terminalSessionId,

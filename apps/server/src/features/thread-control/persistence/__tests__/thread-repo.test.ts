@@ -1,14 +1,14 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo, MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS } from "../thread-repo.js";
 import { TurnSnapshotRepo } from "../../../agents/turns/persistence/turn-snapshot-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 
 describe("ThreadRepo has_file_changes", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let workspaceId: string;
 
@@ -421,7 +421,7 @@ describe("ThreadRepo canonical child retention", () => {
 });
 
 describe("ThreadRepo.search", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let workspaceRepo: WorkspaceRepo;
 

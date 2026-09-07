@@ -1,5 +1,5 @@
 import * as NodeCrypto from "node:crypto";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   CANONICAL_SUBAGENT_TASK_MAX_LENGTH,
   resolveSubagentDisplayName,
@@ -70,7 +70,7 @@ interface ResolvedDiagnosticTurn {
 /** Owns Codex-native child delegation lookup and later lifecycle coordination. */
 export class CanonicalCodexCollaborationCoordinator {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly operations: CanonicalCodexCollaborationOperations,
   ) {}
 

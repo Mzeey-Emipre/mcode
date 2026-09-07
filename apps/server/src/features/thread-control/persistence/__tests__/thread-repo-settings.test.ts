@@ -2,10 +2,10 @@ import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../thread-repo.js";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 describe("ThreadRepo.updateSettings", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: ThreadRepo;
   let threadId: string;
 

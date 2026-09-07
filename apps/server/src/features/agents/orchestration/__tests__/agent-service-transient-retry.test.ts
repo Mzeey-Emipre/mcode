@@ -189,7 +189,7 @@ function buildService(): {
     name: ":memory:",
     transaction: vi.fn((fn: (...args: unknown[]) => unknown) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
-  } as unknown as import("better-sqlite3").Database;
+  } as unknown as import("bun:sqlite").Database;
 
   const service = createAgentServiceForTest(
     threadRepo,

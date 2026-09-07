@@ -1,8 +1,24 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const copyFailure = vi.hoisted(() => ({ walSource: "" }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...original,
+    copyFileSync(source: NodeJS.ArrayBufferView | string | URL, destination: NodeJS.ArrayBufferView | string | URL, mode?: number) {
+      if (String(source) === copyFailure.walSource) {
+        throw new Error("forced WAL copy failure");
+      }
+      original.copyFileSync(source, destination, mode);
+    },
+  };
+});
+
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Database } from "bun:sqlite";
 
 import {
   createMigrationBackup,
@@ -10,7 +26,6 @@ import {
   restoreMigrationBackupAfterFailure,
   restoreMigrationBackup,
 } from "../migration-backup.js";
-import { resolveElectronNativeBinding } from "../database.js";
 
 describe("migration-backup", () => {
   let dir: string;
@@ -23,6 +38,7 @@ describe("migration-backup", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    copyFailure.walSource = "";
     NodeFS.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -77,6 +93,40 @@ describe("migration-backup", () => {
     expect(NodeFS.readFileSync(`${backupPath}-wal`, "utf-8")).toBe("WALCONTENT");
   });
 
+  it("removes both partial backup files when copying the WAL fails", () => {
+    NodeFS.writeFileSync(dbPath, "DBCONTENT");
+    NodeFS.writeFileSync(`${dbPath}-wal`, "WALCONTENT");
+    copyFailure.walSource = `${dbPath}-wal`;
+
+    expect(() => createMigrationBackup(dbPath)).toThrow("forced WAL copy failure");
+    expect(NodeFS.readdirSync(dir).filter((name) => name.startsWith("mcode.db.bak-"))).toEqual([]);
+  });
+
+  it("backs up a committed WAL row that has not been checkpointed into the main file", () => {
+    const database = new Database(dbPath, { strict: true });
+    try {
+      database.exec(`
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE records (id TEXT PRIMARY KEY, body TEXT NOT NULL);
+        INSERT INTO records (id, body) VALUES ('committed-wal-row', 'preserved');
+      `);
+      expect(NodeFS.existsSync(`${dbPath}-wal`)).toBe(true);
+
+      const backupPath = createMigrationBackup(dbPath)!;
+      const backup = new Database(backupPath, { readonly: true, strict: true });
+      try {
+        expect(backup.query("SELECT id, body FROM records").get()).toEqual({
+          id: "committed-wal-row",
+          body: "preserved",
+        });
+      } finally {
+        backup.close(true);
+      }
+    } finally {
+      database.close(true);
+    }
+  });
+
   it("restores DB content and WAL while clearing stale sidecars", () => {
     NodeFS.writeFileSync(dbPath, "ORIGINAL");
     NodeFS.writeFileSync(`${dbPath}-wal`, "ORIG_WAL");
@@ -111,31 +161,46 @@ describe("migration-backup", () => {
 
   it("restores public text identifiers after a migration failure", () => {
     const originalError = new Error("forced migration failure");
-    let database = new Database(dbPath, {
-      nativeBinding: resolveElectronNativeBinding(),
-    });
+    let database = new Database(dbPath, { strict: true });
     database.exec("CREATE TABLE records (id TEXT PRIMARY KEY)");
     database.prepare("INSERT INTO records (id) VALUES (?)").run("thread-public-id");
-    database.close();
+    database.close(true);
 
     const backupPath = createMigrationBackup(dbPath)!;
-    database = new Database(dbPath, {
-      nativeBinding: resolveElectronNativeBinding(),
-    });
+    database = new Database(dbPath, { strict: true });
     database.prepare("UPDATE records SET id = ?").run("mutated-id");
-    database.close();
+    database.close(true);
 
     expect(() =>
       restoreMigrationBackupAfterFailure(backupPath, dbPath, originalError),
     ).toThrow(originalError);
 
-    database = new Database(dbPath, {
-      nativeBinding: resolveElectronNativeBinding(),
-    });
+    database = new Database(dbPath, { strict: true });
     expect(database.prepare("SELECT id FROM records").get()).toEqual({
       id: "thread-public-id",
     });
-    database.close();
+    database.close(true);
+  });
+
+  it("retains five recoverable generations after repeated failed migrations", () => {
+    let database = new Database(dbPath, { strict: true });
+    database.exec("CREATE TABLE records (id TEXT PRIMARY KEY)");
+    database.prepare("INSERT INTO records (id) VALUES (?)").run("preserved-id");
+    database.close(true);
+
+    for (let attempt = 0; attempt < 7; attempt++) {
+      const backupPath = createMigrationBackup(dbPath)!;
+      database = new Database(dbPath, { strict: true });
+      database.prepare("UPDATE records SET id = ?").run(`mutated-${attempt}`);
+      database.close(true);
+
+      expect(() => restoreMigrationBackupAfterFailure(backupPath, dbPath, new Error("migration failed"))).toThrow("migration failed");
+    }
+
+    expect(NodeFS.readdirSync(dir).filter((name) => name.startsWith("mcode.db.bak-") && !name.endsWith("-wal"))).toHaveLength(5);
+    database = new Database(dbPath, { readonly: true, strict: true });
+    expect(database.query("SELECT id FROM records").get()).toEqual({ id: "preserved-id" });
+    database.close(true);
   });
 
   it("reports both the migration and restore failures", () => {

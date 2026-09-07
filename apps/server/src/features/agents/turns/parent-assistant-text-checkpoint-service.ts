@@ -1,7 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { inject, injectable } from "tsyringe";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../runtime/persistence/sqlite/bounded-write-batches.js";
 import { PARENT_ASSISTANT_TEXT_RETAINED_LIMITS } from "./active-turn-recovery-retention-policy.js";
@@ -80,7 +80,7 @@ interface DurableParentAssistantTextCheckpoint {
 @injectable()
 export class ParentAssistantTextCheckpointService {
   constructor(
-    @inject("Database") private readonly db: Database.Database,
+    @inject("Database") private readonly db: Database,
     @inject("ParentAssistantTextCheckpointLimits", { isOptional: true })
     private readonly limits: ParentAssistantTextCheckpointLimits = PARENT_ASSISTANT_TEXT_RETAINED_LIMITS,
     @inject("ParentAssistantTextRecoveryJournalOptions", { isOptional: true })
@@ -520,10 +520,10 @@ export class ParentAssistantTextRecoveryJournal {
   }
 }
 
-function resolveDefaultRecoveryJournalDirectory(db: Database.Database): string | undefined {
-  if (db.name === ":memory:") return undefined;
-  if (!db.name) throw new Error("Assistant text recovery journal database path is unavailable");
-  return NodePath.join(NodePath.dirname(db.name), NodePath.basename(db.name) + ".recovery", "parent-assistant-text");
+function resolveDefaultRecoveryJournalDirectory(db: Database): string | undefined {
+  if (db.filename === ":memory:") return undefined;
+  if (!db.filename) throw new Error("Assistant text recovery journal database path is unavailable");
+  return NodePath.join(NodePath.dirname(db.filename), NodePath.basename(db.filename) + ".recovery", "parent-assistant-text");
 }
 
 function createRecoveryJournalRecord(

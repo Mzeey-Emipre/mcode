@@ -5,7 +5,7 @@
 
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Changes, Database, Statement } from "bun:sqlite";
 import type {
   Message,
   MessageMention,
@@ -253,26 +253,26 @@ function takeUtf8Prefix(text: string, maxBytes: number): { text: string; bytes: 
 /** Repository for message creation and retrieval against SQLite. */
 @injectable()
 export class MessageRepo {
-  private createStatement: Database.Statement | null = null;
-  private createAssistantStatement: Database.Statement | null = null;
-  private publishAssistantStatement: Database.Statement | null = null;
-  private latestSequenceStatement: Database.Statement | null = null;
+  private createStatement: Statement | null = null;
+  private createAssistantStatement: Statement | null = null;
+  private publishAssistantStatement: Statement | null = null;
+  private latestSequenceStatement: Statement | null = null;
 
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
-  private getCreateStatement(): Database.Statement {
+  private getCreateStatement(): Statement {
     return this.createStatement ??= this.db.prepare(
       "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, selected_text_comments, system_notice) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
   }
 
-  private getCreateAssistantStatement(): Database.Statement {
+  private getCreateAssistantStatement(): Statement {
     return this.createAssistantStatement ??= this.db.prepare(
       "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, mentions, model, provider, origin_type, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?, ?, 'composer', ?)",
     );
   }
 
-  private getPublishAssistantStatement(): Database.Statement {
+  private getPublishAssistantStatement(): Statement {
     return this.publishAssistantStatement ??= this.db.prepare(
       "UPDATE messages SET is_internal = 0 WHERE id = ? AND role = 'assistant'",
     );
@@ -513,7 +513,7 @@ export class MessageRepo {
   }
 
   private assistantAttachments(
-    result: Database.RunResult,
+    result: Changes,
     messageId: string,
     attachments: StoredAttachment[] | undefined,
   ): StoredAttachment[] | null {

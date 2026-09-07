@@ -220,6 +220,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
               platform: process.platform,
               architecture: process.arch,
               entryPath,
+              executablePath: process.execPath,
               env: {
                 ...process.env,
                 ELECTRON_RUN_AS_NODE: "1",

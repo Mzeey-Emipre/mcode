@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { Message, MessageMention, PreviewAnnotationBundle, SelectedTextComment, StoredAttachment } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../persistence/message-repo.js";
@@ -16,7 +16,7 @@ import {
   loadOlderConversationPage,
 } from "../conversation-page.js";
 
-function seedThread(db: Database.Database): void {
+function seedThread(db: Database): void {
   const now = new Date().toISOString();
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -27,7 +27,7 @@ function seedThread(db: Database.Database): void {
 }
 
 function insertMessage(
-  db: Database.Database,
+  db: Database,
   id: string,
   role: string,
   content: string,
@@ -39,7 +39,7 @@ function insertMessage(
   ).run(id, "thread-1", role, content, new Date().toISOString(), sequence, isInternal ? 1 : 0);
 }
 
-function createDeps(db: Database.Database) {
+function createDeps(db: Database) {
   const messageRepo = new MessageRepo(db);
   const narrativeStore = new NarrativeStore(
     messageRepo,

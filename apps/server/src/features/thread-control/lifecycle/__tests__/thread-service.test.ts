@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import { HandoffStorage } from "../../../handoff/index.js";
@@ -16,7 +16,7 @@ import type { ThreadDeletionTeardownService } from "../thread-deletion-teardown-
 import { ThreadService } from "../thread-service.js";
 
 describe("ThreadService.delete", () => {
-  let database: Database.Database;
+  let database: Database;
   let threads: ThreadRepo;
   let workspaces: WorkspaceRepo;
   let cleanupJobs: CleanupJobRepo;

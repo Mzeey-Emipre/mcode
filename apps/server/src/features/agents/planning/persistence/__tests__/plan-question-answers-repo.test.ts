@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../../projects/persistence/workspace-repo.js";
@@ -14,7 +14,7 @@ import { PlanQuestionAnswersRepo } from "../plan-question-answers-repo.js";
  * fence; cascading FKs to messages and threads keep the table self-pruning.
  */
 describe("PlanQuestionAnswersRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: PlanQuestionAnswersRepo;
   let messageRepo: MessageRepo;
   let threadId: string;

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import * as NodePerfHooks from "node:perf_hooks";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { CONVERSATION_HISTORY_PAGE_MAX_BYTES } from "@mcode/contracts";
 import { openMemoryDatabase } from "../src/runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../src/features/agents/conversation/persistence/message-repo.js";
@@ -21,7 +21,7 @@ const threadId = "bench-thread";
 const directionalPageSize = Math.min(100, assistantCount);
 const midpointSequence = assistantCount;
 
-function seedThread(db: Database.Database): void {
+function seedThread(db: Database): void {
   const now = new Date().toISOString();
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -31,7 +31,7 @@ function seedThread(db: Database.Database): void {
   ).run(threadId, "bench-ws", "Bench thread", "main", now, now);
 }
 
-function seedMessages(db: Database.Database): void {
+function seedMessages(db: Database): void {
   const now = new Date().toISOString();
   const insert = db.prepare(
     "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)",
@@ -45,7 +45,7 @@ function seedMessages(db: Database.Database): void {
   insertMany();
 }
 
-function seedNarrative(db: Database.Database): void {
+function seedNarrative(db: Database): void {
   const tools = new ToolCallRecordRepo(db);
   const thoughts = new ThoughtSegmentRepo(db);
   const hooks = new HookExecutionRepo(db);

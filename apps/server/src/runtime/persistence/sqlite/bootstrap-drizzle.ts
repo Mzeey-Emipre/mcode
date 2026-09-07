@@ -9,7 +9,7 @@
  */
 
 import * as NodeCrypto from "node:crypto";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -36,14 +36,14 @@ function migrationHash(drizzleDir: string, tag: string): string {
     .digest("hex");
 }
 
-function tableExists(db: Database.Database, name: string): boolean {
+function tableExists(db: Database, name: string): boolean {
   const row = db
     .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
     .get(name);
-  return row !== undefined;
+  return row !== null;
 }
 
-function hasSubagentIdentityKey(db: Database.Database): boolean {
+function hasSubagentIdentityKey(db: Database): boolean {
   return (
     db.prepare("PRAGMA table_info(tool_call_records)").all() as Array<{ name: string }>
   ).some((column) => column.name === "subagent_identity_key");
@@ -66,7 +66,7 @@ const SCHEMA_SENTINEL_TABLE = "workspaces";
  *      a pre-legacy build).
  *   3. Both — handled by either branch above.
  */
-function baselineAlreadyApplied(db: Database.Database): boolean {
+function baselineAlreadyApplied(db: Database): boolean {
   if (tableExists(db, "_migrations")) {
     const legacyCount = (
       db.prepare("SELECT count(*) AS c FROM _migrations").get() as { c: number }
@@ -93,7 +93,7 @@ function baselineAlreadyApplied(db: Database.Database): boolean {
  * @param db Open SQLite database (foreign keys enabled by caller).
  * @param drizzleDir Absolute or cwd-relative path to `apps/server/drizzle`.
  */
-export function bootstrapDrizzle(db: Database.Database, drizzleDir: string): void {
+export function bootstrapDrizzle(db: Database, drizzleDir: string): void {
   if (tableExists(db, "__drizzle_migrations")) {
     const drizzleCount = (
       db.prepare("SELECT count(*) AS c FROM __drizzle_migrations").get() as { c: number }
@@ -145,7 +145,7 @@ export function bootstrapDrizzle(db: Database.Database, drizzleDir: string): voi
  * Safe in production: when all applied hashes match the current journal,
  * nothing is deleted.
  */
-export function reconcileMigrations(db: Database.Database, drizzleDir: string): void {
+export function reconcileMigrations(db: Database, drizzleDir: string): void {
   if (!tableExists(db, "__drizzle_migrations")) return;
 
   const journalPath = NodePath.join(drizzleDir, "meta", "_journal.json");
@@ -178,7 +178,7 @@ export function reconcileMigrations(db: Database.Database, drizzleDir: string): 
 
 /** Reconciles the 0042 tracker entry for databases patched by the previous release. */
 export function reconcileSubagentIdentityMigration(
-  db: Database.Database,
+  db: Database,
   drizzleDir: string,
 ): void {
   const journal = readJournal(drizzleDir);

@@ -2,14 +2,13 @@
  * SQLite database setup with the approved connection policy and Drizzle migrations.
  */
 
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
-import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { getMcodeDir, resolveDbPath } from "@mcode/shared";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import {
   bootstrapDrizzle,
   reconcileMigrations,
@@ -83,76 +82,6 @@ function getDrizzleMigrationsDir(): string {
   return drizzleDirMemo.directory;
 }
 
-/** Resolves and validates the approved better-sqlite3 binding for this process. */
-export function resolveElectronNativeBinding(): string {
-  if (!process.versions.electron) {
-    throw new Error("SQLite requires Electron's Node.js runtime.");
-  }
-
-  const localRequire = NodeModule.createRequire(import.meta.url);
-  const betterSqliteDir = NodePath.dirname(localRequire.resolve("better-sqlite3/package.json"));
-  const expectedBinding = NodePath.join(
-    betterSqliteDir,
-    "build",
-    "Release",
-    "better_sqlite3.electron.node",
-  );
-  const configuredBinding = process.env.BETTER_SQLITE3_BINDING;
-
-  if (!configuredBinding) {
-    throw new Error(
-      `BETTER_SQLITE3_BINDING must be ${expectedBinding}. Run 'bun install' to install the Electron binding.`,
-    );
-  }
-  if (NodePath.resolve(configuredBinding) === NodePath.resolve(expectedBinding)) return resolveWorkspaceBinding(expectedBinding);
-  return resolvePackagedBinding(configuredBinding);
-}
-
-function resolveWorkspaceBinding(expectedBinding: string): string {
-  if (!NodeFS.existsSync(expectedBinding)) {
-    throw new Error(
-      `Workspace Electron better-sqlite3 binding not found: ${expectedBinding}. Run 'bun install'.`,
-    );
-  }
-  return expectedBinding;
-}
-
-function resolvePackagedBinding(configuredBinding: string): string {
-  const packagedResourcesRoot = process.env.MCODE_PACKAGED_RESOURCES_ROOT;
-  if (!packagedResourcesRoot || !NodePath.isAbsolute(packagedResourcesRoot)) {
-    throw new Error("MCODE_PACKAGED_RESOURCES_ROOT must be an absolute canonical packaged resources directory.");
-  }
-
-  const canonicalResourcesRoot = NodeFS.realpathSync(packagedResourcesRoot);
-  if (packagedResourcesRoot !== canonicalResourcesRoot) {
-    throw new Error("MCODE_PACKAGED_RESOURCES_ROOT must be a canonical packaged resources directory.");
-  }
-
-  const expectedPackagedBinding = NodePath.join(
-    canonicalResourcesRoot,
-    "app.asar.unpacked",
-    "node_modules",
-    "better-sqlite3",
-    "build",
-    "Release",
-    "better_sqlite3.node",
-  );
-  if (!NodeFS.existsSync(configuredBinding) || !NodeFS.existsSync(expectedPackagedBinding)) {
-    throw new Error(
-      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or the packaged binding: ${expectedPackagedBinding}`,
-    );
-  }
-
-  const canonicalBinding = NodeFS.realpathSync(configuredBinding);
-  if (canonicalBinding !== expectedPackagedBinding) {
-    throw new Error(
-      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or the packaged binding: ${expectedPackagedBinding}`,
-    );
-  }
-
-  return canonicalBinding;
-}
-
 function hasSubagentIdentityMigration(migrationsDir: string | undefined): boolean {
   if (!migrationsDir || !NodeFS.existsSync(migrationsDir)) return false;
   return NodeFS.readdirSync(migrationsDir)
@@ -173,17 +102,17 @@ function hasSubagentIdentityMigration(migrationsDir: string | undefined): boolea
  * rethrown. The optional migration directory lets a staged migration apply
  * through Drizzle before the legacy fallback runs.
  */
-export function applySchemaPatches(db: Database.Database, migrationsDir?: string): void {
+export function applySchemaPatches(db: Database, migrationsDir?: string): void {
   applyWorkspaceSchemaPatches(db);
   applyToolCallSchemaPatches(db, migrationsDir);
   applyMessageSchemaPatches(db);
 }
 
-function tableColumns(db: Database.Database, table: string): string[] {
+function tableColumns(db: Database, table: string): string[] {
   return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
 }
 
-function addColumn(db: Database.Database, table: string, columnSql: string): void {
+function addColumn(db: Database, table: string, columnSql: string): void {
   try {
     db.prepare(`ALTER TABLE ${table} ADD COLUMN ${columnSql}`).run();
   } catch (error) {
@@ -191,7 +120,7 @@ function addColumn(db: Database.Database, table: string, columnSql: string): voi
   }
 }
 
-function applyWorkspaceSchemaPatches(db: Database.Database): void {
+function applyWorkspaceSchemaPatches(db: Database): void {
   const columns = tableColumns(db, "workspaces");
   if (columns.length === 0) return;
   if (!columns.includes("sort_order")) {
@@ -200,7 +129,7 @@ function applyWorkspaceSchemaPatches(db: Database.Database): void {
   normalizeWorkspaceSortOrder(db);
 }
 
-function normalizeWorkspaceSortOrder(db: Database.Database): void {
+function normalizeWorkspaceSortOrder(db: Database): void {
   const distinctCount = (db.prepare("SELECT COUNT(DISTINCT sort_order) AS cnt FROM workspaces").get() as { cnt: number }).cnt;
   const totalCount = (db.prepare("SELECT COUNT(*) AS cnt FROM workspaces").get() as { cnt: number }).cnt;
   if (totalCount <= 1 || distinctCount >= totalCount) return;
@@ -209,7 +138,7 @@ function normalizeWorkspaceSortOrder(db: Database.Database): void {
   db.transaction(() => ids.forEach((id, index) => statement.run(index, id)))();
 }
 
-function applyToolCallSchemaPatches(db: Database.Database, migrationsDir: string | undefined): void {
+function applyToolCallSchemaPatches(db: Database, migrationsDir: string | undefined): void {
   const columns = tableColumns(db, "tool_call_records");
   if (columns.length === 0) return;
   const patches = [
@@ -230,14 +159,14 @@ function applyToolCallSchemaPatches(db: Database.Database, migrationsDir: string
   }
 }
 
-function applyMessageSchemaPatches(db: Database.Database): void {
+function applyMessageSchemaPatches(db: Database): void {
   const columns = tableColumns(db, "messages");
   if (columns.length > 0 && !columns.includes("mentions")) {
     addColumn(db, "messages", "mentions TEXT");
   }
 }
 
-function runMigrations(db: Database.Database): void {
+function runMigrations(db: Database): void {
   const dir = getDrizzleMigrationsDir();
   bootstrapDrizzle(db, dir);
   reconcileMigrations(db, dir);
@@ -247,8 +176,8 @@ function runMigrations(db: Database.Database): void {
   applySchemaPatches(db, dir);
 }
 
-function readSchemaVersion(db: Database.Database): number {
-  const version = db.pragma("schema_version", { simple: true });
+function readSchemaVersion(db: Database): number {
+  const version = (db.query("PRAGMA schema_version").get() as { schema_version?: unknown } | null)?.schema_version;
   if (typeof version !== "number") {
     throw new Error(`PRAGMA schema_version returned ${typeof version}, expected number.`);
   }
@@ -270,17 +199,16 @@ export interface OpenDatabaseOptions {
  * In non-production, a linked git worktree uses `<toplevel>/.mcode-local/mcode.db`; otherwise a
  * branch opts in to `dbs/dev-<hash>.db`. Resolution matches `resolveDbPath` from `@mcode/shared`.
  */
-export function openDatabase(opts?: OpenDatabaseOptions): Database.Database {
+export function openDatabase(opts?: OpenDatabaseOptions): Database {
   const resolvedPath = resolveDatabasePath(opts);
   const dir = NodePath.dirname(resolvedPath);
   if (!NodeFS.existsSync(dir)) NodeFS.mkdirSync(dir, { recursive: true });
-  const nativeBinding = resolveElectronNativeBinding();
   const backupPath = opts?.migrationBackupSpace
     ? createMigrationBackup(resolvedPath, opts.migrationBackupSpace)
     : createMigrationBackup(resolvedPath);
-  let db: Database.Database | undefined;
+  let db: Database | undefined;
   try {
-    db = new Database(resolvedPath, { nativeBinding });
+    db = new Database(resolvedPath, { strict: true });
     applySQLiteConnectionPolicy(db, true);
     optimizeSQLiteConnection(db, "open");
     const schemaVersionBeforeMigrations = readSchemaVersion(db);
@@ -293,7 +221,7 @@ export function openDatabase(opts?: OpenDatabaseOptions): Database.Database {
     }
   } catch (err) {
     try {
-      db?.close();
+      db?.close(true);
     } catch {
       // ignore: connection may already be invalid
     }
@@ -316,14 +244,13 @@ function resolveDatabasePath(opts: OpenDatabaseOptions | undefined): string {
  * Open an in-memory database for testing. Applies the same foreign keys
  * and migrations as a file-backed database.
  */
-export function openMemoryDatabase(): Database.Database {
-  const nativeBinding = resolveElectronNativeBinding();
-  const db = new Database(":memory:", { nativeBinding });
+export function openMemoryDatabase(): Database {
+  const db = new Database(":memory:", { strict: true });
   applySQLiteConnectionPolicy(db, false);
   try {
     runMigrations(db);
   } catch (err) {
-    db.close();
+    db.close(true);
     throw err;
   }
   return db;

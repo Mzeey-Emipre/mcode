@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { routeMessage, type RouterDeps } from "../../../../application/transport/ws-router.js";
 import { setupContainer } from "../../../../application/composition/container.js";
 import { AgentService } from "../../../agents/index.js";
@@ -24,7 +24,7 @@ const MODERN_CAPABILITIES = {
 };
 
 describe("Terminal diagnostics container wiring", () => {
-  let database: Database.Database | undefined;
+  let database: Database | undefined;
   let temporaryDirectory: string | undefined;
   let modernDiagnostics: TerminalDiagnosticsService;
   const previousBackend = process.env.MCODE_TERMINAL_BACKEND;
@@ -36,7 +36,7 @@ describe("Terminal diagnostics container wiring", () => {
     process.env.MCODE_TERMINAL_BACKEND = "modern";
     process.env.MCODE_DB_PATH = NodePath.join(temporaryDirectory, "mcode.db");
     setupContainer(temporaryDirectory);
-    database = container.resolve<Database.Database>("Database");
+    database = container.resolve<Database>("Database");
 
     modernDiagnostics = new TerminalDiagnosticsService({
       backend: () => "modern",
@@ -63,7 +63,7 @@ describe("Terminal diagnostics container wiring", () => {
 
   afterEach(() => {
     if (!database && container.isRegistered("Database")) {
-      database = container.resolve<Database.Database>("Database");
+      database = container.resolve<Database>("Database");
     }
     database?.close();
     database = undefined;

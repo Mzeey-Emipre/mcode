@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { ReviewComparisonSchema } from "@mcode/contracts";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
@@ -27,7 +27,7 @@ const identity = { threadId: "thread-1", turnId: "turn-1", turnExecutionId: "exe
 const nativePatch = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-AGENT=before\n+AGENT=after\n USER=before\n";
 
 describe("Last turn Review public comparison boundary", () => {
-  let db: Database.Database;
+  let db: Database;
   let directory: string;
   let deps: TurnDiffRouterDeps;
   const scratch = NodePath.resolve(process.cwd(), "../../.codex/tmp");

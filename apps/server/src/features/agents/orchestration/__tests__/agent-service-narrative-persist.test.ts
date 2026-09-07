@@ -4,7 +4,7 @@ import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { AgentEventType } from "@mcode/contracts";
 import type {
   AgentEvent,
@@ -145,7 +145,7 @@ interface Built {
   service: AgentService;
   providerEmitter: NodeEvents.EventEmitter;
   canonicalSink: CanonicalAgentEventSink;
-  db: Database.Database;
+  db: Database;
   messageRepo: MessageRepo;
   thoughtBulk: ReturnType<typeof vi.fn>;
   hookBulk: ReturnType<typeof vi.fn>;
@@ -158,7 +158,7 @@ interface Built {
 }
 
 function build(options: {
-  db?: Database.Database;
+  db?: Database;
   canonicalSink?: CanonicalAgentEventSink;
   messageRepo?: MessageRepo;
   parentAssistantTextCheckpoints?: ParentAssistantTextCheckpointService;
@@ -269,7 +269,7 @@ function build(options: {
     name: ":memory:",
     transaction: vi.fn((fn: Function) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
-  } as unknown as Database.Database);
+  } as unknown as Database);
   const canonicalSink = options.canonicalSink ?? createCanonicalAgentEventSinkStub(db);
   const parentAssistantTextCheckpoints = options.parentAssistantTextCheckpoints
     ?? new ParentAssistantTextCheckpointService(db);

@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import {
   PullRequestReviewLinkRepo,
@@ -11,7 +11,7 @@ import { ThreadRepo } from "../../../../thread-control/persistence/thread-repo.j
 import { WorkspaceRepo } from "../../../../projects/persistence/workspace-repo.js";
 
 describe("PullRequestReviewLinkRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: PullRequestReviewLinkRepo;
   let threadRepo: ThreadRepo;
   let workspaceRepo: WorkspaceRepo;

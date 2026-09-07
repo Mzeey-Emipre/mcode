@@ -1,5 +1,5 @@
 import * as NodeCrypto from "node:crypto";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   CONVERSATION_HISTORY_PAGE_MAX_MESSAGES,
   ThoughtSegmentRecordSchema,
@@ -48,7 +48,7 @@ interface ProjectionState {
 
 /** Reads canonical conversation rows and projects narrative records for compatibility consumers. */
 export class CanonicalConversationProjectionReader {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   /** Loads one canonical conversation page in ascending message order. */
   load(

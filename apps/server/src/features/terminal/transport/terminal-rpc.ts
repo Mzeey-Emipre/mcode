@@ -112,11 +112,11 @@ const terminalManagementHandlers: TerminalManagementHandlers = {
 const terminalClassicHandlers: TerminalClassicHandlers = {
   "terminal.capabilities": (deps) => deps.terminalService.capabilities(),
   "terminal.create": (deps, params) => deps.terminalService.create(params.threadId),
-  "terminal.write": (deps, params) => {
-    deps.terminalService.write(params.ptyId, params.data);
+  "terminal.write": async (deps, params) => {
+    await deps.terminalService.write(params.ptyId, params.data);
   },
-  "terminal.resize": (deps, params) => {
-    deps.terminalService.resize(params.ptyId, params.cols, params.rows);
+  "terminal.resize": async (deps, params) => {
+    await deps.terminalService.resize(params.ptyId, params.cols, params.rows);
   },
   "terminal.kill": async (deps, params) => await deps.terminalService.kill(params.ptyId),
   "terminal.pause": (deps, params) => {

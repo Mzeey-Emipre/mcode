@@ -8,22 +8,47 @@ export interface SpawnPtyHostChildOptions {
   readonly platform: NodeJS.Platform;
   readonly architecture: NodeJS.Architecture;
   readonly entryPath: string;
-  readonly executablePath?: string;
+  readonly executablePath: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly onStderr?: (text: string) => void;
 }
 
-/** Resolves the sibling bundled PTY host entry used by the server bundle. */
-export function resolvePtyHostEntryPath(serverEntryPath: string): string {
+/** Resolves the PTY host entry used by the server bundle. */
+export function resolvePtyHostEntryPath(
+  serverEntryPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const resourcesRoot = env.MCODE_PACKAGED_RESOURCES_ROOT;
+  if (resourcesRoot) {
+    return NodePath.join(
+      resourcesRoot,
+      "app.asar.unpacked",
+      "dist",
+      "server",
+      "pty-host.cjs",
+    );
+  }
   return NodePath.resolve(NodePath.dirname(serverEntryPath), "pty-host.cjs");
+}
+
+/** Resolves the Electron executable that owns the isolated PTY host. */
+export function resolvePtyHostExecutable(env: NodeJS.ProcessEnv): string {
+  const executablePath = env.MCODE_PTY_HOST_EXECUTABLE;
+  if (!executablePath) {
+    throw new Error("MCODE_PTY_HOST_EXECUTABLE must identify the Electron PTY host runtime.");
+  }
+  return executablePath;
 }
 
 /** Spawns the separate PTY host with one inherited Node IPC channel. */
 export function spawnPtyHostChild(
   options: SpawnPtyHostChildOptions,
 ): PtyHostChild {
+  if (!options.executablePath) {
+    throw new Error("PTY host executable path is required.");
+  }
   const child = NodeChildProcess.spawn(
-    options.executablePath ?? process.execPath,
+    options.executablePath,
     [options.entryPath],
     {
       env: options.env ?? process.env,

@@ -2,8 +2,8 @@
  * Start the backend server and Vite dev server together for standalone
  * web development (no Electron needed).
  *
- * The server runs under Electron's Node.js (ELECTRON_RUN_AS_NODE=1) so
- * the better-sqlite3 native module matches the expected ABI. A dev-only
+ * The server runs under Bun. Electron remains the explicit isolated PTY host.
+ * A dev-only
  * auth token is generated and passed to both the server and the Vite
  * dev server so the browser can authenticate WebSocket connections.
  */
@@ -13,7 +13,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { resolveServerOnlyExitCode } from "./dev-web-lifecycle.mjs";
-import { prepareRuntimeDirectories, resolveElectronBinary, resolveElectronBinding, waitForHttpOk } from "./runtime/launch-mechanics.mjs";
+import { prepareRuntimeDirectories, resolveBunBinary, resolveElectronBinary, waitForHttpOk } from "./runtime/launch-mechanics.mjs";
 import { ensureDependencies } from "./agent/ensure-dependencies.mjs";
 import { seedDatabaseForStartup } from "./db-seed.mjs";
 import { killProcessTree } from "./kill-process-tree.mjs";
@@ -38,11 +38,6 @@ const repoRoot = resolveRepoRoot(rootDir);
 await ensureDependencies({ repoRoot });
 const { rebuildServerDevBundle } = await import("./build-server-dev-bundle.mjs");
 
-/**
- * Resolve the Electron binary path. The native module (better-sqlite3)
- * is compiled for Electron's ABI, so the server must run under
- * Electron's Node.js runtime.
- */
 const paths = ensureRuntimeRoot(repoRoot);
 prepareRuntimeDirectories(paths);
 seedDatabaseForStartup({ repoRoot, preserveExistingTarget: true });
@@ -70,7 +65,7 @@ const contract = buildPortsContract({
   },
 });
 const electronBin = resolveElectronBinary(rootDir);
-let electronBinding;
+let bunBin;
 
 if (!electronBin) {
   console.error(
@@ -81,7 +76,7 @@ if (!electronBin) {
 }
 
 try {
-  electronBinding = resolveElectronBinding(rootDir);
+  bunBin = resolveBunBinary();
 } catch (err) {
   console.error(`[dev:web] ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
@@ -100,16 +95,15 @@ console.log(`\x1b[36m[dev:web]\x1b[0m Starting server on port ${serverPort}...`)
 
 let serverFailed = false;
 
-// Start the server using Electron's Node.js (matches better-sqlite3 ABI).
+// Keep Electron as the explicit PTY host while Bun runs the server.
 const server = NodeChildProcess.spawn(
-  electronBin,
+  bunBin,
   [serverCjs],
   {
     cwd: NodePath.dirname(serverCjs),
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
-      BETTER_SQLITE3_BINDING: electronBinding,
+      MCODE_PTY_HOST_EXECUTABLE: electronBin,
       NODE_ENV: "development",
       ...runtimeStateEnv,
       MCODE_PORT: String(serverPort),

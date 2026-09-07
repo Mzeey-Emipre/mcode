@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { afterEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { ProviderCatalogSnapshot } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { ProviderCatalogSnapshotRepo } from "../provider-catalog-snapshot-repo.js";
@@ -21,11 +21,11 @@ const SNAPSHOT: ProviderCatalogSnapshot = {
 };
 
 describe("ProviderCatalogSnapshotRepo", () => {
-  let db: Database.Database | undefined;
+  let db: Database | undefined;
 
   afterEach(() => db?.close());
 
-  function openCatalogDatabase(): Database.Database {
+  function openCatalogDatabase(): Database {
     const database = openMemoryDatabase();
     const insertWorkspace = database.prepare(
       "INSERT INTO workspaces (id, name, path) VALUES (?, ?, ?)",

@@ -10,7 +10,11 @@ import { EnvService } from "../../../runtime/environment/env-service.js";
 import { PtyHostCleanupLedger } from "../cleanup/terminal-cleanup-ledger.js";
 import { PtyHostSupervisor } from "../host/pty-host-supervisor.js";
 import { PtyPidRegistry } from "../host/pty-pid-registry.js";
-import { resolvePtyHostEntryPath, spawnPtyHostChild } from "../host/pty-host-child.js";
+import {
+  resolvePtyHostEntryPath,
+  resolvePtyHostExecutable,
+  spawnPtyHostChild,
+} from "../host/pty-host-child.js";
 import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../backends/terminal-backend.js";
 import { TerminalBackendSelector } from "../backends/terminal-backend-selector.js";
 import { LegacyTerminalBackend } from "../backends/legacy/legacy-terminal-backend.js";
@@ -57,21 +61,31 @@ export function registerTerminalBackends(container: DependencyContainer): void {
   );
 
   let modernTerminalBackend: ModernTerminalBackend | undefined;
+  let ptyHost: PtyHostSupervisor | undefined;
   let terminalBackendSelector: TerminalBackendSelector | undefined;
-  container.register("ModernTerminalBackend", {
+  container.register("PtyHost", {
     useFactory: (c: DependencyContainer) => {
-      if (modernTerminalBackend) return modernTerminalBackend;
+      if (ptyHost) return ptyHost;
       const hostRuntime = c.resolve<HostRuntime>("HostRuntime");
-      const host = new PtyHostSupervisor({
+      ptyHost = new PtyHostSupervisor({
         platform: terminalPlatform(hostRuntime.platform),
         cleanupLedger: c.resolve(PtyHostCleanupLedger),
         spawnHost: () => spawnPtyHostChild({
           platform: hostRuntime.platform,
           architecture: hostRuntime.architecture,
-          entryPath: resolvePtyHostEntryPath(process.argv[1] ?? process.cwd()),
+          entryPath: resolvePtyHostEntryPath(process.argv[1] ?? process.cwd(), process.env),
+          executablePath: resolvePtyHostExecutable(process.env),
           env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
         }),
       });
+      return ptyHost;
+    },
+  } as never);
+  container.register("ModernTerminalBackend", {
+    useFactory: (c: DependencyContainer) => {
+      if (modernTerminalBackend) return modernTerminalBackend;
+      const hostRuntime = c.resolve<HostRuntime>("HostRuntime");
+      const host = c.resolve<PtyHostSupervisor>("PtyHost");
       const runtime = new ModernTerminalSessionRuntime({ host });
       const settings = c.resolve(SettingsService);
       const sessions = new TerminalSessionService({
@@ -124,17 +138,15 @@ export function registerTerminalBackends(container: DependencyContainer): void {
         if (terminalService.capabilities().backend === "modern") {
           return c.resolve<ModernTerminalBackend>("ModernTerminalBackend").getDiagnosticsService();
         }
+        const host = c.resolve<PtyHostSupervisor>("PtyHost");
         return new TerminalDiagnosticsService({
           backend: () => terminalService.capabilities().backend,
           health: () => ({
             contractVersion: 1,
-            state: "healthy",
-            hostGeneration: "0",
+            state: host.health().state,
+            hostGeneration: host.health().hostGeneration,
             activeSessions: Math.min(terminalService.listActiveSessions().length, TERMINAL_MAX_SESSIONS),
-            lastHeartbeatMsAgo: null,
-            queueBytes: 0,
-            eventLoopLagMs: 0,
-            hostRssBytes: "0",
+            ...host.diagnostics(),
           }),
         });
       },

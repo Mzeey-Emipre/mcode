@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { ThreadRepo } from "../../persistence/thread-repo.js";
@@ -29,7 +29,7 @@ vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
 }));
 
 describe("completed thread cleanup Git safety", () => {
-  let database: Database.Database;
+  let database: Database;
   let testRootPath: string;
   let repositoryPath: string;
   let worktreePath: string;

@@ -20,7 +20,7 @@ const refs = vi.hoisted(() => {
 
   // Shared existsSync spy used by "fs"/"node:fs" mocks.
   const existsSyncSpy = vi.fn((path) =>
-    String(path).includes("better_sqlite3"),
+    String(path).includes("mcode-bun") || String(path).includes("/test/bun"),
   );
 
   // Spy for resolveServerBinary — lets tests override the resolved binary path
@@ -185,7 +185,7 @@ describe("ServerManager", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(NodeChildProcess.execFileSync).mockReset();
+    vi.mocked(NodeChildProcess.execFileSync).mockReset().mockReturnValue("/test/bun\n");
     refs.resetExitCallback();
     manager = new ServerManager(TEST_PLATFORM);
 
@@ -210,7 +210,7 @@ describe("ServerManager", () => {
       .fn()
       .mockResolvedValue({ ok: true }) as unknown as typeof fetch;
     vi.mocked(NodeFS.existsSync).mockImplementation((path) =>
-      String(path).includes("better_sqlite3"),
+      String(path).includes("mcode-bun") || String(path).includes("/test/bun"),
     );
 
     setupDefaultReadFileMock();
@@ -236,8 +236,7 @@ describe("ServerManager", () => {
 
     expect(NodeChildProcess.spawn).toHaveBeenCalledOnce();
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
-    // First arg is process.execPath
-    expect(spawnCall[0]).toBe(process.execPath);
+    expect(spawnCall[0]).toBe("/test/bun");
     // Options include detached: true; in non-dev mode stderr is piped to a log file
     const opts = spawnCall[2] as Record<string, unknown>;
     expect(opts.detached).toBe(true);
@@ -289,17 +288,16 @@ describe("ServerManager", () => {
   });
 
   // -----------------------------------------------------------------------
-  // V8 flags in args array
+  // Bun server arguments
   // -----------------------------------------------------------------------
 
-  it("passes V8 flags in the args array with default heap", async () => {
+  it("does not pass Electron V8 flags to the Bun server", async () => {
     await manager.start();
 
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
-    expect(args).toContain(`--max-old-space-size=${SERVER_HEAP_DEFAULT_MB}`);
-    expect(args).toContain("--max-semi-space-size=2");
-    expect(args).toContain("--expose-gc");
+    expect(args).toHaveLength(1);
+    expect(args[0]).toContain("server.cjs");
   });
 
   // -----------------------------------------------------------------------
@@ -622,7 +620,7 @@ describe("ServerManager", () => {
   // Heap size configuration
   // -----------------------------------------------------------------------
 
-  it("reads heapMb from settings.json", async () => {
+  it("does not consume heap settings in the Electron launcher", async () => {
     // Re-sequence readFileSync: lock ENOENT, then settings.json with custom heap.
     // readAuthTokenFromLock uses async readFile (fs/promises), set up separately.
     vi.mocked(NodeFS.readFileSync).mockReset();
@@ -641,10 +639,10 @@ describe("ServerManager", () => {
 
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
-    expect(args).toContain("--max-old-space-size=1024");
+    expect(args).not.toContain("--max-old-space-size=1024");
   });
 
-  it("treats the old default heap setting as unset", async () => {
+  it("does not translate the legacy heap default into a Bun flag", async () => {
     vi.mocked(NodeFS.readFileSync).mockReset();
     const enoent = () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
@@ -663,31 +661,20 @@ describe("ServerManager", () => {
 
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
-    expect(args).toContain(`--max-old-space-size=${SERVER_HEAP_DEFAULT_MB}`);
+    expect(args).not.toContain(`--max-old-space-size=${SERVER_HEAP_DEFAULT_MB}`);
   });
 
-  it("uses MCODE_SERVER_HEAP_MB env var over settings.json", async () => {
+  it("does not turn MCODE_SERVER_HEAP_MB into a Bun V8 flag", async () => {
     process.env.MCODE_SERVER_HEAP_MB = "2048";
-
-    // When env var is set, settings.json is never read. Re-sequence accordingly:
-    // tryExistingServer lock ENOENT only. readAuthTokenFromLock via async readFile.
-    vi.mocked(NodeFS.readFileSync).mockReset();
-    const enoent = () => {
-      const err = new Error("ENOENT") as NodeJS.ErrnoException;
-      err.code = "ENOENT";
-      throw err;
-    };
-    vi.mocked(NodeFS.readFileSync).mockImplementationOnce(enoent); // tryExistingServer
-    vi.mocked(NodeFSPromises.readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
 
     await manager.start();
 
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
-    expect(args).toContain("--max-old-space-size=2048");
+    expect(args).not.toContain("--max-old-space-size=2048");
   });
 
-  it("falls through to settings.json when MCODE_SERVER_HEAP_MB is invalid", async () => {
+  it("leaves memory policy validation to the Bun server settings service", async () => {
     process.env.MCODE_SERVER_HEAP_MB = "invalid";
 
     vi.mocked(NodeFS.readFileSync).mockReset();
@@ -696,18 +683,14 @@ describe("ServerManager", () => {
       err.code = "ENOENT";
       throw err;
     };
-    vi.mocked(NodeFS.readFileSync)
-      .mockImplementationOnce(enoent)
-      .mockReturnValueOnce(
-        JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
-      );
+    vi.mocked(NodeFS.readFileSync).mockImplementationOnce(enoent);
     vi.mocked(NodeFSPromises.readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
 
     await manager.start();
 
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
-    expect(args).toContain("--max-old-space-size=1024");
+    expect(args).not.toContain("--max-old-space-size=1024");
   });
 
   // -----------------------------------------------------------------------
@@ -731,31 +714,33 @@ describe("ServerManager", () => {
     expect(args.join(" ")).not.toContain("--import");
   });
 
-  it("sets ELECTRON_RUN_AS_NODE=1 in the server child process env", async () => {
+  it("uses Bun for the server and keeps Electron as the explicit PTY host in development", async () => {
     await manager.start();
 
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
     const options = spawnCall[2] as { env: Record<string, string> };
-    expect(options.env.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(spawnCall[0]).toBe("/test/bun");
+    expect(options.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(options.env.MCODE_PTY_HOST_EXECUTABLE).toBe(process.execPath);
   });
 
-  it("replaces an inherited Node binding with the workspace Electron binding in dev", async () => {
-    const previousBinding = process.env.BETTER_SQLITE3_BINDING;
-    process.env.BETTER_SQLITE3_BINDING = "/inherited/better_sqlite3.node";
+  it("resolves a Windows Bun shim to the runtime executable before spawning", async () => {
+    manager = new ServerManager("win32");
+    vi.mocked(NodeChildProcess.execFileSync)
+      .mockReset()
+      .mockReturnValueOnce("C:\\Users\\test\\scoop\\shims\\bun.exe\n")
+      .mockReturnValueOnce("C:\\Users\\test\\scoop\\apps\\bun\\1.4.0\\bun.exe\n");
+    vi.mocked(NodeFS.existsSync).mockImplementation((path) =>
+      String(path).includes("mcode-bun") || String(path).includes("bun.exe"),
+    );
 
-    try {
-      await manager.start();
+    await manager.start();
 
-      const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
-      const options = spawnCall[2] as { env: Record<string, string> };
-      expect(options.env.BETTER_SQLITE3_BINDING).toContain(
-        "better_sqlite3.electron.node",
-      );
-    } finally {
-      if (previousBinding === undefined)
-        delete process.env.BETTER_SQLITE3_BINDING;
-      else process.env.BETTER_SQLITE3_BINDING = previousBinding;
-    }
+    expect(NodeChildProcess.spawn).toHaveBeenCalledWith(
+      "C:\\Users\\test\\scoop\\apps\\bun\\1.4.0\\bun.exe",
+      expect.any(Array),
+      expect.any(Object),
+    );
   });
 
   it("spawns the bundled server.cjs when app.isPackaged is true", async () => {
@@ -765,6 +750,7 @@ describe("ServerManager", () => {
       configurable: true,
       writable: true,
     });
+    refs.resolveServerBinarySpy.mockReturnValue("/test/resources/bin/mcode-server");
 
     await manager.start();
 
@@ -773,34 +759,32 @@ describe("ServerManager", () => {
     expect(args.join(" ")).toContain("server.cjs");
   });
 
-  it("enables fatal V8 reports in packaged builds", async () => {
+  it("uses the staged Bun runtime in packaged builds", async () => {
     refs.setIsPackaged(true);
     Object.defineProperty(process, "resourcesPath", {
       value: "/test/resources",
       configurable: true,
       writable: true,
     });
+    refs.resolveServerBinarySpy.mockReturnValue("/test/resources/bin/mcode-server");
 
     await manager.start();
 
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
-    const args = spawnCall[1] as string[];
-    expect(args).toContain("--report-on-fatalerror");
-    expect(args).toContain("--report-directory=/tmp/mcode");
-    expect(args).toContain("--heapsnapshot-near-heap-limit=1");
+    expect(spawnCall[0]).toBe(NodePath.resolve("/test/resources", "bin", "mcode-bun"));
+    expect(spawnCall[1]).toEqual([expect.stringContaining("server.cjs")]);
   });
 
-  it("uses process.execPath when packaged but renamed binary is missing", async () => {
+  it("fails before spawn when the packaged Electron PTY host is missing", async () => {
     refs.setIsPackaged(true);
     Object.defineProperty(process, "resourcesPath", {
       value: "/test/resources",
       configurable: true,
       writable: true,
     });
-    // Resolver returns execPath (fallback) when renamed binary is absent
     refs.resolveServerBinarySpy.mockReturnValue(process.execPath);
 
-    await manager.start();
+    await expect(manager.start()).rejects.toThrow("Packaged Electron PTY host not found");
 
     expect(refs.resolveServerBinarySpy).toHaveBeenCalledWith({
       isPackaged: true,
@@ -808,10 +792,7 @@ describe("ServerManager", () => {
       resourcesPath: "/test/resources",
       platform: TEST_PLATFORM,
     });
-    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
-    expect(spawnCall[0]).toBe(process.execPath);
-    const opts = spawnCall[2] as { env: Record<string, string> };
-    expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(NodeChildProcess.spawn).not.toHaveBeenCalled();
   });
 
   it("uses renamed binary when packaged and mcode-server binary exists", async () => {
@@ -834,32 +815,13 @@ describe("ServerManager", () => {
       platform: TEST_PLATFORM,
     });
     const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
-    expect(spawnCall[0]).toBe(expectedBinary);
+    expect(spawnCall[0]).toBe(NodePath.resolve("/test/resources", "bin", "mcode-bun"));
     const opts = spawnCall[2] as { env: Record<string, string> };
-    expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(opts.env.MCODE_PTY_HOST_EXECUTABLE).toBe(expectedBinary);
   });
 
-  it("passes BETTER_SQLITE3_BINDING env var when packaged and binding exists", async () => {
-    refs.setIsPackaged(true);
-    Object.defineProperty(process, "resourcesPath", {
-      value: "/test/resources",
-      configurable: true,
-      writable: true,
-    });
-    vi.mocked(NodeFS.existsSync).mockImplementation((p) =>
-      String(p).includes("better_sqlite3.node"),
-    );
-
-    await manager.start();
-
-    const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
-    const opts = spawnCall[2] as Record<string, unknown>;
-    const env = opts.env as Record<string, string>;
-    expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.node");
-    expect(env.MCODE_PACKAGED_RESOURCES_ROOT).toBe("/test/resources");
-  });
-
-  it("fails before spawn when the packaged Electron binding is unavailable", async () => {
+  it("fails before spawn when the packaged Bun runtime is unavailable", async () => {
     refs.setIsPackaged(true);
     Object.defineProperty(process, "resourcesPath", {
       value: "/test/resources",
@@ -868,9 +830,7 @@ describe("ServerManager", () => {
     });
     vi.mocked(NodeFS.existsSync).mockReturnValue(false);
 
-    await expect(manager.start()).rejects.toThrow(
-      "Packaged better-sqlite3 binding not found",
-    );
+    await expect(manager.start()).rejects.toThrow("Packaged Bun runtime not found");
     expect(NodeChildProcess.spawn).not.toHaveBeenCalled();
   });
 
@@ -1367,7 +1327,7 @@ describe("ServerManager", () => {
     vi.mocked(NodeFS.existsSync).mockImplementation(
       (path) =>
         String(path).endsWith("server-stderr.log") ||
-        String(path).includes("better_sqlite3"),
+        String(path).includes("/test/bun"),
     );
 
     await manager.start();

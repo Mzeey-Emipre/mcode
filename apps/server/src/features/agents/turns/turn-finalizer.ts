@@ -20,7 +20,7 @@
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent, StoredAttachment } from "@mcode/contracts";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { broadcast } from "../../../application/transport/push.js";
 import type { MessageRepo } from "../conversation/persistence/message-repo.js";
 import type { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
@@ -103,7 +103,7 @@ export class TurnFinalizer {
     private readonly narrativeStore: NarrativeStore,
     private readonly snapshotService: SnapshotService,
     private readonly turnSnapshotRepo: TurnSnapshotPersistence,
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly turnFileTracker?: TurnFileTracker,
     private readonly canonicalSink?: ParentTurnDurability,
     private readonly parentAssistantTextCheckpoints?: ParentAssistantTextCheckpointService,

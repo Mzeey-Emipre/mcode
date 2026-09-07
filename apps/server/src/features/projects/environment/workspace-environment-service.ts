@@ -38,7 +38,7 @@ import {
 } from "@mcode/contracts";
 import { getMcodeDir } from "@mcode/shared";
 import { ZodError } from "zod";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { ThreadStartupService } from "../../thread-startup/thread-startup-service.js";
 import type {
   TerminalCommandCompletion,
@@ -161,7 +161,7 @@ export interface WorkspaceEnvironmentServiceOptions {
   readonly cancelScheduled?: (timeout: ReturnType<typeof setTimeout>) => void;
   readonly now?: () => Date;
   readonly createAttemptId?: () => string;
-  readonly database?: Database.Database;
+  readonly database?: Database;
 }
 
 /** Resolved command facts shared by Setup approval and Project Action orchestration. */

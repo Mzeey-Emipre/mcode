@@ -29,7 +29,7 @@ import { hasRuntimeDatabaseMarker } from "./runtime-database.mjs";
 import {
   prepareRuntimeDirectories as prepareSharedRuntimeDirectories,
   resolveElectronBinary as resolveSharedElectronBinary,
-  resolveElectronBinding,
+  resolveBunBinary,
   waitForHttpOk as waitForSharedHttpOk,
 } from "../runtime/launch-mechanics.mjs";
 
@@ -59,7 +59,6 @@ export function buildWebAutomationEnv(env = process.env) {
  *   stopRecordedRuntimePids: typeof stopRecordedRuntimePids,
  *   computeAvailablePorts: typeof computeAvailablePorts,
  *   getElectronBinary: typeof getElectronBinary,
- *   getElectronBinding: typeof getElectronBinding,
  *   spawnLogged: typeof spawnLogged,
  *   startManagedDesktop: typeof startManagedDesktop,
  *   stopManagedDesktop: typeof stopManagedDesktop,
@@ -94,9 +93,8 @@ export async function agentUp(repoRoot = resolveRepoRoot(), { desktop = false, w
 
   const runtime = await prepareRuntime(repoRoot);
   const electronBin = requireElectronBinary();
-  const getBinding = agentUpTestHooks.getElectronBinding ?? getElectronBinding;
-  runtime.electronBinding = getBinding();
-  return startProvisionedRuntime({ desktop, electronBin, paths, repoRoot, runtime, wait });
+  const bunBin = resolveBunBinary();
+  return startProvisionedRuntime({ bunBin, desktop, electronBin, paths, repoRoot, runtime, wait });
 }
 
 function requireElectronBinary() {
@@ -105,16 +103,16 @@ function requireElectronBinary() {
   return electronBin;
 }
 
-async function startProvisionedRuntime({ desktop, electronBin, paths, repoRoot, runtime, wait }) {
+async function startProvisionedRuntime({ bunBin, desktop, electronBin, paths, repoRoot, runtime, wait }) {
   const startedProcesses = [];
   const persistPid = agentUpTestHooks.writePid ?? writePid;
   try {
-    const server = await startRuntimeServer({ electronBin, paths, repoRoot, runtime });
+    const server = await startRuntimeServer({ bunBin, electronBin, paths, repoRoot, runtime });
     startedProcesses.push({ name: "server", pid: requireChildPid("server", server) });
     startedProcesses.at(-1).pidFile = persistPid(paths, "server", server.pid);
     writePortsFile(runtime.contract, repoRoot);
 
-    const web = await startRuntimeWeb({ paths, repoRoot, runtime });
+    const web = await startRuntimeWeb({ bunBin, paths, repoRoot, runtime });
     startedProcesses.push({ name: "web", pid: requireChildPid("web", web) });
     startedProcesses.at(-1).pidFile = persistPid(paths, "web", web.pid);
 
@@ -228,18 +226,17 @@ function resolveElectronBinary() {
   return getElectron();
 }
 
-async function startRuntimeServer({ electronBin, paths, repoRoot, runtime }) {
+async function startRuntimeServer({ bunBin, electronBin, paths, repoRoot, runtime }) {
   const serverCjs = NodePath.resolve(repoRoot, "apps", "desktop", "dist", "server", "server.cjs");
   const spawnRuntimeProcess = agentUpTestHooks.spawnLogged ?? spawnLogged;
   return spawnRuntimeProcess(
-    electronBin,
+    bunBin,
     [serverCjs],
     {
       cwd: NodePath.dirname(serverCjs),
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
-        BETTER_SQLITE3_BINDING: runtime.electronBinding,
+        MCODE_PTY_HOST_EXECUTABLE: electronBin,
         NODE_ENV: "development",
         ...buildRuntimeStateEnv(repoRoot, { MCODE_AGENT_FIXTURE_REPO: runtime.fixtureRepo }),
         MCODE_PORT: String(runtime.serverPort),
@@ -256,10 +253,10 @@ async function startRuntimeServer({ electronBin, paths, repoRoot, runtime }) {
   );
 }
 
-async function startRuntimeWeb({ paths, repoRoot, runtime }) {
+async function startRuntimeWeb({ bunBin, paths, repoRoot, runtime }) {
   const spawnRuntimeProcess = agentUpTestHooks.spawnLogged ?? spawnLogged;
   return spawnRuntimeProcess(
-    getBunBinary(),
+    bunBin,
     ["run", "dev", "--host", "127.0.0.1", "--port", String(runtime.webPort), "--strictPort"],
     {
       cwd: NodePath.resolve(rootDir, "apps", "web"),
@@ -299,10 +296,6 @@ function getElectronBinary() {
   return resolveSharedElectronBinary(rootDir);
 }
 
-/** Resolve the workspace Electron-native better-sqlite3 binding. */
-function getElectronBinding() {
-  return resolveElectronBinding(rootDir);
-}
 
 /**
  * Spawn a long-running process with stdout and stderr redirected to one log file.
@@ -343,20 +336,6 @@ function acknowledgeSpawn(child) {
   });
 }
 
-/**
- * Resolve the Bun executable used to launch Vite.
- *
- * @returns {string}
- */
-function getBunBinary() {
-  if (process.env.BUN) return process.env.BUN;
-  if (process.platform === "win32") {
-    const result = NodeChildProcess.spawnSync("where.exe", ["bun"], { encoding: "utf8" });
-    const candidate = result.stdout.split(/\r?\n/).find(Boolean);
-    if (candidate) return candidate;
-  }
-  return "bun";
-}
 
 /**
  * Persist the PID of a process started by `agent:up`.

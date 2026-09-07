@@ -4,7 +4,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { logger } from "@mcode/shared";
 
 /**
@@ -37,7 +37,7 @@ export class TaskRepo {
   private readonly stmtGet;
   private readonly stmtDelete;
 
-  constructor(@inject("Database") db: Database.Database) {
+  constructor(@inject("Database") db: Database) {
     this.stmtUpsert = db.prepare(`
       INSERT INTO thread_tasks (thread_id, tasks_json, updated_at)
       VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

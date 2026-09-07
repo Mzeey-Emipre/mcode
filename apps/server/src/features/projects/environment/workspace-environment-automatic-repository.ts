@@ -1,5 +1,5 @@
 import * as NodeCrypto from "node:crypto";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type {
   MessageMention,
   PreviewAnnotationBundle,
@@ -119,7 +119,7 @@ interface QueuedTurnMessageOrigin {
 
 /** SQLite storage for the automatic Setup gate, attempts, and queued Turn claims. */
 export class WorkspaceEnvironmentAutomaticRepository {
-  constructor(private readonly db: Database.Database, private readonly now: () => string) {}
+  constructor(private readonly db: Database, private readonly now: () => string) {}
 
   /** Atomically persist one blocked Turn and create the Setup gate on the first submission. */
   queueFirstTurn(input: WorkspaceEnvironmentQueueFirstTurnInput): WorkspaceEnvironmentQueueAdmission {

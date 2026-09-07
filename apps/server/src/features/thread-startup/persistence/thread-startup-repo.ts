@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { inject, injectable } from "tsyringe";
 import {
   ThreadStartupSchema,
@@ -25,7 +25,7 @@ interface ThreadStartupRow {
 /** SQLite repository for server-owned thread startup lifecycle snapshots. */
 @injectable()
 export class ThreadStartupRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Insert one new startup snapshot. */
   insert(startup: ThreadStartup): void {

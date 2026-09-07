@@ -1,6 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type {
   ExternalThreadControlAuthority,
   ExternalThreadControlScope,
@@ -112,7 +112,7 @@ interface DeliveryRow {
 /** Owns durable external pairings, credential hashing, replay retention, and rate reservations. */
 @injectable()
 export class ExternalThreadControlPairingService {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Create a pairing and return its plaintext credential exactly once. */
   create(input: ExternalThreadControlPairingInput): ExternalThreadControlPairingSecret {

@@ -3,10 +3,10 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { MessageRepo } from "../../../agents/conversation/persistence/message-repo.js";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 describe("thread forking - data layer", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let messageRepo: MessageRepo;
 
@@ -75,7 +75,7 @@ describe("thread forking - data layer", () => {
 });
 
 describe("thread forking - edge cases", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let messageRepo: MessageRepo;
 

@@ -1,13 +1,13 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { ThreadControlApprovalRepo } from "../thread-control-approval-repo.js";
 import { ThreadRepo } from "../../../persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../../projects/persistence/workspace-repo.js";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 
 describe("ThreadControlApprovalRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let approvals: ThreadControlApprovalRepo;
   let threadId: string;
   let workspaceId: string;

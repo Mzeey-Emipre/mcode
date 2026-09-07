@@ -1,13 +1,13 @@
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 import * as NodePath from "node:path";
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import {
   SQLITE_PROFILE_WORKLOADS,
   type SQLiteProfileReport,
   type SQLiteProfileSample,
 } from "./sqlite-profile.js";
-import { openDatabase, resolveElectronNativeBinding } from "../database.js";
+import { openDatabase } from "../database.js";
 import {
   MIGRATION_BACKUP_RETENTION,
 } from "../migration-backup.js";
@@ -378,8 +378,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readNumericPragma(database: Database.Database, name: string): number {
-  const value = database.pragma(name, { simple: true });
+function readNumericPragma(database: Database, name: string): number {
+  const value = (database.query(`PRAGMA ${name}`).get() as Record<string, unknown> | null)?.[name];
   if (typeof value !== "number") {
     throw new Error(`PRAGMA ${name} returned ${typeof value}, expected number.`);
   }
@@ -396,10 +396,8 @@ function createDatabaseWithPublicIdentifier(databasePath: string): void {
   }
 }
 
-function openRawDatabase(databasePath: string): Database.Database {
-  return new Database(databasePath, {
-    nativeBinding: resolveElectronNativeBinding(),
-  });
+function openRawDatabase(databasePath: string): Database {
+  return new Database(databasePath, { strict: true });
 }
 
 function withMigrationsDirectory<T>(directory: string, work: () => T): T {
@@ -431,7 +429,7 @@ function databaseContainsPublicIdentifier(databasePath: string): boolean {
   const database = openRawDatabase(databasePath);
   try {
     return database.prepare("SELECT id FROM threads WHERE id = ?")
-      .get(PUBLIC_TEXT_IDENTIFIER) !== undefined;
+      .get(PUBLIC_TEXT_IDENTIFIER) !== null;
   } finally {
     database.close();
   }

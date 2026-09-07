@@ -289,11 +289,9 @@ NodeTest.test("agentUp removes stale PID files before launching server and web p
     },
     computeAvailablePorts: async () => ({ serverPort: 41_223, webPort: 41_224 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: (_command, _args, options) => {
       spawnAttempted = true;
       NodeAssertStrict.default.equal(NodeFS.existsSync(NodePath.join(getRuntimePaths(repo).pidsDir, "server.pid")), false);
-      NodeAssertStrict.default.match(options.env.BETTER_SQLITE3_BINDING, /better_sqlite3\.electron\.node$/);
       throw new Error("stop before real launch");
     },
   });
@@ -356,7 +354,6 @@ NodeTest.test("agentUp defaults to returning without health checks", async () =>
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_227, webPort: 41_228 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => ({ pid: 80_100 }),
   });
   globalThis.fetch = async () => {
@@ -392,7 +389,6 @@ NodeTest.test("agentUp prints a redacted startup summary and persists credential
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_241, webPort: 41_242 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => ({ pid: 80_101 }),
   });
   process.stdout.write = (chunk, callback) => {
@@ -452,7 +448,6 @@ NodeTest.test("agentUp prepares fresh runtime directories before recording child
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_225, webPort: 41_226 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => {
       for (const directory of runtimeDirectories) {
         NodeAssertStrict.default.equal(
@@ -493,7 +488,6 @@ NodeTest.test("agentUp --desktop waits for the managed Electron app and records 
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_251, webPort: 41_252 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => ({ pid: 81_000 }),
     startManagedDesktop: (receivedRepo, electronBin) => {
       NodeAssertStrict.default.equal(receivedRepo, repo);
@@ -543,7 +537,6 @@ NodeTest.test("agentUp --desktop defaults to no CDP readiness wait", async () =>
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_257, webPort: 41_258 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => ({ pid: 81_020 }),
     startManagedDesktop: () => ({ endpoint: "http://127.0.0.1:43003", pid: 81_021 }),
     waitForDesktopPage: async () => { pageWaited = true; },
@@ -604,7 +597,6 @@ NodeTest.test("agentUp removes the desktop PID after managed page readiness fail
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_253, webPort: 41_254 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: spawnChild,
     startManagedDesktop: () => ({ ...spawnChild(), endpoint: "http://127.0.0.1:43002" }),
     stopManagedDesktop: () => ({ status: "stopped" }),
@@ -638,7 +630,6 @@ NodeTest.test("agentUp hides the console window for runtime child processes", as
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_227, webPort: 41_228 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: (_command, _args, options) => {
       spawnOptions.push(options);
       throw new Error("stop before real launch");
@@ -854,7 +845,6 @@ NodeTest.test("agentUp cleans the managed desktop session when desktop PID regis
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_271, webPort: 41_272 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => ({ pid: 81_071 }),
     startManagedDesktop: () => {
       NodeFS.writeFileSync(NodePath.join(getRuntimePaths(repo).devDir, "electron-agent-runtime.json"), "session\n");
@@ -914,7 +904,6 @@ NodeTest.test("agentUp stops the captured server when server PID persistence fai
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_281, webPort: 41_282 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => ({ pid: 81_081 }),
     writePid: () => { throw new Error("cannot record server PID"); },
     stopPid: async (pid) => { stopped.push(pid); },
@@ -937,7 +926,6 @@ NodeTest.test("agentUp stops captured web and server processes when web PID pers
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_283, webPort: 41_284 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => ({ pid: spawned++ === 0 ? 81_083 : 81_084 }),
     writePid: (_paths, name) => {
       if (name === "web") throw new Error("cannot record web PID");
@@ -964,7 +952,6 @@ NodeTest.test("agentUp falls back to the captured desktop PID when managed clean
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_285, webPort: 41_286 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: () => ({ pid: spawned++ === 0 ? 81_085 : 81_086 }),
     startManagedDesktop: () => {
       NodeFS.writeFileSync(NodePath.join(paths.devDir, "electron-agent-runtime.json"), "session\n");
@@ -1005,7 +992,6 @@ NodeTest.test("agentUp retains the desktop session when managed and captured cle
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_287, webPort: 41_288 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: (() => { let pid = 81_088; return () => ({ pid: pid++ }); })(),
     startManagedDesktop: () => {
       NodeFS.writeFileSync(NodePath.join(paths.devDir, "electron-agent-runtime.json"), "session\n");
@@ -1040,7 +1026,6 @@ NodeTest.test("agentUp stops the captured desktop PID when managed cleanup repor
     stopRecordedRuntimePids: async () => {},
     computeAvailablePorts: async () => ({ serverPort: 41_289, webPort: 41_290 }),
     getElectronBinary: () => process.execPath,
-    getElectronBinding: () => "/fake/better_sqlite3.electron.node",
     spawnLogged: (() => { let pid = 81_091; return () => ({ pid: pid++ }); })(),
     startManagedDesktop: () => {
       NodeFS.writeFileSync(NodePath.join(paths.devDir, "electron-agent-runtime.json"), "session\n");
@@ -1285,7 +1270,7 @@ NodeTest.test("dev web single-instance flag preserves explicit false legacy mode
   NodeAssertStrict.default.equal(resolveDevSingleInstanceFlag("off"), false);
 });
 
-NodeTest.test("dev:server SIGTERM stops the Electron server without a Vite reference error", { timeout: 75_000 }, async () => {
+NodeTest.test("dev:server SIGTERM stops the Bun server without a Vite reference error", { timeout: 75_000 }, async () => {
   const child = NodeChildProcess.spawn(process.execPath, ["scripts/dev-web.mjs", "--server-only"], {
     cwd: NodePath.resolve(process.cwd()),
     stdio: ["ignore", "pipe", "pipe"],
@@ -1342,7 +1327,7 @@ NodeTest.test("server stop polling does not treat a self-caused probe timeout as
 /** Waits for dev-web to report the server-only health port. */
 async function waitForServerPort(readOutput) {
   return waitUntil(() => {
-    const match = /Server ready on port (\d+)/.exec(readOutput());
+    const match = /Mcode server listening on 127\.0\.0\.1:(\d+)/.exec(readOutput());
     if (match) return Number(match[1]);
     return false;
   }, {

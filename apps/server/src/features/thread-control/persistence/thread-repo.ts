@@ -5,7 +5,7 @@
 
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { ReasoningLevelSchema } from "@mcode/contracts";
 import type { Thread, RecentThread, ThreadMode, ThreadStatus, ReasoningLevel, InteractionMode, OrchestrationMode, PermissionMode, ContextWindowMode } from "@mcode/contracts";
 
@@ -249,7 +249,7 @@ type ThreadSearchOptions = {
   limit?: number;
 };
 
-function appendSearchQuery(conditions: string[], params: unknown[], query: string): void {
+function appendSearchQuery(conditions: string[], params: SQLQueryBindings[], query: string): void {
   if (!query) return;
   const escapedQuery = query.replace(/[%_]/g, "\\$&");
   const pattern = `%${escapedQuery}%`;
@@ -266,7 +266,7 @@ function appendSearchQuery(conditions: string[], params: unknown[], query: strin
 
 function appendArraySearchFilter(
   conditions: string[],
-  params: unknown[],
+  params: SQLQueryBindings[],
   column: "status" | "provider" | "workspace_id",
   values: string[] | undefined,
 ): void {
@@ -278,7 +278,7 @@ function appendArraySearchFilter(
 
 function appendSearchValue(
   conditions: string[],
-  params: unknown[],
+  params: SQLQueryBindings[],
   condition: string,
   value: string | undefined,
 ): void {
@@ -322,12 +322,12 @@ function resolveNextBaseBranch(
     : baseBranch;
 }
 
-function appendThreadSetting<T>(
+function appendThreadSetting<T extends SQLQueryBindings>(
   fields: string[],
-  values: unknown[],
+  values: SQLQueryBindings[],
   column: string,
   value: T | undefined,
-  serialize: (value: T) => unknown = (entry) => entry,
+  serialize: (value: T) => SQLQueryBindings = (entry) => entry,
 ): void {
   if (value === undefined) return;
   fields.push(`${column} = ?`);
@@ -362,7 +362,7 @@ export interface CompletedThreadDeadlineUpdate extends CompletedThreadRetentionR
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
 export class ThreadRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Create a new thread and return the fully-populated record. */
   create(
@@ -489,7 +489,7 @@ export class ThreadRepo {
       "w.deleted_at IS NULL",
       canonicalChildVisibilityClause("t"),
     ];
-    const params: unknown[] = [];
+    const params: SQLQueryBindings[] = [];
 
     appendSearchQuery(conditions, params, opts.query);
     appendArraySearchFilter(conditions, params, "status", opts.filters?.status);
@@ -985,7 +985,7 @@ export class ThreadRepo {
     },
   ): boolean {
     const fields: string[] = [];
-    const values: unknown[] = [];
+    const values: SQLQueryBindings[] = [];
     appendThreadSetting(fields, values, "reasoning_level", settings.reasoning_level);
     appendThreadSetting(fields, values, "interaction_mode", settings.interaction_mode);
     appendThreadSetting(fields, values, "orchestration_mode", settings.orchestration_mode);

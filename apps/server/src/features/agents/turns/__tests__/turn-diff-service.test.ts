@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { ProviderTurnDiffUpdate, TurnFileEffectSummary } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { TurnDiffRepo } from "../persistence/turn-diff-repo.js";
@@ -16,7 +16,7 @@ const effects: TurnFileEffectSummary = { revision: 1, fileCount: 1, additions: 1
   effects: [{ path: "a.txt", scope: "workspace", kind: "edited", additions: 1, deletions: 1, binary: false, toolCallIds: ["edit-1"] }] };
 
 describe("TurnDiffService production settlement", () => {
-  let db: Database.Database;
+  let db: Database;
   let service: TurnDiffService;
   let repo: TurnDiffRepo;
   beforeEach(() => {

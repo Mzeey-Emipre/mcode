@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type {
   ProviderCatalogChange,
   ProviderCatalogRequest,
@@ -33,7 +33,7 @@ const CACHED: ProviderCatalogSnapshot = {
 };
 
 describe("ProviderCatalogService", () => {
-  let db: Database.Database | undefined;
+  let db: Database | undefined;
 
   afterEach(() => db?.close());
 

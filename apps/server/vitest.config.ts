@@ -20,5 +20,10 @@ export default defineConfig({
       MCODE_DRIZZLE_MIGRATIONS_DIR: NodePath.resolve(serverPackageRoot, "drizzle"),
     },
     globalSetup: ["../../scripts/vitest-global-setup.ts"],
+    server: {
+      deps: {
+        inline: ["zod"],
+      },
+    },
   },
 });

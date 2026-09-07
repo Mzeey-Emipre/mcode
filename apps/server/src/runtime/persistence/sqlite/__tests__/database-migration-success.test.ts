@@ -2,12 +2,12 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { openDatabase, resolveElectronNativeBinding } from "../database.js";
+import { openDatabase } from "../database.js";
 
 const MIGRATIONS_THROUGH_0041 = "0041_index_completed_thread_cleanup";
 const SUBAGENT_IDENTITY_MIGRATION = "0042_supreme_terrax";
@@ -74,7 +74,7 @@ function copyMigrationsThrough(
   }
 }
 
-function columnNames(db: Database.Database, table: string): string[] {
+function columnNames(db: Database, table: string): string[] {
   return (
     db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
   ).map((column) => column.name);
@@ -105,21 +105,19 @@ describe("successful database migration recovery", () => {
   });
 
   it("keeps five generations and preserves public text identifiers", () => {
-    const originalDatabase = new Database(databasePath, {
-      nativeBinding: resolveElectronNativeBinding(),
-    });
+    const originalDatabase = new Database(databasePath, { strict: true });
     originalDatabase.exec("CREATE TABLE records (id TEXT PRIMARY KEY)");
     originalDatabase
       .prepare("INSERT INTO records (id) VALUES (?)")
       .run("thread-public-id");
-    originalDatabase.close();
+    originalDatabase.close(true);
 
     for (let generation = 0; generation < 7; generation++) {
       const upgradedDatabase = openDatabase({ dbPath: databasePath });
       expect(upgradedDatabase.prepare("SELECT id FROM records").get()).toEqual({
         id: "thread-public-id",
       });
-      upgradedDatabase.close();
+      upgradedDatabase.close(true);
     }
 
     const generations = NodeFS.readdirSync(directory).filter(
@@ -148,7 +146,7 @@ describe("successful database migration recovery", () => {
         created_at: migrationEntry(NodePath.join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION).when,
       }]);
     } finally {
-      database.close();
+      database.close(true);
     }
   });
 
@@ -185,7 +183,7 @@ describe("successful database migration recovery", () => {
         created_at: migrationEntry(NodePath.join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION).when,
       }]);
     } finally {
-      database.close();
+      database.close(true);
     }
   });
 
@@ -198,9 +196,7 @@ describe("successful database migration recovery", () => {
       AUTOMATIC_SETUP_MIGRATION,
     );
 
-    const previousDatabase = new Database(databasePath, {
-      nativeBinding: resolveElectronNativeBinding(),
-    });
+    const previousDatabase = new Database(databasePath, { strict: true });
     try {
       migrate(drizzle(previousDatabase), {
         migrationsFolder: migrationsFolderForDrizzle(previousMigrationsDirectory),
@@ -232,7 +228,7 @@ describe("successful database migration recovery", () => {
         1,
       );
     } finally {
-      previousDatabase.close();
+      previousDatabase.close(true);
     }
 
     process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
@@ -285,7 +281,7 @@ describe("successful database migration recovery", () => {
         { created_at: migration.when },
       ]);
     } finally {
-      upgradedDatabase.close();
+      upgradedDatabase.close(true);
     }
 
     const reopenedDatabase = openDatabase({ dbPath: databasePath });
@@ -299,7 +295,7 @@ describe("successful database migration recovery", () => {
         "SELECT content FROM messages WHERE id = ?",
       ).get("message-production")).toEqual({ content: "Existing production text" });
     } finally {
-      reopenedDatabase.close();
+      reopenedDatabase.close(true);
     }
   });
 
@@ -312,9 +308,7 @@ describe("successful database migration recovery", () => {
       ASSISTANT_TEXT_CHECKPOINT_MIGRATION,
     );
 
-    const previousDatabase = new Database(databasePath, {
-      nativeBinding: resolveElectronNativeBinding(),
-    });
+    const previousDatabase = new Database(databasePath, { strict: true });
     try {
       migrate(drizzle(previousDatabase), {
         migrationsFolder: migrationsFolderForDrizzle(previousMigrationsDirectory),
@@ -333,7 +327,7 @@ describe("successful database migration recovery", () => {
         "INSERT INTO workspace_environment_queued_turns (id, thread_id, message_id, state, submission_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       ).run("queued-1", "thread-queued", "message-queued-1", "queued", "{}", timestamp);
     } finally {
-      previousDatabase.close();
+      previousDatabase.close(true);
     }
 
     process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
@@ -361,7 +355,7 @@ describe("successful database migration recovery", () => {
         created_at: migrationEntry(currentMigrationsDirectory, QUEUED_TURNS_FIFO_MIGRATION).when,
       }]);
     } finally {
-      upgradedDatabase.close();
+      upgradedDatabase.close(true);
     }
   });
 
@@ -386,11 +380,11 @@ describe("successful database migration recovery", () => {
         created_at: migrationEntry(previousMigrationsDirectory, MIGRATIONS_THROUGH_0041).when,
       });
     } finally {
-      previousDatabase.close();
+      previousDatabase.close(true);
     }
 
     const stagedDatabase = openDatabase({ dbPath: databasePath });
-    stagedDatabase.close();
+    stagedDatabase.close(true);
 
     process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
     const upgradedDatabase = openDatabase({ dbPath: databasePath });
@@ -413,7 +407,7 @@ describe("successful database migration recovery", () => {
         created_at: migrationEntry(currentMigrationsDirectory, MESSAGE_OUTCOME_MIGRATION).when,
       }]);
     } finally {
-      upgradedDatabase.close();
+      upgradedDatabase.close(true);
     }
   });
 
@@ -426,9 +420,7 @@ describe("successful database migration recovery", () => {
       MIGRATIONS_THROUGH_0041,
     );
 
-    const previousDatabase = new Database(databasePath, {
-      nativeBinding: resolveElectronNativeBinding(),
-    });
+    const previousDatabase = new Database(databasePath, { strict: true });
     try {
       migrate(drizzle(previousDatabase), {
         migrationsFolder: migrationsFolderForDrizzle(previousMigrationsDirectory),
@@ -442,7 +434,7 @@ describe("successful database migration recovery", () => {
         created_at: migrationEntry(previousMigrationsDirectory, MIGRATIONS_THROUGH_0041).when,
       });
     } finally {
-      previousDatabase.close();
+      previousDatabase.close(true);
     }
 
     const upgradedDatabase = openDatabase({ dbPath: databasePath });
@@ -468,7 +460,7 @@ describe("successful database migration recovery", () => {
         created_at: migrationEntry(currentMigrationsDirectory, MESSAGE_OUTCOME_MIGRATION).when,
       }]);
     } finally {
-      upgradedDatabase.close();
+      upgradedDatabase.close(true);
     }
   });
 
@@ -545,7 +537,7 @@ describe("successful database migration recovery", () => {
         ) VALUES ('orphaned-child-item', ?, 'orphaned-child-turn', 'message', '[]', '{"projection":"message"}', ?, ?)
       `).run(nestedChildId, timestamp, timestamp);
     } finally {
-      previousDatabase.close();
+      previousDatabase.close(true);
     }
 
     process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
@@ -570,7 +562,7 @@ describe("successful database migration recovery", () => {
         ).when,
       }]);
     } finally {
-      upgradedDatabase.close();
+      upgradedDatabase.close(true);
     }
   });
 
@@ -583,15 +575,13 @@ describe("successful database migration recovery", () => {
       TURN_DIFF_MIGRATION,
     );
 
-    const previousDatabase = new Database(databasePath, {
-      nativeBinding: resolveElectronNativeBinding(),
-    });
+    const previousDatabase = new Database(databasePath, { strict: true });
     try {
       migrate(drizzle(previousDatabase), {
         migrationsFolder: migrationsFolderForDrizzle(previousMigrationsDirectory),
       });
     } finally {
-      previousDatabase.close();
+      previousDatabase.close(true);
     }
 
     process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
@@ -608,7 +598,7 @@ describe("successful database migration recovery", () => {
         created_at: migrationEntry(currentMigrationsDirectory, SYSTEM_NOTICE_SESSION_MIGRATION).when,
       }]);
     } finally {
-      upgradedDatabase.close();
+      upgradedDatabase.close(true);
     }
   });
 });
