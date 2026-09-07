@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -125,6 +126,15 @@ import type { BrowserSessionLifecycleTab } from "@/features/preview";
 const EMPTY_MESSAGES: Message[] = [];
 /** Stable empty plans reference so closed Overview selectors never allocate. */
 const EMPTY_PLANS: readonly PlanRecord[] = [];
+const SIDE_OVERVIEW_COLLISION_AVOIDANCE = {
+  side: "none",
+  align: "none",
+  fallbackAxisSide: "none",
+} as const;
+
+function getOverviewCollisionAvoidance(hasRoom: boolean) {
+  return hasRoom ? SIDE_OVERVIEW_COLLISION_AVOIDANCE : undefined;
+}
 
 /** CI dot shown on the Overview trigger for terminal check states. */
 export type ThreadOverviewCiDot = "red" | "green" | null;
@@ -2230,8 +2240,8 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const [loadedRepository, setLoadedRepository] = useState<LoadedRepository | null>(null);
   const [changeSummaryStatus, setChangeSummaryStatus] = useState<LoadStatus>("idle");
 
-  // Space-aware open: the Overview opens when the chat has room or the normal
-  // right panel is visible, until the user takes manual control for this thread.
+  // Overview may open when the chat has room or the normal right panel is
+  // visible, until the user takes manual control for this thread.
   const panelVisible = useDiffStore((s) => s.getRightPanelVisible(thread.workspace_id, thread.id));
   const openRequested = useOverviewStore(
     (state) => state.requestedThreadId === thread.id,
@@ -2286,11 +2296,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     openRequested,
   );
 
-  const setReserveSpace = useOverviewStore((s) => s.setReserveSpace);
-  useEffect(() => {
-    setReserveSpace(open && hasRoom && !panelVisible);
-    return () => setReserveSpace(false);
-  }, [hasRoom, open, panelVisible, setReserveSpace]);
+  const setReserveThread = useOverviewStore((s) => s.setReserveThread);
+  const clearReserveThread = useOverviewStore((s) => s.clearReserveThread);
+  useLayoutEffect(() => {
+    setReserveThread(open && hasRoom ? thread.id : null);
+    return () => clearReserveThread(thread.id);
+  }, [clearReserveThread, hasRoom, open, setReserveThread, thread.id]);
 
   const {
     prable,
@@ -2887,22 +2898,25 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
           <TooltipContent>{getThreadOverviewTriggerStatus(ciDot)}</TooltipContent>
         </Tooltip>
         {/*
-          Pin the popover to the far right edge with a comfortable gap below the
-          trigger. NOTE: base-ui's alignOffset is inverted from what you'd expect
-          for align="end" — a POSITIVE value moves the popover LEFT, a NEGATIVE
-          value moves it RIGHT. The large negative offset overshoots to the right
-          so collision detection clamps it to `collisionPadding` from the edge.
-          collisionPadding matches the header's right padding (pr-4 = 16px) so the
-          popover's right edge lines up with the rightmost header icon.
+          The side layout already reserves this right gutter. Keep Base UI from
+          flipping or shifting into chat when height is short; its available-height
+          variable still constrains the scrollable body below the trigger.
         */}
         <PopoverContent
           align="end"
+          side="bottom"
           sideOffset={18}
           alignOffset={-40}
           collisionPadding={8}
+          collisionAvoidance={getOverviewCollisionAvoidance(hasRoom)}
           className="w-80 overflow-hidden p-0"
         >
-          {overviewBody}
+          <ScrollArea
+            className="max-h-[var(--available-height)]"
+            viewportClassName="max-h-[var(--available-height)]"
+          >
+            {overviewBody}
+          </ScrollArea>
         </PopoverContent>
       </Popover>
 

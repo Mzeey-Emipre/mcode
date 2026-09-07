@@ -70,21 +70,22 @@ export function preferredSplitPanelWidth(contentRowWidth: number, fraction = 0.5
   return Math.max(PANEL_MIN_WIDTH, Math.min(target, max));
 }
 
-/**
- * Chat-pane width below which the Overview should not auto-open: on a narrow
- * composer surface it would crowd the thread, so the user opens it on demand
- * only when the right panel is not squeezing the pane.
- */
-export const OVERVIEW_AUTO_OPEN_MIN_ROW = 1024;
-
 /** Visual thread column width used for Overview collision spacing. */
-export const OVERVIEW_THREAD_CONTENT_MAX_WIDTH_PX = 896;
+export const OVERVIEW_THREAD_CONTENT_MAX_WIDTH_PX = 1536;
 
 /** Right-side popover footprint for Overview (`w-80`) plus collision padding. */
 export const OVERVIEW_POPOVER_RESERVE_PX = 328;
 
 /** Minimum breathing room between the centered thread column and the Overview. */
 export const OVERVIEW_THREAD_GAP_PX = 16;
+
+/** Space from the thread rail to the pane edge while Overview sits beside it. */
+export const OVERVIEW_RIGHT_RESERVE_PX =
+  OVERVIEW_POPOVER_RESERVE_PX + OVERVIEW_THREAD_GAP_PX;
+
+/** Smallest chat pane that can keep the composer usable beside Overview. */
+export const OVERVIEW_AUTO_OPEN_MIN_ROW =
+  COMPOSER_MIN_WIDTH + OVERVIEW_RIGHT_RESERVE_PX;
 
 /**
  * Whether the Overview should auto-open given the actual chat pane width.
@@ -100,24 +101,23 @@ export function shouldAutoOpenOverview(args: {
 /** Width at which a centered thread can sit beside the Overview with no offset. */
 export function overviewNoPaddingMinWidth(): number {
   return OVERVIEW_THREAD_CONTENT_MAX_WIDTH_PX +
-    (OVERVIEW_POPOVER_RESERVE_PX * 2) +
-    (OVERVIEW_THREAD_GAP_PX * 2);
+    (OVERVIEW_RIGHT_RESERVE_PX * 2);
 }
 
 /** Right padding needed to keep centered thread content clear of the Overview. */
 export function overviewResponsivePaddingPx(contentWidth: number): number {
   return Math.max(
     0,
-    Math.min(OVERVIEW_POPOVER_RESERVE_PX, overviewNoPaddingMinWidth() - contentWidth),
+    Math.min(OVERVIEW_RIGHT_RESERVE_PX, overviewNoPaddingMinWidth() - contentWidth),
   );
 }
 
 /**
  * CSS equivalent of {@link overviewResponsivePaddingPx}, using the chat pane's
- * own width. The right panel disables this reserve before it can squeeze chat.
+ * own width. The reservation follows the actual chat-pane width, including in split mode.
  */
 export function overviewResponsivePaddingRight(): string {
-  return `clamp(0px, calc(${overviewNoPaddingMinWidth()}px - 100%), ${OVERVIEW_POPOVER_RESERVE_PX}px)`;
+  return `clamp(0px, calc(${overviewNoPaddingMinWidth()}px - 100%), ${OVERVIEW_RIGHT_RESERVE_PX}px)`;
 }
 
 /** Whether the project tree can dock inline beside a content row of `contentNeed` px. */

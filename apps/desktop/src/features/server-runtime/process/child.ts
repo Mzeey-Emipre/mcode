@@ -13,7 +13,7 @@ export interface ServerPortBand {
 
 export interface SpawnedServerProcess {
   child: NodeChildProcess.ChildProcess;
-  stderrStream: NodeFS.WriteStream | undefined;
+  stderrStream: NodeFS.WriteStream;
 }
 export const SERVER_LOG_PATH = NodePath.join(getMcodeDir(), "server-stderr.log");
 export const SERVER_ROTATED_LOG_PATH = NodePath.join(getMcodeDir(), "server-stderr.1.log");
@@ -31,13 +31,13 @@ export function spawnServerProcess(port: number, platform: NodeJS.Platform): Spa
       cwd: paths.cwd,
       env: createServerEnvironment(paths, port, platform),
       detached: true,
-      stdio: isDesktopDev() ? "inherit" : ["ignore", "ignore", stderrStream ? "pipe" : "ignore"],
+      stdio: ["ignore", "ignore", "pipe"],
     });
     child.unref();
-    if (stderrStream && child.stderr) child.stderr.pipe(stderrStream);
+    if (child.stderr) child.stderr.pipe(stderrStream);
     return { child, stderrStream };
   } catch (error) {
-    stderrStream?.destroy();
+    stderrStream.destroy();
     throw error;
   }
 }
@@ -137,8 +137,7 @@ function setGitEnvironment(env: Record<string, string>, cwd: string): void {
   }
 }
 
-function createServerStderrStream(): NodeFS.WriteStream | undefined {
-  if (isDesktopDev()) return undefined;
+function createServerStderrStream(): NodeFS.WriteStream {
   if (NodeFS.existsSync(SERVER_LOG_PATH)) {
     try {
       if (NodeFS.existsSync(SERVER_ROTATED_LOG_PATH)) NodeFS.unlinkSync(SERVER_ROTATED_LOG_PATH);

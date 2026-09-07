@@ -123,7 +123,7 @@ describe("PullRequestReviewTaskDialog", () => {
       ];
     });
     useCommandPaletteStore.getState().close();
-    useOverviewStore.setState({ reserveSpace: false, requestedThreadId: null });
+    useOverviewStore.setState({ reserveThreadId: null, requestedThreadId: null });
     useUiStore.setState({ primarySurface: "pullRequests" });
   });
 

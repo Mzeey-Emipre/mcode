@@ -427,6 +427,7 @@ function ChatMessageStage({ state, interactions, automaticSetup, selectedTextCom
     ? <ProjectAutomaticSetupCard snapshot={automaticSetup.snapshot} busy={automaticSetup.busy} error={automaticSetup.error} onContinue={automaticSetup.continueWithoutSetup} onRetry={automaticSetup.retrySetup} onApprove={automaticSetup.approveSetup} />
     : undefined;
   const messageListProps = {
+    contentPaddingRight: state.overviewPaddingRight,
     onBranch: interactions.onBranch,
     onSelectedTextComment: interactions.onSelectedTextComment,
     onDeleteSelectedTextComment: interactions.onDeleteSelectedTextComment,
@@ -445,7 +446,7 @@ function ChatMessageStage({ state, interactions, automaticSetup, selectedTextCom
     onOpenSubagents,
   };
   return (
-    <div data-testid="chat-message-stage" className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>
+    <div data-testid="chat-message-stage" className="animate-fade-up-in flex-1 min-h-0">
       <ConversationStageContent stage={getConversationStage(state)} state={state} thread={thread} leadingContent={automaticSetupTranscriptBlock} messageListProps={messageListProps} />
     </div>
   );
@@ -455,7 +456,7 @@ function ChatMessageStage({ state, interactions, automaticSetup, selectedTextCom
 function ActiveThreadComposer({ state, interactions, pendingSelectedTextComment, pendingSelectedTextCommentDeletion, pendingSelectedTextCommentEditor, unavailableSelectedTextCommentIds, setupBlocked }: Pick<ChatViewSurfaceProps, "state" | "interactions" | "pendingSelectedTextComment" | "pendingSelectedTextCommentDeletion" | "pendingSelectedTextCommentEditor" | "unavailableSelectedTextCommentIds"> & { readonly setupBlocked: boolean }) {
   const thread = state.activeThread!;
   return (
-    <div data-testid="chat-composer-stage" className="relative flex-shrink-0 transition-[padding] duration-200" style={{ paddingRight: state.overviewPaddingRight }}>
+    <div data-testid="chat-composer-stage" className="relative flex-shrink-0" style={{ paddingRight: state.overviewPaddingRight }}>
       <PlanQuestionWizard threadId={thread.id} />
       <Composer threadId={thread.id} workspaceId={state.activeWorkspaceId ?? undefined} branchFromMessageId={state.branchFromMessageId} branchFromMessageContent={state.branchFromMessageContent} selectedTextComment={pendingSelectedTextComment ?? undefined} onSelectedTextCommentConsumed={interactions.onSelectedTextCommentConsumed} selectedTextCommentDeletion={pendingSelectedTextCommentDeletion ?? undefined} onSelectedTextCommentDeletionConsumed={interactions.onSelectedTextCommentDeletionConsumed} selectedTextCommentEditorUpdate={pendingSelectedTextCommentEditor} onSelectedTextCommentEditorUpdateConsumed={interactions.onSelectedTextCommentEditorChangeConsumed} onOpenSelectedTextCommentSource={interactions.onOpenSelectedTextCommentSource} unavailableSelectedTextCommentIds={unavailableSelectedTextCommentIds} onBranchModeExit={interactions.onExitForkMode} setupBlocked={setupBlocked} />
     </div>

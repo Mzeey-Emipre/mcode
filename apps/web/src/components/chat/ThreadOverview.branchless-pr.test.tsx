@@ -276,7 +276,7 @@ describe("ThreadOverview branchless Create PR", () => {
       controllers: new Map(),
     });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
-    useOverviewStore.setState({ reserveSpace: false, requestedThreadId: null });
+    useOverviewStore.setState({ reserveThreadId: null, requestedThreadId: null });
     useDiffStore.setState({ rightPanelByThread: {}, rightPanelFallbackByWorkspace: {} });
     useProjectActionStore.setState({ runsByThread: {} });
     setLayoutMeasurements(1200, 1200);
@@ -298,6 +298,38 @@ describe("ThreadOverview branchless Create PR", () => {
     render(<ThreadOverview thread={makeThread()} threadPaneWidth={800} />);
 
     expect(screen.getByTestId("header-workspace-menu")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("reserves space while Overview can leave the composer usable", () => {
+    const overview = render(<ThreadOverview thread={makeThread()} threadPaneWidth={824} />);
+
+    expect(useOverviewStore.getState().reserveThreadId).toBe("thread-1");
+
+    overview.rerender(<ThreadOverview thread={makeThread()} threadPaneWidth={823} />);
+    expect(useOverviewStore.getState().reserveThreadId).toBeNull();
+  });
+
+  it("reserves space beside the visible right panel when the chat has room", () => {
+    mockGetRightPanelVisible.mockReturnValue(true);
+    render(<ThreadOverview thread={makeThread()} threadPaneWidth={824} />);
+
+    expect(useOverviewStore.getState().reserveThreadId).toBe("thread-1");
+  });
+
+  it("keeps an explicitly opened narrow Overview in overlay mode", async () => {
+    useOverviewStore.getState().requestOpen("thread-1");
+    render(<ThreadOverview thread={makeThread()} threadPaneWidth={800} />);
+
+    await waitFor(() => expect(screen.getByTestId("header-workspace-menu")).toHaveAttribute("aria-expanded", "true"));
+    expect(useOverviewStore.getState().reserveThreadId).toBeNull();
+  });
+
+  it("does not clear a new thread's Overview reserve when the prior thread unmounts", () => {
+    const overview = render(<ThreadOverview thread={makeThread()} threadPaneWidth={1400} />);
+
+    overview.rerender(<ThreadOverview thread={makeThread({ id: "thread-2" })} threadPaneWidth={1400} />);
+
+    expect(useOverviewStore.getState().reserveThreadId).toBe("thread-2");
   });
 
   it("launches an idle Action in the background, then focuses its retained terminal", async () => {
