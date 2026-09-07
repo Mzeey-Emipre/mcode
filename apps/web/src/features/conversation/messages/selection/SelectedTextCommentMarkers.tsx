@@ -3,6 +3,7 @@ import type { SelectedTextComment } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
+import type { SelectedTextCommentEditorDraft } from "@/stores/composerDraftStore";
 import {
   findSelectedTextCommentContent,
   reconstructCanonicalMessageRange,
@@ -78,6 +79,8 @@ export interface SelectedTextCommentMarkersProps {
   readonly viewportRef: RefObject<HTMLElement | null>;
   /** Thread whose transcript is currently rendered. */
   readonly renderedThreadId: string | null | undefined;
+  /** Open unsaved editor whose source remains visible while the user writes a note. */
+  readonly editor?: SelectedTextCommentEditorDraft;
   /** Starts source navigation that opens this saved comment's source editor. */
   readonly onOpenComment: (comment: SelectedTextComment) => void;
 }
@@ -86,6 +89,7 @@ export interface SelectedTextCommentMarkersProps {
 export function SelectedTextCommentMarkers({
   viewportRef,
   renderedThreadId,
+  editor,
   onOpenComment,
 }: SelectedTextCommentMarkersProps) {
   const comments = useComposerDraftStore((state) => (
@@ -96,6 +100,24 @@ export function SelectedTextCommentMarkers({
   const [layout, setLayout] = useState<MarkerOverlayLayout | null>(null);
   const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null);
   const [focusedCommentId, setFocusedCommentId] = useState<string | null>(null);
+  const pendingComment = useMemo(() => (
+    editor
+      && !editor.commentId
+      && editor.anchor === "source"
+      && editor.source.threadId === renderedThreadId
+      ? {
+        id: "pending-selected-text-comment",
+        displayNumber: comments.length + 1,
+        source: editor.source,
+        note: editor.note,
+        mentions: editor.mentions,
+      }
+      : undefined
+  ), [comments.length, editor, renderedThreadId]);
+  const visibleComments = useMemo(
+    () => pendingComment ? [...comments, pendingComment] : comments,
+    [comments, pendingComment],
+  );
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -124,7 +146,7 @@ export function SelectedTextCommentMarkers({
   const { geometries, markers } = useMemo(() => {
     const viewport = viewportRef.current;
     if (!viewport || !layout) return { geometries: [], markers: [] };
-    const geometries = comments
+    const geometries = visibleComments
       .map((comment) => commentOverlayGeometry(comment, viewport, renderedThreadId, layout.root))
       .filter((geometry): geometry is CommentOverlayGeometry => geometry !== null);
     const markers = placeSelectedTextCommentMarkers(
@@ -141,9 +163,12 @@ export function SelectedTextCommentMarkers({
       },
     );
     return { geometries, markers };
-  }, [comments, layout, renderedThreadId, viewportRef]);
+  }, [layout, renderedThreadId, viewportRef, visibleComments]);
 
-  const commentsById = useMemo(() => new Map(comments.map((comment) => [comment.id, comment])), [comments]);
+  const commentsById = useMemo(
+    () => new Map(visibleComments.map((comment) => [comment.id, comment])),
+    [visibleComments],
+  );
   const activeCommentId = focusedCommentId ?? hoveredCommentId;
 
   return (
@@ -168,6 +193,19 @@ export function SelectedTextCommentMarkers({
         {markers.map((marker) => {
           const comment = commentsById.get(marker.commentId);
           if (!comment) return null;
+          if (comment === pendingComment) {
+            return (
+              <span
+                key={marker.commentId}
+                data-testid="selected-text-comment-pending-marker"
+                aria-hidden="true"
+                className="absolute flex size-8 items-center justify-center rounded-full bg-primary/80 text-xs font-semibold leading-none text-primary-foreground shadow-sm ring-1 ring-background/80 tabular-nums"
+                style={{ top: marker.top, left: marker.left }}
+              >
+                {marker.displayNumber}
+              </span>
+            );
+          }
           return (
             <Button
               key={marker.commentId}
