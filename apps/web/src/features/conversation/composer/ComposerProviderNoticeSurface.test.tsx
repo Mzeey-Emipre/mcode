@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useRef } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockMessage } from "@/__tests__/mocks/transport";
 import { createEmptyThreadRecord, patchThreadRecord } from "@/stores/thread-record";
 import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
@@ -11,6 +11,7 @@ import { ComposerProviderNoticeSurface } from "./ComposerProviderNoticeSurface";
 const THREAD_A = "thread-a";
 const THREAD_B = "thread-b";
 const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport");
 
 class ResizeObserverMock {
   observe(): void {}
@@ -66,7 +67,7 @@ function NoticeHarness({
   const composerRef = useRef<HTMLDivElement>(null);
   return (
     <>
-      <div ref={composerRef} />
+      <div ref={composerRef} data-testid="composer-anchor" />
       <ComposerProviderNoticeSurface
         threadId={threadId}
         composerContainerRef={composerRef}
@@ -85,6 +86,10 @@ describe("ComposerProviderNoticeSurface", () => {
       configurable: true,
       value: ResizeObserverMock,
     });
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: { width: 1600, height: 900 },
+    });
     resetThreadStoreForTests({
       records: new Map([
         [THREAD_A, createEmptyThreadRecord()],
@@ -96,6 +101,10 @@ describe("ComposerProviderNoticeSurface", () => {
   afterEach(() => {
     if (originalResizeObserver) Object.defineProperty(globalThis, "ResizeObserver", originalResizeObserver);
     else Reflect.deleteProperty(globalThis, "ResizeObserver");
+    if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport);
+    else Reflect.deleteProperty(window, "visualViewport");
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("removes dismissed notices instead of offering them for review", () => {
@@ -217,6 +226,32 @@ describe("ComposerProviderNoticeSurface", () => {
     render(<NoticeHarness />);
 
     expect(screen.getByTestId("composer-provider-notice")).toBeInTheDocument();
+  });
+
+  it("keeps the fixed notice aligned when a layout transition moves Composer", () => {
+    seedThread(THREAD_A, [providerNotice("warning", THREAD_A, "warning")]);
+    let anchorRect = new DOMRect(334, 700, 960, 40);
+    let animationFrameCallback: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
+      animationFrameCallback = callback;
+      return 1;
+    }));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    render(<NoticeHarness />);
+
+    const composer = screen.getByTestId("composer-anchor");
+    vi.spyOn(composer, "getBoundingClientRect").mockImplementation(() => anchorRect);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(screen.getByTestId("composer-provider-notice")).toHaveStyle({ left: "348px", width: "932px" });
+
+    anchorRect = new DOMRect(498, 700, 960, 40);
+    act(() => {
+      document.dispatchEvent(new Event("transitionrun"));
+      animationFrameCallback?.(0);
+    });
+    expect(screen.getByTestId("composer-provider-notice")).toHaveStyle({ left: "512px", width: "932px" });
+    act(() => document.dispatchEvent(new Event("transitionend")));
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
   });
 
   it("hides beneath mention and slash pickers, then restores after either closes", () => {

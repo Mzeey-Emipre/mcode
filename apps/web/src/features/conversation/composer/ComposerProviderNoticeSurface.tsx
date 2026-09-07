@@ -2,6 +2,7 @@ import {
   useCallback,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   type RefObject,
@@ -25,8 +26,11 @@ function sameRect(a: DOMRect, b: DOMRect): boolean {
 
 function useComposerAnchor(
   composerContainerRef: RefObject<HTMLDivElement | null>,
+  shouldTrackPosition: boolean,
 ): DOMRect | null {
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const activeTransitions = useRef(0);
+  const animationFrame = useRef<number | undefined>(undefined);
   const updateAnchor = useCallback(() => {
     const next = composerContainerRef.current?.getBoundingClientRect();
     if (!next) return;
@@ -47,6 +51,49 @@ function useComposerAnchor(
       observer.disconnect();
     };
   }, [composerContainerRef, updateAnchor]);
+
+  useLayoutEffect(() => {
+    const stopSampling = () => {
+      if (animationFrame.current === undefined) return;
+      cancelAnimationFrame(animationFrame.current);
+      animationFrame.current = undefined;
+    };
+    const samplePosition = () => {
+      updateAnchor();
+      animationFrame.current = activeTransitions.current > 0
+        ? requestAnimationFrame(samplePosition)
+        : undefined;
+    };
+    const startSampling = () => {
+      if (!shouldTrackPosition || animationFrame.current !== undefined) return;
+      animationFrame.current = requestAnimationFrame(samplePosition);
+    };
+    const onTransitionRun = () => {
+      activeTransitions.current += 1;
+      startSampling();
+    };
+    const onTransitionStop = () => {
+      activeTransitions.current = Math.max(activeTransitions.current - 1, 0);
+      if (activeTransitions.current === 0) stopSampling();
+      if (shouldTrackPosition) updateAnchor();
+    };
+
+    document.addEventListener("transitionrun", onTransitionRun, true);
+    document.addEventListener("transitionend", onTransitionStop, true);
+    document.addEventListener("transitioncancel", onTransitionStop, true);
+    if (shouldTrackPosition) {
+      updateAnchor();
+      startSampling();
+    } else {
+      stopSampling();
+    }
+    return () => {
+      document.removeEventListener("transitionrun", onTransitionRun, true);
+      document.removeEventListener("transitionend", onTransitionStop, true);
+      document.removeEventListener("transitioncancel", onTransitionStop, true);
+      stopSampling();
+    };
+  }, [shouldTrackPosition, updateAnchor]);
 
   return anchorRect;
 }
@@ -315,11 +362,14 @@ export function ComposerProviderNoticeSurface({
     () => getComposerProviderNotices(sessionNotices, noticeSessionId),
     [noticeSessionId, sessionNotices],
   );
-  const anchorRect = useComposerAnchor(composerContainerRef);
   const sessionIdentity = notices.at(-1)?.sessionIdentity;
   const [details, setDetails] = useState({ sessionIdentity: undefined as string | undefined, open: false });
   const detailsOpen = details.sessionIdentity === sessionIdentity && details.open;
   const noticeState = useNoticeSurfaceState(threadId, sessionIdentity, notices);
+  const anchorRect = useComposerAnchor(
+    composerContainerRef,
+    Boolean(sessionIdentity && noticeState.selectedNotice),
+  );
   const isPickerOpen = isMentionPickerOpen || isSlashPickerOpen;
   const hasAutomaticNotice = noticeState.rankedNotices.some((notice) => notice.tone !== "quiet");
   const showOverlay = shouldShowNoticeOverlay({
