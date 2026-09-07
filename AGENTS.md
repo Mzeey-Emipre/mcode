@@ -110,7 +110,7 @@ The local database snapshot can contain representative user projects. Product an
 
 ## How it works
 
-Clients communicate over typed WebSockets (`packages/contracts`). `apps/server` manages sessions, processes provider events, and updates thread persistence (`better-sqlite3`). Provider adapters translate raw CLI/JSON-RPC protocols into canonical `AgentEvent`s. The web UI derives narrative timeline state from event streams and renders virtualized chat lists.
+Clients communicate over typed WebSockets (`packages/contracts`). `apps/server` manages sessions, processes provider events, and updates thread persistence (`bun:sqlite`). Provider adapters translate raw CLI/JSON-RPC protocols into canonical `AgentEvent`s. The web UI derives narrative timeline state from event streams and renders virtualized chat lists.
 
 ## Where code lives
 
