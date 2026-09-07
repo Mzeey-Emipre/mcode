@@ -1,14 +1,14 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo, MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS } from "../thread-repo.js";
 import { TurnSnapshotRepo } from "../../../agents/turns/persistence/turn-snapshot-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 
 describe("ThreadRepo has_file_changes", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let workspaceId: string;
 
@@ -421,7 +421,7 @@ describe("ThreadRepo canonical child retention", () => {
 });
 
 describe("ThreadRepo.search", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let workspaceRepo: WorkspaceRepo;
 
@@ -498,7 +498,7 @@ describe("Migration 019 backfill", () => {
 
     // Disable FK checks for snapshot inserts: message_id references messages(id)
     // but the test uses fabricated IDs — only the backfill SQL correctness matters here.
-    db.pragma("foreign_keys = OFF");
+    db.run("PRAGMA foreign_keys = OFF");
     snapshotRepo.create({
       messageId: "m1",
       threadId: tWithChanges.id,
@@ -515,7 +515,7 @@ describe("Migration 019 backfill", () => {
       filesChanged: [],
       worktreePath: null,
     });
-    db.pragma("foreign_keys = ON");
+    db.run("PRAGMA foreign_keys = ON");
 
     // Reset the flag to 0 to simulate pre-migration state, then re-run the backfill SQL.
     db.prepare("UPDATE threads SET has_file_changes = 0").run();

@@ -12,10 +12,10 @@ import { container } from "tsyringe";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ModelCacheRepo } from "../persistence/model-cache-repo.js";
 import { ModelCacheService } from "../model-cache-service.js";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 describe("ModelCacheService DI integration", () => {
-  let db: Database.Database | undefined;
+  let db: Database | undefined;
 
   afterEach(() => {
     db?.close();

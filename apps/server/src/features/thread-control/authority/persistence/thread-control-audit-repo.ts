@@ -1,11 +1,11 @@
 import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 /** Writes bounded, content-free thread-control audit events. */
 @injectable()
 export class ThreadControlAuditRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Persist one operation outcome without prompt, credential, or path data. */
   write(input: { callerId: string; sourceThreadId?: string; workspaceId?: string; threadId?: string; operation: string; outcome: string }): void {

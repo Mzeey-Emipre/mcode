@@ -2,7 +2,7 @@ import "reflect-metadata";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
@@ -26,7 +26,7 @@ const TURN_ID = "turn-recovery";
 const EXECUTION_ID = "00000000-0000-4000-8000-000000000015";
 
 describe("TurnRecoveryService", () => {
-  let db: Database.Database;
+  let db: Database;
   let sink: CanonicalAgentEventSink;
   let threadRepo: ThreadRepo;
   let messageRepo: MessageRepo;

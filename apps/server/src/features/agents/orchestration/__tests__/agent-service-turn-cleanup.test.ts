@@ -21,7 +21,7 @@ import type {
   TurnRequest,
   ProviderTurnDiffUpdate,
 } from "@mcode/contracts";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo as RealThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo as RealWorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
@@ -306,11 +306,11 @@ function buildService(
   } as unknown as PlanQuestionAnswersRepo;
 
   const db = {
-    name: ":memory:",
-    // better-sqlite3's transaction() returns a wrapped function; calling it executes the callback
+    filename: ":memory:",
+    // Bun SQLite's transaction() returns a wrapped function; calling it executes the callback
     transaction: vi.fn((fn: Function) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
-  } as unknown as import("better-sqlite3").Database;
+  } as unknown as import("bun:sqlite").Database;
 
   const service = createAgentServiceForTest(
     threadRepo,
@@ -1258,7 +1258,7 @@ describe("AgentService turn cleanup", () => {
 
 describe("AgentService Ended finalization", () => {
   let lastTurnRequest: TurnRequest | undefined;
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: RealThreadRepo;
   let workspaceRepo: RealWorkspaceRepo;
   let messageRepo: RealMessageRepo;

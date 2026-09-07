@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   AgentEventType,
   type ProviderEventBatch,
@@ -20,7 +20,7 @@ import { ProviderEventIngress, type ProviderEventIngressEvent } from "../provide
 const EXECUTION_ID = "00000000-0000-4000-8000-000000000001";
 const NOW = "2026-08-28T12:00:00.000Z";
 
-function seedThread(db: Database.Database): void {
+function seedThread(db: Database): void {
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
   ).run("workspace-1", "Workspace", "C:/workspace", NOW, NOW);
@@ -78,7 +78,7 @@ async function flushIngress(): Promise<void> {
 }
 
 describe("provider composition container", () => {
-  let database: Database.Database | undefined;
+  let database: Database | undefined;
   let temporaryDirectory: string | undefined;
   const previousDatabasePath = process.env.MCODE_DB_PATH;
 
@@ -87,7 +87,7 @@ describe("provider composition container", () => {
     temporaryDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-provider-composition-"));
     process.env.MCODE_DB_PATH = NodePath.join(temporaryDirectory, "mcode.db");
     setupContainer(temporaryDirectory);
-    database = container.resolve<Database.Database>("Database");
+    database = container.resolve<Database>("Database");
   });
 
   afterEach(() => {

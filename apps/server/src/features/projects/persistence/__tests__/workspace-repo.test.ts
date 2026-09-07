@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../workspace-repo.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -11,7 +11,7 @@ import type { AgentService } from "../../../agents/index.js";
 import { FakeGitExecutor } from "../../git/execution/fake-git-executor.js";
 
 describe("WorkspaceRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: WorkspaceRepo;
 
   beforeEach(() => {
@@ -81,7 +81,7 @@ describe("WorkspaceRepo", () => {
 });
 
 describe("WorkspaceService", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: WorkspaceRepo;
   let service: WorkspaceService;
 

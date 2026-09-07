@@ -1,11 +1,11 @@
 import * as NodeCrypto from "node:crypto";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { bootstrapDrizzle } from "../bootstrap-drizzle.js";
-import { openElectronMemoryDatabase } from "./electron-sqlite.js";
+import { openBunMemoryDatabase } from "./bun-sqlite.js";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const DRIZZLE_DIR = NodePath.join(__dirname, "../../../../../drizzle");
@@ -22,14 +22,14 @@ function baselineSqlHash(): string {
   return NodeCrypto.createHash("sha256").update(sqlContent).digest("hex");
 }
 
-function freshDb(): Database.Database {
-  const db = openElectronMemoryDatabase();
-  db.pragma("foreign_keys = ON");
+function freshDb(): Database {
+  const db = openBunMemoryDatabase();
+  db.run("PRAGMA foreign_keys = ON");
   return db;
 }
 
 /** Mimics legacy `_migrations` tracking rows without touching application DDL. */
-function seedLegacyMigrations(db: Database.Database): void {
+function seedLegacyMigrations(db: Database): void {
   db.exec(`
     CREATE TABLE _migrations (
       version TEXT PRIMARY KEY,
@@ -42,22 +42,22 @@ function seedLegacyMigrations(db: Database.Database): void {
   );
 }
 
-function tableExists(db: Database.Database, name: string): boolean {
+function tableExists(db: Database, name: string): boolean {
   const row = db
     .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
     .get(name);
-  return row !== undefined;
+  return row !== null;
 }
 
 describe("bootstrapDrizzle", () => {
-  let db: Database.Database;
+  let db: Database;
 
   beforeEach(() => {
     db = freshDb();
   });
 
   afterEach(() => {
-    db.close();
+    db.close(true);
   });
 
   it("seeds __drizzle_migrations on legacy DB without creating application tables", () => {

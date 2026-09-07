@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { WorkspaceEnvironmentActionRun } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../../thread-control/persistence/thread-repo.js";
@@ -43,7 +43,7 @@ function run(
 }
 
 describe("ProjectActionRunRepo retention", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: ProjectActionRunRepo;
   let threadId: string;
   let workspaceId: string;

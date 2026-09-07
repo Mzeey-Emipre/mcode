@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CANONICAL_AGENT_EVENT_BATCH_MAX,
@@ -37,7 +37,7 @@ const TURN_ID = "turn-1";
 const EXECUTION_ID = "00000000-0000-4000-8000-000000000001";
 const NOW = "2026-08-09T20:00:00.000Z";
 
-function seedThread(db: Database.Database): void {
+function seedThread(db: Database): void {
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
   ).run("workspace-1", "Workspace", "C:/workspace", NOW, NOW);
@@ -113,7 +113,7 @@ function initialDrafts(): CanonicalAgentEventDraft[] {
 }
 
 function seedUnfinishedCheckpointCount(
-  db: Database.Database,
+  db: Database,
   sink: CanonicalAgentEventSink,
   count: number,
 ): void {
@@ -169,7 +169,7 @@ function terminalDraft(
 
 function startCanonicalParent(
   sink: CanonicalAgentEventSink,
-  db: Database.Database,
+  db: Database,
   approvalReview: { mode: "manual" | "automatic"; reason: string } = { mode: "manual", reason: "manual-requested" },
 ): void {
   const messageRepo = new MessageRepo(db);
@@ -221,7 +221,7 @@ function parentNarrativeToolCall(index: number): ParentNarrativeRecoveryItem {
   };
 }
 
-function executionIdForTurn(db: Database.Database, turnId: string): string {
+function executionIdForTurn(db: Database, turnId: string): string {
   const row = db.prepare(
     "SELECT execution_id FROM canonical_agent_turns WHERE id = ?",
   ).get(turnId) as { execution_id: string };
@@ -229,7 +229,7 @@ function executionIdForTurn(db: Database.Database, turnId: string): string {
 }
 
 describe("CanonicalAgentEventSink", () => {
-  let db: Database.Database;
+  let db: Database;
   let published: ReturnType<typeof vi.fn<(events: readonly CanonicalAgentEventEnvelope[]) => void>>;
   let sink: CanonicalAgentEventSink;
 
@@ -435,10 +435,10 @@ describe("CanonicalAgentEventSink", () => {
   it("retains only the five fixed active-turn write statements", () => {
     const preparedSql: string[] = [];
     const originalPrepare = db.prepare.bind(db);
-    (db as unknown as { prepare: Database.Database["prepare"] }).prepare = ((sql: string) => {
+    (db as unknown as { prepare: Database["prepare"] }).prepare = ((sql: string) => {
       preparedSql.push(sql);
       return originalPrepare(sql);
-    }) as Database.Database["prepare"];
+    }) as Database["prepare"];
     const instrumentedSink = new CanonicalAgentEventSink(db, vi.fn());
 
     instrumentedSink.commit({

@@ -160,6 +160,95 @@ describe("PtyHostProcessRuntime", () => {
     vi.useRealTimers();
   });
 
+  it("uses the host graceful close path for app shutdown", async () => {
+    const pty = new FakePty();
+    const scope = createScope();
+    const runtime = new PtyHostProcessRuntime({
+      platform: "windows",
+      hostRuntime: TEST_HOST_RUNTIME,
+      nativeAbi: "fake-v1",
+      publish: () => undefined,
+      spawnPty: () => pty,
+      createScope: () => scope,
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "handshake",
+      requestedGeneration: "7",
+      platform: "windows",
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "create",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      scope: { kind: "workspace", workspaceId: SESSION_ID },
+      executable: "pwsh.exe",
+      arguments: [],
+      cwd: "C:\\repo",
+      cols: 80,
+      rows: 24,
+      env: [],
+    });
+
+    const close = runtime.receive({
+      contractVersion: 1,
+      kind: "close",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      closeSeq: "1",
+      reason: "app-shutdown",
+    });
+    pty.emitExit();
+    await close;
+
+    expect(scope.close).toHaveBeenCalledWith(true);
+    await runtime.dispose();
+  });
+
+  it("uses the graceful close path while the host shuts down", async () => {
+    const pty = new FakePty();
+    const scope = createScope();
+    const runtime = new PtyHostProcessRuntime({
+      platform: "windows",
+      hostRuntime: TEST_HOST_RUNTIME,
+      nativeAbi: "fake-v1",
+      publish: () => undefined,
+      spawnPty: () => pty,
+      createScope: () => scope,
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "handshake",
+      requestedGeneration: "7",
+      platform: "windows",
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "create",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      scope: { kind: "workspace", workspaceId: SESSION_ID },
+      executable: "pwsh.exe",
+      arguments: [],
+      cwd: "C:\\repo",
+      cols: 80,
+      rows: 24,
+      env: [],
+    });
+
+    const shutdown = runtime.receive({
+      contractVersion: 1,
+      kind: "shutdown",
+      hostGeneration: "7",
+      reason: "app-shutdown",
+    });
+    pty.emitExit();
+    await shutdown;
+
+    expect(scope.close).toHaveBeenCalledWith(true);
+  });
+
   it("fails closed when authoritative containment cannot be established", async () => {
     const pty = new FakePty();
     const scope = createScope(false);

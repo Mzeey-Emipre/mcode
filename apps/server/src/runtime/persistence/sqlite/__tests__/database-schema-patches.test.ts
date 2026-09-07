@@ -3,32 +3,32 @@
  * databases created before sort_order was added to the workspaces table.
  */
 
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { applySchemaPatches } from "../database.js";
-import { openElectronMemoryDatabase } from "./electron-sqlite.js";
+import { openBunMemoryDatabase } from "./bun-sqlite.js";
 
-function freshDb(): Database.Database {
-  const db = openElectronMemoryDatabase();
-  db.pragma("foreign_keys = ON");
+function freshDb(): Database {
+  const db = openBunMemoryDatabase();
+  db.run("PRAGMA foreign_keys = ON");
   return db;
 }
 
-function columnNames(db: Database.Database, table: string): string[] {
+function columnNames(db: Database, table: string): string[] {
   return (
     db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
   ).map((r) => r.name);
 }
 
 describe("applySchemaPatches", () => {
-  let db: Database.Database;
+  let db: Database;
 
   beforeEach(() => {
     db = freshDb();
   });
 
   afterEach(() => {
-    db.close();
+    db.close(true);
   });
 
   it("adds sort_order to workspaces when the column is missing (old DB scenario)", () => {

@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   TerminalProfileReferenceSchema,
   WorkspaceTerminalPreferenceSchema,
@@ -26,7 +26,7 @@ export class TerminalWorkspaceNotFoundError extends Error {
 /** Persists explicit workspace-only Terminal default-profile overrides. */
 @injectable()
 export class WorkspaceTerminalPreferencesService {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Returns the explicit override, or null when the workspace inherits the global default. */
   get(workspaceId: string): WorkspaceTerminalPreference | null {

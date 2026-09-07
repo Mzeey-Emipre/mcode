@@ -8,7 +8,7 @@ describe("sanitizePackageManifest", () => {
       version: "1.0.0",
       dependencies: {
         "@mcode/server": "workspace:*",
-        "better-sqlite3": "^11.8.0",
+        "node-pty": "^1.1.0",
       },
       devDependencies: {
         "@mcode/browser-conformance": "workspace:*",
@@ -30,7 +30,7 @@ describe("sanitizePackageManifest", () => {
     expect(sanitizePackageManifest(manifest)).toEqual({
       name: "fixture",
       version: "1.0.0",
-      dependencies: { "better-sqlite3": "^11.8.0" },
+      dependencies: { "node-pty": "^1.1.0" },
       devDependencies: { vitest: "^3.2.4" },
       optionalDependencies: { koffi: "2.14.1" },
       peerDependencies: { electron: ">=35" },

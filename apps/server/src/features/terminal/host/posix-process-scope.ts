@@ -6,6 +6,7 @@ const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 const PROCESS_TABLE_TIMEOUT_MS = 1_000;
 const PROCESS_TABLE_MAX_BYTES = 1_048_576;
 const GRACEFUL_CLOSE_TIMEOUT_MS = 3_000;
+const TERMINATE_CLOSE_TIMEOUT_MS = 500;
 const FORCED_CLOSE_TIMEOUT_MS = 5_000;
 const ESTABLISH_TIMEOUT_MS = 500;
 const CLOSE_POLL_INTERVAL_MS = 25;
@@ -35,6 +36,19 @@ interface PosixSessionOperations {
     delayBeforeRoot: boolean,
   ) => Promise<boolean>;
   readonly waitForEmpty: (deadlineMs: number) => Promise<boolean>;
+}
+
+async function forceClose(
+  session: PosixSessionOperations,
+  dependencies: PosixProcessScopeDependencies,
+  deadlineMs: number,
+): Promise<void> {
+  while (dependencies.monotonicNow() < deadlineMs) {
+    if (!(await session.signalAll("SIGKILL", false))) return;
+    await dependencies.sleep(CLOSE_POLL_INTERVAL_MS);
+  }
+  if ((await session.readMembers()).length === 0) return;
+  throw new Error("POSIX PTY session remained non-empty after forced close");
 }
 
 function createPosixSessionOperations(
@@ -135,21 +149,24 @@ export function createPosixProcessScope(
         (record) => record.pid !== rootPid,
       );
     },
-    close: async () => {
+    close: async (graceful = false) => {
       if (!established)
         throw new Error("POSIX PTY process group is not established");
       const startedAt = dependencies.monotonicNow();
-      if (!(await session.signalAll("SIGHUP", true))) return;
-      if (await session.waitForEmpty(startedAt + GRACEFUL_CLOSE_TIMEOUT_MS))
+      const forcedDeadline = startedAt + FORCED_CLOSE_TIMEOUT_MS;
+      if (!graceful) {
+        await forceClose(session, dependencies, forcedDeadline);
         return;
-      while (dependencies.monotonicNow() < startedAt + FORCED_CLOSE_TIMEOUT_MS) {
-        if (!(await session.signalAll("SIGKILL", false))) return;
-        await dependencies.sleep(CLOSE_POLL_INTERVAL_MS);
       }
-      if ((await session.readMembers()).length === 0) return;
-      throw new Error(
-        `POSIX PTY session ${rootPid} remained non-empty after forced close`,
+      if (!(await session.signalAll("SIGHUP", true))) return;
+      if (await session.waitForEmpty(startedAt + GRACEFUL_CLOSE_TIMEOUT_MS)) return;
+      if (!(await session.signalAll("SIGTERM", true))) return;
+      const terminateDeadline = Math.min(
+        forcedDeadline,
+        dependencies.monotonicNow() + TERMINATE_CLOSE_TIMEOUT_MS,
       );
+      if (await session.waitForEmpty(terminateDeadline)) return;
+      await forceClose(session, dependencies, forcedDeadline);
     },
     dispose: () => {
       if (!established) return;

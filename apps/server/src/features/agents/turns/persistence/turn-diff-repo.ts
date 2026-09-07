@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 /** Provider-neutral settled evidence owned by one assistant message. */
 export interface StoredTurnDiff {
@@ -12,7 +12,7 @@ export interface StoredTurnDiff {
 
 /** Persists final evidence without changing historical Git snapshots. */
 export class TurnDiffRepo {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   /** Preserve the first settled comparison when a terminal projection replays. */
   create(record: StoredTurnDiff): void {
@@ -25,20 +25,20 @@ export class TurnDiffRepo {
 
   /** Read the newest durable comparison in conversation order. */
   latest(threadId: string): StoredTurnDiff | undefined {
-    return this.db.prepare<[string], StoredTurnDiff>(`SELECT d.id, d.message_id, d.thread_id, d.source, d.patch, d.revision
+    return (this.db.prepare<StoredTurnDiff, [string]>(`SELECT d.id, d.message_id, d.thread_id, d.source, d.patch, d.revision
       FROM turn_diff_snapshots d JOIN messages m ON m.id = d.message_id
-      WHERE d.thread_id = ? ORDER BY m.sequence DESC LIMIT 1`).get(threadId);
+      WHERE d.thread_id = ? ORDER BY m.sequence DESC LIMIT 1`).get(threadId) ?? undefined);
   }
 
   /** Read one comparison only within its owning thread. */
   find(threadId: string, id: string): StoredTurnDiff | undefined {
-    return this.db.prepare<[string, string], StoredTurnDiff>(`SELECT id, message_id, thread_id, source, patch, revision
-      FROM turn_diff_snapshots WHERE thread_id = ? AND id = ?`).get(threadId, id);
+    return (this.db.prepare<StoredTurnDiff, [string, string]>(`SELECT id, message_id, thread_id, source, patch, revision
+      FROM turn_diff_snapshots WHERE thread_id = ? AND id = ?`).get(threadId, id) ?? undefined);
   }
 
   /** Preserve pre-outcome history while excluding known unfinished or failed turns. */
   latestLegacySnapshotId(threadId: string): string | undefined {
-    return this.db.prepare<[string], { id: string }>(`SELECT s.id FROM turn_snapshots s
+    return this.db.prepare<{ id: string }, [string]>(`SELECT s.id FROM turn_snapshots s
       JOIN messages m ON m.id = s.message_id
       LEFT JOIN canonical_agent_turns t ON t.id = m.source_turn_id AND t.thread_id = m.thread_id
       WHERE s.thread_id = ? AND m.role = 'assistant'

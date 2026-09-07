@@ -1,6 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   ResolvedExecutionSchema,
   ThreadPlacementSchema,
@@ -93,7 +93,7 @@ function parseOperation(value: string | null | undefined): ThreadControlApproval
 /** Durable repository for protected thread-control creation approvals. */
 @injectable()
 export class ThreadControlApprovalRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Persist one pending approval and return its opaque identity. */
   create(input: Omit<PendingThreadCreateApproval, "approvalId" | "operation" | "operationPhase">): string {

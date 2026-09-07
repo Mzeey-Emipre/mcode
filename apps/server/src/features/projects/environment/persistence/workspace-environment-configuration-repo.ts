@@ -1,9 +1,9 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { WorkspaceEnvironmentStorageMode } from "@mcode/contracts";
 
 /** Persists one Project's active environment location and shared-command approvals. */
 export class WorkspaceEnvironmentConfigurationRepo {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database) {}
 
   /** Returns the explicit storage choice, if this Project has one. */
   storageMode(workspaceId: string): WorkspaceEnvironmentStorageMode | null {

@@ -1,12 +1,12 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { ToolCallRecordRepo } from "../tool-call-record-repo.js";
 import type { CreateToolCallRecordInput } from "../tool-call-record-repo.js";
 
 /** Seed a workspace, thread, and message so foreign keys are satisfied. */
-function seedFixtures(db: Database.Database): {
+function seedFixtures(db: Database): {
   workspaceId: string;
   threadId: string;
   messageId: string;
@@ -69,7 +69,7 @@ describe("V7 migration", () => {
 });
 
 describe("ToolCallRecordRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: ToolCallRecordRepo;
   let messageId: string;
 

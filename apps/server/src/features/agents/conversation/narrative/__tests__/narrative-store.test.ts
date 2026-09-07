@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../persistence/message-repo.js";
 import { ToolCallRecordRepo } from "../../../tools/persistence/tool-call-record-repo.js";
@@ -16,7 +16,7 @@ import {
 } from "@mcode/contracts";
 
 /** Seed a workspace + thread so message/record foreign keys are satisfied. */
-function seedThread(db: Database.Database): string {
+function seedThread(db: Database): string {
   const now = new Date().toISOString();
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -28,7 +28,7 @@ function seedThread(db: Database.Database): string {
 }
 
 function insertMessage(
-  db: Database.Database,
+  db: Database,
   id: string,
   role: string,
   content: string,
@@ -322,7 +322,7 @@ describe("NarrativeStore sub-agent identity persistence", () => {
 });
 
 describe("NarrativeStore.load (read seam)", () => {
-  let db: Database.Database;
+  let db: Database;
   let store: NarrativeStore;
 
   beforeEach(() => {
@@ -414,7 +414,7 @@ describe("NarrativeStore.load (read seam)", () => {
 describe("NarrativeStore write seam (server-side traps)", () => {
   const THREAD = "thread-1";
   const NOW = "2026-08-10T00:00:00.000Z";
-  let db: Database.Database;
+  let db: Database;
   let store: NarrativeStore;
 
   beforeEach(() => {

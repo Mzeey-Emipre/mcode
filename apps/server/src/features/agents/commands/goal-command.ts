@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   type IAgentProvider,
   type AgentEvent,
@@ -17,7 +17,7 @@ type BroadcastFn = (channel: "agent.event", data: AgentEvent) => void;
 /** Repositories and database handle the command needs to persist its rows. */
 interface GoalCommandDeps {
   readonly messageRepo: MessageRepo;
-  readonly db: Database.Database;
+  readonly db: Database;
 }
 
 /** Matches `/goal`, optionally followed by an argument, across newlines. */

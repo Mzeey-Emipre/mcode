@@ -6,7 +6,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { logger } from "@mcode/shared";
 import type { HostRuntime } from "@mcode/shared/node/host-runtime";
 import type { Thread } from "@mcode/contracts";
@@ -68,7 +68,7 @@ export class CleanupWorker {
   private readonly mutationReservations: ThreadControlMutationReservationService;
 
   constructor(
-    @inject("Database") private readonly db: Database.Database,
+    @inject("Database") private readonly db: Database,
     @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(ClaudeProvider) private readonly claudeProvider: ClaudeProvider,

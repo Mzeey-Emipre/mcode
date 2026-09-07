@@ -587,7 +587,7 @@ export async function buildServerRuntimeBundles({
     target: "node20",
     sourcemap: true,
     format: "cjs",
-    external: ["better-sqlite3", "node-pty", "electron", "koffi"],
+  external: ["bun:sqlite", "node-pty", "electron", "koffi"],
     banner: {
       js: 'var __importMetaUrl = require("url").pathToFileURL(__filename).href;',
     },

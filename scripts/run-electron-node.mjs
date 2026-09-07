@@ -1,4 +1,4 @@
-/** Runs a JavaScript CLI with the workspace Electron runtime and SQLite binding. */
+/** Runs a JavaScript CLI with the workspace Electron runtime. */
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -14,20 +14,6 @@ const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const workspaceRoot = NodePath.resolve(scriptDir, "..");
 const electronRequire = NodeModule.createRequire(NodePath.resolve(workspaceRoot, "apps", "desktop", "package.json"));
 const serverRequire = NodeModule.createRequire(NodePath.resolve(workspaceRoot, "apps", "server", "package.json"));
-
-function resolveElectronBinding() {
-  const betterSqliteDir = NodePath.dirname(serverRequire.resolve("better-sqlite3/package.json"));
-  const bindingPath = NodePath.join(
-    betterSqliteDir,
-    "build",
-    "Release",
-    "better_sqlite3.electron.node",
-  );
-  if (!NodeFS.existsSync(bindingPath)) {
-    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${bindingPath}`);
-  }
-  return bindingPath;
-}
 
 function resolveWorkspaceCli(args) {
   if (args[0] !== "--workspace-cli") return args;
@@ -185,7 +171,6 @@ if (isMain) {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
-      BETTER_SQLITE3_BINDING: resolveElectronBinding(),
     },
   });
 

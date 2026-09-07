@@ -171,7 +171,7 @@ export class TurnFileEffects {
     const setup = this.setupByThread.get(threadId);
     if (!setup) return;
     const previous = this.activityByThread.get(threadId) ?? setup;
-    const observation = Promise.resolve().then(action).catch((error) => {
+    const observation = new Promise<void>((resolve) => resolve(action())).catch((error) => {
       logger.warn("Failed to observe provider file event", {
         threadId,
         error: error instanceof Error ? error.message : String(error),

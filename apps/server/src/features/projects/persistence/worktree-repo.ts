@@ -1,6 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 /** Number of days to retain a stale worktree registration for identity revival. */
 export const STALE_WORKTREE_RETENTION_DAYS = 30;
@@ -33,7 +33,7 @@ export interface InternalRegisteredWorktree extends RegisteredWorktree {
 /** Repository for stable workspace-scoped worktree identities. */
 @injectable()
 export class WorktreeRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Reconcile current Git registrations and return opaque display metadata. */
   reconcile(workspaceId: string, worktrees: readonly RegisteredWorktreeInput[]): RegisteredWorktree[] {

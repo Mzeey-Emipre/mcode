@@ -1,11 +1,11 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { ModelCacheRepo } from "../model-cache-repo.js";
 
 describe("ModelCacheRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: ModelCacheRepo;
 
   beforeEach(() => {

@@ -1,11 +1,11 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { MessageRepo } from "../message-repo.js";
-import { openElectronMemoryDatabase } from "../../../../../runtime/persistence/sqlite/__tests__/electron-sqlite.js";
+import { openBunMemoryDatabase } from "../../../../../runtime/persistence/sqlite/__tests__/bun-sqlite.js";
 
-function createTestDb(): Database.Database {
-  const db = openElectronMemoryDatabase();
+function createTestDb(): Database {
+  const db = openBunMemoryDatabase();
   db.exec(`
     CREATE TABLE messages (
       id TEXT PRIMARY KEY,
@@ -48,7 +48,7 @@ function createTestDb(): Database.Database {
 }
 
 describe("MessageRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: MessageRepo;
 
   beforeEach(() => {
@@ -60,10 +60,10 @@ describe("MessageRepo", () => {
     const localDb = createTestDb();
     const preparedSql: string[] = [];
     const originalPrepare = localDb.prepare.bind(localDb);
-    (localDb as unknown as { prepare: Database.Database["prepare"] }).prepare = ((sql: string) => {
+    (localDb as unknown as { prepare: Database["prepare"] }).prepare = ((sql: string) => {
       preparedSql.push(sql);
       return originalPrepare(sql);
-    }) as Database.Database["prepare"];
+    }) as Database["prepare"];
     const localRepo = new MessageRepo(localDb);
 
     localRepo.listByThread("thread-1", 10);

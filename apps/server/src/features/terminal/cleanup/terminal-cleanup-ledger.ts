@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 const MAX_LEDGER_RECORDS = 20;
 const MAX_PROCESS_GROUP_ID_LENGTH = 128;
@@ -39,7 +39,7 @@ export interface PtyHostCleanupLedgerStore {
 /** Bounded SQLite cleanup ledger for process trees owned by supervised host generations. */
 export class PtyHostCleanupLedger implements PtyHostCleanupLedgerStore {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly limit = MAX_LEDGER_RECORDS,
   ) {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LEDGER_RECORDS) {

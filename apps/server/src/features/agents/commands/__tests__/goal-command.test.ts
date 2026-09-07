@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { IAgentProvider, AgentEvent, GoalState } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 import * as NodeEvents from "node:events";
@@ -10,7 +10,7 @@ import { GoalCommand } from "../goal-command.js";
 import type { CommandContext } from "../command-router.js";
 
 /** Seed a workspace + thread so message foreign keys are satisfied. */
-function seedThread(db: Database.Database): string {
+function seedThread(db: Database): string {
   const now = new Date().toISOString();
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -62,7 +62,7 @@ function fakeNonGoalProvider() {
 }
 
 describe("GoalCommand", () => {
-  let db: Database.Database;
+  let db: Database;
   let messageRepo: MessageRepo;
   let broadcast: ReturnType<typeof vi.fn>;
   const threadId = "thread-1";

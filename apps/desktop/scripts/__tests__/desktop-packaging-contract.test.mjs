@@ -10,6 +10,7 @@ import {
 } from "../desktop-packaging/target-inventory/target-inventory.mjs";
 import {
   classifyElectronBuilderFailure,
+  resolveBunExecutable,
   runElectronBuilderWithRetry,
 } from "../desktop-packaging/target-package/ci-package.mjs";
 
@@ -143,6 +144,21 @@ describe("electron-builder transient failure classification", () => {
 
     expect(result).toMatchObject({ status: 0 });
     expect(attempts).toEqual([1, 2]);
+  });
+});
+
+describe("Bun packaging executable resolution", () => {
+  it("keeps an explicit Bun executable available after the CI PATH is sanitized", () => {
+    const scratch = NodePath.join(repoRoot, ".codex", "tmp");
+    NodeFS.mkdirSync(scratch, { recursive: true });
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(scratch, "bun-executable-"));
+    const executable = NodePath.join(tempDir, process.platform === "win32" ? "bun.exe" : "bun");
+    try {
+      NodeFS.writeFileSync(executable, "");
+      expect(resolveBunExecutable({ BUN: executable, PATH: "" })).toBe(executable);
+    } finally {
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

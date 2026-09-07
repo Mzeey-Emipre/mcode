@@ -99,7 +99,10 @@ export function createMigrationBackup(
       NodeFS.copyFileSync(walSrc, `${backupPath}${WAL_SUFFIX}`);
     }
   } catch (error) {
-    NodeFS.unlinkSync(backupPath);
+    for (const suffix of ["", WAL_SUFFIX]) {
+      const partial = `${backupPath}${suffix}`;
+      if (NodeFS.existsSync(partial)) NodeFS.unlinkSync(partial);
+    }
     throw error;
   }
   return backupPath;
@@ -134,6 +137,7 @@ export function restoreMigrationBackupAfterFailure(
 ): never {
   try {
     restoreMigrationBackup(backupPath, dbPath);
+    pruneMigrationBackups(dbPath);
   } catch (restoreError) {
     throw new AggregateError(
       [migrationError, restoreError],

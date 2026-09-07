@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../../persistence/workspace-repo.js";
@@ -56,7 +56,7 @@ function createThreadDeletionTeardownServiceMock(): ThreadDeletionTeardownServic
 }
 
 describe("WorkspaceRepo - soft/hard delete", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
 
@@ -120,7 +120,7 @@ describe("WorkspaceRepo - soft/hard delete", () => {
     expect(result).toBe(true);
 
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("hardDelete cascades to all threads (active and soft-deleted)", () => {
@@ -137,7 +137,7 @@ describe("WorkspaceRepo - soft/hard delete", () => {
 });
 
 describe("ThreadRepo - workspace deletion helpers", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
 
@@ -184,7 +184,7 @@ describe("ThreadRepo - workspace deletion helpers", () => {
 });
 
 describe("CleanupJobRepo - workspace helpers", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -235,7 +235,7 @@ describe("CleanupJobRepo - workspace helpers", () => {
 });
 
 describe("WorkspaceService.delete - two-phase orchestration", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -298,7 +298,7 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
 
     // Workspace should be fully gone
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("keeps workspace in soft-deleted state when worktree cleanup is pending", () => {
@@ -328,7 +328,7 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
     workspaceService.delete(ws.id);
 
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("does not enqueue duplicate cleanup jobs for already-soft-deleted threads with pending jobs", () => {
@@ -357,7 +357,7 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
 });
 
 describe("CleanupWorker - attachment cleanup and workspace finalization", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -449,7 +449,7 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
 
     // Workspace should now be fully gone
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("does NOT hard-delete workspace if other cleanup jobs remain", async () => {
@@ -478,7 +478,7 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
 });
 
 describe("CleanupWorker - startup reconciliation", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -554,7 +554,7 @@ describe("CleanupWorker - startup reconciliation", () => {
     worker.reconcileOnStartup();
 
     const row = db.prepare("SELECT id FROM workspaces WHERE id = ?").get(ws.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 
   it("does not touch active workspaces during reconciliation", () => {
@@ -568,7 +568,7 @@ describe("CleanupWorker - startup reconciliation", () => {
 });
 
 describe("CleanupWorker - shared branch protection", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -657,7 +657,7 @@ describe("CleanupWorker - shared branch protection", () => {
 });
 
 describe("WorkspaceService.delete - active session handling", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -713,7 +713,7 @@ describe("WorkspaceService.delete - active session handling", () => {
 });
 
 describe("Workspace delete - cross-workspace fork lineage", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -765,12 +765,12 @@ describe("Workspace delete - cross-workspace fork lineage", () => {
 
     // Both threads should be gone (cascade from workspace hardDelete)
     const row = db.prepare("SELECT id FROM threads WHERE id = ?").get(t2.id);
-    expect(row).toBeUndefined();
+    expect(row).toBeNull();
   });
 });
 
 describe("CleanupWorker - exhausted retries", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -825,7 +825,7 @@ describe("CleanupWorker - exhausted retries", () => {
 });
 
 describe("CleanupWorker - missing directory handling", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -875,7 +875,7 @@ describe("CleanupWorker - missing directory handling", () => {
 
     // Thread should still be hard-deleted (cleanup succeeded)
     const thread = db.prepare("SELECT id FROM threads WHERE id = ?").get(t1.id);
-    expect(thread).toBeUndefined();
+    expect(thread).toBeNull();
     // Cleanup job should be removed
     expect(cleanupJobRepo.countByWorkspacePath("/tmp/ws")).toBe(0);
   });
@@ -900,7 +900,7 @@ describe("CleanupWorker - missing directory handling", () => {
 
     // Should complete without error, thread hard-deleted
     const thread = db.prepare("SELECT id FROM threads WHERE id = ?").get(t1.id);
-    expect(thread).toBeUndefined();
+    expect(thread).toBeNull();
     expect(mockGitWorktrees.removeWorktree).toHaveBeenCalledWith(
       "/tmp/gone-ws",
       "x",
@@ -910,7 +910,7 @@ describe("CleanupWorker - missing directory handling", () => {
 });
 
 describe("CleanupWorker - idempotent retry", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -973,7 +973,7 @@ describe("CleanupWorker - idempotent retry", () => {
 });
 
 describe("Workspace delete - zero-worktree fast path", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;

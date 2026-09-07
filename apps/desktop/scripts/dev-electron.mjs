@@ -159,7 +159,7 @@ const serverEsbuildCfg = {
   ...shared,
   entryPoints: [NodePath.resolve(serverRoot, "dist-tsc/index.js")],
   outfile: serverOutFile,
-  external: ["better-sqlite3", "node-pty", "electron", "koffi"],
+  external: ["bun:sqlite", "node-pty", "electron", "koffi"],
   banner: {
     js: 'var __importMetaUrl = require("url").pathToFileURL(__filename).href;',
   },
@@ -324,8 +324,7 @@ async function spawnElectron() {
 
   // Resolve the local Electron binary from the project's node_modules.
   // Using npx/bunx can pick up a globally installed Electron with a
-  // different Node.js ABI, causing native module load failures (e.g.
-  // better-sqlite3 compiled for ABI 133 but global Electron needs 145).
+  // different Node.js ABI, which breaks the native PTY host.
   //
   // shell: true routes through cmd.exe on Windows, avoiding the EFTYPE
   // error that occurs when spawning .exe files directly under Git Bash.

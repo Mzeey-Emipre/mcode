@@ -2,7 +2,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeHTTP from "node:http";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { WebSocketServer } from "ws";
 import { THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH } from "@mcode/contracts";
 
@@ -89,7 +89,7 @@ function isCapabilityRunId(value: unknown): value is string {
 
 /** Build a server adapter only when the explicit capability is present. */
 export function createReliabilityHarnessAdapter(
-  database: Database.Database,
+  database: Database,
   capability = readReliabilityHarnessCapability(),
   hooks: {
     readonly blockEventLoop?: (durationMs: number) => void;
@@ -185,7 +185,7 @@ function executeReliabilityControl(
   command: ReliabilityHarnessCommand,
   sockets: WebSocketServer["clients"],
   block: (durationMs: number) => void,
-  database: Database.Database,
+  database: Database,
   persistenceFailure: boolean,
   closeSockets: (sockets: WebSocketServer["clients"]) => void,
 ): boolean {
@@ -200,7 +200,7 @@ function executeReliabilityControl(
       closeSockets(sockets);
       return persistenceFailure;
     case "persistence-failure":
-      if (!persistenceFailure) database.pragma("query_only = ON");
+      if (!persistenceFailure) database.run("PRAGMA query_only = ON");
       return true;
     case "assistant-stream":
       return persistenceFailure;

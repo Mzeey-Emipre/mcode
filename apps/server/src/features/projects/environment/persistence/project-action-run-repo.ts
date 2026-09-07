@@ -1,5 +1,5 @@
 import { inject, injectable } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   WorkspaceEnvironmentActionRunSchema,
   type WorkspaceEnvironmentActionRun,
@@ -34,7 +34,7 @@ const PROJECT_ACTION_RUNS_PER_THREAD_MAX = 256;
 /** Persists the single latest retained Project Action result for each Action slot. */
 @injectable()
 export class ProjectActionRunRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Returns the retained result for one Thread and Action slot. */
   get(threadId: string, actionId: string): WorkspaceEnvironmentActionRun | null {

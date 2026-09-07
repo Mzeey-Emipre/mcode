@@ -1,12 +1,12 @@
 import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceTerminalPreferencesService } from "../workspace-terminal-preferences-service.js";
 
 describe("WorkspaceTerminalPreferencesService", () => {
-  let db: Database.Database;
+  let db: Database;
   let workspaces: WorkspaceRepo;
   let service: WorkspaceTerminalPreferencesService;
 
@@ -43,7 +43,7 @@ describe("WorkspaceTerminalPreferencesService", () => {
     workspaces.hardDelete(workspace.id);
     expect(db.prepare(
       "SELECT workspace_id FROM workspace_terminal_preferences WHERE workspace_id = ?",
-    ).get(workspace.id)).toBeUndefined();
+    ).get(workspace.id)).toBeNull();
   });
 
   it("rejects missing workspaces and invalid profile references", () => {

@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   CANONICAL_AGENT_RECONNECT_DELTA_MAX_EVENTS,
   CanonicalAgentEventEnvelopeSchema,
@@ -31,7 +31,7 @@ export class CanonicalAgentReadRepository {
   private readonly conversationProjection: CanonicalConversationProjectionReader;
 
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly operations: CanonicalAgentReadRepositoryOperations,
   ) {
     this.conversationProjection = new CanonicalConversationProjectionReader(db);

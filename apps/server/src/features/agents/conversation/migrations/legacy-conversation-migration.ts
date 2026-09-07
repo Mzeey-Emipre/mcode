@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { inject, injectable } from "tsyringe";
 import {
   MessageSchema,
@@ -111,7 +111,7 @@ function messageFromLegacyRow(row: LegacyMessageRow): Message {
 /** Migrates provable legacy parent turns while retained ambiguous rows stay readable. */
 @injectable()
 export class LegacyConversationMigration {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Process one bounded source row and commit its migration provenance atomically. */
   runBatch(

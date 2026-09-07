@@ -475,14 +475,29 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       this.handleHostFailure(child, error instanceof Error ? error : new Error(String(error)));
       return false;
     }
-    this.pendingCreates.get(event.sessionId)?.resolve({
+    const pending = this.pendingCreates.get(event.sessionId);
+    if (!pending) {
+      try {
+        this.sendMessage({
+          contractVersion: 1,
+          kind: "close",
+          sessionId: event.sessionId,
+          hostGeneration: event.hostGeneration,
+          closeSeq: "1",
+          reason: "scope-reset",
+        });
+      } catch (error) {
+        this.handleHostFailure(child, error instanceof Error ? error : new Error(String(error)));
+      }
+      return false;
+    }
+    pending.resolve({
       sessionId: event.sessionId,
       hostGeneration: event.hostGeneration,
       state: "running",
       containment: event.containment,
     });
-    const pending = this.pendingCreates.get(event.sessionId);
-    if (pending) clearTimeout(pending.timer);
+    clearTimeout(pending.timer);
     this.pendingCreates.delete(event.sessionId);
     return true;
   }

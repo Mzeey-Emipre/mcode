@@ -120,7 +120,7 @@ import {
   EXPLICIT_SHUTDOWN_DEADLINE_MS,
   type ShutdownCoordinator,
 } from "../../runtime/lifecycle/shutdown-coordinator.js";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { JobObject } from "../../runtime/process/containment/job-object.js";
 import { resolveWebAutomationFlag } from "../../runtime/startup/startup-policy.js";
 import { listenWithPortRetry } from "../../runtime/http/http-listener.js";
@@ -354,7 +354,10 @@ const filesystemBrowser = container.resolve(FilesystemBrowser);
 const modelCacheService = container.resolve(ModelCacheService);
 const providerUsageWarmup = container.resolve(ProviderUsageWarmupService);
 
-seedAgentRuntimeWorkspace(process.env, {
+seedAgentRuntimeWorkspace({
+  MCODE_AGENT_RUNTIME: process.env.MCODE_AGENT_RUNTIME,
+  MCODE_AGENT_FIXTURE_REPO: process.env.MCODE_AGENT_FIXTURE_REPO,
+}, {
   workspaceRepo,
 });
 
@@ -400,7 +403,7 @@ const diffSummaryService = container.resolve(DiffSummaryService);
 const recapService = container.resolve(RecapService);
 const handoffStorage = container.resolve(HandoffStorage);
 const handoffCheckoutService = container.resolve(HandoffCheckoutService);
-const db = container.resolve<Database.Database>("Database");
+const db = container.resolve<Database>("Database");
 const reliabilityHarness = createReliabilityHarnessAdapter(db, undefined, {
   streamAssistant: (threadId) => agentReliability.streamAssistantText(threadId),
 });

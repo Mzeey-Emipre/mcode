@@ -5,7 +5,7 @@
 
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database, Statement } from "bun:sqlite";
 import type { ThoughtSegmentRecord } from "@mcode/contracts";
 import {
   ACTIVE_TURN_WRITE_BATCH_LIMITS,
@@ -55,11 +55,11 @@ const COLUMNS = "id, message_id, text, started_at, ended_at, sort_order, is_fina
 /** Repository for thought segment creation and retrieval against SQLite. */
 @injectable()
 export class ThoughtSegmentRepo {
-  private readonly stmtInsert: Database.Statement;
-  private readonly stmtListByMessage: Database.Statement;
-  private readonly stmtCountByMessage: Database.Statement;
+  private readonly stmtInsert: Statement;
+  private readonly stmtListByMessage: Statement;
+  private readonly stmtCountByMessage: Statement;
 
-  constructor(@inject("Database") private readonly db: Database.Database) {
+  constructor(@inject("Database") private readonly db: Database) {
     this.stmtInsert = db.prepare(
       "INSERT OR IGNORE INTO thought_segments (id, message_id, text, started_at, ended_at, sort_order, is_final_response) VALUES (?, ?, ?, ?, ?, ?, ?)",
     );

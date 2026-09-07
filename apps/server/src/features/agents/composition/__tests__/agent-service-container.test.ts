@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { container } from "tsyringe";
 
 import { setupContainer } from "../../../../application/composition/container.js";
@@ -12,7 +12,7 @@ import { ThreadCreationCoordinator } from "../../turns/thread-creation-coordinat
 import { TURN_FEATURE_EFFECTS, TurnFeatureEffects } from "../../turns/turn-feature-effects.js";
 
 describe("AgentService container composition", () => {
-  let database: Database.Database | undefined;
+  let database: Database | undefined;
   let temporaryDirectory: string | undefined;
   const previousDatabasePath = process.env.MCODE_DB_PATH;
 
@@ -21,7 +21,7 @@ describe("AgentService container composition", () => {
     temporaryDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-agent-service-composition-"));
     process.env.MCODE_DB_PATH = NodePath.join(temporaryDirectory, "mcode.db");
     setupContainer(temporaryDirectory);
-    database = container.resolve<Database.Database>("Database");
+    database = container.resolve<Database>("Database");
   });
 
   afterEach(() => {

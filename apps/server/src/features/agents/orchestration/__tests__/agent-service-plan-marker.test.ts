@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { Thread, IProviderRegistry } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -33,7 +33,7 @@ import { broadcast } from "../../../../application/transport/push.js";
  * Build an AgentService against a real in-memory SQLite DB so the marker
  * transaction can be exercised end-to-end (FK enforcement + rollback).
  */
-function buildService(db: Database.Database) {
+function buildService(db: Database) {
   container.reset();
   container.registerInstance("Database", db);
 
@@ -136,7 +136,7 @@ function buildService(db: Database.Database) {
 }
 
 describe("AgentService.sendMessage — plan-questions answered marker", () => {
-  let db: Database.Database;
+  let db: Database;
   let thread: Thread;
   let assistantMessageId: string;
 
@@ -344,7 +344,7 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
 });
 
 describe("AgentService.sendMessage completed-thread lifecycle", () => {
-  let db: Database.Database;
+  let db: Database;
   let thread: Thread;
 
   beforeEach(() => {

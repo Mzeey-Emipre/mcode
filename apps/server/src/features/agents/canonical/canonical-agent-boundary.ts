@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database, Statement } from "bun:sqlite";
 import * as NodeCrypto from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import {
@@ -343,11 +343,11 @@ export const publishCanonicalAgentEvents: CanonicalAgentEventPublisher = (events
 /** Owns validation, semantic reduction, atomic canonical persistence, and post-commit publication. */
 @injectable()
 export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollaborationDurability, SubagentLifecycleDurability {
-  private readonly persistThreadStatement: Database.Statement;
-  private readonly persistTurnStatement: Database.Statement;
-  private readonly persistItemStatement: Database.Statement;
-  private readonly insertEventStatement: Database.Statement;
-  private readonly persistCheckpointStatement: Database.Statement;
+  private readonly persistThreadStatement: Statement;
+  private readonly persistTurnStatement: Statement;
+  private readonly persistItemStatement: Statement;
+  private readonly insertEventStatement: Statement;
+  private readonly persistCheckpointStatement: Statement;
   private readonly diagnostics = new CanonicalAgentDiagnostics();
   private readonly turnIdByExecution = new Map<string, string>();
   private readonly eventStore: CanonicalAgentEventStore;
@@ -356,7 +356,7 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
   private readonly codexCollaboration: CanonicalCodexCollaborationCoordinator;
 
   constructor(
-    @inject("Database") private readonly db: Database.Database,
+    @inject("Database") private readonly db: Database,
     @inject("CanonicalAgentEventPublisher")
     private readonly publish: CanonicalAgentEventPublisher = publishCanonicalAgentEvents,
   ) {

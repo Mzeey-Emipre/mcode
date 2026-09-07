@@ -5,7 +5,7 @@
 
 import { injectable } from "tsyringe";
 
-const AUTO_PROTECT_PREFIXES = ["MCODE_", "ELECTRON_", "BETTER_SQLITE3_"] as const;
+const AUTO_PROTECT_PREFIXES = ["MCODE_", "ELECTRON_"] as const;
 
 /**
  * Holds a snapshot of server-owned env values and merges them over resolved

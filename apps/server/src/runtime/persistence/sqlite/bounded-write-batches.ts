@@ -1,5 +1,5 @@
 import * as NodePerfHooks from "node:perf_hooks";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 /** Hard limits for one synchronous SQLite write transaction. */
 export interface WriteBatchLimits {
@@ -24,7 +24,7 @@ export interface WriteBatchResult {
 
 /** Inputs and injectable timing seams for a bounded write run. */
 export interface RunBoundedWriteBatchesInput<T> {
-  db: Pick<Database.Database, "transaction">;
+  db: Pick<Database, "transaction">;
   items: readonly T[];
   limits: WriteBatchLimits;
   byteLength: (item: T) => number;

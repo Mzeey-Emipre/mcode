@@ -99,13 +99,13 @@ export type CompletedThreadRetentionDays = z.infer<typeof CompletedThreadRetenti
  */
 export const GRACE_PERIOD_DEFAULT_SECONDS = 30;
 
-/** Default V8 max old space size for the desktop-managed server process, in MB. */
+/** Default server memory budget for the desktop-managed process, in MiB. */
 export const SERVER_HEAP_DEFAULT_MB = 512;
 
-/** Lowest supported V8 max old space size for the server process, in MB. */
+/** Lowest supported server memory budget for the server process, in MiB. */
 export const SERVER_HEAP_MIN_MB = 256;
 
-/** Highest supported V8 max old space size for the server process, in MB. */
+/** Highest supported server memory budget for the server process, in MiB. */
 export const SERVER_HEAP_MAX_MB = 8192;
 
 /** Shipped default from older installs, migrated to {@link SERVER_HEAP_DEFAULT_MB}. */
@@ -254,7 +254,7 @@ export const SettingsSchema = lazySchema(() =>
         /** Memory settings for the server process. */
         memory: z
           .object({
-            /** V8 max old space size in MB. Valid range: 256-8192. */
+            /** Electron V8 cap or Bun soft process-RSS budget in MiB. Valid range: 256-8192. */
             heapMb: z
               .preprocess(
                 (value) =>

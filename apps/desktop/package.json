@@ -25,7 +25,6 @@
     "@electron/rebuild": "^3.7.1",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
-    "better-sqlite3": "^12.0.0",
     "electron-updater": "^6.8.3",
     "koffi": "^2.16.1",
     "node-pty": "^1.0.0",
@@ -61,7 +60,6 @@
     "files": [
       "dist/**/*",
       "package.json",
-      "node_modules/better-sqlite3/**/*",
       "node_modules/koffi/**/*",
       "node_modules/node-pty/**/*"
     ],
@@ -77,7 +75,6 @@
     ],
     "asarUnpack": [
       "dist/server/**",
-      "node_modules/better-sqlite3/**",
       "node_modules/koffi/**",
       "node_modules/node-pty/**"
     ],
@@ -94,7 +91,8 @@
       ],
       "category": "public.app-category.developer-tools",
       "binaries": [
-        "Contents/Resources/bin/mcode-server"
+        "Contents/Resources/bin/mcode-server",
+        "Contents/Resources/bin/mcode-bun"
       ]
     },
     "dmg": {

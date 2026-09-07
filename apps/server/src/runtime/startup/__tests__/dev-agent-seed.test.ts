@@ -7,11 +7,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WorkspaceRepo } from "../../../features/projects/persistence/workspace-repo.js";
 import { seedAgentRuntimeWorkspace } from "../dev-agent-seed.js";
 import { openMemoryDatabase } from "../../persistence/sqlite/database.js";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 describe("seedAgentRuntimeWorkspace", () => {
   const tmpDirs: string[] = [];
-  let db: Database.Database | null = null;
+  let db: Database | null = null;
 
   afterEach(() => {
     db?.close();

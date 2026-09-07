@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { inject, injectable } from "tsyringe";
 import {
   AgentEventType,
@@ -69,7 +69,7 @@ export class GoalLifecycleService {
     @inject(ThreadRepo) private readonly threads: ThreadRepo,
     @inject("IProviderRegistry") private readonly providers: IProviderRegistry,
     @inject(MessageRepo) messages: MessageRepo,
-    @inject("Database") database: Database.Database,
+    @inject("Database") database: Database,
     @inject(AgentRuntimeCommandPort) private readonly runtime: AgentRuntimeCommandPort,
   ) {
     this.command = new GoalCommand({ messageRepo: messages, db: database }, broadcast);

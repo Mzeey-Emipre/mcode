@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { createCursorProvider, type ProviderFactoryInput, type ProviderHostPorts } from "@mcode/providers";
 import type { ForkRequest, HandoffArtifact, Settings } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -13,7 +13,7 @@ import type { Client } from "@agentclientprotocol/sdk";
  * side-channel (path B) and leaves the parent's canonical session untouched.
  */
 describe("Cursor clean side-channel fork", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let messageRepo: MessageRepo;
   let provider: ReturnType<typeof createCursorProvider>;

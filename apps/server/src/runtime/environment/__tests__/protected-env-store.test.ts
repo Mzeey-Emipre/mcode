@@ -34,20 +34,6 @@ describe("ProtectedEnvStore", () => {
     }
   });
 
-  it("auto-protects BETTER_SQLITE3_ prefixed keys", () => {
-    const prev = process.env.BETTER_SQLITE3_BINDING;
-    process.env.BETTER_SQLITE3_BINDING = "/native/path";
-    try {
-      const store = new ProtectedEnvStore();
-      expect(store.isProtected("BETTER_SQLITE3_BINDING")).toBe(true);
-      const merged = store.applyTo({ BETTER_SQLITE3_BINDING: "from-shell" });
-      expect(merged.BETTER_SQLITE3_BINDING).toBe("/native/path");
-    } finally {
-      if (prev === undefined) delete process.env.BETTER_SQLITE3_BINDING;
-      else process.env.BETTER_SQLITE3_BINDING = prev;
-    }
-  });
-
   it("isProtected returns false for non-protected keys", () => {
     const store = new ProtectedEnvStore();
     expect(store.isProtected("PATH")).toBe(false);

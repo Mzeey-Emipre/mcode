@@ -5,7 +5,7 @@
  */
 
 import { inject, injectable } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { ProviderModelInfo } from "@mcode/contracts";
 
 /** A cached model list row from `provider_model_cache`. */
@@ -27,7 +27,7 @@ interface CacheRow {
 /** Data access for the `provider_model_cache` SQLite table. */
 @injectable()
 export class ModelCacheRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Read cached models for a provider. Returns null if no cache entry exists. */
   get(providerId: string): CachedModelEntry | null {

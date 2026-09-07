@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { openMemoryDatabase } from "../../database.js";
 import {
@@ -228,7 +228,7 @@ describe("runSQLiteProfile", () => {
 });
 
 describe("checkpoint policy profile", () => {
-  let db: Database.Database | undefined;
+  let db: Database | undefined;
 
   afterEach(() => {
     db?.close();

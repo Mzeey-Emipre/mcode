@@ -6,7 +6,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import * as NodeCrypto from "node:crypto";
 import type { PlanRecord, PlanStatus } from "@mcode/contracts";
 
@@ -20,7 +20,7 @@ export class PlanRepo {
   private readonly stmtUpdateStatus;
   private readonly stmtGetLatest;
 
-  constructor(@inject("Database") db: Database.Database) {
+  constructor(@inject("Database") db: Database) {
     this.stmtInsert = db.prepare(`
       INSERT INTO plans (id, thread_id, message_id, version, title, content_md, sections_json, change_summary, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

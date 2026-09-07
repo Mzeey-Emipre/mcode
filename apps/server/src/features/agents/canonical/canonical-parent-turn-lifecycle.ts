@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type {
   AgentThread,
   AgentTurn,
@@ -71,7 +71,7 @@ export type CanonicalParentTurnInterruptionInput = ParentTurnInterruptionInput;
 /** Coordinates start and terminal decisions for one parent execution. */
 export class CanonicalParentTurnLifecycle {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly operations: CanonicalParentTurnLifecycleOperations,
   ) {}
 

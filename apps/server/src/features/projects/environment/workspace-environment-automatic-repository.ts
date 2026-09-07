@@ -1,5 +1,5 @@
 import * as NodeCrypto from "node:crypto";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type {
   MessageMention,
   PreviewAnnotationBundle,
@@ -119,7 +119,7 @@ interface QueuedTurnMessageOrigin {
 
 /** SQLite storage for the automatic Setup gate, attempts, and queued Turn claims. */
 export class WorkspaceEnvironmentAutomaticRepository {
-  constructor(private readonly db: Database.Database, private readonly now: () => string) {}
+  constructor(private readonly db: Database, private readonly now: () => string) {}
 
   /** Atomically persist one blocked Turn and create the Setup gate on the first submission. */
   queueFirstTurn(input: WorkspaceEnvironmentQueueFirstTurnInput): WorkspaceEnvironmentQueueAdmission {
@@ -148,10 +148,10 @@ export class WorkspaceEnvironmentAutomaticRepository {
     return true;
   }
 
-  private findSetupGate(threadId: string): AutomaticSetupGate | undefined {
+  private findSetupGate(threadId: string): AutomaticSetupGate | null {
     return this.db.prepare(
       "SELECT state FROM workspace_environment_setup_gates WHERE thread_id = ?",
-    ).get(threadId) as AutomaticSetupGate | undefined;
+    ).get(threadId) as AutomaticSetupGate | null;
   }
 
   private assertQueuedTurnCapacity(threadId: string): void {
@@ -163,7 +163,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
     }
   }
 
-  private ensureBlockedSetupGate(threadId: string, gate: AutomaticSetupGate | undefined, now: string): void {
+  private ensureBlockedSetupGate(threadId: string, gate: AutomaticSetupGate | null, now: string): void {
     if (gate) return;
     const attemptId = NodeCrypto.randomUUID();
     this.db.prepare(
@@ -517,8 +517,8 @@ export class WorkspaceEnvironmentAutomaticRepository {
   }
 }
 
-function isReleasedSetupGate(gate: AutomaticSetupGate | undefined): boolean {
-  return gate !== undefined && gate.state !== "blocked";
+function isReleasedSetupGate(gate: AutomaticSetupGate | null): boolean {
+  return gate !== null && gate.state !== "blocked";
 }
 
 function queuedTurnMessageOrigin(

@@ -13,6 +13,19 @@ const DEFAULT_DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
 const ELECTRON_RELEASE_URL = /https?:\/\/[^\s"']*electron[^\s"']*\/releases\/download\//i;
 const TRANSIENT_DOWNLOAD_FAILURE = /\b(?:EOF|ECONNRESET|ETIMEDOUT|temporary connection failure)\b/i;
 
+/** Resolves the Bun executable before CI removes Bun's bin directory from PATH. */
+export function resolveBunExecutable(env = process.env, platform = process.platform) {
+  if (env.BUN && NodeFS.existsSync(env.BUN)) return env.BUN;
+  const command = platform === "win32" ? "where.exe" : "which";
+  const output = NodeChildProcess.execFileSync(command, ["bun"], {
+    encoding: "utf8",
+    env,
+  });
+  const executable = output.split(/\r?\n/).find((candidate) => NodeFS.existsSync(candidate));
+  if (!executable) throw new Error("[ci-package] Bun executable not found");
+  return executable;
+}
+
 /** Classifies only known transient Electron release download failures. */
 export function classifyElectronBuilderFailure(
   output,
@@ -194,6 +207,7 @@ async function packageDesktop() {
   NodeFS.writeFileSync(rootPackagePath, `${JSON.stringify(rootPackage, null, 2)}\n`);
   console.log("[ci-package] Stripped workspaces from root package.json");
 
+  const bunExecutable = resolveBunExecutable();
   const separator = process.platform === "win32" ? ";" : ":";
   const filteredPath = (process.env.PATH ?? "")
     .split(separator)
@@ -217,7 +231,7 @@ async function packageDesktop() {
         nodeExecutable,
         args,
         cwd: scriptRoot,
-        env: { ...process.env, PATH: filteredPath },
+        env: { ...process.env, PATH: filteredPath, BUN: bunExecutable },
         diagnosticLimitBytes: DEFAULT_DIAGNOSTIC_LIMIT_BYTES,
       }),
   });

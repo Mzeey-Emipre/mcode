@@ -5,7 +5,7 @@
 
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { Workspace } from "@mcode/contracts";
 
 interface WorkspaceRow {
@@ -44,7 +44,7 @@ function rowToWorkspace(row: WorkspaceRow): Workspace {
 /** Repository for workspace CRUD operations against SQLite. */
 @injectable()
 export class WorkspaceRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Create a new workspace and return the fully-populated record. */
   create(name: string, path: string, isGitRepo = true): Workspace {

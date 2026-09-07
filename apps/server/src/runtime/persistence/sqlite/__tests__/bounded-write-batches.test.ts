@@ -1,10 +1,10 @@
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { runBoundedWriteBatches } from "../bounded-write-batches.js";
-import { openMemoryDatabase, resolveElectronNativeBinding } from "../database.js";
+import { openMemoryDatabase } from "../database.js";
 
 describe("runBoundedWriteBatches", () => {
   it("commits bounded batches and yields only after each transaction closes", async () => {
@@ -118,13 +118,12 @@ describe("runBoundedWriteBatches", () => {
   it("rolls back the active batch when the lock timeout expires", async () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcode-write-lock-"));
     const databasePath = NodePath.join(directory, "locked.sqlite");
-    const nativeBinding = resolveElectronNativeBinding();
-    const lockOwner = new Database(databasePath, { nativeBinding });
-    const writer = new Database(databasePath, { nativeBinding });
+    const lockOwner = new Database(databasePath, { strict: true });
+    const writer = new Database(databasePath, { strict: true });
 
     try {
       lockOwner.exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)");
-      writer.pragma("busy_timeout = 10");
+      writer.run("PRAGMA busy_timeout = 10");
       const insert = writer.prepare("INSERT INTO records (id, value) VALUES (?, ?)");
       lockOwner.exec("BEGIN EXCLUSIVE");
 
@@ -141,20 +140,20 @@ describe("runBoundedWriteBatches", () => {
       expect(writer.prepare("SELECT id FROM records").all()).toEqual([]);
     } finally {
       if (lockOwner.inTransaction) lockOwner.exec("ROLLBACK");
-      writer.close();
-      lockOwner.close();
+      writer.close(true);
+      lockOwner.close(true);
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it("rolls back the active batch when SQLite reports a full disk", async () => {
-    const db = new Database(":memory:", { nativeBinding: resolveElectronNativeBinding() });
+    const db = new Database(":memory:", { strict: true });
 
     try {
-      db.pragma("page_size = 512");
+      db.run("PRAGMA page_size = 512");
       db.exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value BLOB NOT NULL)");
-      const pageCount = db.pragma("page_count", { simple: true }) as number;
-      db.pragma(`max_page_count = ${pageCount}`);
+      const pageCount = (db.query("PRAGMA page_count").get() as { page_count: number }).page_count;
+      db.run(`PRAGMA max_page_count = ${pageCount}`);
       const insert = db.prepare("INSERT INTO records (id, value) VALUES (?, zeroblob(?))");
 
       await expect(runBoundedWriteBatches({
@@ -168,7 +167,7 @@ describe("runBoundedWriteBatches", () => {
       expect(db.inTransaction).toBe(false);
       expect(db.prepare("SELECT id FROM records").all()).toEqual([]);
     } finally {
-      db.close();
+      db.close(true);
     }
   });
 });

@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   CanonicalAgentEventEnvelopeSchema,
   reduceAgentEventBatch,
@@ -87,7 +87,7 @@ interface CommitContext {
 /** Commits canonical state atomically, then separates durable state from publication. */
 export class CanonicalAgentEventStore {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Database,
     private readonly operations: CanonicalAgentEventStoreOperations,
   ) {}
 

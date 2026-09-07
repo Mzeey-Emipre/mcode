@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as NodeEvents from "node:events";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { AgentEventType } from "@mcode/contracts";
 import type {
   IAgentProvider,
@@ -36,7 +36,7 @@ import type { ProviderAvailabilityService } from "../../../providers/availabilit
  * EventEmitter bus BEFORE provider.sendMessage() completes.
  */
 describe("AgentService.sendMessage emits TurnStarted", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let workspaceRepo: WorkspaceRepo;
   let messageRepo: MessageRepo;

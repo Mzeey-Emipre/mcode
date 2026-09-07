@@ -4,12 +4,12 @@
 
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceRepo } from "../workspace-repo.js";
 
 describe("WorkspaceRepo pinning + recency", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: WorkspaceRepo;
 
   beforeEach(() => {

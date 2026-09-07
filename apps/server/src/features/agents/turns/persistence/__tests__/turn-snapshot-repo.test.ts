@@ -1,12 +1,12 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { TurnSnapshotRepo } from "../turn-snapshot-repo.js";
 import type { CreateTurnSnapshotInput } from "../turn-snapshot-repo.js";
 
 /** Seed a workspace, thread, and message so foreign keys are satisfied. */
-function seedFixtures(db: Database.Database): {
+function seedFixtures(db: Database): {
   workspaceId: string;
   threadId: string;
   messageId: string;
@@ -32,7 +32,7 @@ function seedFixtures(db: Database.Database): {
 }
 
 describe("TurnSnapshotRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: TurnSnapshotRepo;
   let threadId: string;
   let messageId: string;

@@ -15,6 +15,7 @@ import { flipFuses, FuseVersion, FuseV1Options } from "@electron/fuses";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeChildProcess from "node:child_process";
 import {
   buildServerBinary,
 } from "./build-server-binary.mjs";
@@ -92,6 +93,14 @@ export default async function afterPack(context) {
     electronPlatformName,
     productFilename,
   });
+  const bunRuntime = stageBunRuntime({
+    appOutDir,
+    electronPlatformName,
+    productFilename,
+    packagedServerDir,
+    arch: electronArchToNpm(context.arch),
+  });
+  console.log(`[after-pack] Staged Bun server runtime at ${bunRuntime}`);
   const { platformPkg, binDst } = copyClaudeSdkCliToDir({
     destServerDir: packagedServerDir,
     serverPackageRoot,
@@ -142,6 +151,36 @@ export default async function afterPack(context) {
   // -------------------------------------------------------------------------
 
   await configureBrowserSnapshotAndFuses(context, snapshotFile);
+}
+
+function stageBunRuntime({ appOutDir, electronPlatformName, productFilename, packagedServerDir, arch }) {
+  const platform = electronPlatformToNpm(electronPlatformName);
+  const bunPlatform = bunCompileTargetPlatform(platform);
+  const resourcesRoot = electronPlatformName === "darwin" || electronPlatformName === "mas"
+    ? NodePath.resolve(appOutDir, `${productFilename}.app`, "Contents", "Resources")
+    : NodePath.resolve(appOutDir, "resources");
+  const binary = NodePath.resolve(resourcesRoot, "bin", platform === "win32" ? "mcode-bun.exe" : "mcode-bun");
+  NodeFS.mkdirSync(NodePath.dirname(binary), { recursive: true });
+  NodeChildProcess.execFileSync(resolveBunExecutable(), [
+    "build", "--compile", `--target=bun-${bunPlatform}-${arch}`,
+    NodePath.resolve(packagedServerDir, "server.cjs"), "--outfile", binary,
+  ], { stdio: "inherit" });
+  return binary;
+}
+
+function bunCompileTargetPlatform(platform) {
+  if (platform === "win32") return "windows";
+  return platform;
+}
+
+function resolveBunExecutable() {
+  if (process.versions.bun && NodeFS.existsSync(process.execPath)) return process.execPath;
+  if (process.env.BUN && NodeFS.existsSync(process.env.BUN)) return process.env.BUN;
+  const command = process.platform === "win32" ? "where.exe" : "which";
+  const output = NodeChildProcess.execFileSync(command, ["bun"], { encoding: "utf8" });
+  const executable = output.split(/\r?\n/, 1)[0]?.trim();
+  if (executable && NodeFS.existsSync(executable)) return executable;
+  throw new Error("Bun executable not found for packaged server compilation");
 }
 
 function toWindowsVersion(rawVersion) {

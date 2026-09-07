@@ -174,7 +174,7 @@ When adding a new setting, ask these questions in order:
   "worktree": {},                      // Legacy worktree.naming.* values are tolerated on load only
   "server": {
     "memory": {
-      "heapMb": 512                    // 256-8192, V8 max old space (MB)
+      "heapMb": 512                    // 256-8192 MiB, Electron V8 cap or Bun soft process-RSS budget
     }
   },
   "provider": {

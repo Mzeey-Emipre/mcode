@@ -1,7 +1,7 @@
 /**
  * End-to-end fork flow integration test.
  *
- * Full DI bootstrap is impractical here because better-sqlite3 requires a
+ * Full DI bootstrap is impractical here because the production persistence layer requires a
  * native binding that may not resolve in all CI environments, and the
  * AgentService constructor takes 20+ deps that need a live container.
  *

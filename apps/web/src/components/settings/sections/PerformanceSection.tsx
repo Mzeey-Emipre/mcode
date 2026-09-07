@@ -20,12 +20,12 @@ export function PerformanceSection() {
       <SectionHeading>Performance</SectionHeading>
       <div>
         <SettingRow
-          label="Heap memory"
+          label="Server memory budget"
           configKey="server.memory.heapMb"
-          hint="V8 max old space in MB (64–8192). Override via MCODE_SERVER_HEAP_MB. Changes apply after restart."
+          hint="Electron uses this as its V8 old-space cap. Bun uses it as a soft server process-RSS budget for admission and shedding (256–8192 MiB). Electron changes apply after restart; Bun updates apply when saved."
         >
           <RangeControl
-            min={64}
+            min={256}
             max={8192}
             step={64}
             value={heapMb}

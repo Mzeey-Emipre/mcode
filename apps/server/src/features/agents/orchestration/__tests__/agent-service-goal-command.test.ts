@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import type { Thread, IProviderRegistry, GoalState, AgentEvent, GoalLookupResult } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -48,7 +48,7 @@ function needsTurnExecutionId(event: unknown): event is Record<string, unknown> 
  * setGoal/clearGoal/sendTurn so we can assert which path the /goal
  * intercept took (control short-circuit vs SET fall-through).
  */
-function buildService(db: Database.Database) {
+function buildService(db: Database) {
   container.reset();
   container.registerInstance("Database", db);
 
@@ -220,7 +220,7 @@ function buildService(db: Database.Database) {
 }
 
 describe("AgentService.sendMessage — /goal command", () => {
-  let db: Database.Database;
+  let db: Database;
   let thread: Thread;
 
   beforeEach(() => {

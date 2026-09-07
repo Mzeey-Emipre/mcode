@@ -5,7 +5,7 @@
 
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database, Statement } from "bun:sqlite";
 import type { ToolCallRecord, ToolCallStatus } from "@mcode/contracts";
 import {
   ACTIVE_TURN_WRITE_BATCH_LIMITS,
@@ -164,12 +164,12 @@ const TOOL_CALL_RECORD_COLUMNS =
 /** Repository for tool call record creation and retrieval against SQLite. */
 @injectable()
 export class ToolCallRecordRepo {
-  private readonly stmtInsert: Database.Statement;
-  private readonly stmtListByMessage: Database.Statement;
-  private readonly stmtListByParent: Database.Statement;
-  private readonly stmtCountByMessage: Database.Statement;
+  private readonly stmtInsert: Statement;
+  private readonly stmtListByMessage: Statement;
+  private readonly stmtListByParent: Statement;
+  private readonly stmtCountByMessage: Statement;
 
-  constructor(@inject("Database") private readonly db: Database.Database) {
+  constructor(@inject("Database") private readonly db: Database) {
     this.stmtInsert = db.prepare(
       "INSERT OR IGNORE INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, display_name, provider_agent_key, subagent_identity_key, subagent_provider_name, subagent_prompt, subagent_type, subagent_agent_id, subagent_duration_ms, model, reasoning_effort, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );

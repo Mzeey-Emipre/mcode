@@ -9,7 +9,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 /** Repository for the `plan_question_answers` sidecar table. */
 @injectable()
@@ -18,7 +18,7 @@ export class PlanQuestionAnswersRepo {
   private readonly stmtIsAnswered;
   private readonly stmtListForThread;
 
-  constructor(@inject("Database") db: Database.Database) {
+  constructor(@inject("Database") db: Database) {
     this.stmtMark = db.prepare(`
       INSERT OR IGNORE INTO plan_question_answers (assistant_message_id, thread_id)
       VALUES (?, ?)
@@ -41,7 +41,7 @@ export class PlanQuestionAnswersRepo {
 
   /** True iff a marker exists for the given assistant message id. */
   isAnswered(assistantMessageId: string): boolean {
-    return this.stmtIsAnswered.get(assistantMessageId) !== undefined;
+    return this.stmtIsAnswered.get(assistantMessageId) !== null;
   }
 
   /** All answered assistant-message ids for a thread, oldest first. */

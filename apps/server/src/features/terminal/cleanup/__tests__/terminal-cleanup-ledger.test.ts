@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { PtyHostCleanupLedger } from "../terminal-cleanup-ledger.js";
 
 const SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SESSION_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-async function openLedgerTestDatabase(): Promise<Database.Database> {
+async function openLedgerTestDatabase(): Promise<Database> {
   if (!process.versions.electron) {
     const { DatabaseSync } = await import("node:sqlite");
     const database = new DatabaseSync(":memory:");
@@ -35,13 +35,13 @@ async function openLedgerTestDatabase(): Promise<Database.Database> {
         }
       },
       close: () => database.close(),
-    } as unknown as Database.Database;
+    } as unknown as Database;
   }
   return openMemoryDatabase();
 }
 
 describe("PtyHostCleanupLedger", () => {
-  let db: Database.Database | null = null;
+  let db: Database | null = null;
 
   afterEach(() => {
     db?.close();

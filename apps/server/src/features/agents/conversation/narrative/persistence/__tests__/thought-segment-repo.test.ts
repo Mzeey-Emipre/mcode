@@ -1,11 +1,11 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../../runtime/persistence/sqlite/database.js";
 import { ThoughtSegmentRepo } from "../thought-segment-repo.js";
 
 /** Seed a workspace, thread, and assistant message so FKs resolve. */
-function seedFixtures(db: Database.Database): { messageId: string } {
+function seedFixtures(db: Database): { messageId: string } {
   const now = new Date().toISOString();
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -20,7 +20,7 @@ function seedFixtures(db: Database.Database): { messageId: string } {
 }
 
 describe("ThoughtSegmentRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: ThoughtSegmentRepo;
   let messageId: string;
 

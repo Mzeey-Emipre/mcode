@@ -14,15 +14,11 @@ export function resolveElectronBinary(rootDir) {
   }
 }
 
-/** Resolve the Electron ABI better-sqlite3 binding. */
-export function resolveElectronBinding(rootDir) {
-  const serverRequire = NodeModule.createRequire(NodePath.resolve(rootDir, "apps", "server", "package.json"));
-  const packagePath = serverRequire.resolve("better-sqlite3/package.json");
-  const bindingPath = NodePath.resolve(NodePath.dirname(packagePath), "build", "Release", "better_sqlite3.electron.node");
-  if (!NodeFS.existsSync(bindingPath)) {
-    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${bindingPath}`);
-  }
-  return bindingPath;
+/** Resolve the Bun executable that runs the backend server. */
+export function resolveBunBinary() {
+  if (process.versions.bun && NodeFS.existsSync(process.execPath)) return process.execPath;
+  if (process.env.BUN && NodeFS.existsSync(process.env.BUN)) return process.env.BUN;
+  throw new Error("Bun executable not found. Run this launcher with Bun or set BUN to its absolute path.");
 }
 
 /** Ensure the runtime directories required by a launcher exist. */

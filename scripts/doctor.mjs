@@ -8,7 +8,6 @@ import * as NodeFS from 'node:fs';
 import * as NodeChildProcess from 'node:child_process';
 import * as NodePath from 'node:path';
 import * as NodeOS from 'node:os';
-import * as NodeModule from 'node:module';
 import { resolveMainRoot } from './utils.mjs';
 import {
   isElectronBinaryInstalled,
@@ -16,38 +15,6 @@ import {
 } from './ensure-electron.mjs';
 
 const mainRoot = resolveMainRoot();
-
-/**
- * Resolve the path to the better-sqlite3 module, checking both the root and
- * apps/server locations since Bun workspaces may not hoist it to the root.
- */
-function resolveSqliteModule() {
-  try {
-    const serverRequire = NodeModule.createRequire(NodePath.resolve(mainRoot, 'apps', 'server', 'package.json'));
-    return NodePath.resolve(serverRequire.resolve('better-sqlite3/package.json'), '..');
-  } catch {
-    return null;
-  }
-}
-
-/** Returns the installed Electron module ABI. */
-function getElectronABI() {
-  const desktopRequire = NodeModule.createRequire(NodePath.resolve(mainRoot, 'apps', 'desktop', 'package.json'));
-  const electronBinary = desktopRequire('electron');
-  const abi = NodeChildProcess.execFileSync(
-    electronBinary,
-    ['-e', 'process.stdout.write(process.versions.modules)'],
-    {
-      cwd: mainRoot,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 30_000,
-    },
-  ).trim();
-  if (!/^\d+$/.test(abi)) throw new Error(`Electron reported invalid ABI: ${abi || 'empty'}`);
-  return abi;
-}
 
 let passed = 0;
 let failed = 0;
@@ -75,7 +42,7 @@ function hasCommand(cmd) {
 
 console.log('Checking prerequisites...\n');
 
-// Repository scripts run under Bun; backend and native modules run under Electron.
+// Repository scripts and the backend run under Bun.
 check('Bun runtime', () => {
   if (!process.versions.bun) throw new Error('doctor must run under Bun');
 }, 'Run: bun run doctor');
@@ -93,26 +60,10 @@ check(
   'bun run install:electron'
 );
 
-// Electron-compatible better-sqlite3 binding
 check(
-  'better-sqlite3 Electron binding installed',
+  'Bun SQLite runtime available',
   () => {
-    const modulePath = resolveSqliteModule();
-    if (!modulePath) throw new Error('better-sqlite3 module is not installed; run bun install');
-    const electronBinding = NodePath.resolve(modulePath, 'build', 'Release', 'better_sqlite3.electron.node');
-    if (!NodeFS.existsSync(electronBinding)) {
-      throw new Error(`better-sqlite3 Electron binding is missing: ${electronBinding}`);
-    }
-
-    const markerPath = NodePath.resolve(modulePath, 'build', 'Release', '.electron-abi');
-    if (!NodeFS.existsSync(markerPath)) throw new Error(`Electron ABI marker is missing: ${markerPath}`);
-    const marker = NodeFS.readFileSync(markerPath, 'utf8').trim();
-    const electronABI = getElectronABI();
-    if (!/^\d+$/.test(marker) || marker !== electronABI) {
-      throw new Error(
-        `Electron ABI marker mismatch: expected ${electronABI}, found ${marker || 'missing'}`,
-      );
-    }
+    if (!process.versions.bun) throw new Error('bun:sqlite requires Bun');
   },
   'bun install'
 );

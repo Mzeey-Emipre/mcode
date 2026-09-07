@@ -245,7 +245,7 @@ async function buildPackagedApp(repoRoot) {
       dereference: true,
     }),
   ]);
-  const nativeDependencies = ["better-sqlite3", "koffi", "node-pty"];
+  const nativeDependencies = ["koffi", "node-pty"];
   for (const dependency of nativeDependencies) {
     const dependencyRoot = NodePath.dirname(
       desktopRequire.resolve(`${dependency}/package.json`),

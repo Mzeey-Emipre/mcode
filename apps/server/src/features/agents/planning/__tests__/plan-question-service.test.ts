@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { PlanQuestionAnswersRepo } from "../persistence/plan-question-answers-repo.js";
@@ -8,7 +8,7 @@ import { PlanQuestionService } from "../plan-question-service.js";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 
 /** Seed a workspace + thread so message foreign keys are satisfied. */
-function seedThread(db: Database.Database): string {
+function seedThread(db: Database): string {
   const now = new Date().toISOString();
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -20,7 +20,7 @@ function seedThread(db: Database.Database): string {
 }
 
 function insertMessage(
-  db: Database.Database,
+  db: Database,
   id: string,
   role: string,
   content: string,
@@ -49,7 +49,7 @@ function fence(): string {
 }
 
 describe("PlanQuestionService.buildAnswerPayload", () => {
-  let db: Database.Database;
+  let db: Database;
   let svc: PlanQuestionService;
 
   beforeEach(() => {
@@ -114,7 +114,7 @@ describe("PlanQuestionService.buildAnswerPayload", () => {
 });
 
 describe("PlanQuestionService.findLatestPlanQuestionsMessageId", () => {
-  let db: Database.Database;
+  let db: Database;
   let svc: PlanQuestionService;
 
   beforeEach(() => {
@@ -145,7 +145,7 @@ describe("PlanQuestionService.findLatestPlanQuestionsMessageId", () => {
 });
 
 describe("PlanQuestionService.dismiss", () => {
-  let db: Database.Database;
+  let db: Database;
   let answersRepo: PlanQuestionAnswersRepo;
   let svc: PlanQuestionService;
 

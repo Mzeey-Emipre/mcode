@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as NodeEvents from "node:events";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { AgentEventType } from "@mcode/contracts";
 import type {
   AgentEvent,
@@ -88,7 +88,7 @@ async function flushCommittedEvents(): Promise<void> {
  * a fresh session instead of resuming the broken transcript forever.
  */
 describe("AgentService clears sdk_session_id on session invalidation", () => {
-  let db: Database.Database;
+  let db: Database;
   let threadRepo: ThreadRepo;
   let workspaceRepo: WorkspaceRepo;
   let messageRepo: MessageRepo;

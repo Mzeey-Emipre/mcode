@@ -1,10 +1,10 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { HookExecutionRepo } from "../hook-execution-repo.js";
 
-function seedFixtures(db: Database.Database): { messageId: string } {
+function seedFixtures(db: Database): { messageId: string } {
   const now = new Date().toISOString();
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -19,7 +19,7 @@ function seedFixtures(db: Database.Database): { messageId: string } {
 }
 
 describe("HookExecutionRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: HookExecutionRepo;
   let messageId: string;
 

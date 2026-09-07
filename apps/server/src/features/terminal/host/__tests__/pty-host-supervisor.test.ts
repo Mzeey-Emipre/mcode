@@ -184,6 +184,61 @@ describe("PtyHostSupervisor", () => {
     vi.useRealTimers();
   });
 
+  it("closes a session that reports running after its create deadline", async () => {
+    vi.useFakeTimers();
+    const child = new FakeHostChild();
+    const ledger = new InMemoryPtyHostCleanupLedger();
+    const supervisor = new PtyHostSupervisor({
+      platform: "windows",
+      cleanupLedger: ledger,
+      operationTimeoutMs: 10,
+      spawnHost: () => child,
+    });
+    await supervisor.start();
+
+    const creating = supervisor.create(createRequest);
+    const rejection = expect(creating).rejects.toThrow("PTY create exceeded 10ms");
+    await vi.advanceTimersByTimeAsync(10);
+    await rejection;
+
+    child.emitMessage({
+      contractVersion: 1,
+      kind: "running",
+      sessionId: UUID,
+      hostGeneration: "1",
+      rootPid: 123,
+      processGroupId: "job-123",
+      containment: "job-object",
+    });
+
+    expect(ledger.list()).toEqual([
+      expect.objectContaining({ sessionId: UUID, hostGeneration: "1" }),
+    ]);
+    expect(child.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "close",
+        sessionId: UUID,
+        closeSeq: "1",
+        reason: "scope-reset",
+      }),
+      expect.any(Function),
+    );
+
+    child.emitMessage({
+      contractVersion: 1,
+      kind: "exit",
+      sessionId: UUID,
+      hostGeneration: "1",
+      finalOutputSeq: "0",
+      code: 0,
+      signal: null,
+      reason: "user-close",
+    });
+    expect(ledger.list()).toEqual([]);
+    await supervisor.shutdown();
+    vi.useRealTimers();
+  });
+
   it("waits for running and exit events at the adapter boundary", async () => {
     const child = new FakeHostChild();
     const supervisor = new PtyHostSupervisor({

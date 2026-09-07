@@ -1,6 +1,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { openDatabase } from "../database.js";
@@ -27,9 +28,14 @@ describe("database migration recovery", () => {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   });
 
-  it("restores the usable database when a migration fails", () => {
-    const originalBytes = Buffer.from("usable generation");
-    NodeFS.writeFileSync(databasePath, originalBytes);
+  it("restores a usable WAL database and clears failed-migration sidecars", () => {
+    const seed = new Database(databasePath, { strict: true });
+    seed.exec(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE records (id TEXT PRIMARY KEY, body TEXT NOT NULL);
+      INSERT INTO records (id, body) VALUES ('thread-public-id', 'preserved body');
+    `);
+    seed.close();
     NodeFS.writeFileSync(
       NodePath.join(migrationsDirectory, "meta", "_journal.json"),
       JSON.stringify({
@@ -40,17 +46,28 @@ describe("database migration recovery", () => {
             idx: 0,
             version: "6",
             when: 1,
-            tag: "0000_missing",
+            tag: "0000_broken",
             breakpoints: true,
           },
         ],
       }),
     );
+    NodeFS.writeFileSync(
+      NodePath.join(migrationsDirectory, "0000_broken.sql"),
+      "CREATE TABLE partially_migrated (id INTEGER);\n--> statement-breakpoint\nSELECT FROM;",
+    );
     process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = migrationsDirectory;
 
     expect(() => openDatabase({ dbPath: databasePath })).toThrow();
+    expect(NodeFS.existsSync(`${databasePath}-shm`)).toBe(false);
 
-    expect(NodeFS.readFileSync(databasePath)).toEqual(originalBytes);
+    const restored = new Database(databasePath, { readonly: true, strict: true });
+    expect(restored.query("SELECT id, body FROM records").get()).toEqual({
+      id: "thread-public-id",
+      body: "preserved body",
+    });
+    expect(restored.query("SELECT name FROM sqlite_master WHERE name = 'partially_migrated'").get()).toBeNull();
+    restored.close(true);
     expect(
       NodeFS.readdirSync(directory).some((name) => name.startsWith("mcode.db.bak-")),
     ).toBe(true);

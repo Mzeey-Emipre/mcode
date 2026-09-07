@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CANONICAL_AGENT_EVENT_BATCH_MAX } from "@mcode/contracts";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-repo.js";
@@ -26,7 +26,7 @@ const IDEMPOTENT_SQL =
   "UPDATE threads SET has_file_changes = 1 WHERE id = ? AND has_file_changes = 0";
 
 /** Seed a workspace + thread so message/record foreign keys are satisfied. */
-function seedThread(db: Database.Database): void {
+function seedThread(db: Database): void {
   const now = new Date().toISOString();
   db.prepare(
     "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -37,7 +37,7 @@ function seedThread(db: Database.Database): void {
 }
 
 function insertMessage(
-  db: Database.Database,
+  db: Database,
   id: string,
   role: string,
   content: string,
@@ -55,7 +55,7 @@ function insertMessage(
  * ref is recorded, so the snapshot step is skipped (covered separately below).
  */
 describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
-  let db: Database.Database;
+  let db: Database;
   let toolRepo: ToolCallRecordRepo;
   let narrativeStore: NarrativeStore;
   let finalizer: TurnFinalizer;
@@ -519,7 +519,7 @@ describe("TurnFinalizer canonical commit recovery", () => {
  * seeds them.
  */
 describe("TurnFinalizer.hasRecordableActivity — TurnSubstance predicate", () => {
-  let db: Database.Database;
+  let db: Database;
   let narrativeStore: NarrativeStore;
   let finalizer: TurnFinalizer;
 
@@ -629,7 +629,7 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
     const db = {
       transaction: vi.fn((fn: (files: string[]) => void) => fn),
       prepare: vi.fn(() => ({ run: runSpy })),
-    } as unknown as Database.Database;
+    } as unknown as Database;
     const finalizer = new TurnFinalizer(
       messageRepo,
       threadRepo,
@@ -705,7 +705,7 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
     const db = {
       transaction: vi.fn((fn: (files: string[]) => void) => fn),
       prepare: vi.fn(() => ({ run: vi.fn() })),
-    } as unknown as Database.Database;
+    } as unknown as Database;
     const finalizer = new TurnFinalizer(
       messageRepo,
       threadRepo,

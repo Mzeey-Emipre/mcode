@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { inject, injectable } from "tsyringe";
 import {
   AgentEventType,
@@ -63,7 +63,7 @@ export class ProviderTurnEventApplication implements TurnEventApplication {
     @inject(NarrativeStore) private readonly narrative: NarrativeStore,
     @inject(ParentAssistantTextCheckpointService) checkpoints: ParentAssistantTextCheckpointService,
     @inject(TURN_FEATURE_EFFECTS) private readonly featureEffects: TurnFeatureEffects,
-    @inject("Database") private readonly db: Database.Database,
+    @inject("Database") private readonly db: Database,
     @inject(TURN_RUNTIME_EVENT_CONTROL) private readonly runtime: TurnRuntimeEventControl,
     @inject(AgentEventPublicationRegistry)
     private readonly publication: AgentEventPublicationRegistry,

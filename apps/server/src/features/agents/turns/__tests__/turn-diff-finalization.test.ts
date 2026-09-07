@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
@@ -22,7 +22,7 @@ const identity = { threadId: "thread-1", turnId: "turn-1", turnExecutionId: "000
 const patch = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
 
 describe("native diff terminal persistence", () => {
-  let db: Database.Database;
+  let db: Database;
   beforeEach(() => {
     db = openMemoryDatabase();
     const now = new Date().toISOString();

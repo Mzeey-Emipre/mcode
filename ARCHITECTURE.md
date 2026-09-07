@@ -8,7 +8,7 @@ The codebase has a runtime-neutral **agent model**, transport **contracts**, sha
 
 Key architectural rules:
 
-- `server` has zero Electron imports. It runs under Electron's Node.js runtime
+- `server` has zero Electron imports. It runs under Bun
   when launched by the desktop shell or repository development scripts.
 - `desktop` has zero business logic. It cannot read the database or manage agents.
 - `web` never imports from `server` or `desktop`. It depends only on `contracts`.
@@ -21,10 +21,10 @@ Key architectural rules:
 | Runtime | Bun (package manager + repository script runner) |
 | Monorepo | Turborepo |
 | Desktop | Electron 35, esbuild (main/preload) + Vite (renderer) |
-| Server | Electron Node.js, tsyringe (DI), better-sqlite3, Claude Agent SDK |
+| Server | Bun, tsyringe (DI), bun:sqlite, Claude Agent SDK |
 | Frontend | Chromium renderer, React 19, Vite, shadcn/ui, Tailwind CSS 4, Zustand |
 | Contracts | Zod (schemas + type inference) |
-| Database | SQLite (WAL mode, better-sqlite3) |
+| Database | SQLite (WAL mode, bun:sqlite) |
 | Communication | WebSocket (JSON RPC + push events) |
 | Testing | Vitest and Testing Library |
 | CI/CD | GitHub Actions, release-please, electron-builder |
@@ -38,7 +38,7 @@ packages/
   shared/                       Runtime utilities used across packages
 
 apps/
-  server/                       Electron Node.js HTTP + WebSocket backend
+  server/                       Bun HTTP + WebSocket backend
   web/                          React SPA (connects via WebSocket)
   desktop/                      Thin Electron shell (~500 lines)
 ```
@@ -202,11 +202,11 @@ graph TB
         Proto["mcode-attachment://"]
     end
 
-    subgraph Server["Electron Node.js Backend Process"]
+    subgraph Server["Bun Backend Process"]
         WS["WebSocket Server<br/>(RPC + push events)"]
         HTTP["HTTP /health"]
         Services["Service Layer<br/>(tsyringe DI)"]
-        DB["SQLite<br/>(better-sqlite3)"]
+        DB["SQLite<br/>(bun:sqlite)"]
         Providers["Provider Registry<br/>(Claude, future providers)"]
         PTY["PTY Manager<br/>(node-pty)"]
 

@@ -6,7 +6,7 @@
 
 import * as NodeCrypto from "node:crypto";
 import { injectable, inject } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database, Statement } from "bun:sqlite";
 import { logger } from "@mcode/shared";
 import { UtilityCompletionService } from "../../../../shared/completion/utility-completion-service.js";
 import { SnapshotService } from "../snapshots/snapshot-service.js";
@@ -55,8 +55,8 @@ function rowToRecord(row: DiffSummaryRow): DiffSummaryRecord {
  */
 @injectable()
 export class DiffSummaryService {
-  private readonly stmtGet: Database.Statement;
-  private readonly stmtInsert: Database.Statement;
+  private readonly stmtGet: Statement;
+  private readonly stmtInsert: Statement;
 
   constructor(
     @inject(UtilityCompletionService)
@@ -66,7 +66,7 @@ export class DiffSummaryService {
     @inject("GitExecutor")
     private readonly gitExecutor: GitExecutor,
     @inject("Database")
-    db: Database.Database,
+    db: Database,
   ) {
     this.stmtGet = db.prepare(
       "SELECT id, thread_id, content, turn_count, last_turn_id, model, created_at FROM diff_summaries WHERE thread_id = ? LIMIT 1",

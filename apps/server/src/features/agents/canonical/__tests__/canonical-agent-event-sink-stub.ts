@@ -1,9 +1,9 @@
 import type { CanonicalAgentEventSink } from "../../index.js";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 
 /** Creates an AgentService test seam that runs compatibility writes without canonical persistence. */
 export function createCanonicalAgentEventSinkStub(
-  db: Pick<Database.Database, "transaction">,
+  db: Pick<Database, "transaction">,
 ): CanonicalAgentEventSink {
   return {
     startParentTurn: (

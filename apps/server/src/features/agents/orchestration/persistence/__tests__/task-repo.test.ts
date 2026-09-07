@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import { container } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { TaskRepo, type StoredTask } from "../task-repo.js";
 import { WorkspaceRepo } from "../../../../projects/persistence/workspace-repo.js";
@@ -16,7 +16,7 @@ import { ThreadRepo } from "../../../../thread-control/persistence/thread-repo.j
  * each test creates a workspace + thread before exercising the repo.
  */
 describe("TaskRepo", () => {
-  let db: Database.Database;
+  let db: Database;
   let repo: TaskRepo;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;

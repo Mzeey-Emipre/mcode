@@ -1,5 +1,5 @@
 import { inject, injectable } from "tsyringe";
-import type Database from "better-sqlite3";
+import type { Database } from "bun:sqlite";
 import {
   ProviderCatalogSnapshotSchema,
   type ProviderCatalogSnapshot,
@@ -15,7 +15,7 @@ const MAX_PERSISTED_CONTEXTS_PER_PROVIDER = 512;
 /** Persists bounded provider catalog snapshots by realized discovery context. */
 @injectable()
 export class ProviderCatalogSnapshotRepo {
-  constructor(@inject("Database") private readonly db: Database.Database) {}
+  constructor(@inject("Database") private readonly db: Database) {}
 
   /** Returns one validated snapshot, or null when the row is absent or corrupt. */
   get(contextKey: string): ProviderCatalogSnapshot | null {
