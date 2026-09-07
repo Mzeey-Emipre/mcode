@@ -69,6 +69,8 @@ interface ComposerQueueListProps {
   isEditing?: boolean;
   /** True when another composer surface must finish before queued sends resume. */
   isPaused?: boolean;
+  /** Allows an attached composer overlay to remove the standalone card spacing. */
+  className?: string;
 }
 
 /**
@@ -91,6 +93,7 @@ export function ComposerQueueList({
   onResume,
   isEditing = false,
   isPaused = false,
+  className,
 }: ComposerQueueListProps) {
   const queue = useQueueStore((s) => s.queues[threadId] ?? EMPTY_QUEUE);
   const hasInFlightQueuedMessage = useQueueStore((s) => s.inFlightQueuedMessages[threadId] !== undefined);
@@ -119,11 +122,11 @@ export function ComposerQueueList({
   return (
     <section
       aria-label="Queued messages"
-      className="mb-2 overflow-hidden rounded-xl bg-muted/30 ring-1 ring-inset ring-border/40"
+      className={cn("mb-2 flex flex-col overflow-hidden rounded-xl bg-muted/30 ring-1 ring-inset ring-border/40", className)}
     >
       {/* Header strip: small-caps mono, quiet, dev-tool feel.
           Continue is primary (only when idle); Clear all is quiet on the side. */}
-      <header className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
+      <header className="flex shrink-0 items-center justify-between border-b border-border/40 px-3 py-1.5">
         <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground/70">
           Queued
         </span>
@@ -156,7 +159,7 @@ export function ComposerQueueList({
           wrapper, the rows' DOM parent is the outer <section> (which
           includes the header), and dragging a row up would push the ghost
           into the header strip. */}
-      <div>
+      <div className="min-h-0 overflow-y-auto">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}

@@ -40,7 +40,9 @@ function useComposerAnchor(
     window.addEventListener("resize", updateAnchor);
     window.addEventListener("scroll", updateAnchor, true);
     const observer = new ResizeObserver(updateAnchor);
-    observer.observe(composer);
+    for (let element: HTMLElement | null = composer; element; element = element.parentElement) {
+      observer.observe(element);
+    }
     return () => {
       window.removeEventListener("resize", updateAnchor);
       window.removeEventListener("scroll", updateAnchor, true);
@@ -66,6 +68,9 @@ interface ComposerProviderNoticeSurfaceProps {
   readonly composerContainerRef: RefObject<HTMLDivElement | null>;
   readonly isMentionPickerOpen: boolean;
   readonly isSlashPickerOpen: boolean;
+  /** Existing domain-owned content displayed above the provider notice. */
+  readonly queue?: ReactNode;
+  readonly hasQueue?: boolean;
   readonly children: (trigger: ReactNode) => ReactNode;
 }
 
@@ -194,8 +199,7 @@ function ComposerNoticeTrigger({
   );
 }
 
-function ComposerNoticeOverlay({
-  anchorRect,
+function ComposerNoticeContent({
   notice,
   notices,
   detailsOpen,
@@ -203,7 +207,6 @@ function ComposerNoticeOverlay({
   onShowAnother,
   onDismiss,
 }: {
-  readonly anchorRect: DOMRect;
   readonly notice: ComposerProviderNotice;
   readonly notices: readonly ComposerProviderNotice[];
   readonly detailsOpen: boolean;
@@ -213,14 +216,8 @@ function ComposerNoticeOverlay({
 }) {
   const Icon = noticeIcon(notice.tone);
   return (
-    <ComposerOverlaySurface
-      anchorRect={anchorRect}
-      estimatedHeight={detailsOpen ? 152 : 40}
-      attached
-      className="composer-provider-notice-surface max-h-56 overflow-y-auto"
-      data-testid="composer-provider-notice"
-    >
-      <div className="flex min-w-0 items-center overflow-hidden rounded-t-xl hover:bg-muted/60 focus-within:bg-muted/60">
+    <>
+      <div className="flex min-w-0 items-center overflow-hidden hover:bg-muted/60 focus-within:bg-muted/60">
         <Button
           type="button"
           variant="ghost"
@@ -278,7 +275,7 @@ function ComposerNoticeOverlay({
           {notice.location && <p className="mt-1 break-all font-mono text-muted-foreground">{notice.location}</p>}
         </div>
       )}
-    </ComposerOverlaySurface>
+    </>
   );
 }
 
@@ -301,12 +298,28 @@ function shouldShowNoticeOverlay({
     && (isManuallyOpen || hasAutomaticNotice));
 }
 
+function shouldRenderComposerNoticeOverlay(
+  isPickerOpen: boolean,
+  hasQueue: boolean,
+  showOverlay: boolean,
+  anchorRect: DOMRect | null,
+): anchorRect is DOMRect {
+  return !isPickerOpen && (hasQueue || showOverlay) && anchorRect !== null;
+}
+
+function estimatedComposerOverlayHeight(hasQueue: boolean, detailsOpen: boolean): number {
+  if (hasQueue) return detailsOpen ? 424 : 312;
+  return detailsOpen ? 152 : 40;
+}
+
 /** Shows loaded provider notices above Composer without affecting editor or picker controls. */
 export function ComposerProviderNoticeSurface({
   threadId,
   composerContainerRef,
   isMentionPickerOpen,
   isSlashPickerOpen,
+  queue,
+  hasQueue = false,
   children,
 }: ComposerProviderNoticeSurfaceProps) {
   const sessionNotices = useThreadRecord(threadId, (record) => record.sessionNotices);
@@ -353,19 +366,33 @@ export function ComposerProviderNoticeSurface({
           onOpen={open}
         />,
       )}
-      {showOverlay && noticeState.selectedNotice && anchorRect && (
-        <ComposerNoticeOverlay
+      {shouldRenderComposerNoticeOverlay(isPickerOpen, hasQueue, showOverlay, anchorRect) && (
+        <ComposerOverlaySurface
           anchorRect={anchorRect}
-          notice={noticeState.selectedNotice}
-          notices={noticeState.rankedNotices}
-          detailsOpen={detailsOpen}
-          onDetailsChange={() => setDetails((current) => ({
-            sessionIdentity,
-            open: current.sessionIdentity === sessionIdentity ? !current.open : true,
-          }))}
-          onShowAnother={showAnother}
-          onDismiss={dismiss}
-        />
+          estimatedHeight={estimatedComposerOverlayHeight(hasQueue, detailsOpen)}
+          attached
+          className="composer-provider-notice-surface max-h-[calc(100vh-5rem)] overflow-y-auto"
+          data-testid="composer-provider-notice"
+        >
+          {hasQueue && (
+            <div className="max-h-72 p-1">
+              {queue}
+            </div>
+          )}
+          {showOverlay && noticeState.selectedNotice && (
+            <ComposerNoticeContent
+              notice={noticeState.selectedNotice}
+              notices={noticeState.rankedNotices}
+              detailsOpen={detailsOpen}
+              onDetailsChange={() => setDetails((current) => ({
+                sessionIdentity,
+                open: current.sessionIdentity === sessionIdentity ? !current.open : true,
+              }))}
+              onShowAnother={showAnother}
+              onDismiss={dismiss}
+            />
+          )}
+        </ComposerOverlaySurface>
       )}
     </>
   );

@@ -11,11 +11,19 @@ import { ComposerProviderNoticeSurface } from "./ComposerProviderNoticeSurface";
 const THREAD_A = "thread-a";
 const THREAD_B = "thread-b";
 const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport");
+const resizeObservers: ResizeObserverMock[] = [];
 
 class ResizeObserverMock {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
+  readonly targets = new Set<Element>();
+
+  constructor(readonly callback: () => void) {
+    resizeObservers.push(this);
+  }
+
+  observe(target: Element): void { this.targets.add(target); }
+  unobserve(target: Element): void { this.targets.delete(target); }
+  disconnect(): void { this.targets.clear(); }
 }
 
 function providerNotice(
@@ -58,20 +66,24 @@ function NoticeHarness({
   threadId = THREAD_A,
   isMentionPickerOpen = false,
   isSlashPickerOpen = false,
+  hasQueue = false,
 }: {
   readonly threadId?: string;
   readonly isMentionPickerOpen?: boolean;
   readonly isSlashPickerOpen?: boolean;
+  readonly hasQueue?: boolean;
 }) {
   const composerRef = useRef<HTMLDivElement>(null);
   return (
     <>
-      <div ref={composerRef} />
+      <div ref={composerRef} data-testid="composer-anchor" />
       <ComposerProviderNoticeSurface
         threadId={threadId}
         composerContainerRef={composerRef}
         isMentionPickerOpen={isMentionPickerOpen}
         isSlashPickerOpen={isSlashPickerOpen}
+        hasQueue={hasQueue}
+        queue={hasQueue ? <div data-testid="composer-queue-content">Queued follow-up</div> : undefined}
       >
         {(trigger) => <div data-testid="notice-trigger">{trigger}</div>}
       </ComposerProviderNoticeSurface>
@@ -85,6 +97,11 @@ describe("ComposerProviderNoticeSurface", () => {
       configurable: true,
       value: ResizeObserverMock,
     });
+    resizeObservers.length = 0;
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: { width: 1000, height: 800 },
+    });
     resetThreadStoreForTests({
       records: new Map([
         [THREAD_A, createEmptyThreadRecord()],
@@ -96,6 +113,58 @@ describe("ComposerProviderNoticeSurface", () => {
   afterEach(() => {
     if (originalResizeObserver) Object.defineProperty(globalThis, "ResizeObserver", originalResizeObserver);
     else Reflect.deleteProperty(globalThis, "ResizeObserver");
+    if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport);
+    else Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  it("realigns after an ancestor layout change moves the composer without resizing it", () => {
+    seedThread(THREAD_A, [providerNotice("warning", THREAD_A, "warning")]);
+    render(<main data-testid="composer-layout"><NoticeHarness /></main>);
+
+    const anchor = screen.getByTestId("composer-anchor");
+    let left = 25;
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(left, 100, 878, 48),
+    });
+    fireEvent(window, new Event("resize"));
+    expect(screen.getByTestId("composer-provider-notice")).toHaveStyle({ left: "39px", width: "850px" });
+
+    left = 118;
+    const layoutObserver = resizeObservers.find((observer) => observer.targets.has(screen.getByTestId("composer-layout")));
+    expect(layoutObserver).toBeDefined();
+    act(() => layoutObserver?.callback());
+    expect(screen.getByTestId("composer-provider-notice")).toHaveStyle({ left: "132px", width: "850px" });
+  });
+
+  it("keeps queued messages above a dismissible provider warning in one attached surface", () => {
+    seedThread(THREAD_A, [providerNotice("warning", THREAD_A, "warning")]);
+    render(<NoticeHarness hasQueue />);
+
+    const overlay = screen.getByTestId("composer-provider-notice");
+    const queue = screen.getByTestId("composer-queue-content");
+    const warning = screen.getByRole("button", { name: "Provider warning" });
+    expect(overlay).toContainElement(queue);
+    expect(overlay).toContainElement(warning);
+    expect(queue.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notice" }));
+    expect(screen.getByTestId("composer-provider-notice")).toContainElement(queue);
+    expect(screen.queryByRole("button", { name: "Provider warning" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Review provider notices" }));
+    expect(screen.getByTestId("composer-provider-notice")).toContainElement(queue);
+    expect(screen.getByRole("button", { name: "Provider warning" })).toBeInTheDocument();
+  });
+
+  it("shows a queue in the attached surface when there is no provider notice", () => {
+    render(<NoticeHarness hasQueue />);
+
+    expect(screen.getByTestId("composer-provider-notice")).toContainElement(
+      screen.getByTestId("composer-queue-content"),
+    );
+    expect(screen.queryByRole("button", { name: "Provider warning" })).not.toBeInTheDocument();
   });
 
   it("removes dismissed notices instead of offering them for review", () => {
@@ -221,15 +290,18 @@ describe("ComposerProviderNoticeSurface", () => {
 
   it("hides beneath mention and slash pickers, then restores after either closes", () => {
     seedThread(THREAD_A, [providerNotice("warning", THREAD_A, "warning")]);
-    const { rerender } = render(<NoticeHarness />);
+    const { rerender } = render(<NoticeHarness hasQueue />);
 
     expect(screen.getByTestId("composer-provider-notice")).toBeInTheDocument();
-    rerender(<NoticeHarness isMentionPickerOpen />);
+    rerender(<NoticeHarness hasQueue isMentionPickerOpen />);
     expect(screen.queryByTestId("composer-provider-notice")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Review provider notices" })).toBeInTheDocument();
-    rerender(<NoticeHarness isSlashPickerOpen />);
+    rerender(<NoticeHarness hasQueue isSlashPickerOpen />);
     expect(screen.queryByTestId("composer-provider-notice")).not.toBeInTheDocument();
-    rerender(<NoticeHarness />);
+    rerender(<NoticeHarness hasQueue />);
     expect(screen.getByTestId("composer-provider-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("composer-provider-notice")).toContainElement(
+      screen.getByTestId("composer-queue-content"),
+    );
   });
 });

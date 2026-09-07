@@ -53,6 +53,7 @@ const TURN_CONTENT_METHODS = new Set([
 const SILENT_ITEM_TYPES = new Set([
   "webSearch", "plan", "imageView", "imageGeneration",
   "contextCompaction", "enteredReviewMode", "exitedReviewMode",
+  "sleep",
 ]);
 
 /**
@@ -1553,7 +1554,7 @@ export class CodexEventMapper {
       ? this.mapNotificationInternal(notification)
       : this.malformedNotification();
     const mapped = this.dedupeChildEvents([...events, ...this.replayedChildEvents]).map((event) => this.toRuntimeEvent(event));
-    if (mapped.some(({ event }) => event.type === AgentEventType.System && event.systemNotice?.kind === "diagnostic")) {
+    if (this.hasDiagnosticDisposition() || mapped.some(({ event }) => event.type === AgentEventType.System && event.systemNotice?.kind === "diagnostic")) {
       this.disposition = this.diagnosticDisposition();
     } else if (mapped.length > 0) {
       this.disposition = { kind: "mapped" };
@@ -1566,6 +1567,10 @@ export class CodexEventMapper {
 
   private diagnosticDisposition(): CodexNotificationDisposition {
     return this.disposition.kind === "diagnostic" ? this.disposition : { kind: "diagnostic", reason: "unknown-notification" };
+  }
+
+  private hasDiagnosticDisposition(): boolean {
+    return this.disposition.kind === "diagnostic";
   }
 
   private malformedNotification(): CodexMappedEvent[] {
@@ -1855,8 +1860,9 @@ export class CodexEventMapper {
 
   private unknownNotification(nativeMethod: string): CodexMappedEvent[] {
     const method = this.boundedText(nativeMethod, "unknown").slice(0, 128);
+    this.disposition = { kind: "diagnostic", reason: "unknown-notification" };
     logger.warn("CodexEventMapper: unrecognized notification", { method });
-    return this.notice("provider.notice.unknown-event", `Codex sent an update this client does not recognize (${method}). The thread continues normally.`);
+    return [];
   }
 
   private mapMainItemStarted(notification: CodexNotification): CodexMappedEvent[] {

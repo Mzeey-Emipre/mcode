@@ -47,6 +47,7 @@ import {
 } from "./submission/useComposerSubmissionController";
 import { ComposerContentSurface } from "./ComposerContentSurface";
 import { ComposerProviderNoticeSurface } from "./ComposerProviderNoticeSurface";
+import { ComposerQueueList } from "@/components/chat/ComposerQueueList";
 import { ComposerStatusStrip } from "./ComposerStatusStrip";
 import { useComposerSurfaceState } from "./useComposerSurfaceState";
 import {
@@ -75,6 +76,14 @@ function createPopupKeyboardEvent(key: string): React.KeyboardEvent {
 
 function showComposerOptionsInline(composerWidth: number): boolean {
   return composerWidth === 0 || composerWidth >= 640;
+}
+
+function getQueueThreadId(
+  threadId: string | undefined,
+  branchFromMessageId: string | undefined,
+  isNewThread: boolean | undefined,
+): string | undefined {
+  return threadId !== undefined && !branchFromMessageId && !isNewThread ? threadId : undefined;
 }
 
 function popupAnchorRect(
@@ -640,7 +649,10 @@ export function Composer({
   }, [fileAutocomplete.isOpen, filePopup, slashCommand, handleSlashSelect, branchFromMessageId, onBranchModeExit]);
 
   const toast = useQueueStore((s) => s.toast);
-
+  const hasQueuedMessages = useQueueStore(
+    (state) => threadId !== undefined && (state.queues[threadId]?.length ?? 0) > 0,
+  );
+  const queueThreadId = getQueueThreadId(threadId, branchFromMessageId, isNewThread);
 
   const showComposerStatusBar = !!branchFromMessageId;
 
@@ -656,6 +668,20 @@ export function Composer({
           composerContainerRef={composerContainerRef}
           isMentionPickerOpen={fileAutocomplete.isOpen}
           isSlashPickerOpen={slashCommand.isOpen}
+          hasQueue={Boolean(queueThreadId) && hasQueuedMessages}
+          queue={queueThreadId ? (
+            <ComposerQueueList
+              threadId={queueThreadId}
+              isAgentRunning={isAgentRunning}
+              provider={provider}
+              isEditing={Boolean(editingFromQueue)}
+              isPaused={planPending}
+              className="mb-0 max-h-70 rounded-none ring-0"
+              onLoadIntoComposer={loadIntoComposer}
+              onResume={() => planPending ? Promise.resolve() : resumeQueuedMessage()}
+              onSendNow={(message) => planPending ? Promise.resolve() : sendQueuedMessageNow(message)}
+            />
+          ) : undefined}
         >
           {(providerNoticeTrigger) => <ComposerContentSurface
           model={{
@@ -726,9 +752,6 @@ export function Composer({
           actions={{
             onBranchModeExit,
             onComposerModeChange: setComposerMode,
-            onLoadIntoComposer: loadIntoComposer,
-            onResumeQueuedMessage: resumeQueuedMessage,
-            onSendQueuedMessageNow: sendQueuedMessageNow,
             onDragEnter: handleDragEnter,
             onDragLeave: handleDragLeave,
             onDragOver: handleDragOver,
