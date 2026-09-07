@@ -162,7 +162,7 @@ function stageBunRuntime({ appOutDir, electronPlatformName, productFilename, pac
   const binary = NodePath.resolve(resourcesRoot, "bin", platform === "win32" ? "mcode-bun.exe" : "mcode-bun");
   NodeFS.mkdirSync(NodePath.dirname(binary), { recursive: true });
   NodeChildProcess.execFileSync(resolveBunExecutable(), [
-    "build", "--compile", `--target=bun-${bunPlatform}-${arch}`,
+    "build", "--compile", "--bytecode", `--target=bun-${bunPlatform}-${arch}`,
     NodePath.resolve(packagedServerDir, "server.cjs"), "--outfile", binary,
   ], { stdio: "inherit" });
   return binary;

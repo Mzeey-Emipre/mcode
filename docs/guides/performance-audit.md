@@ -297,3 +297,31 @@ Chrome trace analysis marks a Layout over 1 ms as slow. One bounded jump may
 contain at most two slow layouts, and no two may start within the same 16.7 ms
 frame window. Three separated slow layouts still fail. Any main-thread task over
 50 ms fails.
+
+## Packaged Server Startup
+
+Electron packaging compiles `apps/desktop/dist/server/server.cjs` into the
+`resources/bin/mcode-bun` executable with `bun build --compile --bytecode`.
+This affects the packaged server only. Development starts that run
+`bun apps/desktop/dist/server/server.cjs` do not use the compiled bytecode.
+
+[`--bytecode`](https://bun.sh/docs/bundler/executables#bytecode-compilation)
+moves JavaScript parsing work from runtime to bundle time. On source revision
+`4e971f7eda98536400f7aadc66f97704ca996d76`, Bun 1.4.1 on Windows x64, nine
+interleaved baseline and bytecode pairs measured median authenticated-RPC startup
+times of 1609.0 ms and 834.4 ms. The baseline range was 1069.0 to 3736.7 ms;
+the bytecode range was 493.5 to 2280.2 ms.
+
+The metric runs from spawning a fresh Bun process until an authenticated
+`workspace.list` RPC completes. Both binaries use copies of one immutable,
+migrated fixture database with one fixture workspace and no user projects.
+The benchmark runs with `NODE_ENV=development`. It measures the compiled Bun
+server binary, not startup of the packaged Electron application or behavior on
+other target platforms.
+
+The receipt requires a `/health` body with `status: "ok"` and numeric
+`activeAgents`, one `workspace.list` result whose path is the fixture repository,
+and a zero server exit code. The runner writes the receipt to
+`.dev/verification/performance/server-startup/<output>/baseline.json`.
+The interleaved session receipt is
+`.dev/verification/performance/server-startup/interleaved-9-pairs-corrected/interleaved.json`.

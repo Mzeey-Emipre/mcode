@@ -368,4 +368,14 @@ describe("desktop packaging workflow contract", () => {
     expect(afterPack).not.toContain("attestPackagedTerminalArtifacts");
     expect(afterPack).toContain("retainTargetTerminalNativeArtifacts");
   });
+
+  it("compiles the packaged Bun runtime with bytecode", () => {
+    const afterPack = NodeFS.readFileSync(
+      NodePath.join(repoRoot, "apps/desktop/scripts/desktop-packaging/target-package/after-pack.mjs"),
+      "utf8",
+    );
+    expect(afterPack).toContain(
+      '"build", "--compile", "--bytecode", `--target=bun-${bunPlatform}-${arch}`',
+    );
+  });
 });
