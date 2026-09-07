@@ -140,7 +140,7 @@ describe("PullRequestForkDialog", () => {
     vi.clearAllMocks();
     workspaceState.activeWorkspaceId = "workspace-previous";
     workspaceState.activeThreadId = "thread-previous";
-    useOverviewStore.setState({ reserveSpace: false, requestedThreadId: null });
+    useOverviewStore.setState({ reserveThreadId: null, requestedThreadId: null });
     useUiStore.setState({ primarySurface: "pullRequests" });
     useToastStore.setState({ toasts: [] });
   });

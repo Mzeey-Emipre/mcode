@@ -316,6 +316,8 @@ export interface MessageListProps {
   onOpenSubagents?: (target: SubagentRosterTarget) => void;
   /** Whether child prompts display their parent-agent provenance label. */
   showParentAgentProvenance?: boolean;
+  /** Reserved space that keeps transcript content clear of the open Overview. */
+  contentPaddingRight?: string;
 }
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
@@ -337,6 +339,7 @@ export function MessageList({
   onSubagentSelect,
   onOpenSubagents,
   showParentAgentProvenance = true,
+  contentPaddingRight,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
@@ -1434,12 +1437,14 @@ export function MessageList({
                 className="absolute left-0 w-full px-4 py-2 sm:px-8"
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
-                <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-clip")}>
-                  {item.type === "leading-content" || item.type === "after-first-user-content" ? (
-                    <div data-testid="message-list-leading-content">{item.content}</div>
-                  ) : (
-                    <TranscriptItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
-                  )}
+                <div className="w-full overflow-x-clip" style={{ paddingRight: contentPaddingRight }}>
+                  <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-clip")}>
+                    {item.type === "leading-content" || item.type === "after-first-user-content" ? (
+                      <div data-testid="message-list-leading-content">{item.content}</div>
+                    ) : (
+                      <TranscriptItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
+                    )}
+                  </div>
                 </div>
               </div>
             );

@@ -30,6 +30,9 @@ Enrich the existing `header-workspace-menu` into a thread-scoped header popover,
 | **Switch provider** | provider list | swaps this thread's provider + handoff | new `thread.switchProvider` RPC |
 
 A **CI notification blob** on the trigger (red = failing, green = passing, nothing otherwise) is scoped to the active thread and visible without opening the popover.
+### Layout
+
+At a chat-pane width of 824px or more, Overview opens beside the thread and the chat reserves room for its 320px popover and a 16px gap. At narrower widths, Overview stays closed until opened explicitly, then overlays the chat. The popover scrolls within the height available below its trigger.
 
 ### Goals
 

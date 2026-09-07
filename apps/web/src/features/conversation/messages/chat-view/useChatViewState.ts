@@ -88,7 +88,7 @@ export function useChatViewState() {
   const connectionStatus = useConnectionStore((state) => state.status);
   const chatPaneRef = useRef<HTMLDivElement>(null);
   const threadPaneWidth = useElementWidth(chatPaneRef, activeThreadId);
-  const reserveOverviewSpace = useOverviewStore((state) => state.reserveSpace);
+  const reserveOverviewSpace = useOverviewStore((state) => state.reserveThreadId === activeThreadId);
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
   const { targetPaintable } = getConversationPaintState(
     activeThreadId,
