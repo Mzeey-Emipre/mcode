@@ -251,6 +251,26 @@ describe("ServerManager", () => {
     );
   });
 
+  it("isolates development server standard output and captures standard error", async () => {
+    const previousRendererUrl = process.env.ELECTRON_RENDERER_URL;
+    process.env.ELECTRON_RENDERER_URL = "http://localhost:5173";
+
+    try {
+      await manager.start();
+
+      const spawnCall = vi.mocked(NodeChildProcess.spawn).mock.calls[0];
+      const opts = spawnCall[2] as Record<string, unknown>;
+      expect(opts.stdio).toEqual(["ignore", "ignore", "pipe"]);
+      expect(NodeFS.createWriteStream).toHaveBeenCalledWith(
+        NodePath.join("/tmp/mcode", "server-stderr.log"),
+        { flags: "w" },
+      );
+    } finally {
+      if (previousRendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL;
+      else process.env.ELECTRON_RENDERER_URL = previousRendererUrl;
+    }
+  });
+
   it("calls unref() on the child process after spawning", async () => {
     await manager.start();
     expect(refs.mockChildProcess.unref).toHaveBeenCalledOnce();
